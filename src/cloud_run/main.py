@@ -32,7 +32,8 @@ def webhook():
     except json.JSONDecodeError:
         return jsonify({"status": "bad request"}), 400
 
-    if payload.get("eventType") != "review.created":
+    event = payload.get("eventType")
+    if event not in ("review.created", "review.updated", "review.deleted"):
         return jsonify({"status": "ignored"})
 
     name    = (payload.get("consumer") or {}).get("displayName") or "A customer"
@@ -41,8 +42,12 @@ def webhook():
     text    = payload.get("text") or ""
     comment = f"{title}\n\n{text}".strip() if title else text.strip()
 
+    if event == "review.deleted":
+        send_to_gchat_deleted(name, rating)
+        return jsonify({"status": "ok"})
+
     suggestion = get_gemini_suggestion(comment, rating) if len(comment) > 5 else ""
-    send_to_gchat(name, rating, comment, suggestion)
+    send_to_gchat(name, rating, comment, suggestion, event)
 
     return jsonify({"status": "ok"})
 
@@ -79,14 +84,28 @@ def get_gemini_suggestion(comment, rating):
     return "AI suggestion unavailable."
 
 
-def send_to_gchat(name, rating, comment, suggestion):
+def send_to_gchat(name, rating, comment, suggestion, event):
     stars = "⭐" * min(int(rating) if rating.isdigit() else 0, 5)
+    label = "New Trustpilot Review" if event == "review.created" else "Trustpilot Review Updated"
     text = (
-        f"{stars} *New Trustpilot Review* {stars}\n\n"
+        f"{stars} *{label}* {stars}\n\n"
         f"*Customer:* {name}\n"
         f"*Rating:* {rating}-star\n\n"
         f"*Comment:*\n\"{comment}\"\n\n"
         f"💡 *AI Suggestion:*\n{suggestion}"
+    )
+    try:
+        requests.post(GCHAT_WEBHOOK_URL, json={"text": text}, timeout=10)
+    except Exception as e:
+        print(f"Google Chat error: {e}")
+
+
+def send_to_gchat_deleted(name, rating):
+    stars = "⭐" * min(int(rating) if rating.isdigit() else 0, 5)
+    text = (
+        f"🗑️ *Trustpilot Review Deleted*\n\n"
+        f"*Customer:* {name}\n"
+        f"*Was rated:* {rating}-star {stars}"
     )
     try:
         requests.post(GCHAT_WEBHOOK_URL, json={"text": text}, timeout=10)
