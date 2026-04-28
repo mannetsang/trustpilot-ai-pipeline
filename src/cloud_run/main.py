@@ -11,11 +11,13 @@ from googleapiclient.discovery import build
 app = Flask(__name__)
 
 GCHAT_WEBHOOK_URL = os.environ["GCHAT_WEBHOOK_URL"]
-GEMINI_API_KEY    = os.environ["GEMINI_API_KEY"]
 GOOGLE_SHEET_ID   = os.environ["GOOGLE_SHEET_ID"]
 TP_API_KEY        = os.environ["TP_API_KEY"]
 TP_SECRET         = os.environ["TP_SECRET"]
 BU_ID             = "5e44f707d7d8c700011eaa10"
+GCP_PROJECT       = "shp-ai-bot-2026"
+VERTEX_LOCATION   = "us-central1"
+VERTEX_MODEL      = "gemini-2.5-pro"
 
 # Cache the Trustpilot access token so we don't re-fetch on every request
 _tp_token = None
@@ -110,10 +112,17 @@ def webhook():
     return jsonify({"status": "ok"})
 
 
+def get_vertex_token():
+    creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+    creds.refresh(google.auth.transport.requests.Request())
+    return creds.token
+
+
 def get_gemini_suggestion(comment, rating):
     url = (
-        f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-2.5-pro:generateContent?key={GEMINI_API_KEY}"
+        f"https://{VERTEX_LOCATION}-aiplatform.googleapis.com/v1/"
+        f"projects/{GCP_PROJECT}/locations/{VERTEX_LOCATION}/"
+        f"publishers/google/models/{VERTEX_MODEL}:generateContent"
     )
     prompt = (
         f"A customer left a {rating}-star review for our hairpiece company "
@@ -123,17 +132,19 @@ def get_gemini_suggestion(comment, rating):
         "capitalise on it. Be concise and professional."
     )
     try:
+        token = get_vertex_token()
         r = requests.post(
             url,
+            headers={"Authorization": f"Bearer {token}"},
             json={"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.4}},
-            timeout=30,
+            timeout=60,
         )
         parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
         for part in parts:
             if part.get("text"):
                 return part["text"].strip()
     except Exception as e:
-        print(f"Gemini error: {e}")
+        print(f"Vertex AI error: {e}")
     return "AI suggestion unavailable."
 
 
