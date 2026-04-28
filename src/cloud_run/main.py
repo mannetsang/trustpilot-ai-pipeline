@@ -1,0 +1,98 @@
+import os
+import hmac
+import hashlib
+import json
+import requests
+from flask import Flask, request, jsonify
+
+app = Flask(__name__)
+
+GCHAT_WEBHOOK_URL  = os.environ["GCHAT_WEBHOOK_URL"]
+GEMINI_API_KEY     = os.environ["GEMINI_API_KEY"]
+TRUSTPILOT_SECRET  = os.environ.get("TRUSTPILOT_SECRET", "")
+
+
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    raw = request.get_data()
+
+    # Verify HMAC-SHA256 signature sent by Trustpilot
+    if TRUSTPILOT_SECRET:
+        sig = request.headers.get("X-Trustpilot-Signature", "")
+        expected = hmac.new(
+            TRUSTPILOT_SECRET.encode(),
+            raw,
+            hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(expected, sig):
+            return jsonify({"status": "unauthorized"}), 401
+
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return jsonify({"status": "bad request"}), 400
+
+    if payload.get("eventType") != "review.created":
+        return jsonify({"status": "ignored"})
+
+    name    = (payload.get("consumer") or {}).get("displayName") or "A customer"
+    rating  = str(payload.get("stars", "Unknown"))
+    title   = payload.get("title") or ""
+    text    = payload.get("text") or ""
+    comment = f"{title}\n\n{text}".strip() if title else text.strip()
+
+    suggestion = get_gemini_suggestion(comment, rating) if len(comment) > 5 else ""
+    send_to_gchat(name, rating, comment, suggestion)
+
+    return jsonify({"status": "ok"})
+
+
+def get_gemini_suggestion(comment, rating):
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"gemini-2.5-pro:generateContent?key={GEMINI_API_KEY}"
+    )
+    prompt = (
+        f"A customer left a {rating}-star review for our hairpiece company "
+        f"(Superhairpieces) with the following comment:\n\"{comment}\"\n\n"
+        "Provide a brief 1-2 sentence actionable improvement suggestion for our "
+        "internal team. If the review is fully positive, suggest a quick way to "
+        "capitalise on it. Be concise and professional."
+    )
+    body = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.4},
+    }
+    try:
+        r = requests.post(url, json=body, timeout=30)
+        data = r.json()
+        parts = (
+            data.get("candidates", [{}])[0]
+            .get("content", {})
+            .get("parts", [])
+        )
+        for part in parts:
+            if part.get("text"):
+                return part["text"].strip()
+    except Exception as e:
+        print(f"Gemini error: {e}")
+    return "AI suggestion unavailable."
+
+
+def send_to_gchat(name, rating, comment, suggestion):
+    stars = "⭐" * min(int(rating) if rating.isdigit() else 0, 5)
+    text = (
+        f"{stars} *New Trustpilot Review* {stars}\n\n"
+        f"*Customer:* {name}\n"
+        f"*Rating:* {rating}-star\n\n"
+        f"*Comment:*\n\"{comment}\"\n\n"
+        f"💡 *AI Suggestion:*\n{suggestion}"
+    )
+    try:
+        requests.post(GCHAT_WEBHOOK_URL, json={"text": text}, timeout=10)
+    except Exception as e:
+        print(f"Google Chat error: {e}")
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
