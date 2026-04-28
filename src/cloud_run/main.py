@@ -1,23 +1,88 @@
 import os
-import hmac
-import hashlib
+import base64
 import json
+import time
 import requests
 from flask import Flask, request, jsonify
+import google.auth
+import google.auth.transport.requests
+from googleapiclient.discovery import build
 
 app = Flask(__name__)
 
-GCHAT_WEBHOOK_URL  = os.environ["GCHAT_WEBHOOK_URL"]
-GEMINI_API_KEY     = os.environ["GEMINI_API_KEY"]
-TRUSTPILOT_SECRET  = os.environ.get("TRUSTPILOT_SECRET", "")
+GCHAT_WEBHOOK_URL = os.environ["GCHAT_WEBHOOK_URL"]
+GEMINI_API_KEY    = os.environ["GEMINI_API_KEY"]
+GOOGLE_SHEET_ID   = os.environ["GOOGLE_SHEET_ID"]
+TP_API_KEY        = os.environ["TP_API_KEY"]
+TP_SECRET         = os.environ["TP_SECRET"]
+BU_ID             = "5e44f707d7d8c700011eaa10"
+
+# Cache the Trustpilot access token so we don't re-fetch on every request
+_tp_token = None
+_tp_token_expiry = 0
+
+
+def get_tp_token():
+    global _tp_token, _tp_token_expiry
+    if _tp_token and time.time() < _tp_token_expiry:
+        return _tp_token
+    creds = base64.b64encode(f"{TP_API_KEY}:{TP_SECRET}".encode()).decode()
+    r = requests.post(
+        "https://api.trustpilot.com/v1/oauth/oauth-business-users-for-applications/accesstoken",
+        headers={"Authorization": f"Basic {creds}", "Content-Type": "application/x-www-form-urlencoded"},
+        data={"grant_type": "client_credentials"},
+        timeout=10,
+    )
+    data = r.json()
+    _tp_token = data["access_token"]
+    _tp_token_expiry = time.time() + int(data.get("expires_in", 3600)) - 60
+    return _tp_token
+
+
+def get_review_email(review_id):
+    try:
+        token = get_tp_token()
+        r = requests.get(
+            f"https://api.trustpilot.com/v1/private/reviews/{review_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            params={"apikey": TP_API_KEY},
+            timeout=10,
+        )
+        return r.json().get("referralEmail") or ""
+    except Exception as e:
+        print(f"Error fetching review email: {e}")
+        return ""
+
+
+def get_sheets_service():
+    creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/spreadsheets"])
+    return build("sheets", "v4", credentials=creds)
+
+
+def write_to_sheet(name, email, rating, comment, suggestion):
+    try:
+        service = get_sheets_service()
+        service.spreadsheets().values().append(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range="A:F",
+            valueInputOption="USER_ENTERED",
+            body={"values": [[
+                time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
+                name,
+                email,
+                rating,
+                comment,
+                suggestion,
+            ]]},
+        ).execute()
+    except Exception as e:
+        print(f"Sheet write error: {e}")
 
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    raw = request.get_data()
-
     try:
-        payload = json.loads(raw)
+        payload = json.loads(request.get_data())
     except json.JSONDecodeError:
         return jsonify({"status": "bad request"}), 400
 
@@ -25,18 +90,22 @@ def webhook():
     if event not in ("review.created", "review.updated", "review.deleted"):
         return jsonify({"status": "ignored"})
 
-    name    = (payload.get("consumer") or {}).get("displayName") or "A customer"
-    rating  = str(payload.get("stars", "Unknown"))
-    title   = payload.get("title") or ""
-    text    = payload.get("text") or ""
-    comment = f"{title}\n\n{text}".strip() if title else text.strip()
+    name      = (payload.get("consumer") or {}).get("displayName") or "A customer"
+    rating    = str(payload.get("stars", "Unknown"))
+    title     = payload.get("title") or ""
+    text      = payload.get("text") or ""
+    review_id = payload.get("reviewId") or payload.get("id") or ""
+    comment   = f"{title}\n\n{text}".strip() if title else text.strip()
 
     if event == "review.deleted":
         send_to_gchat_deleted(name, rating)
         return jsonify({"status": "ok"})
 
+    email      = get_review_email(review_id) if review_id else ""
     suggestion = get_gemini_suggestion(comment, rating) if len(comment) > 5 else ""
-    send_to_gchat(name, rating, comment, suggestion, event)
+
+    send_to_gchat(name, email, rating, comment, suggestion, event)
+    write_to_sheet(name, email, rating, comment, suggestion)
 
     return jsonify({"status": "ok"})
 
@@ -53,18 +122,13 @@ def get_gemini_suggestion(comment, rating):
         "internal team. If the review is fully positive, suggest a quick way to "
         "capitalise on it. Be concise and professional."
     )
-    body = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.4},
-    }
     try:
-        r = requests.post(url, json=body, timeout=30)
-        data = r.json()
-        parts = (
-            data.get("candidates", [{}])[0]
-            .get("content", {})
-            .get("parts", [])
+        r = requests.post(
+            url,
+            json={"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.4}},
+            timeout=30,
         )
+        parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
         for part in parts:
             if part.get("text"):
                 return part["text"].strip()
@@ -73,12 +137,13 @@ def get_gemini_suggestion(comment, rating):
     return "AI suggestion unavailable."
 
 
-def send_to_gchat(name, rating, comment, suggestion, event):
+def send_to_gchat(name, email, rating, comment, suggestion, event):
     stars = "⭐" * min(int(rating) if rating.isdigit() else 0, 5)
     label = "New Trustpilot Review" if event == "review.created" else "Trustpilot Review Updated"
+    email_line = f"\n*Email:* {email}" if email else ""
     text = (
         f"{stars} *{label}* {stars}\n\n"
-        f"*Customer:* {name}\n"
+        f"*Customer:* {name}{email_line}\n"
         f"*Rating:* {rating}-star\n\n"
         f"*Comment:*\n\"{comment}\"\n\n"
         f"💡 *AI Suggestion:*\n{suggestion}"
