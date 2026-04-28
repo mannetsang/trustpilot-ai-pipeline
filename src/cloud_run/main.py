@@ -111,7 +111,32 @@ def webhook():
     send_to_gchat(name, email, rating, comment, reply, suggestion, event, review_id)
     write_to_sheet(name, email, rating, comment, reply, suggestion)
 
+    if rating.isdigit() and int(rating) <= 3:
+        create_service_request(email, comment)
+
     return jsonify({"status": "ok"})
+
+
+TEAMDESK_URL = "https://www.teamdesk.net/secure/api/v2/56554/BEA2566590EF4D14AA8D35AD0E2CEA77/t_419099/upsert.json"
+
+
+def create_service_request(email, comment):
+    try:
+        r = requests.post(
+            TEAMDESK_URL,
+            json=[{
+                "Email": email,
+                "SR Level": "Social Damage",
+                "Client Request Notes": comment,
+                "Agent Email": "geeta@superhairpieces.com",
+                "Will the Client Send Products to Office?": "No",
+            }],
+            headers={"Content-Type": "application/json"},
+            timeout=15,
+        )
+        print(f"TeamDesk SR created: {r.status_code} {r.text}")
+    except Exception as e:
+        print(f"TeamDesk error: {e}")
 
 
 def get_vertex_token():
