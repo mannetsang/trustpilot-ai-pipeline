@@ -61,12 +61,12 @@ def get_sheets_service():
     return build("sheets", "v4", credentials=creds)
 
 
-def write_to_sheet(name, email, rating, comment, suggestion):
+def write_to_sheet(name, email, rating, comment, reply, suggestion):
     try:
         service = get_sheets_service()
         service.spreadsheets().values().append(
             spreadsheetId=GOOGLE_SHEET_ID,
-            range="A:F",
+            range="A:G",
             valueInputOption="USER_ENTERED",
             body={"values": [[
                 time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
@@ -74,6 +74,7 @@ def write_to_sheet(name, email, rating, comment, suggestion):
                 email,
                 rating,
                 comment,
+                reply,
                 suggestion,
             ]]},
         ).execute()
@@ -104,10 +105,11 @@ def webhook():
         return jsonify({"status": "ok"})
 
     email      = get_review_email(review_id) if review_id else ""
+    reply      = get_reply_suggestion(comment, rating, name) if len(comment) > 5 else ""
     suggestion = get_gemini_suggestion(comment, rating) if len(comment) > 5 else ""
 
-    send_to_gchat(name, email, rating, comment, suggestion, event)
-    write_to_sheet(name, email, rating, comment, suggestion)
+    send_to_gchat(name, email, rating, comment, reply, suggestion, event)
+    write_to_sheet(name, email, rating, comment, reply, suggestion)
 
     return jsonify({"status": "ok"})
 
@@ -116,6 +118,41 @@ def get_vertex_token():
     creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
     creds.refresh(google.auth.transport.requests.Request())
     return creds.token
+
+
+def vertex_call(prompt):
+    url = (
+        f"https://{VERTEX_LOCATION}-aiplatform.googleapis.com/v1/"
+        f"projects/{GCP_PROJECT}/locations/{VERTEX_LOCATION}/"
+        f"publishers/google/models/{VERTEX_MODEL}:generateContent"
+    )
+    token = get_vertex_token()
+    r = requests.post(
+        url,
+        headers={"Authorization": f"Bearer {token}"},
+        json={"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.4}},
+        timeout=60,
+    )
+    parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
+    for part in parts:
+        if part.get("text"):
+            return part["text"].strip()
+    return ""
+
+
+def get_reply_suggestion(comment, rating, name):
+    prompt = (
+        f"A customer named {name} left a {rating}-star review for Superhairpieces "
+        f"with the following comment:\n\"{comment}\"\n\n"
+        "Write a warm, professional public reply from Superhairpieces to post on Trustpilot. "
+        "Keep it to 2-3 sentences. Thank them, address their specific feedback, and invite "
+        "them to reach out if needed. Do not use generic filler phrases."
+    )
+    try:
+        return vertex_call(prompt)
+    except Exception as e:
+        print(f"Vertex AI reply error: {e}")
+    return ""
 
 
 def get_gemini_suggestion(comment, rating):
@@ -132,31 +169,23 @@ def get_gemini_suggestion(comment, rating):
         "capitalise on it. Be concise and professional."
     )
     try:
-        token = get_vertex_token()
-        r = requests.post(
-            url,
-            headers={"Authorization": f"Bearer {token}"},
-            json={"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.4}},
-            timeout=60,
-        )
-        parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
-        for part in parts:
-            if part.get("text"):
-                return part["text"].strip()
+        return vertex_call(prompt)
     except Exception as e:
         print(f"Vertex AI error: {e}")
     return "AI suggestion unavailable."
 
 
-def send_to_gchat(name, email, rating, comment, suggestion, event):
+def send_to_gchat(name, email, rating, comment, reply, suggestion, event):
     stars = "⭐" * min(int(rating) if rating.isdigit() else 0, 5)
     label = "New Trustpilot Review" if event == "review.created" else "Trustpilot Review Updated"
     email_line = f"\n*Email:* {email}" if email else ""
+    reply_line = f"\n\n💬 *Reply Suggestion:*\n{reply}" if reply else ""
     text = (
         f"{stars} *{label}* {stars}\n\n"
         f"*Customer:* {name}{email_line}\n"
         f"*Rating:* {rating}-star\n\n"
-        f"*Comment:*\n\"{comment}\"\n\n"
+        f"*Comment:*\n\"{comment}\""
+        f"{reply_line}\n\n"
         f"💡 *AI Suggestion:*\n{suggestion}"
     )
     try:
