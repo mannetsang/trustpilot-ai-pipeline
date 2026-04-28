@@ -16,17 +16,6 @@ TRUSTPILOT_SECRET  = os.environ.get("TRUSTPILOT_SECRET", "")
 def webhook():
     raw = request.get_data()
 
-    # Verify HMAC-SHA256 signature sent by Trustpilot
-    if TRUSTPILOT_SECRET:
-        sig = request.headers.get("X-Trustpilot-Signature", "")
-        expected = hmac.new(
-            TRUSTPILOT_SECRET.encode(),
-            raw,
-            hashlib.sha256
-        ).hexdigest()
-        if not hmac.compare_digest(expected, sig):
-            return jsonify({"status": "unauthorized"}), 401
-
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
