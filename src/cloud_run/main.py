@@ -108,7 +108,7 @@ def webhook():
     reply      = get_reply_suggestion(comment, rating, name) if len(comment) > 5 else ""
     suggestion = get_gemini_suggestion(comment, rating) if len(comment) > 5 else ""
 
-    send_to_gchat(name, email, rating, comment, reply, suggestion, event)
+    send_to_gchat(name, email, rating, comment, reply, suggestion, event, review_id)
     write_to_sheet(name, email, rating, comment, reply, suggestion)
 
     return jsonify({"status": "ok"})
@@ -175,21 +175,53 @@ def get_gemini_suggestion(comment, rating):
     return "AI suggestion unavailable."
 
 
-def send_to_gchat(name, email, rating, comment, reply, suggestion, event):
+def send_to_gchat(name, email, rating, comment, reply, suggestion, event, review_id=""):
     stars = "⭐" * min(int(rating) if rating.isdigit() else 0, 5)
     label = "New Trustpilot Review" if event == "review.created" else "Trustpilot Review Updated"
-    email_line = f"\n*Email:* {email}" if email else ""
-    reply_line = f"\n\n💬 *Reply Suggestion:*\n{reply}" if reply else ""
-    text = (
-        f"{stars} *{label}* {stars}\n\n"
-        f"*Customer:* {name}{email_line}\n"
-        f"*Rating:* {rating}-star\n\n"
-        f"*Comment:*\n\"{comment}\""
-        f"{reply_line}\n\n"
-        f"💡 *AI Suggestion:*\n{suggestion}"
-    )
+    email_line = f"<br><b>Email:</b> {email}" if email else ""
+    review_url = f"https://businessapp.b2b.trustpilot.com/reviews/{review_id}" if review_id else "https://businessapp.b2b.trustpilot.com/reviews"
+
+    card = {
+        "cardsV2": [{
+            "cardId": review_id or "review",
+            "card": {
+                "sections": [
+                    {
+                        "widgets": [{
+                            "textParagraph": {
+                                "text": (
+                                    f"{stars} <b>{label}</b> {stars}<br><br>"
+                                    f"<b>Customer:</b> {name}{email_line}<br>"
+                                    f"<b>Rating:</b> {rating}-star"
+                                )
+                            }
+                        }]
+                    },
+                    {
+                        "header": "Comment",
+                        "widgets": [{"textParagraph": {"text": comment}}]
+                    },
+                    {
+                        "header": "💬 Reply Suggestion",
+                        "widgets": [{"textParagraph": {"text": reply or "—"}}]
+                    },
+                    {
+                        "header": "💡 AI Suggestion",
+                        "widgets": [
+                            {"textParagraph": {"text": suggestion or "—"}},
+                            {"buttonList": {"buttons": [{
+                                "text": "Reply on Trustpilot",
+                                "onClick": {"openLink": {"url": review_url}},
+                                "color": {"red": 0.0, "green": 0.478, "blue": 1.0, "alpha": 1.0}
+                            }]}}
+                        ]
+                    }
+                ]
+            }
+        }]
+    }
     try:
-        requests.post(GCHAT_WEBHOOK_URL, json={"text": text}, timeout=10)
+        requests.post(GCHAT_WEBHOOK_URL, json=card, timeout=10)
     except Exception as e:
         print(f"Google Chat error: {e}")
 
