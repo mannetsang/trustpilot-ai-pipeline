@@ -136,7 +136,7 @@ def get_gemini_suggestion(comment, rating):
         r = requests.post(
             url,
             headers={"Authorization": f"Bearer {token}"},
-            json={"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.4}},
+            json={"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.4}},
             timeout=60,
         )
         parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
