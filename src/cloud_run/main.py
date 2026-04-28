@@ -206,7 +206,7 @@ def send_to_gchat(name, email, rating, comment, reply, suggestion, event, review
                         "widgets": [{"textParagraph": {"text": reply or "—"}}]
                     },
                     {
-                        "header": "💡 AI Suggestion",
+                        "header": "💡 Business Suggestion",
                         "widgets": [
                             {"textParagraph": {"text": suggestion or "—"}},
                             {"buttonList": {"buttons": [{
