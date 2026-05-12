@@ -66,16 +66,18 @@ def write_to_sheet(name, email, rating, comment, reply, suggestion):
         service = get_sheets_service()
         service.spreadsheets().values().append(
             spreadsheetId=GOOGLE_SHEET_ID,
-            range="A:G",
+            range="A:I",
             valueInputOption="USER_ENTERED",
             body={"values": [[
-                time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
-                name,
-                email,
-                rating,
-                comment,
-                reply,
-                suggestion,
+                time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),  # A: Timestamp
+                name,                                                 # B: Customer Name
+                email,                                                # C: Customer Email
+                rating,                                               # D: Star Rating
+                "",                                                   # E: Type (set manually)
+                comment,                                              # F: Comment
+                reply,                                                # G: Reply Suggestion
+                suggestion,                                           # H: Business Suggestion
+                "",                                                   # I: Remark (set manually)
             ]]},
         ).execute()
     except Exception as e:
