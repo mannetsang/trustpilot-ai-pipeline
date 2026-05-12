@@ -100,7 +100,12 @@ def webhook():
     title     = payload.get("title") or ""
     text      = payload.get("text") or ""
     review_id = payload.get("reviewId") or payload.get("id") or ""
-    comment   = f"{title}\n\n{text}".strip() if title else text.strip()
+    # Trustpilot customers often repeat the title as the first line of the body.
+    # Only prepend the title if the body doesn't already start with it.
+    if title and not text.lower().startswith(title.lower()):
+        comment = f"{title}\n\n{text}".strip()
+    else:
+        comment = text.strip()
 
     if event == "review.deleted":
         send_to_gchat_deleted(name, rating)
