@@ -42,18 +42,21 @@ def get_tp_token():
 
 
 def get_review_email(review_id):
-    try:
-        token = get_tp_token()
-        r = requests.get(
-            f"https://api.trustpilot.com/v1/private/reviews/{review_id}",
-            headers={"Authorization": f"Bearer {token}"},
-            params={"apikey": TP_API_KEY},
-            timeout=10,
-        )
-        return r.json().get("referralEmail") or ""
-    except Exception as e:
-        print(f"Error fetching review email: {e}")
-        return ""
+    for attempt in range(1, 4):  # up to 3 attempts
+        try:
+            token = get_tp_token()
+            r = requests.get(
+                f"https://api.trustpilot.com/v1/private/reviews/{review_id}",
+                headers={"Authorization": f"Bearer {token}"},
+                params={"apikey": TP_API_KEY},
+                timeout=15,
+            )
+            return r.json().get("referralEmail") or ""
+        except Exception as e:
+            print(f"Error fetching review email (attempt {attempt}/3): {e}")
+            if attempt < 3:
+                time.sleep(2)
+    return ""
 
 
 def get_sheets_service():
