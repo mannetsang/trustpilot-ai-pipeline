@@ -1,0 +1,1010 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=1440, initial-scale=1" />
+  <title>Trustpilot Dashboard — Superhairpieces</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #f7f8f9;
+      --surface: #ffffff;
+      --border: #e5e7ea;
+      --border-subtle: #eff1f3;
+      --text: #191919;
+      --text-mid: #5b5b5b;
+      --text-mute: #8f939a;
+      --brand: #00b67a;
+      --brand-soft: #e6f8f2;
+      --star: #00b67a;
+      --star-mute: #e5e7ea;
+      --up: #00a86b;
+      --up-soft: #e5f6ef;
+      --down: #d43f3f;
+      --down-soft: #ffeded;
+      --sidebar: #15181c;
+      --sidebar-active: #282d36;
+      --sidebar-text: #bbbfc6;
+      --warn: #fff7e6;
+      --warn-text: #ae7100;
+      --ai-soft: #f2f1ff;
+      --ai-text: #6358d4;
+    }
+    html, body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: var(--text); }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+    .pill { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 4px 10px; font-size: 11px; font-weight: 500; }
+    .pill-brand { background: var(--brand-soft); color: var(--brand); }
+    .pill-up { background: var(--up-soft); color: var(--up); }
+    .pill-down { background: var(--down-soft); color: var(--down); }
+    .pill-warn { background: var(--warn); color: var(--warn-text); }
+    .pill-ai { background: var(--ai-soft); color: var(--ai-text); }
+    .star { color: var(--star); font-weight: 700; }
+    .star-mute { color: var(--star-mute); font-weight: 700; }
+    .track { height: 8px; background: var(--border-subtle); border-radius: 999px; overflow: hidden; }
+    .track > div { height: 100%; background: var(--brand); border-radius: 999px; transition: width .4s ease; }
+    .skeleton { background: linear-gradient(90deg, #f0f1f3 0%, #e5e7ea 50%, #f0f1f3 100%); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; border-radius: 6px; }
+    @keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+    .nav-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; font-size: 13px; color: var(--sidebar-text); cursor: pointer; }
+    .nav-row:hover { background: rgba(255,255,255,0.04); }
+    .nav-row.active { background: var(--sidebar-active); color: #fff; font-weight: 500; }
+    .nav-row .icon { width: 16px; height: 16px; border-radius: 4px; background: #5d626b; flex-shrink: 0; }
+    .nav-row.active .icon { background: var(--brand); }
+    .source-tab { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 10px; font-size: 13px; font-weight: 500; color: var(--text-mid); cursor: pointer; }
+    .source-tab.active { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,0.06); border: 1px solid var(--border); }
+    .source-tab .count { background: var(--border-subtle); color: var(--text-mid); padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 500; }
+    .source-tab.active .count { background: var(--brand-soft); color: var(--brand); }
+    .source-logo { width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; }
+    .source-logo.tp { background: var(--brand); color: #fff; border-radius: 4px; }
+    .source-logo.gg { background: #fff; color: #4285f4; border: 1px solid var(--border); border-radius: 999px; }
+    .review-row { padding: 16px 20px; border-bottom: 1px solid var(--border-subtle); display: flex; gap: 12px; align-items: flex-start; cursor: pointer; transition: background .15s; }
+    .review-row:hover { background: var(--bg); }
+    .review-row:last-child { border-bottom: 0; }
+    .avatar { width: 36px; height: 36px; border-radius: 999px; background: var(--brand-soft); color: var(--brand); display: inline-flex; align-items: center; justify-content: center; font-weight: 600; font-size: 12px; flex-shrink: 0; }
+    .avatar-sm { width: 28px; height: 28px; font-size: 11px; }
+    .btn { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 8px; font-size: 12px; font-weight: 500; cursor: pointer; border: 1px solid transparent; }
+    .btn-primary { background: var(--text); color: #fff; }
+    .btn-secondary { background: var(--surface); color: var(--text-mid); border-color: var(--border); }
+    .btn-ghost { background: transparent; color: var(--text-mid); }
+    .tag { display: inline-flex; padding: 2px 8px; border-radius: 6px; font-size: 10px; font-weight: 500; }
+    .tag-praised { background: var(--brand-soft); color: var(--brand); }
+    .tag-mixed { background: var(--warn); color: var(--warn-text); }
+    .tag-pain { background: var(--down-soft); color: var(--down); }
+    .modal-backdrop { position: fixed; inset: 0; background: rgba(10, 11, 14, 0.6); display: flex; align-items: center; justify-content: center; z-index: 50; opacity: 0; pointer-events: none; transition: opacity .2s; }
+    .modal-backdrop.open { opacity: 1; pointer-events: auto; }
+    .modal { background: var(--surface); border-radius: 16px; box-shadow: 0 24px 48px rgba(0,0,0,0.25); width: 640px; max-height: 90vh; overflow: hidden; display: flex; flex-direction: column; transform: scale(0.96); transition: transform .2s; }
+    .modal-backdrop.open .modal { transform: scale(1); }
+    .reviews-table-row { padding: 14px 20px; border-bottom: 1px solid var(--border-subtle); display: flex; align-items: center; gap: 12px; cursor: pointer; }
+    .reviews-table-row:hover { background: var(--bg); }
+  </style>
+</head>
+<body>
+
+<!-- ROOT -->
+<div class="flex min-h-screen">
+  <!-- SIDEBAR -->
+  <aside class="w-[240px] flex-shrink-0 flex flex-col p-4" style="background: var(--sidebar);">
+    <div class="mb-6 pt-1">
+      <img
+        src="https://superhairpieces.ca/content/images/common/shp-main-logo.svg"
+        alt="Superhairpieces"
+        class="h-7 w-auto block"
+        style="filter: brightness(0) invert(1);"
+      />
+      <div class="text-[10px] mt-1.5" style="color: var(--text-mute);">Reviews dashboard</div>
+    </div>
+
+    <div class="text-[10px] font-medium tracking-[2px] mb-2 mt-1" style="color: var(--text-mute);">ANALYZE</div>
+    <div class="space-y-1 mb-4">
+      <a class="nav-row active"><span class="icon"></span>Overview</a>
+      <a class="nav-row" data-route="reviews"><span class="icon"></span>Reviews<span class="ml-auto pill" style="background: #3a414b; color: #fff; padding: 2px 8px; font-size: 10px;" id="navReviewsBadge">—</span></a>
+      <a class="nav-row"><span class="icon"></span>Insights</a>
+      <a class="nav-row"><span class="icon"></span>Themes</a>
+    </div>
+
+    <div class="text-[10px] font-medium tracking-[2px] mb-2" style="color: var(--text-mute);">ACT</div>
+    <div class="space-y-1 mb-4">
+      <a class="nav-row"><span class="icon"></span>Invitations</a>
+      <a class="nav-row"><span class="icon"></span>Replies queue<span class="ml-auto pill" style="background: #3a414b; color: #fff; padding: 2px 8px; font-size: 10px;" id="navRepliesBadge">—</span></a>
+      <a class="nav-row"><span class="icon"></span>Competitors</a>
+    </div>
+
+    <div class="text-[10px] font-medium tracking-[2px] mb-2" style="color: var(--text-mute);">CONNECT</div>
+    <div class="space-y-1">
+      <a class="nav-row"><span class="icon"></span>Integrations</a>
+      <a class="nav-row"><span class="icon"></span>Settings</a>
+    </div>
+
+    <div class="mt-auto pt-4">
+      <div class="flex items-center gap-2.5 p-2.5 rounded-[10px]" style="background: var(--sidebar-active);">
+        <div class="w-8 h-8 rounded-full" style="background: #ff8c4a;"></div>
+        <div class="flex-1 min-w-0">
+          <div class="text-xs font-semibold text-white truncate">Superhairpieces</div>
+          <div class="text-[11px]" style="color: var(--sidebar-text);">Business plan</div>
+        </div>
+        <span style="color: var(--sidebar-text);">⌄</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <main class="flex-1 flex flex-col">
+    <!-- TOP BAR -->
+    <header class="flex items-center gap-4 px-6 h-16 bg-white border-b" style="border-color: var(--border-subtle);">
+      <div class="flex items-center gap-2 text-sm">
+        <span style="color: var(--text-mute);">Dashboard</span>
+        <span style="color: var(--text-mute);">/</span>
+        <span class="font-medium" id="crumbCurrent">Overview</span>
+      </div>
+      <div class="flex-1"></div>
+      <div class="flex items-center gap-2 px-3 h-9 rounded-lg border w-[320px] text-sm focus-within:ring-2 transition" style="border-color: var(--border); background: var(--bg);">
+        <span style="color: var(--text-mute);">🔍</span>
+        <input class="bg-transparent flex-1 outline-none" placeholder="Search reviews, customers…" id="search" style="color: var(--text);" />
+        <button id="searchClear" class="hidden text-xs font-medium px-2 py-1 rounded-md" style="color: var(--text-mute);">Clear</button>
+      </div>
+      <button class="flex items-center gap-2 h-9 px-3 rounded-lg border bg-white text-sm font-medium" style="border-color: var(--border);">
+        Last 30 days
+        <span class="text-xs" style="color: var(--text-mid);">▾</span>
+      </button>
+      <button class="btn btn-primary h-9">Export</button>
+    </header>
+
+    <!-- CONTENT (single-page app: overview + reviews list both rendered inside, toggled) -->
+    <section class="p-6 space-y-5 overflow-y-auto" id="content">
+
+      <!-- SOURCE SWITCHER -->
+      <div class="inline-flex items-center gap-1 p-1 rounded-xl border" style="background: var(--bg); border-color: var(--border-subtle);" id="sourceTabs">
+        <a class="source-tab" data-source="all"><span class="source-logo" style="background: var(--border-subtle); color: var(--text-mid);">⌘</span>All sources<span class="count" id="countAll">—</span></a>
+        <a class="source-tab active" data-source="trustpilot"><span class="source-logo tp">★</span>Trustpilot<span class="count" id="countTp">—</span></a>
+        <a class="source-tab" data-source="google"><span class="source-logo gg">G</span>Google Business<span class="count" id="countGg">—</span></a>
+        <div class="w-px h-6 mx-1" style="background: var(--border-subtle);"></div>
+        <a class="source-tab" style="opacity: .8;"><span class="font-bold text-base leading-none">+</span>Add source</a>
+      </div>
+
+      <!-- ============ OVERVIEW VIEW ============ -->
+      <div id="viewOverview" class="space-y-5">
+        <!-- SOURCE COMPARISON (only visible when source = All sources) -->
+        <div id="sourceCompare" class="hidden"></div>
+
+        <!-- H1 -->
+        <div class="flex items-center gap-3">
+          <div>
+            <h1 class="text-2xl font-semibold tracking-tight">Overview</h1>
+            <p class="text-sm mt-1" style="color: var(--text-mid);">How customers are rating Superhairpieces this month.</p>
+          </div>
+          <div class="flex-1"></div>
+          <span class="pill pill-brand">
+            <span class="w-1.5 h-1.5 rounded-full" style="background: var(--brand);"></span>
+            Live · syncing from Google Sheet
+          </span>
+        </div>
+
+        <!-- KPI CARDS -->
+        <div class="grid grid-cols-3 gap-4" id="kpiRow">
+          <!-- injected -->
+        </div>
+
+        <!-- MIDDLE: Distribution + Recent reviews -->
+        <div class="grid grid-cols-[360px_1fr] gap-4">
+          <div class="card p-5 flex flex-col gap-4">
+            <h3 class="text-sm font-semibold">Rating distribution</h3>
+            <div>
+              <div class="text-5xl font-semibold tracking-tight leading-none" id="distAvg">—</div>
+              <div class="flex items-center gap-2 mt-2">
+                <span id="distStars" class="text-lg"></span>
+                <span class="text-xs ml-1" style="color: var(--text-mute);" id="distTotal">— reviews</span>
+              </div>
+            </div>
+            <div class="space-y-2.5" id="distBars">
+              <!-- injected -->
+            </div>
+            <hr style="border: 0; border-top: 1px solid var(--border-subtle);" />
+            <div class="text-[10px] font-medium tracking-[2px]" style="color: var(--text-mid);">BY TYPE</div>
+            <div class="space-y-2 text-xs" id="distTypes">
+              <!-- injected -->
+            </div>
+          </div>
+
+          <div class="card flex flex-col">
+            <div class="flex items-center justify-between px-5 h-14 border-b" style="border-color: var(--border-subtle);">
+              <h3 class="text-sm font-semibold">Recent reviews</h3>
+              <div class="flex items-center gap-1 p-1 rounded-lg" style="background: var(--bg);">
+                <button class="px-3 py-1.5 text-xs rounded-md feed-tab active" data-feed="all">All</button>
+                <button class="px-3 py-1.5 text-xs rounded-md feed-tab" data-feed="needsReply">Needs reply</button>
+                <button class="px-3 py-1.5 text-xs rounded-md feed-tab" data-feed="five">5★</button>
+                <button class="px-3 py-1.5 text-xs rounded-md feed-tab" data-feed="lowstar">≤3★</button>
+              </div>
+            </div>
+            <div id="recentFeed" class="flex-1 overflow-hidden">
+              <!-- injected -->
+            </div>
+          </div>
+        </div>
+
+        <!-- THEME CLUSTERS -->
+        <div class="card p-5 space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-sm font-semibold">Review themes</h3>
+              <p class="text-xs mt-1" style="color: var(--text-mid);">Auto-clustered by the Type column in your sheet. Edit Type in column E to re-group.</p>
+            </div>
+            <span class="pill pill-ai">✨ AI-generated</span>
+          </div>
+          <div class="grid grid-cols-5 gap-3" id="themesRow">
+            <!-- injected -->
+          </div>
+        </div>
+
+        <!-- LATEST 4 REVIEWS -->
+        <div class="card p-5 space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-sm font-semibold">Latest reviews</h3>
+              <p class="text-xs mt-1" style="color: var(--text-mid);">Most recent 4 across all connected sources.</p>
+            </div>
+            <button class="btn btn-secondary" data-route="reviews">View all reviews</button>
+          </div>
+          <div class="grid grid-cols-4 gap-4" id="latestCards">
+            <!-- injected -->
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ REVIEWS LIST VIEW ============ -->
+      <div id="viewReviews" class="hidden">
+        <div class="grid grid-cols-[220px_1fr_360px] gap-0 card overflow-hidden" style="height: calc(100vh - 200px);">
+          <!-- Filter rail -->
+          <aside class="p-5 border-r flex flex-col gap-5" style="border-color: var(--border-subtle);">
+            <div>
+              <div class="text-sm font-semibold">Filters</div>
+              <div class="text-[11px]" style="color: var(--text-mute);" id="filterCount">— applied</div>
+            </div>
+            <div>
+              <div class="text-[11px] font-medium tracking-[1.5px] mb-2" style="color: var(--text-mid);">RATING</div>
+              <div class="space-y-1.5" id="filterRating"></div>
+            </div>
+            <div>
+              <div class="text-[11px] font-medium tracking-[1.5px] mb-2" style="color: var(--text-mid);">STATUS</div>
+              <div class="space-y-1.5" id="filterStatus"></div>
+            </div>
+            <div>
+              <div class="text-[11px] font-medium tracking-[1.5px] mb-2" style="color: var(--text-mid);">TYPE</div>
+              <div class="space-y-1.5" id="filterType"></div>
+            </div>
+            <button class="text-xs font-medium text-left" style="color: var(--brand);" id="clearFilters">Clear all filters</button>
+          </aside>
+
+          <!-- List -->
+          <div class="flex flex-col min-w-0">
+            <div class="flex items-center justify-between px-5 h-14 border-b" style="border-color: var(--border-subtle);">
+              <div class="flex items-center gap-1 p-1 rounded-lg" style="background: var(--bg);">
+                <button class="px-3 py-1.5 text-xs rounded-md list-tab active" data-list="all">All</button>
+                <button class="px-3 py-1.5 text-xs rounded-md list-tab" data-list="needsReply">Needs reply</button>
+                <button class="px-3 py-1.5 text-xs rounded-md list-tab" data-list="five">5★</button>
+                <button class="px-3 py-1.5 text-xs rounded-md list-tab" data-list="lowstar">≤3★</button>
+              </div>
+              <button class="btn btn-secondary">Newest <span style="color: var(--text-mid);">▾</span></button>
+            </div>
+            <div id="reviewsTable" class="flex-1 overflow-y-auto"></div>
+          </div>
+
+          <!-- Detail drawer -->
+          <aside class="p-5 border-l flex flex-col gap-4 overflow-y-auto" style="border-color: var(--border-subtle);" id="detailDrawer">
+            <div class="text-sm font-medium" style="color: var(--text-mute);">Select a review to see details.</div>
+          </aside>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- REPLY MODAL -->
+<div class="modal-backdrop" id="modal">
+  <div class="modal">
+    <div class="flex items-center justify-between px-6 h-16 border-b" style="border-color: var(--border-subtle);">
+      <div>
+        <div class="text-[15px] font-semibold" id="modalTitle">Reply to —</div>
+        <div class="text-xs mt-0.5" style="color: var(--text-mute);">Your reply will be visible publicly.</div>
+      </div>
+      <button class="w-9 h-9 rounded-lg btn-ghost text-lg" id="modalClose">×</button>
+    </div>
+    <div class="p-6 space-y-4 flex-1 overflow-y-auto" style="background: var(--bg);">
+      <div class="card p-4" id="modalReviewCard">
+        <!-- injected -->
+      </div>
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-1.5 text-[11px] tracking-[1.5px]" style="color: var(--ai-text);">
+          ✨ <span class="font-medium">SUGGESTED REPLIES</span>
+        </div>
+        <button class="text-[11px] font-medium" style="color: var(--brand);">Regenerate</button>
+      </div>
+      <div class="flex flex-wrap gap-2" id="modalChips"></div>
+      <textarea id="modalTextarea" rows="6" class="w-full p-3 rounded-lg text-sm bg-white border-2 outline-none resize-none" style="border-color: var(--brand); box-shadow: 0 0 0 3px rgba(0,182,122,0.15);" placeholder="Write your reply…"></textarea>
+      <div class="flex items-center justify-between text-[11px]" style="color: var(--text-mute);">
+        <span id="modalAiHint">Looks great. Reviewed by AI: warm, specific, offers a clear next step.</span>
+        <span id="modalChars">0 / 1000</span>
+      </div>
+    </div>
+    <div class="flex items-center justify-between px-6 h-16 border-t bg-white" style="border-color: var(--border-subtle);">
+      <span class="text-xs font-medium">Public reply · <a class="text-xs" style="color: var(--brand);">change</a></span>
+      <div class="flex gap-2">
+        <button class="btn btn-secondary" id="modalDraft">Save draft</button>
+        <button class="btn btn-primary" id="modalSend">Send reply</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div id="toast" class="fixed bottom-6 right-6 px-4 py-3 rounded-lg text-sm font-medium text-white opacity-0 transition-opacity pointer-events-none z-[100]" style="background: var(--text);"></div>
+
+<script>
+/* ============================================================
+   Data layer — fetch from Google Sheets via gviz
+   ============================================================ */
+const SHEET_ID = "1hq3hm-vmZrGDxe6QzaVqAkcBPHTh3FZS-4HI_xqPKCc";
+const GVIZ_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json`;
+
+// Column indices per saved schema
+const COL = { ts: 0, name: 1, email: 2, stars: 3, type: 4, comment: 5, reply: 6, biz: 7, remark: 8 };
+
+let DATA = [];        // normalized review objects
+let FILTERED = [];    // after source + tab + filters
+let UI = { source: "trustpilot", feedTab: "all", listTab: "all", search: "", filters: { rating: new Set(), status: new Set(), type: new Set() }, selectedId: null };
+
+/* fetch + normalize */
+async function loadData() {
+  try {
+    const res = await fetch(GVIZ_URL);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = await res.text();
+    // Strip JSONP wrapper. Response is: /*O_o*/\ngoogle.visualization.Query.setResponse({...});
+    const first = text.indexOf("{");
+    const last = text.lastIndexOf("}");
+    if (first === -1 || last === -1) throw new Error("Could not find JSON in response: " + text.slice(0, 200));
+    const json = JSON.parse(text.slice(first, last + 1));
+    if (json.status !== "ok") throw new Error("Sheet returned error: " + JSON.stringify(json.errors || json));
+    const rows = json.table.rows || [];
+    console.log(`[Trustpilot dashboard] Loaded ${rows.length} rows from sheet`, json.table);
+    DATA = rows.map((r, i) => {
+      const c = r.c || [];
+      const cell = (ix) => (c[ix] && (c[ix].v !== undefined && c[ix].v !== null)) ? c[ix].v : null;
+      const tsRaw = cell(COL.ts);
+      let ts = null;
+      if (typeof tsRaw === "string" && tsRaw.startsWith("Date(")) {
+        // gviz date format: Date(yyyy,mm,dd,hh,mm,ss)
+        const parts = tsRaw.match(/\d+/g).map(Number);
+        // months are 0-indexed in this format
+        ts = new Date(parts[0], parts[1] || 0, parts[2] || 1, parts[3] || 0, parts[4] || 0, parts[5] || 0);
+      } else if (tsRaw) {
+        ts = new Date(tsRaw);
+      }
+      return {
+        id: i,
+        ts,
+        name: cell(COL.name) || "Anonymous",
+        email: cell(COL.email) || "",
+        stars: Number(cell(COL.stars)) || 0,
+        type: (cell(COL.type) || "Uncategorized").toString().trim() || "Uncategorized",
+        comment: cell(COL.comment) || "",
+        reply: cell(COL.reply) || "",
+        biz: cell(COL.biz) || "",
+        remark: cell(COL.remark) || "",
+        // Source is inferred — sheet schema doesn't carry it, so all rows are Trustpilot for now.
+        source: "trustpilot"
+      };
+    }).filter(r => r.ts); // drop rows with no timestamp
+    DATA.sort((a,b) => b.ts - a.ts);
+    return DATA;
+  } catch (err) {
+    console.error("[Trustpilot dashboard] Load failed:", err);
+    showToast("Load failed: " + err.message + " — see console for details");
+    return [];
+  }
+}
+
+/* ============================================================
+   Derived stats
+   ============================================================ */
+function stats(rows) {
+  const n = rows.length;
+  const avg = n ? (rows.reduce((s,r) => s + r.stars, 0) / n) : 0;
+  const replied = rows.filter(r => r.reply && r.reply.trim()).length;
+  const responseRate = n ? (replied / n) : 0;
+  const dist = [1,2,3,4,5].map(k => ({ k, count: rows.filter(r => r.stars === k).length }));
+  // Themes by Type
+  const byType = {};
+  rows.forEach(r => {
+    if (!byType[r.type]) byType[r.type] = { name: r.type, rows: [] };
+    byType[r.type].rows.push(r);
+  });
+  const themes = Object.values(byType).map(t => {
+    const tn = t.rows.length;
+    const avgS = tn ? (t.rows.reduce((s,r) => s + r.stars, 0) / tn) : 0;
+    let tag = "Praised", sentiment = (avgS - 3) / 2;
+    if (avgS < 2.5) tag = "Pain";
+    else if (avgS < 3.8) tag = "Mixed";
+    return { name: t.name, count: tn, sentiment, tag };
+  }).sort((a,b) => b.count - a.count);
+  return { n, avg, replied, responseRate, dist, themes };
+}
+
+/* ============================================================
+   Rendering
+   ============================================================ */
+const fmtN = n => n.toLocaleString();
+const fmtPct = p => `${Math.round(p * 100)}%`;
+const fmtAvg = a => a.toFixed(2).replace(/\.?0+$/, '');
+
+function relTime(d) {
+  if (!d) return "";
+  const ms = Date.now() - d.getTime();
+  const m = Math.floor(ms / 60000);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const days = Math.floor(h / 24);
+  if (days === 1) return "yesterday";
+  if (days < 7) return `${days}d ago`;
+  return d.toLocaleDateString();
+}
+
+function starsHTML(n, size = 12) {
+  let s = "";
+  for (let i = 0; i < 5; i++) s += `<span class="${i < n ? 'star' : 'star-mute'}" style="font-size: ${size}px;">★</span>`;
+  return s;
+}
+
+function avatarHTML(name, sm = false) {
+  const initials = (name || "?").split(" ").map(s => s[0]).filter(Boolean).slice(0,2).join("").toUpperCase();
+  return `<div class="avatar ${sm ? 'avatar-sm' : ''}">${initials}</div>`;
+}
+
+function needsReply(r) { return !(r.reply && r.reply.trim()); }
+
+function kpiCardHTML({ label, value, sub, delta, up, foot }) {
+  return `<div class="card p-5 flex flex-col gap-2.5">
+    <div class="flex items-center justify-between">
+      <span class="text-[11px] font-medium tracking-[2px]" style="color: var(--text-mid);">${label}</span>
+      ${delta ? `<span class="pill ${up ? 'pill-up' : 'pill-down'}">${up ? '▲' : '▼'} ${delta}</span>` : ''}
+    </div>
+    <div class="flex items-baseline gap-2">
+      <span class="text-4xl font-semibold tracking-tight">${value}</span>
+      ${sub ? `<span class="text-sm" style="color: var(--text-mute);">${sub}</span>` : ''}
+    </div>
+    <div class="text-xs" style="color: var(--text-mute);">${foot || ''}</div>
+  </div>`;
+}
+
+function distBarHTML({ label, count, total }) {
+  const pct = total ? Math.max(0.02, count / total) : 0;
+  return `<div class="flex items-center gap-2.5 text-xs">
+    <span class="font-medium w-6">${label}★</span>
+    <div class="track flex-1"><div style="width: ${pct * 100}%;"></div></div>
+    <span style="color: var(--text-mid);" class="w-10 text-right">${fmtN(count)}</span>
+  </div>`;
+}
+
+function feedRowHTML(r) {
+  return `<div class="review-row" data-id="${r.id}" data-action="openModal">
+    ${avatarHTML(r.name)}
+    <div class="flex-1 min-w-0">
+      <div class="flex items-center gap-2 text-xs" style="color: var(--text-mute);">
+        <span class="font-semibold text-[13px]" style="color: var(--text);">${escape(r.name)}</span>
+        <span>·</span>
+        <span>${relTime(r.ts)}</span>
+        ${needsReply(r) ? `<span class="pill pill-down" style="padding: 2px 6px;">Needs reply</span>` : ''}
+      </div>
+      <div class="flex items-center gap-2 mt-1">
+        ${starsHTML(r.stars)}
+        <span class="text-[13px] font-medium truncate">${escape(headline(r.comment))}</span>
+      </div>
+      <div class="text-xs mt-1.5 line-clamp-2" style="color: var(--text-mid);">${escape(r.comment)}</div>
+    </div>
+    <button class="btn ${needsReply(r) ? 'btn-primary' : 'btn-secondary'}" data-id="${r.id}" data-action="openModal">
+      ${needsReply(r) ? 'Reply' : 'View'}
+    </button>
+  </div>`;
+}
+
+function latestCardHTML(r) {
+  return `<div class="card p-4 flex flex-col gap-3 cursor-pointer hover:shadow-md transition" data-id="${r.id}" data-action="openModal">
+    <div class="flex items-center gap-2.5">
+      ${avatarHTML(r.name, true)}
+      <div class="flex-1 min-w-0">
+        <div class="text-[13px] font-semibold truncate">${escape(r.name)}</div>
+        <div class="text-[11px]" style="color: var(--text-mute);">${relTime(r.ts)}</div>
+      </div>
+      <span class="source-logo tp">★</span>
+    </div>
+    <div class="flex items-center gap-2">${starsHTML(r.stars)}</div>
+    <div class="text-[14px] font-semibold leading-tight">${escape(headline(r.comment))}</div>
+    <div class="text-xs line-clamp-3" style="color: var(--text-mid);">${escape(r.comment)}</div>
+    <div class="mt-auto pt-2 text-xs font-medium" style="color: var(--brand);">Open review →</div>
+  </div>`;
+}
+
+function themeCardHTML(t) {
+  const tagClass = t.tag === "Pain" ? "tag-pain" : t.tag === "Mixed" ? "tag-mixed" : "tag-praised";
+  const tagLabel = t.tag === "Pain" ? "Pain point" : t.tag;
+  const up = t.sentiment >= 0;
+  return `<div class="rounded-xl p-3.5 flex flex-col gap-2" style="background: var(--bg); border: 1px solid var(--border-subtle);">
+    <span class="tag ${tagClass}">${tagLabel}</span>
+    <div class="text-sm font-semibold leading-tight">${escape(t.name)}</div>
+    <div class="flex items-baseline gap-1.5">
+      <span class="text-xl font-semibold">${fmtN(t.count)}</span>
+      <span class="text-[11px]" style="color: var(--text-mute);">mentions</span>
+    </div>
+    <div class="flex items-center gap-1.5 text-[11px]" style="color: var(--text-mid);">
+      <span style="color: ${up ? 'var(--up)' : 'var(--down)'}; font-weight: 700;">${up ? '▲' : '▼'}</span>
+      Sentiment ${up ? '+' : ''}${t.sentiment.toFixed(2)}
+    </div>
+  </div>`;
+}
+
+function headline(comment) {
+  if (!comment) return "(No comment)";
+  // Use first sentence or first 60 chars
+  const s = comment.split(/[.!?\n]/)[0].trim();
+  return s.length > 70 ? s.slice(0, 70) + "…" : (s || comment.slice(0, 70));
+}
+
+function escape(s) { return String(s || "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
+
+/* ============================================================
+   Apply UI state and render everything
+   ============================================================ */
+function applySource(rows) {
+  if (UI.source === "all") return rows;
+  return rows.filter(r => r.source === UI.source);
+}
+
+function applySearch(rows) {
+  const q = (UI.search || "").trim().toLowerCase();
+  if (!q) return rows;
+  return rows.filter(r =>
+    (r.name && r.name.toLowerCase().includes(q)) ||
+    (r.comment && r.comment.toLowerCase().includes(q)) ||
+    (r.email && r.email.toLowerCase().includes(q)) ||
+    (r.type && r.type.toLowerCase().includes(q))
+  );
+}
+
+function applyFeedTab(rows, tab) {
+  if (tab === "needsReply") return rows.filter(needsReply);
+  if (tab === "five") return rows.filter(r => r.stars === 5);
+  if (tab === "lowstar") return rows.filter(r => r.stars <= 3);
+  return rows;
+}
+
+function applyFilters(rows) {
+  const { rating, status, type } = UI.filters;
+  return rows.filter(r => {
+    if (rating.size && !rating.has(r.stars)) return false;
+    if (status.size) {
+      if (status.has("needsReply") && !needsReply(r)) return false;
+      if (status.has("replied") && needsReply(r)) return false;
+    }
+    if (type.size && !type.has(r.type)) return false;
+    return true;
+  });
+}
+
+function weeklyDelta(rows) {
+  // Returns { current7Avg, prev7Avg, delta, current7Count, prev7Count }
+  const now = Date.now();
+  const day = 24 * 60 * 60 * 1000;
+  const cur = rows.filter(r => r.ts && (now - r.ts.getTime()) <= 7 * day);
+  const prev = rows.filter(r => r.ts && (now - r.ts.getTime()) > 7 * day && (now - r.ts.getTime()) <= 14 * day);
+  const avg = arr => arr.length ? arr.reduce((s,r) => s + r.stars, 0) / arr.length : null;
+  const a = avg(cur), b = avg(prev);
+  return {
+    current7Avg: a,
+    prev7Avg: b,
+    delta: (a != null && b != null) ? (a - b) : null,
+    current7Count: cur.length,
+    prev7Count: prev.length
+  };
+}
+
+function sourceCompareCardHTML(label, logoHTML, rows, isPrimary) {
+  const n = rows.length;
+  const avg = n ? (rows.reduce((s,r) => s + r.stars, 0) / n) : null;
+  const wk = weeklyDelta(rows);
+  const hasData = n > 0;
+  const hasDelta = wk.delta != null;
+  const up = (wk.delta || 0) >= 0;
+  const deltaTxt = hasDelta ? `${up ? '▲ +' : '▼ '}${wk.delta.toFixed(2)}` : '—';
+
+  return `<div class="card p-5 flex flex-col gap-3 ${isPrimary ? 'ring-1' : ''}" ${isPrimary ? `style="ring-color: var(--brand);"` : ''}>
+    <div class="flex items-center gap-2.5">
+      ${logoHTML}
+      <span class="text-[13px] font-semibold">${label}</span>
+      <div class="flex-1"></div>
+      ${hasData ? `<span class="pill ${up ? 'pill-up' : 'pill-down'}" title="vs. previous 7 days">${deltaTxt}</span>` : `<span class="pill" style="background: var(--border-subtle); color: var(--text-mute);">No data</span>`}
+    </div>
+    ${hasData
+      ? `<div class="flex items-baseline gap-2.5">
+          <span class="text-4xl font-semibold tracking-tight">${fmtAvg(avg)}</span>
+          <span class="text-sm" style="color: var(--text-mute);">/ 5</span>
+          <div class="flex-1"></div>
+          <span>${starsHTML(Math.round(avg), 14)}</span>
+        </div>
+        <div class="grid grid-cols-3 gap-3 text-[11px] pt-2 border-t" style="border-color: var(--border-subtle);">
+          <div>
+            <div style="color: var(--text-mute);">TOTAL</div>
+            <div class="text-sm font-semibold mt-0.5">${fmtN(n)}</div>
+          </div>
+          <div>
+            <div style="color: var(--text-mute);">LAST 7D</div>
+            <div class="text-sm font-semibold mt-0.5">${fmtN(wk.current7Count)}</div>
+          </div>
+          <div>
+            <div style="color: var(--text-mute);">PRIOR 7D</div>
+            <div class="text-sm font-semibold mt-0.5">${fmtN(wk.prev7Count)}</div>
+          </div>
+        </div>`
+      : `<div class="py-3 text-xs" style="color: var(--text-mute);">No ${label} reviews in sheet yet. Connect this source or import historical data to populate.</div>`
+    }
+  </div>`;
+}
+
+function renderSourceCompare() {
+  const wrap = document.getElementById("sourceCompare");
+  if (UI.source !== "all") { wrap.classList.add("hidden"); wrap.innerHTML = ""; return; }
+  const tpRows = DATA.filter(r => r.source === "trustpilot");
+  const ggRows = DATA.filter(r => r.source === "google");
+  wrap.classList.remove("hidden");
+  wrap.className = "grid grid-cols-2 gap-4";
+  wrap.innerHTML = [
+    sourceCompareCardHTML("Trustpilot", `<span class="source-logo tp">★</span>`, tpRows, true),
+    sourceCompareCardHTML("Google Business", `<span class="source-logo gg">G</span>`, ggRows, false)
+  ].join("");
+}
+
+function render() {
+  // Source comparison ignores the search query so the at-a-glance numbers stay stable
+  renderSourceCompare();
+  const sourceRows = applySearch(applySource(DATA));
+  const s = stats(sourceRows);
+
+  // Source counts
+  document.getElementById("countAll").textContent = fmtN(DATA.length);
+  document.getElementById("countTp").textContent = fmtN(DATA.filter(r => r.source === "trustpilot").length);
+  document.getElementById("countGg").textContent = fmtN(DATA.filter(r => r.source === "google").length);
+
+  // Sidebar badges
+  const needsCount = sourceRows.filter(needsReply).length;
+  document.getElementById("navReviewsBadge").textContent = fmtN(sourceRows.length);
+  document.getElementById("navRepliesBadge").textContent = fmtN(needsCount);
+
+  // KPI row
+  const kpiRow = document.getElementById("kpiRow");
+  kpiRow.innerHTML = [
+    kpiCardHTML({ label: "AVERAGE RATING", value: s.n ? fmtAvg(s.avg) : "—", sub: "/ 5", delta: null, foot: `${fmtN(s.n)} reviews this period` }),
+    kpiCardHTML({ label: "TOTAL REVIEWS", value: fmtN(s.n), sub: "in sheet", delta: null, foot: `${fmtN(needsCount)} need a reply` }),
+    kpiCardHTML({ label: "RESPONSE RATE", value: fmtPct(s.responseRate), sub: "replied", delta: null, foot: `${fmtN(s.replied)} replies on file` })
+  ].join("");
+
+  // Distribution
+  document.getElementById("distAvg").textContent = s.n ? fmtAvg(s.avg) : "—";
+  document.getElementById("distStars").innerHTML = starsHTML(Math.round(s.avg), 18);
+  document.getElementById("distTotal").textContent = `${fmtN(s.n)} reviews`;
+  document.getElementById("distBars").innerHTML = [5,4,3,2,1].map(k => distBarHTML({
+    label: k, count: (s.dist.find(d => d.k === k) || { count: 0 }).count, total: s.n
+  })).join("");
+  // By type — show top 4
+  const topTypes = s.themes.slice(0, 4);
+  document.getElementById("distTypes").innerHTML = topTypes.map(t =>
+    `<div class="flex items-center justify-between"><span style="color: var(--text-mid);">${escape(t.name)}</span><span class="font-medium">${fmtN(t.count)}</span></div>`
+  ).join("");
+
+  // Recent reviews feed (first 5 after applying feed tab)
+  const feedRows = applyFeedTab(sourceRows, UI.feedTab).slice(0, 5);
+  document.getElementById("recentFeed").innerHTML = feedRows.length
+    ? feedRows.map(feedRowHTML).join("")
+    : `<div class="p-10 text-center text-sm" style="color: var(--text-mute);">No reviews match this filter.</div>`;
+
+  // Themes (top 5)
+  document.getElementById("themesRow").innerHTML = s.themes.slice(0, 5).map(themeCardHTML).join("");
+
+  // Latest 4 cards
+  document.getElementById("latestCards").innerHTML = sourceRows.slice(0, 4).map(latestCardHTML).join("");
+
+  // Reviews list
+  renderReviewsList(sourceRows);
+}
+
+function renderReviewsList(sourceRows) {
+  // Build filter checklists from current source rows
+  const ratingCounts = [5,4,3,2,1].map(k => ({ k, n: sourceRows.filter(r => r.stars === k).length }));
+  document.getElementById("filterRating").innerHTML = ratingCounts.map(({k,n}) => filterCheckHTML("rating", k, `${k}★`, n)).join("");
+  document.getElementById("filterStatus").innerHTML = [
+    filterCheckHTML("status", "needsReply", "Needs reply", sourceRows.filter(needsReply).length),
+    filterCheckHTML("status", "replied",    "Replied",     sourceRows.filter(r => !needsReply(r)).length)
+  ].join("");
+  const types = Array.from(new Set(sourceRows.map(r => r.type))).slice(0, 8);
+  document.getElementById("filterType").innerHTML = types.map(t =>
+    filterCheckHTML("type", t, t, sourceRows.filter(r => r.type === t).length)
+  ).join("");
+  const fc = UI.filters.rating.size + UI.filters.status.size + UI.filters.type.size;
+  document.getElementById("filterCount").textContent = `${fc} applied`;
+
+  // Apply filters + list tab
+  const filtered = applyFeedTab(applyFilters(sourceRows), UI.listTab);
+  FILTERED = filtered;
+  document.getElementById("reviewsTable").innerHTML = filtered.length
+    ? filtered.slice(0, 200).map(reviewsTableRowHTML).join("")
+    : `<div class="p-10 text-center text-sm" style="color: var(--text-mute);">No reviews match these filters.</div>`;
+
+  // Detail drawer: keep selected or fall back to first
+  if (UI.selectedId == null || !filtered.find(r => r.id === UI.selectedId)) {
+    UI.selectedId = filtered[0] ? filtered[0].id : null;
+  }
+  renderDetail();
+}
+
+function filterCheckHTML(group, value, label, count) {
+  const set = UI.filters[group];
+  const checked = set.has(value);
+  return `<label class="flex items-center gap-2 text-[13px] cursor-pointer">
+    <input type="checkbox" data-filter-group="${group}" data-filter-value="${escape(value)}" ${checked ? 'checked' : ''}
+      class="w-3.5 h-3.5 rounded accent-current" style="accent-color: var(--brand);"/>
+    <span class="${checked ? 'font-medium' : ''}">${escape(label)}</span>
+    <span class="ml-auto text-[11px]" style="color: var(--text-mute);">${fmtN(count)}</span>
+  </label>`;
+}
+
+function reviewsTableRowHTML(r) {
+  const sel = r.id === UI.selectedId;
+  return `<div class="reviews-table-row" data-id="${r.id}" data-action="select" style="${sel ? 'background: var(--brand-soft);' : ''}">
+    ${avatarHTML(r.name)}
+    <div class="flex-1 min-w-0">
+      <div class="flex items-center gap-2 text-xs" style="color: var(--text-mute);">
+        <span class="font-semibold text-[13px]" style="color: var(--text);">${escape(r.name)}</span>
+        <span>·</span><span>${relTime(r.ts)}</span>
+        ${needsReply(r) ? `<span class="pill pill-down" style="padding: 2px 6px;">Needs reply</span>` : ''}
+      </div>
+      <div class="flex items-center gap-2 mt-1">
+        ${starsHTML(r.stars, 11)}
+        <span class="text-[13px] font-medium truncate">${escape(headline(r.comment))}</span>
+      </div>
+      <div class="text-[11px] mt-1 line-clamp-1" style="color: var(--text-mid);">${escape(r.comment)}</div>
+    </div>
+    <span style="color: ${sel ? 'var(--brand)' : 'var(--text-mute)'}; font-weight: ${sel ? '700' : '400'};">›</span>
+  </div>`;
+}
+
+function renderDetail() {
+  const drawer = document.getElementById("detailDrawer");
+  if (!UI.selectedId && UI.selectedId !== 0) {
+    drawer.innerHTML = `<div class="text-sm font-medium" style="color: var(--text-mute);">Select a review to see details.</div>`;
+    return;
+  }
+  const r = DATA.find(x => x.id === UI.selectedId);
+  if (!r) return;
+  drawer.innerHTML = `
+    <div class="flex items-center justify-between">
+      <h3 class="text-sm font-semibold">Review detail</h3>
+      <button class="w-9 h-9 rounded-lg btn-ghost" data-action="closeDrawer">×</button>
+    </div>
+    <div class="flex items-center gap-3">${avatarHTML(r.name)}
+      <div>
+        <div class="text-sm font-semibold">${escape(r.name)}</div>
+        <div class="text-[11px]" style="color: var(--text-mute);">${escape(r.email) || "no email"}</div>
+      </div>
+    </div>
+    <div>${starsHTML(r.stars, 16)}</div>
+    <div class="text-lg font-semibold leading-tight tracking-tight">${escape(headline(r.comment))}</div>
+    <div class="text-[11px]" style="color: var(--text-mute);">${r.ts ? r.ts.toLocaleString() : ""} · Type: ${escape(r.type)}</div>
+    <div class="text-sm leading-relaxed" style="color: var(--text-mid);">${escape(r.comment) || "(no comment)"}</div>
+    ${r.biz ? `<div class="rounded-lg p-3" style="background: var(--ai-soft);">
+      <div class="text-[10px] font-semibold tracking-[1.5px]" style="color: var(--ai-text);">✨ BUSINESS SUGGESTION (AI)</div>
+      <div class="text-xs mt-1.5" style="color: var(--ai-text);">${escape(r.biz)}</div>
+    </div>` : ''}
+    <button class="btn btn-primary justify-center" data-id="${r.id}" data-action="openModal">Reply publicly</button>
+    <button class="btn justify-center" style="background: var(--ai-soft); color: var(--ai-text);" data-id="${r.id}" data-action="openModalAI">✨ Suggest reply with AI</button>
+    <hr style="border: 0; border-top: 1px solid var(--border-subtle);" />
+    <div class="text-[10px] font-medium tracking-[2px]" style="color: var(--text-mute);">SHEET ROW</div>
+    <div class="text-[11px] grid grid-cols-[80px_1fr] gap-x-3 gap-y-1.5" style="color: var(--text-mid);">
+      <span>Comment</span><span style="color: var(--text);">${escape(r.comment) || "—"}</span>
+      <span>Reply hint</span><span>${escape(r.reply) || "—"}</span>
+      <span>Remark</span><span>${escape(r.remark) || "—"}</span>
+    </div>
+  `;
+}
+
+/* ============================================================
+   Modal
+   ============================================================ */
+function openModal(reviewId, useAi = false) {
+  const r = DATA.find(x => x.id === reviewId);
+  if (!r) return;
+  document.getElementById("modalTitle").textContent = `Reply to ${r.name}`;
+  const card = document.getElementById("modalReviewCard");
+  card.innerHTML = `
+    <div class="flex items-center gap-2.5 mb-2">
+      ${avatarHTML(r.name)}
+      <div class="text-xs font-medium">${escape(r.name)} · ${r.stars}★ · ${relTime(r.ts)}</div>
+    </div>
+    <div class="flex items-center gap-2 mb-2">${starsHTML(r.stars, 11)}</div>
+    <div class="text-sm font-semibold mb-1">${escape(headline(r.comment))}</div>
+    <div class="text-[13px]" style="color: var(--text-mid);">${escape(r.comment)}</div>
+  `;
+  // Chips
+  const chips = useAi && r.reply ? [r.reply] : suggestChips(r);
+  document.getElementById("modalChips").innerHTML = chips.map(c =>
+    `<button class="pill pill-ai" style="cursor: pointer;" data-chip="${escape(c).slice(0,500)}">${escape(c.length > 60 ? c.slice(0,60) + '…' : c)}</button>`
+  ).join("");
+  // Prefill
+  document.getElementById("modalTextarea").value = r.reply || "";
+  updateChars();
+  document.getElementById("modal").classList.add("open");
+}
+function closeModal() { document.getElementById("modal").classList.remove("open"); }
+
+function suggestChips(r) {
+  const chips = [];
+  if (r.reply) chips.push(r.reply);
+  if (r.stars >= 4) {
+    chips.push(`Thank ${r.name.split(" ")[0]} and invite to share more`);
+    chips.push("Quick acknowledgement");
+  } else {
+    chips.push("Apology + return offer");
+    chips.push("Ask for order details to investigate");
+    chips.push("Quick acknowledgement");
+  }
+  return chips;
+}
+
+function updateChars() {
+  const v = document.getElementById("modalTextarea").value;
+  document.getElementById("modalChars").textContent = `${v.length} / 1000`;
+}
+
+/* ============================================================
+   Misc helpers
+   ============================================================ */
+let toastTimer = null;
+function showToast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.style.opacity = "1";
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.style.opacity = "0"; }, 2500);
+}
+
+function setView(view) {
+  if (view === "reviews") {
+    document.getElementById("viewOverview").classList.add("hidden");
+    document.getElementById("viewReviews").classList.remove("hidden");
+    document.getElementById("crumbCurrent").textContent = "Reviews";
+  } else {
+    document.getElementById("viewOverview").classList.remove("hidden");
+    document.getElementById("viewReviews").classList.add("hidden");
+    document.getElementById("crumbCurrent").textContent = "Overview";
+  }
+}
+
+/* ============================================================
+   Event delegation
+   ============================================================ */
+document.addEventListener("click", (e) => {
+  const route = e.target.closest("[data-route]");
+  if (route) { setView(route.dataset.route); return; }
+
+  const action = e.target.closest("[data-action]")?.dataset.action;
+  const idAttr = e.target.closest("[data-id]")?.dataset.id;
+  const id = idAttr != null ? Number(idAttr) : null;
+
+  if (action === "openModal") { openModal(id); return; }
+  if (action === "openModalAI") { openModal(id, true); return; }
+  if (action === "select") { UI.selectedId = id; render(); return; }
+  if (action === "closeDrawer") { UI.selectedId = null; renderDetail(); return; }
+
+  // Source tabs
+  const srcTab = e.target.closest("[data-source]");
+  if (srcTab) {
+    UI.source = srcTab.dataset.source;
+    document.querySelectorAll("#sourceTabs .source-tab").forEach(t => t.classList.toggle("active", t === srcTab));
+    render();
+    return;
+  }
+
+  // Feed tabs
+  const feedTab = e.target.closest(".feed-tab");
+  if (feedTab) {
+    UI.feedTab = feedTab.dataset.feed;
+    document.querySelectorAll(".feed-tab").forEach(t => t.classList.toggle("active", t === feedTab));
+    document.querySelectorAll(".feed-tab.active").forEach(t => { t.style.background = "var(--surface)"; t.style.boxShadow = "0 1px 2px rgba(0,0,0,0.06)"; t.style.fontWeight = "500"; });
+    document.querySelectorAll(".feed-tab:not(.active)").forEach(t => { t.style.background = "transparent"; t.style.boxShadow = "none"; t.style.fontWeight = "400"; });
+    render();
+    return;
+  }
+  // List tabs
+  const listTab = e.target.closest(".list-tab");
+  if (listTab) {
+    UI.listTab = listTab.dataset.list;
+    document.querySelectorAll(".list-tab").forEach(t => t.classList.toggle("active", t === listTab));
+    document.querySelectorAll(".list-tab.active").forEach(t => { t.style.background = "var(--surface)"; t.style.boxShadow = "0 1px 2px rgba(0,0,0,0.06)"; t.style.fontWeight = "500"; });
+    document.querySelectorAll(".list-tab:not(.active)").forEach(t => { t.style.background = "transparent"; t.style.boxShadow = "none"; t.style.fontWeight = "400"; });
+    render();
+    return;
+  }
+
+  // Modal close
+  if (e.target.id === "modalClose" || e.target.id === "modal") { closeModal(); return; }
+  if (e.target.id === "modalDraft") { showToast("Draft saved (local only)"); closeModal(); return; }
+  if (e.target.id === "modalSend") { showToast("Reply sent (mock — wire to your API)"); closeModal(); return; }
+
+  // AI chip → fill textarea
+  const chip = e.target.closest("[data-chip]");
+  if (chip) {
+    document.getElementById("modalTextarea").value = chip.dataset.chip;
+    updateChars();
+    return;
+  }
+
+  // Clear filters
+  if (e.target.id === "clearFilters") {
+    UI.filters = { rating: new Set(), status: new Set(), type: new Set() };
+    render();
+    return;
+  }
+
+  // Clear search
+  if (e.target.id === "searchClear") {
+    UI.search = "";
+    const input = document.getElementById("search");
+    input.value = "";
+    document.getElementById("searchClear").classList.add("hidden");
+    render();
+    return;
+  }
+});
+
+document.addEventListener("change", (e) => {
+  const cb = e.target.closest("input[data-filter-group]");
+  if (!cb) return;
+  const g = cb.dataset.filterGroup;
+  let v = cb.dataset.filterValue;
+  if (g === "rating") v = Number(v);
+  if (cb.checked) UI.filters[g].add(v); else UI.filters[g].delete(v);
+  render();
+});
+
+let searchDebounce = null;
+document.addEventListener("input", (e) => {
+  if (e.target.id === "modalTextarea") { updateChars(); return; }
+  if (e.target.id === "search") {
+    clearTimeout(searchDebounce);
+    const v = e.target.value;
+    document.getElementById("searchClear").classList.toggle("hidden", !v);
+    searchDebounce = setTimeout(() => {
+      UI.search = v;
+      render();
+    }, 150);
+  }
+});
+
+/* Initial active-tab styling for feed/list tabs */
+document.querySelectorAll(".feed-tab.active, .list-tab.active").forEach(t => {
+  t.style.background = "var(--surface)";
+  t.style.boxShadow = "0 1px 2px rgba(0,0,0,0.06)";
+  t.style.fontWeight = "500";
+});
+
+/* ============================================================
+   Boot
+   ============================================================ */
+(async () => {
+  // Show loading skeletons
+  document.getElementById("kpiRow").innerHTML = Array(3).fill(`<div class="card p-5 space-y-3"><div class="skeleton h-3 w-24"></div><div class="skeleton h-8 w-20"></div><div class="skeleton h-3 w-32"></div></div>`).join("");
+  await loadData();
+  render();
+})();
+</script>
+</body>
+</html>
