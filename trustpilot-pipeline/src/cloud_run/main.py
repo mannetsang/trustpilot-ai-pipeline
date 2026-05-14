@@ -61,7 +61,7 @@ def get_sheets_service():
     return build("sheets", "v4", credentials=creds)
 
 
-def write_to_sheet(name, email, rating, comment, reply, suggestion):
+def write_to_sheet(name, email, rating, review_type, comment, reply, suggestion):
     try:
         service = get_sheets_service()
         service.spreadsheets().values().append(
@@ -73,7 +73,7 @@ def write_to_sheet(name, email, rating, comment, reply, suggestion):
                 name,                                                 # B: Customer Name
                 email,                                                # C: Customer Email
                 rating,                                               # D: Star Rating
-                "",                                                   # E: Type (set manually)
+                review_type,                                          # E: Type (AI-classified for 1-3 stars)
                 comment,                                              # F: Comment
                 reply,                                                # G: Reply Suggestion
                 suggestion,                                           # H: Business Suggestion
@@ -111,12 +111,14 @@ def webhook():
         send_to_gchat_deleted(name, rating)
         return jsonify({"status": "ok"})
 
-    email      = get_review_email(review_id) if review_id else ""
-    reply      = get_reply_suggestion(comment, rating, name) if len(comment) > 5 else ""
-    suggestion = get_gemini_suggestion(comment, rating) if len(comment) > 5 else ""
+    email        = get_review_email(review_id) if review_id else ""
+    has_comment  = len(comment) > 5
+    reply        = get_reply_suggestion(comment, rating, name) if has_comment else ""
+    suggestion   = get_gemini_suggestion(comment, rating) if has_comment else ""
+    review_type  = get_review_type(comment) if has_comment and rating.isdigit() and int(rating) <= 3 else ""
 
     send_to_gchat(name, email, rating, comment, reply, suggestion, event, review_id)
-    write_to_sheet(name, email, rating, comment, reply, suggestion)
+    write_to_sheet(name, email, rating, review_type, comment, reply, suggestion)
 
     if rating.isdigit() and int(rating) <= 3:
         create_service_request(email, comment)
@@ -169,6 +171,38 @@ def vertex_call(prompt):
     for part in parts:
         if part.get("text"):
             return part["text"].strip()
+    return ""
+
+
+REVIEW_TYPES = [
+    "customer support",
+    "shipping",
+    "product defective - stock",
+    "product defective - custom",
+    "product defective - salon finished",
+]
+
+
+def get_review_type(comment):
+    prompt = (
+        "You are classifying a negative customer review for Superhairpieces, a hairpiece company.\n\n"
+        "Based on the review comment below, pick the single most relevant category from this list:\n"
+        + "\n".join(f"- {t}" for t in REVIEW_TYPES) +
+        "\n\nDefinitions:\n"
+        "- customer support: complaint about staff, communication, response time, or service attitude\n"
+        "- shipping: complaint about delivery, courier, packaging damage in transit, or delays\n"
+        "- product defective - stock: complaint about a ready-made/off-the-shelf hairpiece (quality, colour, size)\n"
+        "- product defective - custom: complaint about a custom-ordered hairpiece that didn't meet specifications\n"
+        "- product defective - salon finished: complaint about additional services such as haircut, base cut, trim, or spray applied to the product\n\n"
+        f"Review:\n\"{comment}\"\n\n"
+        "Reply with only the category name, exactly as written above. No explanation."
+    )
+    try:
+        result = vertex_call(prompt).lower().strip()
+        if result in REVIEW_TYPES:
+            return result
+    except Exception as e:
+        print(f"Vertex AI type error: {e}")
     return ""
 
 
