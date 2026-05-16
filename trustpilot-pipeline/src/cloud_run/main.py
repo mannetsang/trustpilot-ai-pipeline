@@ -2,6 +2,7 @@ import os
 import base64
 import json
 import time
+import threading
 import requests
 from flask import Flask, request, jsonify
 import google.auth
@@ -22,23 +23,25 @@ VERTEX_MODEL      = "gemini-2.5-pro"
 # Cache the Trustpilot access token so we don't re-fetch on every request
 _tp_token = None
 _tp_token_expiry = 0
+_tp_lock = threading.Lock()
 
 
 def get_tp_token():
     global _tp_token, _tp_token_expiry
-    if _tp_token and time.time() < _tp_token_expiry:
+    with _tp_lock:
+        if _tp_token and time.time() < _tp_token_expiry:
+            return _tp_token
+        creds = base64.b64encode(f"{TP_API_KEY}:{TP_SECRET}".encode()).decode()
+        r = requests.post(
+            "https://api.trustpilot.com/v1/oauth/oauth-business-users-for-applications/accesstoken",
+            headers={"Authorization": f"Basic {creds}", "Content-Type": "application/x-www-form-urlencoded"},
+            data={"grant_type": "client_credentials"},
+            timeout=10,
+        )
+        data = r.json()
+        _tp_token = data["access_token"]
+        _tp_token_expiry = time.time() + int(data.get("expires_in", 3600)) - 60
         return _tp_token
-    creds = base64.b64encode(f"{TP_API_KEY}:{TP_SECRET}".encode()).decode()
-    r = requests.post(
-        "https://api.trustpilot.com/v1/oauth/oauth-business-users-for-applications/accesstoken",
-        headers={"Authorization": f"Basic {creds}", "Content-Type": "application/x-www-form-urlencoded"},
-        data={"grant_type": "client_credentials"},
-        timeout=10,
-    )
-    data = r.json()
-    _tp_token = data["access_token"]
-    _tp_token_expiry = time.time() + int(data.get("expires_in", 3600)) - 60
-    return _tp_token
 
 
 def get_review_email(review_id):
@@ -64,12 +67,12 @@ def get_sheets_service():
     return build("sheets", "v4", credentials=creds)
 
 
-def write_to_sheet(name, email, rating, review_type, comment, reply, suggestion):
+def write_to_sheet(name, email, rating, review_type, comment, reply, suggestion, review_id=""):
     try:
         service = get_sheets_service()
         service.spreadsheets().values().append(
             spreadsheetId=GOOGLE_SHEET_ID,
-            range="A:I",
+            range="A:J",
             valueInputOption="USER_ENTERED",
             body={"values": [[
                 time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),  # A: Timestamp
@@ -81,10 +84,44 @@ def write_to_sheet(name, email, rating, review_type, comment, reply, suggestion)
                 reply,                                                # G: Reply Suggestion
                 suggestion,                                           # H: Business Suggestion
                 "",                                                   # I: Remark (set manually)
+                review_id,                                            # J: Trustpilot Review ID
             ]]},
         ).execute()
     except Exception as e:
         print(f"Sheet write error: {e}")
+
+
+def process_review(payload):
+    """Process a review event in a background thread."""
+    event     = payload.get("eventType")
+    name      = (payload.get("consumer") or {}).get("displayName") or "A customer"
+    rating    = str(payload.get("stars", "Unknown"))
+    title     = payload.get("title") or ""
+    text      = payload.get("text") or ""
+    review_id = payload.get("reviewId") or payload.get("id") or ""
+
+    # Trustpilot customers often repeat the title as the first line of the body.
+    # Only prepend the title if the body doesn't already start with it.
+    if title and not text.lower().startswith(title.lower()):
+        comment = f"{title}\n\n{text}".strip()
+    else:
+        comment = text.strip()
+
+    if event == "review.deleted":
+        send_to_gchat_deleted(name, rating)
+        return
+
+    email        = get_review_email(review_id) if review_id else ""
+    has_comment  = len(comment) > 5
+    reply        = get_reply_suggestion(comment, rating, name) if has_comment else ""
+    suggestion   = get_gemini_suggestion(comment, rating) if has_comment else ""
+    review_type  = get_review_type(comment) if has_comment and rating.isdigit() and int(rating) <= 3 else ""
+
+    send_to_gchat(name, email, rating, comment, reply, suggestion, event, review_id)
+    write_to_sheet(name, email, rating, review_type, comment, reply, suggestion, review_id)
+
+    if rating.isdigit() and int(rating) <= 3:
+        create_service_request(email, comment)
 
 
 @app.route("/webhook", methods=["POST"])
@@ -98,35 +135,84 @@ def webhook():
     if event not in ("review.created", "review.updated", "review.deleted"):
         return jsonify({"status": "ignored"})
 
-    name      = (payload.get("consumer") or {}).get("displayName") or "A customer"
-    rating    = str(payload.get("stars", "Unknown"))
-    title     = payload.get("title") or ""
-    text      = payload.get("text") or ""
-    review_id = payload.get("reviewId") or payload.get("id") or ""
-    # Trustpilot customers often repeat the title as the first line of the body.
-    # Only prepend the title if the body doesn't already start with it.
-    if title and not text.lower().startswith(title.lower()):
-        comment = f"{title}\n\n{text}".strip()
-    else:
-        comment = text.strip()
-
-    if event == "review.deleted":
-        send_to_gchat_deleted(name, rating)
-        return jsonify({"status": "ok"})
-
-    email        = get_review_email(review_id) if review_id else ""
-    has_comment  = len(comment) > 5
-    reply        = get_reply_suggestion(comment, rating, name) if has_comment else ""
-    suggestion   = get_gemini_suggestion(comment, rating) if has_comment else ""
-    review_type  = get_review_type(comment) if has_comment and rating.isdigit() and int(rating) <= 3 else ""
-
-    send_to_gchat(name, email, rating, comment, reply, suggestion, event, review_id)
-    write_to_sheet(name, email, rating, review_type, comment, reply, suggestion)
-
-    if rating.isdigit() and int(rating) <= 3:
-        create_service_request(email, comment)
+    # Return 200 immediately — process in background so the request never times out
+    thread = threading.Thread(target=process_review, args=(payload,), daemon=True)
+    thread.start()
 
     return jsonify({"status": "ok"})
+
+
+@app.route("/monitor", methods=["GET", "POST"])
+def monitor():
+    """
+    Fetch the 50 most recent Trustpilot reviews, check which are absent from
+    the sheet (by review ID stored in col J), and backfill any that are missing.
+    Called by Cloud Scheduler every 30 minutes.
+    """
+    try:
+        # ── fetch sheet review IDs (col J) and names (col B) ─────────────────
+        service = get_sheets_service()
+        result = service.spreadsheets().values().get(
+            spreadsheetId=GOOGLE_SHEET_ID, range="B:J"
+        ).execute()
+        rows = result.get("values", [])
+        known_ids   = {r[8].strip() for r in rows if len(r) > 8 and r[8].strip()}
+        known_names = {r[0].lower().strip() for r in rows if r}
+
+        # ── fetch recent Trustpilot reviews ───────────────────────────────────
+        tp_token = get_tp_token()
+        r = requests.get(
+            f"https://api.trustpilot.com/v1/private/business-units/{BU_ID}/reviews",
+            headers={"Authorization": f"Bearer {tp_token}"},
+            params={"apikey": TP_API_KEY, "perPage": 50, "orderBy": "createdat.desc"},
+            timeout=15,
+        )
+        reviews = r.json().get("reviews", [])
+
+        missing = []
+        for rv in reviews:
+            rid  = rv.get("id", "")
+            name = (rv.get("consumer") or {}).get("displayName") or ""
+            if rid in known_ids:
+                continue
+            if name.lower().strip() in known_names:
+                continue  # legacy rows without IDs — skip by name
+            missing.append(rv)
+
+        print(f"Monitor: {len(reviews)} reviews checked, {len(missing)} missing")
+
+        # ── backfill each missing review ──────────────────────────────────────
+        for rv in missing:
+            rid    = rv.get("id", "")
+            name   = (rv.get("consumer") or {}).get("displayName") or "A customer"
+            rating = str(rv.get("stars", ""))
+            title  = rv.get("title") or ""
+            text   = rv.get("text") or ""
+
+            if title and not text.lower().startswith(title.lower()):
+                comment = f"{title}\n\n{text}".strip()
+            else:
+                comment = text.strip()
+
+            email = get_review_email(rid) if rid else ""
+            has_comment = len(comment) > 5
+            reply        = get_reply_suggestion(comment, rating, name) if has_comment else ""
+            suggestion   = get_gemini_suggestion(comment, rating) if has_comment else ""
+            review_type  = get_review_type(comment) if has_comment and rating.isdigit() and int(rating) <= 3 else ""
+
+            send_to_gchat(name, email, rating, comment, reply, suggestion, "review.created", rid)
+            write_to_sheet(name, email, rating, review_type, comment, reply, suggestion, rid)
+
+            if rating.isdigit() and int(rating) <= 3:
+                create_service_request(email, comment)
+
+            print(f"Monitor: backfilled {name} ({rating} stars, id={rid})")
+
+        return jsonify({"status": "ok", "checked": len(reviews), "backfilled": len(missing)})
+
+    except Exception as e:
+        print(f"Monitor error: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 TEAMDESK_URL = "https://www.teamdesk.net/secure/api/v2/56554/BEA2566590EF4D14AA8D35AD0E2CEA77/t_419099/upsert.json"
@@ -225,11 +311,6 @@ def get_reply_suggestion(comment, rating, name):
 
 
 def get_gemini_suggestion(comment, rating):
-    url = (
-        f"https://{VERTEX_LOCATION}-aiplatform.googleapis.com/v1/"
-        f"projects/{GCP_PROJECT}/locations/{VERTEX_LOCATION}/"
-        f"publishers/google/models/{VERTEX_MODEL}:generateContent"
-    )
     prompt = (
         f"A customer left a {rating}-star review for our hairpiece company "
         f"(Superhairpieces) with the following comment:\n\"{comment}\"\n\n"
@@ -268,14 +349,14 @@ def send_to_gchat(name, email, rating, comment, reply, suggestion, event, review
                     },
                     {
                         "header": "Comment",
-                        "widgets": [{"textParagraph": {"text": comment}}]
+                        "widgets": [{"textParagraph": {"text": comment or "—"}}]
                     },
                     {
-                        "header": "💬 Reply Suggestion",
+                        "header": "\U0001f4ac Reply Suggestion",
                         "widgets": [{"textParagraph": {"text": reply or "—"}}]
                     },
                     {
-                        "header": "💡 Business Suggestion",
+                        "header": "\U0001f4a1 Business Suggestion",
                         "widgets": [
                             {"textParagraph": {"text": suggestion or "—"}},
                             {"buttonList": {"buttons": [{
@@ -298,7 +379,7 @@ def send_to_gchat(name, email, rating, comment, reply, suggestion, event, review
 def send_to_gchat_deleted(name, rating):
     stars = "⭐" * min(int(rating) if rating.isdigit() else 0, 5)
     text = (
-        f"🗑️ *Trustpilot Review Deleted*\n\n"
+        f"\U0001f5d1️ *Trustpilot Review Deleted*\n\n"
         f"*Customer:* {name}\n"
         f"*Was rated:* {rating}-star {stars}"
     )
