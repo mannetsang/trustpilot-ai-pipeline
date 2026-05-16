@@ -61,12 +61,12 @@ def get_sheets_service():
     return build("sheets", "v4", credentials=creds)
 
 
-def write_to_sheet(name, email, rating, comment, reply, suggestion):
+def write_to_sheet(name, email, rating, comment, reply, suggestion, review_id=""):
     try:
         service = get_sheets_service()
         service.spreadsheets().values().append(
             spreadsheetId=GOOGLE_SHEET_ID,
-            range="A:G",
+            range="A:H",
             valueInputOption="USER_ENTERED",
             body={"values": [[
                 time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
@@ -76,10 +76,24 @@ def write_to_sheet(name, email, rating, comment, reply, suggestion):
                 comment,
                 reply,
                 suggestion,
+                review_id,
             ]]},
         ).execute()
     except Exception as e:
         print(f"Sheet write error: {e}")
+
+
+def existing_review_ids():
+    try:
+        service = get_sheets_service()
+        result = service.spreadsheets().values().get(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range="H:H",
+        ).execute()
+        return {row[0] for row in result.get("values", []) if row and row[0]}
+    except Exception as e:
+        print(f"Sheet dedupe read failed: {e}")
+        return set()
 
 
 @app.route("/webhook", methods=["POST"])
@@ -104,12 +118,15 @@ def webhook():
         send_to_gchat_deleted(name, rating)
         return jsonify({"status": "ok"})
 
+    if event == "review.created" and review_id and review_id in existing_review_ids():
+        return jsonify({"status": "duplicate", "reviewId": review_id})
+
     email      = get_review_email(review_id) if review_id else ""
     reply      = get_reply_suggestion(comment, rating, name) if len(comment) > 5 else ""
     suggestion = get_gemini_suggestion(comment, rating) if len(comment) > 5 else ""
 
     send_to_gchat(name, email, rating, comment, reply, suggestion, event, review_id)
-    write_to_sheet(name, email, rating, comment, reply, suggestion)
+    write_to_sheet(name, email, rating, comment, reply, suggestion, review_id)
 
     if rating.isdigit() and int(rating) <= 3:
         create_service_request(email, comment)
