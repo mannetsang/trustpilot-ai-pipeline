@@ -135,8 +135,9 @@ def webhook():
     if event not in ("review.created", "review.updated", "review.deleted"):
         return jsonify({"status": "ignored"})
 
-    # Return 200 immediately — process in background so the request never times out
-    thread = threading.Thread(target=process_review, args=(payload,), daemon=True)
+    # Return 200 immediately — process in background so the request never times out.
+    # daemon=False so the process won't exit while the thread is still running.
+    thread = threading.Thread(target=process_review, args=(payload,), daemon=False)
     thread.start()
 
     return jsonify({"status": "ok"})
