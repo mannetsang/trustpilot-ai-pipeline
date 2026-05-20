@@ -1,0 +1,22 @@
+# Environment & secrets
+.env
+*.json
+!package.json
+gcp_credentials.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# Node
+node_modules/
+
+# Docs (binary files — store outside git)
+docs/*.pptx
+
+# OS
+.DS_Store
+Thumbs.db
