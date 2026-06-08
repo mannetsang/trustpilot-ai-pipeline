@@ -15,10 +15,11 @@ GCHAT_WEBHOOK_URL = os.environ["GCHAT_WEBHOOK_URL"]
 GOOGLE_SHEET_ID   = os.environ["GOOGLE_SHEET_ID"]
 TP_API_KEY        = os.environ["TP_API_KEY"]
 TP_SECRET         = os.environ["TP_SECRET"]
-BU_ID             = "5e44f707d7d8c700011eaa10"
-GCP_PROJECT       = "shp-ai-bot-2026"
-VERTEX_LOCATION   = "us-central1"
-VERTEX_MODEL      = "gemini-2.5-pro"
+BU_ID                = "5e44f707d7d8c700011eaa10"
+GCP_PROJECT          = "shp-ai-bot-2026"
+VERTEX_LOCATION      = "us-central1"
+VERTEX_MODEL         = "gemini-2.5-pro"
+INVITATIONS_SHEET_ID = "193E74iZIvF1X3rvDfbEEObqaVOQFRTK8C0iRIReYTnw"
 
 # Cache the Trustpilot access token so we don't re-fetch on every request
 _tp_token = None
@@ -157,8 +158,9 @@ def monitor():
             spreadsheetId=GOOGLE_SHEET_ID, range="B:J"
         ).execute()
         rows = result.get("values", [])
-        known_ids   = {r[8].strip() for r in rows if len(r) > 8 and r[8].strip()}
-        known_names = {r[0].lower().strip() for r in rows if r}
+        # Only deduplicate by review ID (column J) — name matching caused false
+        # positives when two customers share the same first name (e.g. two "Steven"s).
+        known_ids = {r[8].strip() for r in rows if len(r) > 8 and r[8].strip()}
 
         # ── fetch recent Trustpilot reviews ───────────────────────────────────
         tp_token = get_tp_token()
@@ -176,8 +178,6 @@ def monitor():
             name = (rv.get("consumer") or {}).get("displayName") or ""
             if rid in known_ids:
                 continue
-            if name.lower().strip() in known_names:
-                continue  # legacy rows without IDs — skip by name
             missing.append(rv)
 
         print(f"Monitor: {len(reviews)} reviews checked, {len(missing)} missing")
@@ -388,6 +388,94 @@ def send_to_gchat_deleted(name, rating):
         requests.post(GCHAT_WEBHOOK_URL, json={"text": text}, timeout=10)
     except Exception as e:
         print(f"Google Chat error: {e}")
+
+
+INVITATION_HEADERS = [
+    "Invitation ID",
+    "Order / Reference #",
+    "Customer Name",
+    "Customer Email",
+    "Status",
+    "Created At (UTC)",
+    "Sent At (UTC)",
+    "Source",
+    "Tags",
+]
+
+INVITATIONS_API = "https://invitations-api.trustpilot.com/v1/private/business-units"
+
+
+def fetch_all_invitations():
+    """Fetch every invitation from Trustpilot (paginates via page param)."""
+    token = get_tp_token()
+    page, per_page = 1, 100
+    all_invitations = []
+    while True:
+        r = requests.get(
+            f"{INVITATIONS_API}/{BU_ID}/invitations",
+            headers={"Authorization": f"Bearer {token}"},
+            params={"apikey": TP_API_KEY, "perPage": per_page, "page": page},
+            timeout=30,
+        )
+        batch = r.json().get("invitations", [])
+        if not batch:
+            break
+        all_invitations.extend(batch)
+        if len(batch) < per_page:
+            break
+        page += 1
+    return all_invitations
+
+
+def invitation_to_row(inv):
+    recipient = inv.get("recipient") or {}
+    tags      = ", ".join(inv.get("tags", []) or [])
+    return [
+        inv.get("id", ""),
+        inv.get("referenceId", ""),
+        recipient.get("name", ""),
+        recipient.get("email", ""),
+        inv.get("status", ""),
+        (inv.get("createdTime", "") or "")[:19].replace("T", " "),
+        (inv.get("sentTime", "") or "")[:19].replace("T", " "),
+        inv.get("source", ""),
+        tags,
+    ]
+
+
+@app.route("/sync-invitations", methods=["GET", "POST"])
+def sync_invitations():
+    """
+    Full refresh: fetch all Trustpilot invitations and overwrite the
+    invitations sheet (INVITATIONS_SHEET_ID).
+    Safe to call repeatedly — always writes a fresh snapshot.
+    """
+    try:
+        invitations = fetch_all_invitations()
+        rows = [INVITATION_HEADERS] + [invitation_to_row(inv) for inv in invitations]
+
+        service = get_sheets_service()
+        sheet   = service.spreadsheets()
+
+        # Clear existing content then write fresh rows
+        sheet.values().clear(
+            spreadsheetId=INVITATIONS_SHEET_ID,
+            range="A:I",
+        ).execute()
+
+        sheet.values().update(
+            spreadsheetId=INVITATIONS_SHEET_ID,
+            range="A1",
+            valueInputOption="USER_ENTERED",
+            body={"values": rows},
+        ).execute()
+
+        print(f"sync-invitations: wrote {len(invitations)} rows")
+        return jsonify({"status": "ok", "total": len(invitations)})
+
+    except Exception as e:
+        print(f"sync-invitations error: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 if __name__ == "__main__":
