@@ -756,15 +756,19 @@ def api_send_website_reply():
 
 
 # ============================================================
-# Weekly EU website-feedback summary → Google Chat (EU SEO/AEO Tasks space)
+# Weekly website-feedback summaries → Google Chat
 # ============================================================
-# Cloud Scheduler hits /weekly-eu-feedback every Monday morning. It reads the
-# website feedback sheet, keeps rows from the EU storefronts logged in the last
-# 7 days, and posts a summary card (stats + comments + AI insights) to the
-# EU SEO/AEO Tasks Chat space via the EU_GCHAT_WEBHOOK_URL env var.
+# Cloud Scheduler hits /weekly-feedback?region=<eu|na> every Monday morning.
+# Each region reads the website feedback sheet, keeps rows from its storefront
+# domains logged in the last 7 days, and posts a summary card (stats + comments
+# + AI insights) to its Chat space via the region's webhook env var:
+#   eu → EU_GCHAT_WEBHOOK_URL → "EU SEO/AEO Tasks" space (Ryan's EU team)
+#   na → NA_GCHAT_WEBHOOK_URL → "BC websites" space
 
-EU_GCHAT_WEBHOOK_URL = os.environ.get("EU_GCHAT_WEBHOOK_URL", "")
-EU_FEEDBACK_DOMAINS  = ".es,.nl,.fr,.de"
+FEEDBACK_REGIONS = {
+    "eu": {"label": "EU",            "domains": ".es,.nl,.fr,.de", "webhook_env": "EU_GCHAT_WEBHOOK_URL", "translate": True},
+    "na": {"label": "North America", "domains": ".com,.ca",        "webhook_env": "NA_GCHAT_WEBHOOK_URL", "translate": False},
+}
 
 
 def _parse_logged_date(value):
@@ -807,14 +811,14 @@ def translate_notes_to_english(notes):
     return [""] * len(notes)
 
 
-def get_eu_feedback_summary(noted_entries):
+def get_feedback_summary(noted_entries, label):
     lines = "\n".join(
         f"- {e['score']}★ ({e['domain']}, {e['url']}) {e['note'][:300]}"
         for e in noted_entries[:60]
     )
     prompt = (
-        "You are summarizing on-site customer feedback for the EU storefronts of "
-        "Superhairpieces (hairpiece / wig retailer) for the EU market manager.\n"
+        f"You are summarizing on-site customer feedback for the {label} storefronts of "
+        "Superhairpieces (hairpiece / wig retailer) for the market manager.\n"
         f"Feedback from the past week:\n{lines}\n\n"
         "Write 2-3 short sentences: the main theme(s), any site/UX problem worth "
         "fixing, and one suggested action. Plain text, no greeting, no markdown."
@@ -822,25 +826,28 @@ def get_eu_feedback_summary(noted_entries):
     try:
         return vertex_call(prompt)
     except Exception as e:
-        print(f"Vertex AI EU summary error: {e}")
+        print(f"Vertex AI feedback summary error: {e}")
         return ""
 
 
-@app.route("/weekly-eu-feedback", methods=["GET", "POST"])
-def weekly_eu_feedback():
+def _weekly_feedback(region):
     """
-    Weekly digest of EU website feedback for the EU SEO/AEO Tasks Chat space.
-    Query params: domains (default '.es,.nl,.fr,.de'), days (default 7),
+    Weekly digest of website feedback for one region's Chat space.
+    Query params: domains (default = region's), days (default 7),
     dry_run=1 to preview the message without posting.
     """
     import datetime
+    cfg = FEEDBACK_REGIONS.get(region)
+    if not cfg:
+        return jsonify({"error": f"Unknown region '{region}' (expected one of {sorted(FEEDBACK_REGIONS)})"}), 400
     try:
-        domains = [d.strip() for d in (request.args.get("domains") or EU_FEEDBACK_DOMAINS).split(",") if d.strip()]
+        webhook_url = os.environ.get(cfg["webhook_env"], "")
+        domains = [d.strip() for d in (request.args.get("domains") or cfg["domains"]).split(",") if d.strip()]
         days    = int(request.args.get("days", 7))
         dry_run = request.args.get("dry_run") in ("1", "true", "yes")
 
-        if not EU_GCHAT_WEBHOOK_URL and not dry_run:
-            return jsonify({"error": "EU_GCHAT_WEBHOOK_URL env var not set"}), 503
+        if not webhook_url and not dry_run:
+            return jsonify({"error": f"{cfg['webhook_env']} env var not set"}), 503
 
         now    = datetime.datetime.utcnow()
         cutoff = now - datetime.timedelta(days=days)
@@ -876,7 +883,7 @@ def weekly_eu_feedback():
 
         if not entries:
             message = {"text": (
-                f"📊 *Weekly Website Feedback — EU* ({date_range})\n\n"
+                f"📊 *Weekly Website Feedback — {cfg['label']}* ({date_range})\n\n"
                 f"No feedback was submitted on {domains_label} this week."
             )}
         else:
@@ -884,10 +891,10 @@ def weekly_eu_feedback():
             avg     = round(sum(e["score"] for e in scored) / len(scored), 2) if scored else 0
             dist    = " · ".join(f"{s}★ ×{sum(1 for e in scored if e['score'] == s)}" for s in range(5, 0, -1))
             noted   = sorted([e for e in entries if e["note"]], key=lambda e: e["score"])
-            ai_text = get_eu_feedback_summary(noted) if noted else ""
+            ai_text = get_feedback_summary(noted, cfg["label"]) if noted else ""
 
             stats_html = (
-                f"📊 <b>Weekly Website Feedback — EU</b><br>"
+                f"📊 <b>Weekly Website Feedback — {cfg['label']}</b><br>"
                 f"<i>{date_range} · {domains_label}</i><br><br>"
                 f"<b>Responses:</b> {len(entries)}<br>"
                 f"<b>Average score:</b> {avg} / 5<br>"
@@ -898,7 +905,7 @@ def weekly_eu_feedback():
 
             if noted:
                 shown = noted[:10]
-                translations = translate_notes_to_english([e["note"] for e in shown])
+                translations = translate_notes_to_english([e["note"] for e in shown]) if cfg["translate"] else [""] * len(shown)
                 note_widgets = []
                 for e, translated in zip(shown, translations):
                     page  = e["url"].split("?")[0]
@@ -921,24 +928,35 @@ def weekly_eu_feedback():
                 "color": {"red": 0.0, "green": 0.478, "blue": 1.0, "alpha": 1.0}
             }]}}]})
 
-            message = {"cardsV2": [{"cardId": f"eu-feedback-{now.strftime('%Y-%m-%d')}", "card": {"sections": sections}}]}
+            message = {"cardsV2": [{"cardId": f"{region}-feedback-{now.strftime('%Y-%m-%d')}", "card": {"sections": sections}}]}
 
         posted = False
         if not dry_run:
-            r = requests.post(EU_GCHAT_WEBHOOK_URL, json=message, timeout=10)
+            r = requests.post(webhook_url, json=message, timeout=10)
             posted = r.status_code == 200
             if not posted:
-                print(f"weekly-eu-feedback: Chat webhook returned {r.status_code} {r.text[:300]}")
+                print(f"weekly-feedback[{region}]: Chat webhook returned {r.status_code} {r.text[:300]}")
 
         return jsonify({
-            "status": "ok", "days": days, "domains": domains,
+            "status": "ok", "region": region, "days": days, "domains": domains,
             "total": len(entries), "posted": posted, "dry_run": dry_run,
             **({"message": message} if dry_run else {}),
         })
 
     except Exception as e:
-        print(f"weekly-eu-feedback error: {e}")
+        print(f"weekly-feedback[{region}] error: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/weekly-feedback", methods=["GET", "POST"])
+def weekly_feedback():
+    return _weekly_feedback((request.args.get("region") or "eu").lower())
+
+
+@app.route("/weekly-eu-feedback", methods=["GET", "POST"])
+def weekly_eu_feedback():
+    # Legacy route — the original Cloud Scheduler job for the EU digest calls this.
+    return _weekly_feedback("eu")
 
 
 # Issue-type taxonomy used by the backfill endpoint. (The live webhook keeps using
