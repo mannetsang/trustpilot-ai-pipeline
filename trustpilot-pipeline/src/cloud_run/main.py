@@ -778,6 +778,35 @@ def _parse_logged_date(value):
     return None
 
 
+def translate_notes_to_english(notes):
+    """Batch-translate feedback notes to English in one Gemini call.
+    Returns a list the same length as `notes`; an entry is '' when the note is
+    already English or translation failed (caller shows the original only)."""
+    numbered = "\n".join(f"{i + 1}. {n[:300]}" for i, n in enumerate(notes))
+    prompt = (
+        "Translate each numbered customer feedback note below into English. The notes "
+        "come from Spanish, Dutch, French, or German storefronts of a hairpiece retailer.\n\n"
+        f"{numbered}\n\n"
+        "Return STRICT JSON: an array of strings with exactly the same order and length "
+        "as the input, no markdown fences. If a note is already in English, return an "
+        "empty string \"\" for that position."
+    )
+    try:
+        raw = (vertex_call(prompt) or "").strip()
+        if raw.startswith("```"):
+            raw = raw.strip("`")
+            if raw.lower().startswith("json"):
+                raw = raw[4:].lstrip()
+        first, last = raw.find("["), raw.rfind("]")
+        parsed = json.loads(raw[first:last + 1])
+        if isinstance(parsed, list) and len(parsed) == len(notes):
+            return [str(t or "").strip() for t in parsed]
+        print(f"translate_notes: length mismatch ({len(parsed) if isinstance(parsed, list) else 'non-list'} vs {len(notes)})")
+    except Exception as e:
+        print(f"Vertex AI translation error: {e}")
+    return [""] * len(notes)
+
+
 def get_eu_feedback_summary(noted_entries):
     lines = "\n".join(
         f"- {e['score']}★ ({e['domain']}, {e['url']}) {e['note'][:300]}"
@@ -868,12 +897,15 @@ def weekly_eu_feedback():
             sections = [{"widgets": [{"textParagraph": {"text": stats_html}}]}]
 
             if noted:
+                shown = noted[:10]
+                translations = translate_notes_to_english([e["note"] for e in shown])
                 note_widgets = []
-                for e in noted[:10]:
+                for e, translated in zip(shown, translations):
                     page  = e["url"].split("?")[0]
                     email = f" · {e['email']}" if e["email"] else ""
+                    en_line = f"<br>→ <i>{translated[:400]}</i>" if translated else ""
                     note_widgets.append({"textParagraph": {"text": (
-                        f"<b>{e['score']}★</b> — {e['note'][:400]}"
+                        f"<b>{e['score']}★</b> — {e['note'][:400]}{en_line}"
                         f"<br><i>{page}{email}</i>"
                     )}})
                 if len(noted) > 10:
