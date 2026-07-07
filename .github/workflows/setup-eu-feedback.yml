@@ -2,7 +2,7 @@ name: Setup EU weekly feedback summary
 
 # One-time setup for the weekly EU website-feedback digest:
 #  1. Sets EU_GCHAT_WEBHOOK_URL on the Cloud Run service (from the repo secret
-#     of the same name — the incoming webhook of the "EU SEO/AEO/GEO" Chat space).
+#     of the same name — the incoming webhook of the "EU SEO/AEO Tasks" Chat space).
 #  2. Creates/updates a Cloud Scheduler job that calls /weekly-eu-feedback
 #     every Monday at 8:00 AM Toronto time.
 # Run it manually from the Actions tab after adding the secret.
@@ -23,7 +23,7 @@ jobs:
       - name: Set webhook env var on Cloud Run
         run: |
           if [ -z "${{ secrets.EU_GCHAT_WEBHOOK_URL }}" ]; then
-            echo "::error::Repo secret EU_GCHAT_WEBHOOK_URL is not set. Create an incoming webhook in the EU SEO/AEO/GEO Chat space and save its URL as this secret."
+            echo "::error::Repo secret EU_GCHAT_WEBHOOK_URL is not set. Create an incoming webhook in the EU SEO/AEO Tasks Chat space and save its URL as this secret."
             exit 1
           fi
           gcloud run services update trustpilot-webhook \

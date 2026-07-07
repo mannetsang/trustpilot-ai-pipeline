@@ -756,12 +756,12 @@ def api_send_website_reply():
 
 
 # ============================================================
-# Weekly EU website-feedback summary → Google Chat (EU SEO/AEO/GEO space)
+# Weekly EU website-feedback summary → Google Chat (EU SEO/AEO Tasks space)
 # ============================================================
 # Cloud Scheduler hits /weekly-eu-feedback every Monday morning. It reads the
 # website feedback sheet, keeps rows from the EU storefronts logged in the last
 # 7 days, and posts a summary card (stats + comments + AI insights) to the
-# EU SEO/AEO/GEO Chat space via the EU_GCHAT_WEBHOOK_URL env var.
+# EU SEO/AEO Tasks Chat space via the EU_GCHAT_WEBHOOK_URL env var.
 
 EU_GCHAT_WEBHOOK_URL = os.environ.get("EU_GCHAT_WEBHOOK_URL", "")
 EU_FEEDBACK_DOMAINS  = ".es,.nl,.fr,.de"
@@ -829,7 +829,7 @@ def get_eu_feedback_summary(noted_entries):
 @app.route("/weekly-eu-feedback", methods=["GET", "POST"])
 def weekly_eu_feedback():
     """
-    Weekly digest of EU website feedback for the EU SEO/AEO/GEO Chat space.
+    Weekly digest of EU website feedback for the EU SEO/AEO Tasks Chat space.
     Query params: domains (default '.es,.nl,.fr,.de'), days (default 7),
     dry_run=1 to preview the message without posting.
     """
