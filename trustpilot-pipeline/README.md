@@ -18,6 +18,17 @@ It features a dual-architecture design to support both real-time webhook ingesti
    - **Authentication:** Enterprise Service Account (`gcp_credentials.json`)
    - **Purpose:** Designed for massive CSV exports. Iterates through thousands of historical Trustpilot reviews, generates insights using the Vertex AI SDK, and appends the data robustly to a processed dataset.
 
+## Weekly EU Website-Feedback Digest
+
+The Cloud Run service (`src/cloud_run/main.py`) exposes `/weekly-eu-feedback`: it reads
+the website feedback Google Sheet, filters rows from the EU storefronts (`.es`, `.nl`,
+`.fr`, `.de` — currently only `.es` collects feedback) logged in the last 7 days, and
+posts a summary card (stats, comments, Gemini insights) to the **EU SEO/AEO/GEO**
+Google Chat space via the `EU_GCHAT_WEBHOOK_URL` env var. A Cloud Scheduler job calls
+it every Monday 8:00 AM Toronto time (see `.github/workflows/setup-eu-feedback.yml`
+at the repo root for one-time setup). Preview without posting:
+`GET /weekly-eu-feedback?dry_run=1`.
+
 ## Setup Instructions
 
 ### Python (Option B)

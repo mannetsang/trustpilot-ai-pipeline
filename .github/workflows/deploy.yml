@@ -4,7 +4,8 @@ on:
   push:
     branches: [main]
     paths:
-      - 'src/cloud_run/**'
+      - 'trustpilot-pipeline/src/cloud_run/**'
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -21,7 +22,7 @@ jobs:
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy trustpilot-webhook \
-            --source ./src/cloud_run \
+            --source ./trustpilot-pipeline/src/cloud_run \
             --region us-central1 \
             --project shp-ai-bot-2026 \
             --min-instances 1 \

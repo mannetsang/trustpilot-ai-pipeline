@@ -1,0 +1,47 @@
+name: Setup EU weekly feedback summary
+
+# One-time setup for the weekly EU website-feedback digest:
+#  1. Sets EU_GCHAT_WEBHOOK_URL on the Cloud Run service (from the repo secret
+#     of the same name — the incoming webhook of the "EU SEO/AEO/GEO" Chat space).
+#  2. Creates/updates a Cloud Scheduler job that calls /weekly-eu-feedback
+#     every Monday at 8:00 AM Toronto time.
+# Run it manually from the Actions tab after adding the secret.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set webhook env var on Cloud Run
+        run: |
+          if [ -z "${{ secrets.EU_GCHAT_WEBHOOK_URL }}" ]; then
+            echo "::error::Repo secret EU_GCHAT_WEBHOOK_URL is not set. Create an incoming webhook in the EU SEO/AEO/GEO Chat space and save its URL as this secret."
+            exit 1
+          fi
+          gcloud run services update trustpilot-webhook \
+            --region us-central1 \
+            --project shp-ai-bot-2026 \
+            --update-env-vars "EU_GCHAT_WEBHOOK_URL=${{ secrets.EU_GCHAT_WEBHOOK_URL }}" \
+            --quiet
+
+      - name: Create weekly Cloud Scheduler job (Mon 8:00 Toronto)
+        run: |
+          SERVICE_URL=$(gcloud run services describe trustpilot-webhook \
+            --region us-central1 --project shp-ai-bot-2026 \
+            --format 'value(status.url)')
+          gcloud scheduler jobs update http weekly-eu-feedback \
+            --location us-central1 --project shp-ai-bot-2026 \
+            --schedule "0 8 * * 1" --time-zone "America/Toronto" \
+            --uri "$SERVICE_URL/weekly-eu-feedback" --http-method GET --quiet \
+          || gcloud scheduler jobs create http weekly-eu-feedback \
+            --location us-central1 --project shp-ai-bot-2026 \
+            --schedule "0 8 * * 1" --time-zone "America/Toronto" \
+            --uri "$SERVICE_URL/weekly-eu-feedback" --http-method GET --quiet
