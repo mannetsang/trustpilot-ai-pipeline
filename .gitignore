@@ -1,0 +1,85 @@
+.env
+node_modules/
+
+# Independent project with its own private git repo — never tracked here.
+helperconnect/
+
+# ---------------------------------------------------------------------------
+# This repo is trustpilot-ai-pipeline. The Claude Projects folder is merely its
+# working directory, so ~60 unrelated things sit alongside it: other projects
+# (several with their own remotes), scratch scripts, data exports and secrets.
+# They are listed explicitly rather than with a blanket rule, so that genuinely
+# new files still show up in git status instead of being silently swallowed.
+#
+# Never remove these three — each is a live secret or personal data:
+#   CyberSourceKey_*.pem                  private key
+#   .mcp.json                             literal GitHub PAT
+#   Cybersource ... (filled)...json       filled credentials
+#   Eglinton Email list.csv               customer email addresses
+# ---------------------------------------------------------------------------
+/.claude/
+/.codex/
+/.mcp.json
+/.obsidian/
+/.prd_unpacked/
+/CA/
+/CRM/
+/Customer Form/
+/CyberSourceKey_20260630110249.pem
+/Cybersource Payments REST API (filled).postman_collection.json
+/Cybersource Payments REST API.postman_collection.json
+/CUsersManneDocumentsblog9_output.txt
+/Eglinton Email list.csv
+/Helper Form/
+/Obsidian/
+/Walmart Global API (Canada).postman_collection.json
+/__pycache__/
+/bc-account-chatbot/
+/bc-seo-audit/
+/chunks/
+/course-webapp/
+/cybersource_api_test.py
+/db_connect_test.py
+/db_inspect_consult.py
+/db_inspect_es.py
+/db_latest_es.py
+/db_latest_one.py
+/deleted-delivery-request-853.json
+/delivery_requests-Jassy-backup-2026-08-05.json
+/delivery_requests-Jiaqi-2026-08-19-deleted-backup.json
+/delivery_requests-backup-2026-08-03.json
+/design.md
+/genc-bigcommerce-categories.csv
+/genc-bigcommerce-category-paths.csv
+/genc-bigcommerce-category-tree.md
+/genc-category-finder.html
+/helperconnects/
+/helperexpress/
+/ig-chat-notifier/
+/notion_prd.json
+/offline-dims-to-load.csv
+/openwebui-tools/
+/pptx-builder/
+/procurement-chat-reminder/
+/setup-lightbridge-env.ps1
+/skucheck-gaps.csv
+/skucheck-loadable.csv
+/skucheck-rejected-weights.csv
+/snap-calorie-ai-main/
+/src/
+/trustpilot-pipeline/token_server.py
+/veritas-scroll/
+/vgr_new_products.csv
+/vgr_products_gen.py
+/walmart-delisted-skus.csv
+/walmart-listings-missing-weight.csv
+/walmart-live-skus.json
+/walmart-supabase-sync/
+/walmart-uncosted-listings.csv
+/walmart-weight-estimates.csv
+/walmart_app_script.js
+/weights-found.json
+/weights-still-missing.csv
+/weights-todo.json
+/固定式基站开发包文档/
+/灯条基站通讯定义(HTTP及MQTT)(公网)/

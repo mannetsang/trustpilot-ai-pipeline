@@ -1,0 +1,59 @@
+name: Setup IG notifier
+
+# One-time (re-runnable) setup for the Instagram -> Google Chat notifier:
+#   1. Pushes the required env vars onto the Cloud Run service, from repo secrets:
+#        IG_ACCESS_TOKEN       - never-expiring System User access token
+#        IG_GCHAT_WEBHOOK_URL  - incoming webhook of the target Chat space
+#        POLL_TOKEN            - shared secret guarding the /poll endpoint
+#      plus IG_USERNAME (which account to watch) as a plain value below.
+#      The numeric IG account id is auto-discovered from the token at runtime.
+#   2. Creates/updates a Cloud Scheduler job that calls /poll every 5 minutes.
+#
+# Run it from the Actions tab after the service is deployed and the secrets exist.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Validate secrets
+        run: |
+          for v in IG_ACCESS_TOKEN IG_GCHAT_WEBHOOK_URL POLL_TOKEN; do
+            case "$v" in
+              IG_ACCESS_TOKEN)      val="${{ secrets.IG_ACCESS_TOKEN }}" ;;
+              IG_GCHAT_WEBHOOK_URL) val="${{ secrets.IG_GCHAT_WEBHOOK_URL }}" ;;
+              POLL_TOKEN)           val="${{ secrets.POLL_TOKEN }}" ;;
+            esac
+            if [ -z "$val" ]; then echo "::error::Repo secret $v is not set."; exit 1; fi
+          done
+
+      - name: Set env vars on Cloud Run
+        run: |
+          gcloud run services update ig-chat-notifier \
+            --region us-central1 \
+            --project shp-ai-bot-2026 \
+            --update-env-vars "IG_ACCESS_TOKEN=${{ secrets.IG_ACCESS_TOKEN }},IG_GCHAT_WEBHOOK_URL=${{ secrets.IG_GCHAT_WEBHOOK_URL }},POLL_TOKEN=${{ secrets.POLL_TOKEN }},IG_USERNAME=superhairpieces" \
+            --quiet
+
+      - name: Create Cloud Scheduler job (every 5 min)
+        run: |
+          SERVICE_URL=$(gcloud run services describe ig-chat-notifier \
+            --region us-central1 --project shp-ai-bot-2026 \
+            --format 'value(status.url)')
+          URI="$SERVICE_URL/poll?token=${{ secrets.POLL_TOKEN }}"
+          gcloud scheduler jobs update http ig-notifier-poll \
+            --location us-central1 --project shp-ai-bot-2026 \
+            --schedule "*/5 * * * *" --time-zone "America/Toronto" \
+            --uri "$URI" --http-method GET --quiet \
+          || gcloud scheduler jobs create http ig-notifier-poll \
+            --location us-central1 --project shp-ai-bot-2026 \
+            --schedule "*/5 * * * *" --time-zone "America/Toronto" \
+            --uri "$URI" --http-method GET --quiet
