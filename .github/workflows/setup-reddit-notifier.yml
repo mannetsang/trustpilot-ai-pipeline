@@ -1,0 +1,66 @@
+name: Setup Reddit notifier
+
+# One-time (re-runnable) setup for the Reddit -> Google Chat notifier:
+#   1. Pushes the required env vars onto the Cloud Run service:
+#        REDDIT_GCHAT_WEBHOOK_URL - repo secret: incoming webhook of the Chat space
+#        POLL_TOKEN               - repo secret: shared secret guarding /poll
+#        REDDIT_SUBREDDITS        - workflow input (default HairSystem)
+#        REDDIT_FEEDS             - workflow input (posts, or posts,comments)
+#   2. Creates/updates a Cloud Scheduler job that calls /poll every 5 minutes.
+#
+# Run it from the Actions tab after the service is deployed and the secrets exist.
+# Re-run it any time to change the subreddits or feeds being watched.
+
+on:
+  workflow_dispatch:
+    inputs:
+      subreddits:
+        description: 'Subreddits to watch (comma-separated, no r/ prefix)'
+        required: true
+        default: 'HairSystem'
+      feeds:
+        description: 'Feeds to watch: posts or posts,comments'
+        required: true
+        default: 'posts'
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Validate secrets
+        run: |
+          if [ -z "${{ secrets.REDDIT_GCHAT_WEBHOOK_URL }}" ]; then
+            echo "::error::Repo secret REDDIT_GCHAT_WEBHOOK_URL is not set."; exit 1
+          fi
+          if [ -z "${{ secrets.POLL_TOKEN }}" ]; then
+            echo "::error::Repo secret POLL_TOKEN is not set."; exit 1
+          fi
+
+      - name: Set env vars on Cloud Run
+        run: |
+          gcloud run services update reddit-chat-notifier \
+            --region us-central1 \
+            --project shp-ai-bot-2026 \
+            --update-env-vars "^@^REDDIT_GCHAT_WEBHOOK_URL=${{ secrets.REDDIT_GCHAT_WEBHOOK_URL }}@POLL_TOKEN=${{ secrets.POLL_TOKEN }}@REDDIT_SUBREDDITS=${{ inputs.subreddits }}@REDDIT_FEEDS=${{ inputs.feeds }}" \
+            --quiet
+
+      - name: Create Cloud Scheduler job (every 5 min)
+        run: |
+          SERVICE_URL=$(gcloud run services describe reddit-chat-notifier \
+            --region us-central1 --project shp-ai-bot-2026 \
+            --format 'value(status.url)')
+          URI="$SERVICE_URL/poll?token=${{ secrets.POLL_TOKEN }}"
+          gcloud scheduler jobs update http reddit-notifier-poll \
+            --location us-central1 --project shp-ai-bot-2026 \
+            --schedule "*/5 * * * *" --time-zone "America/Toronto" \
+            --uri "$URI" --http-method GET --quiet \
+          || gcloud scheduler jobs create http reddit-notifier-poll \
+            --location us-central1 --project shp-ai-bot-2026 \
+            --schedule "*/5 * * * *" --time-zone "America/Toronto" \
+            --uri "$URI" --http-method GET --quiet
