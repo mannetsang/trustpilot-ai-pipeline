@@ -50,17 +50,26 @@ jobs:
             --update-env-vars "^@^REDDIT_GCHAT_WEBHOOK_URL=${{ secrets.REDDIT_GCHAT_WEBHOOK_URL }}@POLL_TOKEN=${{ secrets.POLL_TOKEN }}@REDDIT_SUBREDDITS=${{ inputs.subreddits }}@REDDIT_FEEDS=${{ inputs.feeds }}" \
             --quiet
 
-      - name: Create Cloud Scheduler job (every 5 min)
+      # One scheduler job PER FEED at offset minutes: reddit throttles a second
+      # request seconds after the first from datacenter IPs, but tolerates one
+      # request every ~2+ minutes. Never fetch two feeds in one poll.
+      - name: Create Cloud Scheduler jobs (posts */5, comments offset +2)
         run: |
           SERVICE_URL=$(gcloud run services describe reddit-chat-notifier \
             --region us-central1 --project shp-ai-bot-2026 \
             --format 'value(status.url)')
-          URI="$SERVICE_URL/poll?token=${{ secrets.POLL_TOKEN }}"
-          gcloud scheduler jobs update http reddit-notifier-poll \
-            --location us-central1 --project shp-ai-bot-2026 \
-            --schedule "*/5 * * * *" --time-zone "America/Toronto" \
-            --uri "$URI" --http-method GET --quiet \
-          || gcloud scheduler jobs create http reddit-notifier-poll \
-            --location us-central1 --project shp-ai-bot-2026 \
-            --schedule "*/5 * * * *" --time-zone "America/Toronto" \
-            --uri "$URI" --http-method GET --quiet
+          BASE="$SERVICE_URL/poll?token=${{ secrets.POLL_TOKEN }}"
+          upsert() {
+            gcloud scheduler jobs update http "$1" \
+              --location us-central1 --project shp-ai-bot-2026 \
+              --schedule "$2" --time-zone "America/Toronto" \
+              --uri "$3" --http-method GET --quiet \
+            || gcloud scheduler jobs create http "$1" \
+              --location us-central1 --project shp-ai-bot-2026 \
+              --schedule "$2" --time-zone "America/Toronto" \
+              --uri "$3" --http-method GET --quiet
+          }
+          upsert reddit-notifier-poll "*/5 * * * *" "$BASE&feeds=posts"
+          case ",${{ inputs.feeds }}," in *,comments,*)
+            upsert reddit-notifier-poll-comments "2-59/5 * * * *" "$BASE&feeds=comments"
+          ;; esac

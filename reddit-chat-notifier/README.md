@@ -90,13 +90,18 @@ announced, oldest-first so cards arrive chronologically.
 
 ## Rate limits
 
-Reddit rate-limits RSS by IP and is strict about it (as low as ~1 request per
-~10 s bursts, and generic user agents get throttled much harder). One poll
-makes 1 request per (subreddit × feed kind), so the default — 1 subreddit,
-posts only, every 5 minutes — is far under the limit. If you watch many
-subreddits + comments, keep the schedule at 5 minutes or slower. A 429 simply
-skips that cycle; the next poll catches up (the feed holds the latest 25
-entries, so nothing is missed unless the subreddit gets >25 posts in 5 min).
+Reddit rate-limits RSS by IP and is **much stricter for datacenter IPs**
+(Cloud Run egress): in practice even the second request 3–13 s after the
+first gets a 429, while one request every ~2+ minutes never does. So each
+feed gets its **own Cloud Scheduler job at offset minutes** — `/poll` accepts
+a `?feeds=posts` / `?feeds=comments` override:
+
+- `reddit-notifier-poll` — `*/5 * * * *` → `&feeds=posts`
+- `reddit-notifier-poll-comments` — `2-59/5 * * * *` → `&feeds=comments`
+
+Never fetch two feeds in one poll from Cloud Run. A stray 429 simply skips
+that cycle; the next poll catches up (each feed holds the latest 25 entries,
+so nothing is missed unless a feed gets >25 new entries between polls).
 
 ## Troubleshooting
 

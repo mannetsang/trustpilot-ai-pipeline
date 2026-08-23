@@ -271,10 +271,20 @@ def poll():
     if not GCHAT_WEBHOOK_URL:
         return jsonify({"error": "REDDIT_GCHAT_WEBHOOK_URL is not set"}), 500
 
+    # Reddit throttles back-to-back requests from datacenter IPs hard, so the
+    # scheduler runs one job per feed kind (?feeds=posts / ?feeds=comments) at
+    # offset minutes instead of fetching both feeds in one poll.
+    kinds = FEED_KINDS
+    if request.args.get("feeds"):
+        kinds = [
+            k.strip().lower() for k in request.args["feeds"].split(",")
+            if k.strip().lower() in ("posts", "comments")
+        ] or FEED_KINDS
+
     results, errors = [], []
     first = True
     for sub in SUBREDDITS:
-        for kind in FEED_KINDS:
+        for kind in kinds:
             if not first:
                 time.sleep(3)  # courtesy gap between feeds; reddit 429s bursts
             first = False
