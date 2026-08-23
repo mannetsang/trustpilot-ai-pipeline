@@ -6,6 +6,12 @@
 - If you believe something is correct, say "correct."
 - If you believe something is wrong, say "wrong." Do not side with the user just to agree.
 
+## Git
+
+- Whenever you complete a piece of work (new feature, fix, config change), commit it — don't leave finished work uncommitted. Then push to GitHub.
+- If the push fails because this machine's credentials (`talenttsang`) lack write access to the repo (e.g. `mannetsang/trustpilot-ai-pipeline`), still commit locally and tell the user the push is pending.
+- Never commit secrets: tokens, webhook URLs, service-account keys, `.env` files. Config with secrets goes in env vars / repo secrets, not the repo.
+
 ---
 
 ## Company Background
