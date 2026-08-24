@@ -18,6 +18,16 @@ helperconnect/
 #   Eglinton Email list.csv               customer email addresses
 # ---------------------------------------------------------------------------
 /.claude/
+
+# Scaffolding written by `npx skills add` (Stripe docs skills). The skills
+# themselves live in .agents/; .kiro/ and .trae/ are symlink trees it makes
+# for editors we don't use. Re-creatable from skills-lock.json, so none of
+# it belongs in this repo.
+/.agents/
+/.kiro/
+/.trae/
+/skills-lock.json
+
 /.codex/
 /.mcp.json
 /.obsidian/
@@ -83,3 +93,7 @@ helperconnect/
 /weights-todo.json
 /固定式基站开发包文档/
 /灯条基站通讯定义(HTTP及MQTT)(公网)/
+
+# Migration/normalisation backups: the undo log stays on disk, not in history.
+/sku_mapping-owners-backup-*.json
+/owner-code-migration-backup-*.json
