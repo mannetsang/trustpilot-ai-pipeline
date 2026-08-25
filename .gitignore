@@ -97,3 +97,6 @@ helperconnect/
 # Migration/normalisation backups: the undo log stays on disk, not in history.
 /sku_mapping-owners-backup-*.json
 /owner-code-migration-backup-*.json
+
+# sv_inventory drop backup (2026-08-25).
+/sv_inventory-backup-*.json
