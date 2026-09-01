@@ -9,8 +9,13 @@ Usage:
     python env_to_secret_manager.py [--dry-run] [--project PROJECT] [--env PATH]
 """
 import argparse
+import shutil
 import subprocess
 import sys
+
+# On Windows the CLI is gcloud.cmd; subprocess without shell=True needs the
+# resolved path, so look it up once via PATHEXT-aware which().
+GCLOUD = shutil.which("gcloud") or "gcloud"
 
 # The .env defines BIGCOMMERCE_gmosz3ja_* twice with different values: an older
 # "AI Agent Test" app and a newer "Man POS machine Aug 30 2026" app. The newer
@@ -64,7 +69,7 @@ def parse_env(path):
 
 
 def gcloud(args, project, stdin=None):
-    cmd = ["gcloud"] + args + ["--project", project]
+    cmd = [GCLOUD] + args + ["--project", project]
     return subprocess.run(cmd, input=stdin, capture_output=True)
 
 
