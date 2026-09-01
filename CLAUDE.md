@@ -14,6 +14,20 @@
 
 ---
 
+## Local Environment
+
+Manne runs commands locally on **Windows** (`cmd.exe`), not a Unix shell. When
+handing over a command to run:
+
+- Keep it on **one line**. A trailing `\` is not a line continuation in CMD and
+  gets passed through as a literal argument. (CMD uses `^`, PowerShell uses a
+  backtick.)
+- Use `python`, not `python3`.
+- Prefer `gcloud`/`git` invocations over shell builtins, pipes, `export`, or
+  heredocs, none of which behave the same way.
+
+---
+
 ## Data & Credentials
 
 **GCP project:** `shp-ai-bot-2026`. All credentials live in **Secret Manager**;
