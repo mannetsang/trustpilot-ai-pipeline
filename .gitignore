@@ -1,5 +1,17 @@
 .env
+.env.*
+!.env.example
+!.env.*.example
 node_modules/
+
+# Build output and caches. Regenerable, and the reason this folder is 5 GB.
+.next/
+__pycache__/
+*.pyc
+dist/
+build/
+.venv/
+venv/
 
 # Independent project with its own private git repo — never tracked here.
 helperconnect/
