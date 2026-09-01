@@ -4,17 +4,10 @@
 BigCommerce has no aggregate "revenue by payment method" endpoint, so this
 walks the v2 Orders API for a date range and sums the orders itself.
 
-Credentials come from a .env file beside this script or at the repo root (or
-from real environment variables, which win). .env is gitignored — keep it that
-way, and never commit the token:
-
-    BC_STORE_HASH=abc123
-    BC_ACCESS_TOKEN=...               # store-level API account, scope: Orders read-only
-
-In a Claude Code cloud environment you can instead store the token as an API
-credential on the environment: set only BC_STORE_HASH, leave BC_ACCESS_TOKEN
-unset, and the agent proxy attaches the X-Auth-Token header for
-api.bigcommerce.com after the request leaves the sandbox.
+Credentials resolve through lib/secrets.py: GCP Secret Manager first, or a
+gitignored .env for local runs. The secrets are `bigcommerce-store-hash` and
+`bigcommerce-access-token` (env vars BC_STORE_HASH and BC_ACCESS_TOKEN), and
+the API account needs only the Orders scope, read-only.
 
 Usage:
 
@@ -38,6 +31,9 @@ import urllib.parse
 import urllib.request
 from collections import defaultdict
 from decimal import Decimal
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from lib.secrets import SecretNotFound, get_secret  # noqa: E402
 
 API_HOST = "https://api.bigcommerce.com"
 PAGE_SIZE = 250
@@ -63,28 +59,6 @@ STATUS_NAMES = {
 
 # Carts that never became orders, and orders that never took money.
 DEFAULT_EXCLUDED_STATUSES = (0, 5, 6)
-
-
-def load_dotenv():
-    """Read KEY=VALUE from .env next to this script, then the repo root.
-
-    Real environment variables win, so `BC_STORE_HASH=x python3 ...` still works.
-    """
-    here = os.path.dirname(os.path.abspath(__file__))
-    for path in (os.path.join(here, ".env"), os.path.join(os.path.dirname(here), ".env")):
-        if not os.path.isfile(path):
-            continue
-        with open(path, encoding="utf-8") as handle:
-            for raw in handle:
-                line = raw.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, _, value = line.partition("=")
-                key = key.strip()
-                if key.startswith("export "):
-                    key = key[len("export "):].strip()
-                value = value.strip().strip('"').strip("'")
-                os.environ.setdefault(key, value)
 
 
 class BigCommerceError(RuntimeError):
@@ -294,22 +268,12 @@ def main():
     else:
         parser.error("pass --year, or both --start and --end")
 
-    load_dotenv()
-    store_hash = os.environ.get("BC_STORE_HASH")
-    token = os.environ.get("BC_ACCESS_TOKEN")
-    if not store_hash:
-        parser.error(
-            "missing BC_STORE_HASH — set it in .env (repo root or bigcommerce-reports/), "
-            "export it, or add it to the cloud environment's variables"
-        )
-    if not token:
-        # A cloud-environment API credential attaches X-Auth-Token outside the VM,
-        # so the token is deliberately not readable from in here.
-        print(
-            "No BC_ACCESS_TOKEN set — sending unauthenticated and relying on an "
-            "environment API credential to attach the header.",
-            file=sys.stderr,
-        )
+    try:
+        store_hash = get_secret("bigcommerce-store-hash", env_var="BC_STORE_HASH")
+        token = get_secret("bigcommerce-access-token", env_var="BC_ACCESS_TOKEN")
+    except SecretNotFound as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
     excluded = () if args.include_all_statuses else DEFAULT_EXCLUDED_STATUSES
 

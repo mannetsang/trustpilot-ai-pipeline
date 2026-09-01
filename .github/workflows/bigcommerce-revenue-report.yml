@@ -23,10 +23,18 @@ jobs:
         with:
           python-version: '3.11'
 
+      # Credentials come from Secret Manager, so GCP_SA_KEY is the only
+      # secret this repo needs — the BigCommerce token never touches GitHub.
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Install dependencies
+        run: pip install --quiet google-cloud-secret-manager
+
       - name: Run the report
         env:
-          BC_STORE_HASH: ${{ secrets.BC_STORE_HASH }}
-          BC_ACCESS_TOKEN: ${{ secrets.BC_ACCESS_TOKEN }}
+          GCP_PROJECT: shp-ai-bot-2026
         run: |
           python3 bigcommerce-reports/revenue_by_payment_method.py \
             --year "${{ inputs.year }}" \
