@@ -33,8 +33,11 @@ from the environment need no third-party packages.
 
 | Secret | Used by |
 |---|---|
-| `bigcommerce-store-hash` | `bigcommerce-reports/revenue_by_payment_method.py` |
-| `bigcommerce-access-token` | same |
+| `BIGCOMMERCE_gmosz3ja_ACCESS_TOKEN` | `bigcommerce-reports/revenue_by_payment_method.py` |
+
+Only genuine secrets belong here. The BigCommerce store hash identifies the
+store in a URL path and is not sensitive, so it is set inline in the workflow
+rather than taking up a secret.
 
 ## One-time setup
 

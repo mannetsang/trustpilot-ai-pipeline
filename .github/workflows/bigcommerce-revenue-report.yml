@@ -35,9 +35,10 @@ jobs:
       - name: Run the report
         env:
           GCP_PROJECT: shp-ai-bot-2026
-          # Change these two if the secrets are named differently in Secret Manager.
-          BC_STORE_HASH_SECRET: bigcommerce-store-hash
-          BC_ACCESS_TOKEN_SECRET: bigcommerce-access-token
+          # The store hash identifies the store in the URL path and isn't
+          # sensitive, so it stays inline rather than occupying a secret.
+          BC_STORE_HASH: gmosz3ja
+          BC_ACCESS_TOKEN_SECRET: BIGCOMMERCE_gmosz3ja_ACCESS_TOKEN
         run: |
           python3 bigcommerce-reports/revenue_by_payment_method.py \
             --year "${{ inputs.year }}" \
