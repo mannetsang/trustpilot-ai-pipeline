@@ -11,6 +11,11 @@ way, and never commit the token:
     BC_STORE_HASH=abc123
     BC_ACCESS_TOKEN=...               # store-level API account, scope: Orders read-only
 
+In a Claude Code cloud environment you can instead store the token as an API
+credential on the environment: set only BC_STORE_HASH, leave BC_ACCESS_TOKEN
+unset, and the agent proxy attaches the X-Auth-Token header for
+api.bigcommerce.com after the request leaves the sandbox.
+
 Usage:
 
     python3 revenue_by_payment_method.py --year 2026
@@ -25,6 +30,7 @@ import argparse
 import csv
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -88,13 +94,10 @@ class BigCommerceError(RuntimeError):
 def request_json(path, params, store_hash, token):
     """GET a v2 endpoint, retrying on rate limit. Returns None on 204."""
     url = f"{API_HOST}/stores/{store_hash}{path}?{urllib.parse.urlencode(params)}"
-    req = urllib.request.Request(
-        url,
-        headers={
-            "X-Auth-Token": token,
-            "Accept": "application/json",
-        },
-    )
+    headers = {"Accept": "application/json"}
+    if token:
+        headers["X-Auth-Token"] = token
+    req = urllib.request.Request(url, headers=headers)
 
     for attempt in range(6):
         try:
@@ -113,7 +116,18 @@ def request_json(path, params, store_hash, token):
             if exc.code in (500, 502, 503, 504) and attempt < 5:
                 time.sleep(2 ** attempt)
                 continue
-            body = exc.read().decode("utf-8", "replace")[:500]
+            body = exc.read().decode("utf-8", "replace")
+            if "<html" in body[:200].lower():  # error pages from the edge, not the API
+                body = re.sub(r"<[^>]+>", " ", body)
+            body = " ".join(body.split())[:300]
+            if exc.code in (401, 403):
+                hint = (
+                    "check BC_ACCESS_TOKEN and that the API account has Orders read-only"
+                    if token
+                    else "no token was sent, so an environment API credential was expected "
+                    "to inject the X-Auth-Token header for api.bigcommerce.com"
+                )
+                raise BigCommerceError(f"HTTP {exc.code} on {path} — {hint}: {body}") from exc
             raise BigCommerceError(f"HTTP {exc.code} on {path}: {body}") from exc
         except urllib.error.URLError as exc:
             if attempt < 5:
@@ -283,11 +297,18 @@ def main():
     load_dotenv()
     store_hash = os.environ.get("BC_STORE_HASH")
     token = os.environ.get("BC_ACCESS_TOKEN")
-    if not store_hash or not token:
-        missing = [n for n in ("BC_STORE_HASH", "BC_ACCESS_TOKEN") if not os.environ.get(n)]
+    if not store_hash:
         parser.error(
-            f"missing {' and '.join(missing)} — set them in .env (repo root or "
-            "bigcommerce-reports/) or export them in your shell"
+            "missing BC_STORE_HASH — set it in .env (repo root or bigcommerce-reports/), "
+            "export it, or add it to the cloud environment's variables"
+        )
+    if not token:
+        # A cloud-environment API credential attaches X-Auth-Token outside the VM,
+        # so the token is deliberately not readable from in here.
+        print(
+            "No BC_ACCESS_TOKEN set — sending unauthenticated and relying on an "
+            "environment API credential to attach the header.",
+            file=sys.stderr,
         )
 
     excluded = () if args.include_all_statuses else DEFAULT_EXCLUDED_STATUSES

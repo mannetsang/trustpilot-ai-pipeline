@@ -20,6 +20,14 @@ BC_ACCESS_TOKEN=...
 The store hash is the `stores/<hash>` segment of the API path BigCommerce shows
 you when the account is created.
 
+**Running inside a Claude Code cloud session instead?** Store the token as an
+**API credential** on the cloud environment (host `api.bigcommerce.com`, custom
+header `X-Auth-Token` with an empty prefix) and put only `BC_STORE_HASH` in the
+environment's variables. Leave `BC_ACCESS_TOKEN` unset: the agent proxy attaches
+the header after the request leaves the sandbox, so the token is never readable
+from inside the session. The script detects the missing token and sends the
+request unauthenticated on purpose.
+
 ### Run
 
 ```bash
