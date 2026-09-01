@@ -1,0 +1,47 @@
+name: BigCommerce revenue by payment method
+
+on:
+  workflow_dispatch:
+    inputs:
+      year:
+        description: 'Calendar year to report on (UTC)'
+        required: false
+        default: '2026'
+      by_channel:
+        description: 'Break the table down by channel_id'
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run the report
+        env:
+          BC_STORE_HASH: ${{ secrets.BC_STORE_HASH }}
+          BC_ACCESS_TOKEN: ${{ secrets.BC_ACCESS_TOKEN }}
+        run: |
+          python3 bigcommerce-reports/revenue_by_payment_method.py \
+            --year "${{ inputs.year }}" \
+            ${{ inputs.by_channel && '--by-channel' || '' }} \
+            --csv "revenue-by-payment-method-${{ inputs.year }}.csv" \
+            | tee report.txt
+          {
+            echo '## Revenue by payment method — ${{ inputs.year }}'
+            echo '```'
+            cat report.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: revenue-by-payment-method-${{ inputs.year }}
+          path: revenue-by-payment-method-${{ inputs.year }}.csv
+          if-no-files-found: error
