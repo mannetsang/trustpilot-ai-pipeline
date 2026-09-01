@@ -29,6 +29,23 @@ jobs:
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
+      # A service account email is an identifier, not a secret. Printing it
+      # makes a 403 self-diagnosing: it names the principal that needs
+      # roles/secretmanager.secretAccessor on the secret below.
+      - name: Show authenticated identity
+        run: |
+          python3 - <<'EOF'
+          import json, os
+          path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+          try:
+              with open(path) as fh:
+                  info = json.load(fh)
+              print("Authenticated as:", info.get("client_email") or info.get("service_account_impersonation_url") or "unknown")
+              print("Project:", info.get("project_id", "unknown"))
+          except Exception as exc:
+              print("Could not determine identity:", exc)
+          EOF
+
       - name: Install dependencies
         run: pip install --quiet google-cloud-secret-manager
 
