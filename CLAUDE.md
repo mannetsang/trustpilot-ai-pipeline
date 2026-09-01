@@ -14,6 +14,67 @@
 
 ---
 
+## Local Environment
+
+Manne runs commands locally on **Windows** (`cmd.exe`), not a Unix shell. When
+handing over a command to run:
+
+- Keep it on **one line**. A trailing `\` is not a line continuation in CMD and
+  gets passed through as a literal argument. (CMD uses `^`, PowerShell uses a
+  backtick.)
+- Use `python`, not `python3`.
+- Prefer `gcloud`/`git` invocations over shell builtins, pipes, `export`, or
+  heredocs, none of which behave the same way.
+
+---
+
+## Data & Credentials
+
+**GCP project:** `shp-ai-bot-2026`. All credentials live in **Secret Manager**;
+nothing sensitive goes in the repo, in a GitHub Actions *variable*, or in a
+Claude cloud environment's *environment variables* box.
+
+Scripts resolve credentials through `lib/secrets.py`: a named environment
+variable first (reading a gitignored `.env`, for local runs), then Secret
+Manager over Application Default Credentials.
+
+```python
+from lib.secrets import get_secret
+token = get_secret("BIGCOMMERCE_gmosz3ja_ACCESS_TOKEN", env_var="BC_ACCESS_TOKEN")
+```
+
+Secret Manager holds the GCP client libraries' dependencies awkwardly in this
+image - the system `cryptography` package is broken, so use a venv. See
+`docs/cloud-session-setup.md` for a setup script that prepares one, and
+`docs/credentials.md` for naming, IAM grants and rotation.
+
+### BigCommerce stores
+
+Each storefront is a separate BigCommerce store with its own hash, so a report
+must be run once per store and the results combined. Revenue is **never** summed
+across currencies.
+
+| Store hash | Storefront | Currency |
+|---|---|---|
+| `gmosz3ja` | superhairpieces.ca | CAD |
+| _(unknown)_ | superhairpieces.com | USD |
+| _(unknown)_ | .nl / .fr / .es / .de | EUR |
+
+Secrets follow `BIGCOMMERCE_<store_hash>_<CREDENTIAL>`, e.g.
+`BIGCOMMERCE_gmosz3ja_ACCESS_TOKEN`. The store hash itself is not sensitive.
+
+### Known data-quality caveats
+
+- `payment_method` on orders contains free text in places (service-request
+  numbers, contract numbers), and case-variant duplicates such as `E-Transfer`
+  vs `e-Transfer`. Normalize before trusting it for aggregates.
+- Card revenue is split across `Credit Card Including Debit VISA`,
+  `Credit Card` and `Authorize.Net (Google Pay)`.
+- Order statuses Incomplete (0), Cancelled (5) and Declined (6) are excluded
+  from revenue by default.
+
+---
+
 ## Company Background
 
 You are the head of digital transformation for:

@@ -100,3 +100,7 @@ helperconnect/
 
 # sv_inventory drop backup (2026-08-25).
 /sv_inventory-backup-*.json
+
+# Python bytecode
+__pycache__/
+*.pyc
