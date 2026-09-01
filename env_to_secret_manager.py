@@ -17,18 +17,9 @@ import sys
 # resolved path, so look it up once via PATHEXT-aware which().
 GCLOUD = shutil.which("gcloud") or "gcloud"
 
-# The .env defines BIGCOMMERCE_gmosz3ja_* twice with different values: an older
-# "AI Agent Test" app and a newer "Man POS machine Aug 30 2026" app. The newer
-# (last) one keeps the plain secret name; the older set is preserved under a
-# disambiguated name instead of being silently dropped.
-RENAME_EARLIER = {
-    "BIGCOMMERCE_gmosz3ja_ACCESS_TOKEN": "BIGCOMMERCE_gmosz3ja_AI_AGENT_TEST_ACCESS_TOKEN",
-    "BIGCOMMERCE_gmosz3ja_CLIENT_NAME": "BIGCOMMERCE_gmosz3ja_AI_AGENT_TEST_CLIENT_NAME",
-    "BIGCOMMERCE_gmosz3ja_CLIENT_ID": "BIGCOMMERCE_gmosz3ja_AI_AGENT_TEST_CLIENT_ID",
-    "BIGCOMMERCE_gmosz3ja_CLIENT_SECRET": "BIGCOMMERCE_gmosz3ja_AI_AGENT_TEST_CLIENT_SECRET",
-    "BIGCOMMERCE_gmosz3ja_API_NAME": "BIGCOMMERCE_gmosz3ja_AI_AGENT_TEST_API_NAME",
-    "BIGCOMMERCE_gmosz3ja_API_PATH": "BIGCOMMERCE_gmosz3ja_AI_AGENT_TEST_API_PATH",
-}
+# A key defined more than once keeps its plain name for the LAST definition,
+# matching python-dotenv (the loader bc-seo-audit uses). Earlier definitions
+# are kept under a suffixed name rather than silently dropped.
 
 
 def unquote(v):
@@ -55,12 +46,8 @@ def parse_env(path):
 
     out, seen = [], set()
     for i, (k, v) in enumerate(raw):
-        if i == last_index[k]:
-            name = k                       # last occurrence wins the plain name
-        elif k in RENAME_EARLIER:
-            name = RENAME_EARLIER[k]
-        else:
-            name = f"{k}__PREV{i}"
+        # last occurrence wins the plain name; earlier ones get a suffix
+        name = k if i == last_index[k] else f"{k}__PREV{i}"
         if name in seen:
             continue
         seen.add(name)
