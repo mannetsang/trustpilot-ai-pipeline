@@ -269,8 +269,16 @@ def main():
         parser.error("pass --year, or both --start and --end")
 
     try:
-        store_hash = get_secret("bigcommerce-store-hash", env_var="BC_STORE_HASH")
-        token = get_secret("bigcommerce-access-token", env_var="BC_ACCESS_TOKEN")
+        # Secret ids are overridable so the code doesn't have to match whatever
+        # naming convention the secrets were created under.
+        store_hash = get_secret(
+            os.environ.get("BC_STORE_HASH_SECRET", "bigcommerce-store-hash"),
+            env_var="BC_STORE_HASH",
+        )
+        token = get_secret(
+            os.environ.get("BC_ACCESS_TOKEN_SECRET", "bigcommerce-access-token"),
+            env_var="BC_ACCESS_TOKEN",
+        )
     except SecretNotFound as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
