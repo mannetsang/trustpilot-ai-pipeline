@@ -1,4 +1,6 @@
-# Superhairpieces – Agent Instructions & Company Background
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Agent Behavior
 
@@ -11,8 +13,7 @@
 - Whenever you complete a piece of work (new feature, fix, config change), commit it — don't leave finished work uncommitted. Then push to GitHub.
 - If the push fails because this machine's credentials (`talenttsang`) lack write access to the repo (e.g. `mannetsang/trustpilot-ai-pipeline`), still commit locally and tell the user the push is pending.
 - Never commit secrets: tokens, webhook URLs, service-account keys, `.env` files. Config with secrets goes in env vars / repo secrets, not the repo.
-
----
+- The root `.gitignore` lists ~60 unrelated folders and files by name on purpose: Manne's Claude Projects folder is this repo's working directory and holds other projects, exports and secrets alongside it. When a new untracked path shows up in `git status` that is not ours, add it to that list explicitly rather than with a blanket rule.
 
 ## Local Environment
 
@@ -28,6 +29,154 @@ handing over a command to run:
 
 ---
 
+## What This Repo Is
+
+A monorepo of small, independent automations for Superhairpieces, all on GCP
+project **`shp-ai-bot-2026`**, region **`us-central1`**, deployed by GitHub
+Actions. Each top-level folder is its own deployable or script with its own
+`requirements.txt`; there is no shared build, no package manager at the root,
+**no test suite and no linter**. Do not go looking for them.
+
+| Folder | What it is | Runs as |
+|---|---|---|
+| `trustpilot-pipeline/src/cloud_run/` | Trustpilot review pipeline + dashboard API + weekly website-feedback digest | Cloud Run service `trustpilot-webhook` |
+| `reddit-chat-notifier/src/cloud_run/` | Subreddit RSS → Google Chat cards | Cloud Run service `reddit-chat-notifier` |
+| `bigcommerce-reports/` | Revenue-by-payment-method report (stdlib only) | Manual GitHub Actions workflow or local |
+| `lib/secrets.py` | Shared credential resolution (env/.env → Secret Manager) | Imported by scripts |
+| `trustpilot-pipeline/src/apps_script/`, `trustpilot-pipeline/src/python/` | Original Apps Script / Vertex bulk-CSV version of the pipeline, plus one-off helpers | Legacy, not deployed by CI |
+| `docs/` | `credentials.md` (Secret Manager naming, IAM, rotation) and `cloud-session-setup.md` (venv/gcloud setup script for Claude cloud sessions) | Reference |
+
+`.github/workflows/` also deploys and configures an **IG notifier**
+(`ig-chat-notifier/`), but that source is gitignored and lives outside this
+repo. Don't try to edit it here.
+
+### Deployment model (same for every Cloud Run service)
+
+1. **Deploy workflow** runs on push to `main` when the service's
+   `src/cloud_run/**` path changes (or manually). It does
+   `gcloud run deploy <service> --source ./<folder>/src/cloud_run`, so the
+   Dockerfile in that folder is the build. Only `main.py` and
+   `requirements.txt` are copied into the image; anything the service needs
+   must be in `main.py` or a dependency.
+2. **Setup workflow** (`setup-*.yml`, `workflow_dispatch` only, re-runnable)
+   pushes env vars onto the service from **GitHub repo secrets** and creates or
+   updates the **Cloud Scheduler** jobs that drive it. Runtime config is
+   therefore env vars on the Cloud Run service, not files in the repo. To add a
+   new secret-bearing setting: add the repo secret, add it to the setup
+   workflow's `--update-env-vars`, read it with `os.environ` in `main.py`.
+3. `GCP_SA_KEY` is the one GitHub secret that authenticates all workflows.
+   Scheduler jobs run on `America/Toronto` time.
+
+Merging to `main` deploys. Push to a feature branch first if the change
+shouldn't go live immediately.
+
+### trustpilot-pipeline Cloud Run service (`main.py`, one file, ~1250 lines)
+
+Flask + gunicorn. Four env vars are read at import time and the module
+fails to load without them: `GCHAT_WEBHOOK_URL`, `GOOGLE_SHEET_ID`,
+`TP_API_KEY`, `TP_SECRET`. Optional: `EU_GCHAT_WEBHOOK_URL`,
+`NA_GCHAT_WEBHOOK_URL`, `REPLY_SENDER_EMAIL`, `REPLY_FROM_NAME`,
+`RUNTIME_SA_EMAIL`. Google APIs (Sheets, Vertex AI, Gmail domain-wide
+delegation) authenticate via the Cloud Run service identity through
+`google.auth.default()`; only Trustpilot uses an explicit key/secret
+(client-credentials token cached in-process by `get_tp_token`).
+
+Route groups:
+
+- **Ingest:** `POST /webhook` receives Trustpilot `review.created/updated/deleted`
+  events, returns 200 immediately and processes in a background thread.
+  `GET|POST /monitor` (Cloud Scheduler, every 30 min) fetches the 50 newest
+  reviews and backfills any whose ID is missing from the sheet, so the
+  webhook and the monitor are two paths into the same `process_review`-style
+  flow. Keep them in sync when changing what a review produces.
+- **Per-review flow:** fetch email + real review date from the Trustpilot
+  private API → Gemini (`gemini-2.5-pro` on Vertex, `us-central1`) for a
+  reply suggestion, a business-improvement suggestion, and (1–3 stars only) a
+  review type → Google Chat card → append a row to the reviews Google Sheet →
+  for 1–3 stars, upsert a TeamDesk service request. The sheet's column layout
+  (A date … J Trustpilot review ID) is hardcoded in `write_to_sheet` and read
+  back by `/monitor` for dedup, so column changes touch both.
+- **Dashboard API** (`/api/*`, CORS open, called from an external dashboard):
+  business-unit stats, reviews, business users, reply to a review as the
+  configured business user, send a website-feedback reply via Gmail DWD,
+  Gemini insights summary (24 h cache), and two backfill endpoints that
+  re-classify existing sheet rows. Read-mostly results are cached in
+  module-level dicts with TTLs.
+- **Weekly website-feedback digest:** `GET /weekly-feedback?region=eu|na`
+  (and legacy `/weekly-eu-feedback`) reads the website-feedback sheet, filters
+  by storefront domain and the last N days, translates EU notes to English,
+  and posts a card to that region's Chat space. `FEEDBACK_REGIONS` is the
+  single place regions, domains and webhook env vars are defined. Always
+  preview with `?dry_run=1` before letting anything post.
+
+Business-unit ID, the sheet IDs, the reply author's business-user ID and the
+Vertex model are constants at the top of the file.
+
+### reddit-chat-notifier
+
+Reddit has no webhooks, so `/poll` fetches public RSS for each subreddit,
+keeps a per-feed watermark (`reddit_notifier/<sub>__<kind>` in Firestore
+Native mode) and posts a Chat card per new entry, oldest first. The first
+poll only seeds the watermark. **Reddit rate-limits datacenter IPs hard**, so
+there is one Cloud Scheduler job per feed at offset minutes and `/poll`
+takes `?feeds=posts|comments`; never fetch two feeds in one request. Details
+and env vars are in its README.
+
+### bigcommerce-reports
+
+`revenue_by_payment_method.py` pages the BigCommerce v2 Orders API and sums
+orders itself (there is no aggregate endpoint). Stdlib only. Credentials
+come through `lib/secrets.py`, with `BC_STORE_HASH`/`BC_ACCESS_TOKEN` as the
+local env-var names and `BC_ACCESS_TOKEN_SECRET` overriding the Secret Manager
+id. The README documents the flags and how gross/refunded/net are built.
+
+---
+
+## Commands
+
+There is nothing to build. Syntax-check before pushing a Cloud Run change,
+since the only "test" is the deploy:
+
+```bash
+python3 -m py_compile trustpilot-pipeline/src/cloud_run/main.py reddit-chat-notifier/src/cloud_run/main.py
+```
+
+Run a Cloud Run service locally (needs the env vars above and ADC for Google
+APIs):
+
+```bash
+pip install -r trustpilot-pipeline/src/cloud_run/requirements.txt
+GCHAT_WEBHOOK_URL=... GOOGLE_SHEET_ID=... TP_API_KEY=... TP_SECRET=... python3 trustpilot-pipeline/src/cloud_run/main.py
+curl "http://localhost:8080/weekly-feedback?region=eu&dry_run=1"
+```
+
+BigCommerce report (reads `.env` at the repo root locally, Secret Manager otherwise):
+
+```bash
+python3 bigcommerce-reports/revenue_by_payment_method.py --year 2026
+python3 bigcommerce-reports/revenue_by_payment_method.py --start 2026-01-01 --end 2026-07-01 --csv out.csv --by-channel
+```
+
+Deploy / configure: push to `main`, or trigger from the Actions tab —
+**Deploy to Cloud Run** (Trustpilot), **Deploy Reddit notifier to Cloud
+Run**, **Setup EU weekly feedback summary**, **Setup Reddit notifier**
+(inputs: subreddits, feeds), **BigCommerce revenue by payment method**
+(inputs: year, by_channel; uploads the CSV as an artifact).
+
+Manual Cloud Run checks against production:
+
+```bash
+gcloud run services describe trustpilot-webhook --region us-central1 --project shp-ai-bot-2026 --format 'value(status.url)'
+gcloud run services logs read trustpilot-webhook --region us-central1 --project shp-ai-bot-2026 --limit 100
+```
+
+In a Claude cloud session the system `cryptography` package is broken, which
+breaks every `google-cloud-*` import. Use the venv from
+`docs/cloud-session-setup.md` (`/opt/gcp-venv/bin/python`) for anything that
+touches Secret Manager.
+
+---
+
 ## Data & Credentials
 
 **GCP project:** `shp-ai-bot-2026`. All credentials live in **Secret Manager**;
@@ -36,17 +185,16 @@ Claude cloud environment's *environment variables* box.
 
 Scripts resolve credentials through `lib/secrets.py`: a named environment
 variable first (reading a gitignored `.env`, for local runs), then Secret
-Manager over Application Default Credentials.
+Manager over Application Default Credentials. The Secret Manager client is
+imported lazily, so env-only runs need no third-party packages.
 
 ```python
 from lib.secrets import get_secret
 token = get_secret("BIGCOMMERCE_gmosz3ja_ACCESS_TOKEN", env_var="BC_ACCESS_TOKEN")
 ```
 
-Secret Manager holds the GCP client libraries' dependencies awkwardly in this
-image - the system `cryptography` package is broken, so use a venv. See
-`docs/cloud-session-setup.md` for a setup script that prepares one, and
-`docs/credentials.md` for naming, IAM grants and rotation.
+See `docs/credentials.md` for adding, granting (per-secret
+`secretmanager.secretAccessor`, never project-wide) and rotating secrets.
 
 ### BigCommerce stores
 
