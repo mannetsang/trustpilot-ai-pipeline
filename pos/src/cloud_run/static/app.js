@@ -150,10 +150,20 @@
     if (!state.products.length) { $('grid').innerHTML = '<div class="empty">Nothing matches.</div>'; return; }
     $('grid').innerHTML = state.products.map((p) => `
       <button class="card" data-id="${esc(p.id)}">
+        ${thumb(p, 'photo')}
         <div class="name">${esc(p.name)}</div>
         <div class="meta"><span class="tag">${esc(p.category)}</span>${p.isSet ? '<span class="tag">set</span>' : ''}${p.isClearance ? '<span class="tag warn">clearance</span>' : ''}</div>
         <div class="price money">${money(p.price)}</div>
       </button>`).join('');
+  };
+
+  // Product photo, or a neutral placeholder with the first letters of the name.
+  // A photo that fails to load falls back to the placeholder (onerror).
+  const thumb = (p, cls) => {
+    const ph = `<div class="${cls} ph" aria-hidden="true">${esc(p.name.replace(/^[A-Za-z]+_/, '').slice(0, 2).toUpperCase())}</div>`;
+    if (!p.image) return ph;
+    return `<img class="${cls}" src="${esc(p.image)}" alt="" loading="lazy" referrerpolicy="no-referrer"
+      onerror="this.outerHTML=${esc(JSON.stringify(ph))}">`;
   };
 
   $('catChips').addEventListener('click', (e) => {
@@ -224,7 +234,7 @@
     $('cartCount').textContent = `${count} item${count === 1 ? '' : 's'}`;
     $('cartLines').innerHTML = state.cart.length ? state.cart.map((l) => `
       <div class="line" data-id="${esc(l.product.id)}">
-        <div><div class="n">${esc(l.product.name)}</div><div class="s">${esc(l.product.category)} · ${money(l.product.price)} each</div></div>
+        <div class="line-main">${thumb(l.product, 'mini')}<div><div class="n">${esc(l.product.name)}</div><div class="s">${esc(l.product.category)} · ${money(l.product.price)} each</div></div></div>
         <div class="amt money">${money(Number(l.product.price) * l.qty)}</div>
         <div class="qty">
           <button data-step="-1" aria-label="Less">−</button><span>${l.qty}</span><button data-step="1" aria-label="More">+</button>

@@ -372,7 +372,12 @@ def admin_page():
 # Products
 # ---------------------------------------------------------------------------
 
-PRODUCT_COLS = "p.id, p.sku, p.name, p.category, p.price, p.is_set, p.is_clearance, p.show_qty"
+# Product photos come from the SkuVault-synced `products` table (pictures[]),
+# matched on SKU. A scalar subquery keeps pos_products free of copied URLs and
+# picks up new photos as soon as that table syncs.
+IMAGE_SQL = ("(select pr.pictures[1] from products pr where pr.sku = p.sku"
+             " and cardinality(pr.pictures) > 0 and pr.pictures[1] <> '' limit 1) as image_url")
+PRODUCT_COLS = f"p.id, p.sku, p.name, p.category, p.price, p.is_set, p.is_clearance, p.show_qty, {IMAGE_SQL}"
 
 
 @app.get("/api/products")
@@ -423,6 +428,7 @@ def serialise_product(r):
     return {
         "id": str(r["id"]), "sku": r["sku"], "name": r["name"], "category": r["category"],
         "price": str(r["price"]), "isSet": r["is_set"], "isClearance": r["is_clearance"], "showQty": r["show_qty"],
+        "image": r.get("image_url"),
     }
 
 

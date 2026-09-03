@@ -39,9 +39,12 @@ input { font: inherit; color: inherit; }
 .chips { display: flex; gap: 8px; flex-wrap: wrap; }
 .chip { padding: 8px 14px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line); font-size: 13px; font-weight: 600; }
 .chip.on { background: var(--ink); color: #fff; border-color: var(--ink); }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; text-align: left; display: flex; flex-direction: column; gap: 6px; min-height: 108px; transition: transform .08s; }
 .card:active { transform: scale(.98); }
+.card .photo { width: 100%; aspect-ratio: 4 / 3; object-fit: contain; border-radius: 8px; background: #fff; border: 1px solid var(--line); display: block; }
+.card .photo.ph, .line .mini.ph { display: grid; place-items: center; background: var(--chip); color: var(--muted); font-weight: 800; letter-spacing: .04em; border: 0; }
+.card .photo.ph { font-size: 22px; }
 .card .name { font-weight: 600; font-size: 14px; line-height: 1.3; overflow-wrap: anywhere; }
 .card .meta { color: var(--muted); font-size: 12px; display: flex; gap: 6px; align-items: center; }
 .card .price { margin-top: auto; font-weight: 700; font-size: 17px; }
@@ -56,6 +59,8 @@ input { font: inherit; color: inherit; }
 .cart-clear { color: var(--muted); font-size: 13px; font-weight: 600; }
 .lines { flex: 1; overflow: auto; padding: 0 10px; }
 .line { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding: 12px 8px; border-bottom: 1px solid var(--line); }
+.line-main { display: flex; gap: 10px; align-items: flex-start; min-width: 0; }
+.line .mini { width: 44px; height: 44px; flex: 0 0 44px; object-fit: contain; border-radius: 6px; border: 1px solid var(--line); background: #fff; font-size: 12px; }
 .line .n { font-weight: 600; font-size: 14px; overflow-wrap: anywhere; }
 .line .s { color: var(--muted); font-size: 12px; }
 .line .amt { font-weight: 700; text-align: right; align-self: start; }
