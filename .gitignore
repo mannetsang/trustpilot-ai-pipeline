@@ -17,7 +17,11 @@ helperconnect/
 #   Cybersource ... (filled)...json       filled credentials
 #   Eglinton Email list.csv               customer email addresses
 # ---------------------------------------------------------------------------
-/.claude/
+# Claude Code settings: only the shared hook config is tracked. Everything
+# else in here (settings.local.json, caches) stays on the machine.
+/.claude/*
+!/.claude/settings.json
+!/.claude/hooks/
 
 # Scaffolding written by `npx skills add` (Stripe docs skills). The skills
 # themselves live in .agents/; .kiro/ and .trae/ are symlink trees it makes
