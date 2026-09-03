@@ -88,6 +88,10 @@ class ApiBackend:
             raise RuntimeError(f"Supabase API returned {exc.code}: {detail}") from None
         return json.loads(raw) if raw else []
 
+    def run(self, sql):
+        """Execute SQL; returns the last statement's rows as a list of dicts."""
+        return self._run(sql)
+
     def applied(self):
         rows = self._run("select name from pos_schema_migrations order by name;")
         return [row["name"] for row in rows]
@@ -109,6 +113,21 @@ class PsycopgBackend:
         with self.conn.cursor() as cur:
             cur.execute(BOOTSTRAP_SQL)
         self.conn.commit()
+
+    def run(self, sql):
+        """Execute SQL in one transaction; returns the last result set as dicts."""
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(sql)
+                rows = []
+                if cur.description:
+                    cols = [d[0] for d in cur.description]
+                    rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+            self.conn.commit()
+            return rows
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def applied(self):
         with self.conn.cursor() as cur:
@@ -165,6 +184,25 @@ class PsqlBackend:
         if result.returncode != 0:
             raise RuntimeError(result.stderr.strip() or f"psql exited {result.returncode}")
         return result.stdout
+
+    def run(self, sql):
+        """Execute SQL in one transaction; returns the last result set as dicts."""
+        import csv
+        import io
+
+        out = subprocess.run(
+            self.args + ["--csv", "-c", f"begin;\n{sql}\ncommit;"],
+            env=self.env,
+            text=True,
+            capture_output=True,
+        )
+        if out.returncode != 0:
+            raise RuntimeError(out.stderr.strip() or f"psql exited {out.returncode}")
+        # -c prints only the last statement's result, which is what we want.
+        text = out.stdout.strip()
+        if not text or text in ("BEGIN", "COMMIT"):
+            return []
+        return list(csv.DictReader(io.StringIO(text)))
 
     def applied(self):
         out = self._run("select name from pos_schema_migrations order by name;", capture=True)

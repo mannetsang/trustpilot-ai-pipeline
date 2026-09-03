@@ -4,9 +4,8 @@ A point-of-sale for the salons, starting with cash transactions. The screen
 design it follows is `design/superhairpieces-pos-reference.html` (a self-contained
 prototype; open it through `python -m http.server` as its banner explains).
 
-Customers are not modelled on purpose. Products are captured as text per line
-until the product list is decided; a products table can be referenced later
-without touching existing rows.
+Customers are not modelled on purpose. The first use is the cash till at the
+ESI Montreal trade show, selling the products on the show-prep Google Sheet.
 
 ## Data
 
@@ -16,13 +15,17 @@ are applied once each, in name order, by `apply_migration.py`.
 | Table / view | What it holds |
 |---|---|
 | `pos_transactions` | One row per sale: where, who rang it, currency, totals, cash received and change, refund details. |
-| `pos_transaction_items` | One row per line sold: SKU, name, spec text, grade, quantity, unit price, line total. |
+| `pos_transaction_items` | One row per line sold: SKU, name, quantity, unit price, line total, and the product and barcode it came from. |
+| `pos_products` | The product list, one row per SKU: name, category, tax-inclusive price, cost, quantity brought to the show, flags, and the raw sheet row. |
+| `pos_product_barcodes` | Scannable codes (UPC, EAN, ASIN) pointing at a product. Several codes may point at one product. |
 | `pos_daily_cash_summary` | View. Per till, per Toronto calendar day, per currency: sales, cash in, change out, cash refunds, net drawer. |
 | `pos_schema_migrations` | Which migration files have been applied. |
 
 Rules the database enforces, so no register build can disagree:
 
-- `grand_total = subtotal - discount_total + tax_total`.
+- `grand_total = subtotal - discount_total + tax_total`, or, when
+  `prices_include_tax` is set, `grand_total = subtotal - discount_total` with
+  `tax_total` being the amount backed out for the receipt.
 - An inspection order records `deposit_total` and `amount_paid` equals it;
   a normal sale has no deposit and `amount_paid` equals `grand_total`.
 - Cash sales must carry `cash_received`, and `change_given` must equal
@@ -60,6 +63,28 @@ routes in and the script picks the first that has credentials:
 The API route runs the SQL through the Supabase Management API against project
 `ngwlwntvoteuafeplobx` (the project reference is an identifier, not a secret;
 override it with the `SUPABASE_PROJECT_REF` environment variable).
+
+## Importing the product list
+
+Products come from the tab `所有拿货及定价` of the show-prep sheet, which is
+shared with the sessions' service account. One line, Windows cmd:
+
+```
+python pos\import_products.py
+```
+
+`--dry-run` reads and reports without writing. `--deactivate-missing` also
+marks SKUs that are no longer on the sheet as not sellable. Re-running is
+safe: rows are matched on SKU. What the importer does with the sheet's quirks
+is documented at the top of the script: the `ESI Montreal -` prefix is dropped
+from names, a SKU on several rows becomes one product with several barcodes,
+quantities such as `2+1*` become 3 with the raw text kept, and a blank
+Montreal price makes the product inactive.
+
+Prices on the sheet are whole dollars with tax included (the sheet's website
+price is exactly the show price divided by 1.13), so `price_includes_tax` is
+true on every imported product and a sale of them sets `prices_include_tax`
+on the transaction.
 
 ## Adding a migration
 
