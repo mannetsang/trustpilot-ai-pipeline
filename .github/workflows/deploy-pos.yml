@@ -1,0 +1,27 @@
+name: Deploy POS to Cloud Run
+
+# Mirrors the other deploy workflows. Needs the GCP_SA_KEY repository secret,
+# which is currently empty in this repo, so until it is set the register is
+# deployed from a Claude session or a workstation with pos/deploy.sh.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pos/src/cloud_run/**'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to Cloud Run
+        run: bash pos/deploy.sh

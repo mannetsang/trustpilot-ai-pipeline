@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="icon" href="data:,">
+<title>Superhairpieces POS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+
+<div class="lock" id="lock">
+  <form class="box" id="lockForm">
+    <h1>Superhairpieces POS</h1>
+    <p id="lockHint" style="margin:0;color:#5f666d">Enter your name and the till code to open the register.</p>
+    <input id="lockStaff" placeholder="Your name" autocomplete="off" autocapitalize="words" required>
+    <input id="lockCode" type="password" inputmode="numeric" placeholder="Till code" autocomplete="off" required>
+    <div class="err" id="lockErr"></div>
+    <button class="btn primary" type="submit" id="lockBtn">Open register</button>
+  </form>
+</div>
+
+<div class="app" id="app" hidden>
+  <aside class="rail">
+    <div class="brand">SHP</div>
+    <button class="nav-btn on" data-view="sell" id="navSell">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h2l.4 2M7 13h10l3-8H5.4"/><circle cx="9" cy="19" r="1.6"/><circle cx="17" cy="19" r="1.6"/></svg>
+      Sell
+    </button>
+    <button class="nav-btn" data-view="orders" id="navOrders">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg>
+      Sales
+    </button>
+  </aside>
+
+  <header class="topbar">
+    <div class="title" id="pageTitle">Sell</div>
+    <div class="top-right">
+      <span class="pill" id="connPill"><span class="dot"></span><span id="connText">Online</span></span>
+      <span class="pill" id="locPill"></span>
+      <button class="pill" id="userBtn" title="Switch user"><span class="av" id="userAv">?</span><span id="userName"></span></button>
+      <button class="pill" id="lockOut" title="Lock the till">Lock</button>
+    </div>
+  </header>
+
+  <!-- SELL -->
+  <section class="view on" id="view-sell">
+    <div class="catalog">
+      <div class="search-row">
+        <div class="search">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="searchInput" type="text" inputmode="search" placeholder="Search name or SKU, or scan a barcode" autocomplete="off" aria-label="Search the catalogue">
+        </div>
+      </div>
+      <div class="chips" id="catChips" role="tablist"></div>
+      <div class="grid" id="grid"></div>
+    </div>
+    <aside class="cart">
+      <div class="cart-head">
+        <h2>Current sale</h2>
+        <span class="sub" id="cartCount">0 items</span>
+        <button class="cart-clear" id="clearBtn">Clear</button>
+      </div>
+      <div class="lines" id="cartLines"></div>
+      <div class="tools">
+        <label for="discountInput">Discount (whole sale)</label>
+        <input id="discountInput" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00">
+      </div>
+      <div class="totals" id="cartTotals"></div>
+      <div class="cta">
+        <button class="btn primary" id="chargeBtn" disabled>Charge</button>
+      </div>
+    </aside>
+  </section>
+
+  <!-- PAY -->
+  <section class="view" id="view-pay">
+    <div class="pay-main">
+      <button class="back" id="payBack">‹ Back to sale</button>
+      <div class="amount">
+        <div class="lbl">Total due · cash</div>
+        <div class="val money" id="payAmount"></div>
+      </div>
+      <div class="cash">
+        <div class="cash-display">
+          <div class="lbl">Cash received</div>
+          <div class="val money" id="cashVal"></div>
+        </div>
+        <div class="quick" id="cashQuick"></div>
+        <div class="keys" id="cashKeys"></div>
+        <button class="btn primary" id="cashTender" disabled>Tender cash</button>
+        <div class="err" id="payErr"></div>
+      </div>
+    </div>
+    <aside class="pay-side">
+      <h3>Sale summary</h3>
+      <div id="payLines"></div>
+      <div class="totals" id="payTotals" style="padding:10px 0 0"></div>
+    </aside>
+  </section>
+
+  <!-- DONE -->
+  <section class="view" id="view-done">
+    <div class="done">
+      <div class="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5L20 7"/></svg></div>
+      <div class="kicker" id="doneKicker"></div>
+      <div class="big money" id="doneAmount"></div>
+      <div class="meta" id="doneMeta"></div>
+      <button class="btn primary" id="newSaleBtn">New sale</button>
+    </div>
+  </section>
+
+  <!-- ORDERS -->
+  <section class="view" id="view-orders">
+    <div class="orders-main">
+      <div class="search-row">
+        <div class="search">
+          <input id="orderSearch" type="text" placeholder="Sale # or staff name" autocomplete="off" aria-label="Search sales">
+        </div>
+        <button class="chip" id="refreshOrders">Refresh</button>
+      </div>
+      <table class="summary-table" id="summaryTable"></table>
+      <div class="order-list" id="orderList"></div>
+    </div>
+    <aside class="detail" id="orderDetail"><div class="muted">Pick a sale to see its lines.</div></aside>
+  </section>
+</div>
+
+<div class="scrim" id="scrim"></div>
+
+<div class="sheet" id="userSheet">
+  <h3>Who is on the till?</h3>
+  <input id="userInput" placeholder="Name" autocomplete="off" autocapitalize="words">
+  <div class="err" id="userErr"></div>
+  <div class="row"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="userSave">Save</button></div>
+</div>
+
+<div class="sheet" id="refundSheet">
+  <h3>Refund <span id="refundNum"></span></h3>
+  <p>Refunds are paid back in cash and need the till code to approve.</p>
+  <select id="refundReason">
+    <option value="">Pick a reason</option>
+    <option>Changed mind</option>
+    <option>Wrong item rung up</option>
+    <option>Damaged or faulty</option>
+    <option>Price adjustment</option>
+    <option>Other</option>
+  </select>
+  <input id="refundAmount" type="number" inputmode="decimal" min="0.01" step="0.01" placeholder="Amount (blank = full refund)">
+  <input id="refundCode" type="password" inputmode="numeric" placeholder="Till code" autocomplete="off">
+  <div class="err" id="refundErr"></div>
+  <div class="row"><button class="btn ghost" data-close>Cancel</button><button class="btn danger" id="refundConfirm">Refund</button></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
