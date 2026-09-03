@@ -4,32 +4,45 @@ Runs every file in pos/supabase/migrations/ in name order, skipping the ones
 already recorded in pos_schema_migrations. Each file runs in its own
 transaction, so a failing migration leaves the database as it was.
 
-The connection string is the SUPABASE_DB_URL secret, resolved through
-lib/secrets.py: the SUPABASE_DB_URL environment variable (or a gitignored
-.env) first, then GCP Secret Manager on project shp-ai-bot-2026. Direct
-Postgres connections need port 5432 (or 6543 for the pooler) open outbound;
-if you only have HTTPS, paste the .sql into the Supabase SQL editor instead.
+Two ways in, both resolved through lib/secrets.py (an environment variable or
+gitignored .env first, then GCP Secret Manager on project shp-ai-bot-2026):
+
+  api  The Supabase Management API over HTTPS, authenticated with the
+       SUPABASE_ACCESS_TOKEN secret (a personal access token). Works from
+       anywhere with HTTPS, including Claude cloud sessions. Preferred.
+  db   A direct Postgres connection with the SUPABASE_DB_URL secret, through
+       the psycopg package or the psql command. Needs outbound port 5432 or
+       6543, which cloud sessions do not have.
+
+By default the API is used when SUPABASE_ACCESS_TOKEN resolves, else the
+database. Force one with --via api or --via db.
 
 Usage (one line, works in Windows cmd):
 
     python pos/apply_migration.py            apply what is pending
     python pos/apply_migration.py --list     show applied and pending, change nothing
-
-Needs either the psycopg package (pip install "psycopg[binary]") or the psql
-command on PATH. psycopg is tried first.
 """
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from urllib.parse import urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lib.secrets import SecretNotFound, get_secret  # noqa: E402
 
 MIGRATIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "supabase", "migrations")
+
+# The Supabase project reference is the subdomain of the project's API URL. It
+# is an identifier, not a secret, and doubles as the default for the API path.
+SUPABASE_PROJECT_REF = os.environ.get("SUPABASE_PROJECT_REF", "ngwlwntvoteuafeplobx")
+SUPABASE_API = "https://api.supabase.com/v1"
+USER_AGENT = "trustpilot-ai-pipeline pos/apply_migration"
 BOOTSTRAP_SQL = (
     "create table if not exists pos_schema_migrations ("
     "name text primary key, applied_at timestamptz not null default now());"
@@ -47,8 +60,45 @@ def read(path):
 
 
 # ---------------------------------------------------------------------------
-# Two interchangeable backends. Each exposes applied() and apply(name, sql).
+# Three interchangeable backends. Each exposes applied() and apply(name, sql).
 # ---------------------------------------------------------------------------
+
+
+class ApiBackend:
+    """Runs SQL through the Supabase Management API's database/query endpoint."""
+
+    def __init__(self, token, project_ref):
+        self.url = f"{SUPABASE_API}/projects/{project_ref}/database/query"
+        self.headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            # Cloudflare in front of the API rejects Python's default agent string.
+            "User-Agent": USER_AGENT,
+        }
+        self._run(BOOTSTRAP_SQL)
+
+    def _run(self, sql):
+        body = json.dumps({"query": sql}).encode("utf-8")
+        request = urllib.request.Request(self.url, data=body, headers=self.headers, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                raw = response.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", "replace").strip()
+            raise RuntimeError(f"Supabase API returned {exc.code}: {detail}") from None
+        return json.loads(raw) if raw else []
+
+    def applied(self):
+        rows = self._run("select name from pos_schema_migrations order by name;")
+        return [row["name"] for row in rows]
+
+    def apply(self, name, sql):
+        safe_name = name.replace("'", "''")
+        script = f"begin;\n{sql}\ninsert into pos_schema_migrations (name) values ('{safe_name}');\ncommit;\n"
+        self._run(script)
+
+    def close(self):
+        pass
 
 
 class PsycopgBackend:
@@ -129,7 +179,11 @@ class PsqlBackend:
         pass
 
 
-def connect(url):
+def connect_db():
+    try:
+        url = get_secret("SUPABASE_DB_URL", env_var="SUPABASE_DB_URL")
+    except SecretNotFound as exc:
+        raise SystemExit(str(exc))
     try:
         import psycopg  # noqa: F401
     except ImportError:
@@ -138,21 +192,42 @@ def connect(url):
                 'Neither the psycopg package nor the psql command is available. '
                 'Run: pip install "psycopg[binary]"'
             )
+        print("via psql")
         return PsqlBackend(url)
+    print("via psycopg")
     return PsycopgBackend(url)
+
+
+def connect_api(token=None):
+    if token is None:
+        try:
+            token = get_secret("SUPABASE_ACCESS_TOKEN", env_var="SUPABASE_ACCESS_TOKEN")
+        except SecretNotFound as exc:
+            raise SystemExit(str(exc))
+    print(f"via Supabase API, project {SUPABASE_PROJECT_REF}")
+    return ApiBackend(token, SUPABASE_PROJECT_REF)
+
+
+def connect(via):
+    if via == "db":
+        return connect_db()
+    if via == "api":
+        return connect_api()
+    token = get_secret("SUPABASE_ACCESS_TOKEN", env_var="SUPABASE_ACCESS_TOKEN", required=False)
+    return connect_api(token) if token else connect_db()
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--list", action="store_true", help="show applied and pending migrations, change nothing")
+    parser.add_argument("--via", choices=["auto", "api", "db"], default="auto",
+                        help="api = Supabase Management API over HTTPS, db = direct Postgres (default: api if its token resolves, else db)")
     args = parser.parse_args()
 
     try:
-        url = get_secret("SUPABASE_DB_URL", env_var="SUPABASE_DB_URL")
-    except SecretNotFound as exc:
+        backend = connect(args.via)
+    except RuntimeError as exc:
         raise SystemExit(str(exc))
-
-    backend = connect(url)
     try:
         done = set(backend.applied())
         pending = [(n, p) for n, p in migration_files() if n not in done]
@@ -168,7 +243,11 @@ def main():
 
         for name, path in pending:
             print(f"applying {name} ...", end=" ", flush=True)
-            backend.apply(name, read(path))
+            try:
+                backend.apply(name, read(path))
+            except RuntimeError as exc:
+                print("FAILED")
+                raise SystemExit(str(exc))
             print("ok")
     finally:
         backend.close()

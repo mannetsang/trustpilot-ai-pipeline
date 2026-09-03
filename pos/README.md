@@ -40,21 +40,26 @@ decided.
 
 ## Applying a migration
 
-Credentials come from Secret Manager (`SUPABASE_DB_URL` on `shp-ai-bot-2026`)
-through `lib/secrets.py`, or from a `SUPABASE_DB_URL` line in a gitignored
-`.env` for local runs. One line, Windows cmd:
+One line, Windows cmd, from the repo root:
 
 ```
 python pos\apply_migration.py
 ```
 
-`--list` shows applied and pending files without changing anything. The script
-uses the `psycopg` package if installed (`pip install "psycopg[binary]"`) and
-falls back to the `psql` command.
+`--list` shows applied and pending files without changing anything.
 
-A direct Postgres connection needs outbound port 5432 (or 6543 for the pooler).
-Where only HTTPS is open, paste the `.sql` into the Supabase SQL editor and then
-insert its filename into `pos_schema_migrations` so the script stays in step.
+Credentials come from Secret Manager on `shp-ai-bot-2026` through
+`lib/secrets.py`, or from a gitignored `.env` for local runs. There are two
+routes in and the script picks the first that has credentials:
+
+| Route | Secret | Needs | Where it works |
+|---|---|---|---|
+| `--via api` | `SUPABASE_ACCESS_TOKEN` (a Supabase personal access token) | HTTPS only | Anywhere, including Claude cloud sessions |
+| `--via db` | `SUPABASE_DB_URL` | outbound port 6543 (or 5432), plus `pip install "psycopg[binary]"` or `psql` on PATH | Your own machine |
+
+The API route runs the SQL through the Supabase Management API against project
+`ngwlwntvoteuafeplobx` (the project reference is an identifier, not a secret;
+override it with the `SUPABASE_PROJECT_REF` environment variable).
 
 ## Adding a migration
 
