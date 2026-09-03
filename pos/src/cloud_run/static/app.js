@@ -11,6 +11,11 @@
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+  // The payment screen (cash received, quick amounts, keypad, change) is
+  // switched off for now: Charge records the sale at the exact total straight
+  // away. Set this to true to bring the screen back; its code is all still here.
+  const PAYMENT_SCREEN = false;
+
   const state = {
     config: null,
     category: 'all',
@@ -265,6 +270,7 @@
     <div class="trow grand"><span>Total</span><span class="money">${money(t.total)}</span></div>`;
 
   const renderCart = () => {
+    if (!PAYMENT_SCREEN) state.pendingSale = null;   // the cart changed; a retry must send the new cart
     const count = state.cart.reduce((a, l) => a + l.qty, 0);
     $('cartCount').textContent = `${count} item${count === 1 ? '' : 's'}`;
     $('cartLines').innerHTML = state.cart.length ? state.cart.map((l) => `
@@ -294,12 +300,37 @@
     }
     renderCart();
   });
-  $('clearBtn').addEventListener('click', () => { state.cart = []; state.discount = 0; $('discountInput').value = ''; renderCart(); });
+  $('clearBtn').addEventListener('click', () => { state.cart = []; state.discount = 0; state.pendingSale = null; $('discountInput').value = ''; renderCart(); });
   $('discountInput').addEventListener('input', () => { state.discount = Number($('discountInput').value) || 0; renderCart(); });
 
   // ------------------------------------------------------------ payment
 
-  $('chargeBtn').addEventListener('click', () => openPayment());
+  $('chargeBtn').addEventListener('click', () => (PAYMENT_SCREEN ? openPayment() : chargeExact()));
+
+  /** Record the sale at the exact total, no payment screen. Re-pressing after a
+      failure resends the same payload, so a retry can never double-record. */
+  const chargeExact = async () => {
+    if (!state.cart.length) return;
+    const payload = state.pendingSale || {
+      clientRecordId: recordId(),
+      items: state.cart.map((l) => ({ productId: l.product.id, quantity: l.qty, barcode: l.barcode })),
+      discount: cartTotals().discount,
+      cashReceived: cartTotals().total,
+    };
+    state.pendingSale = payload;
+    const btn = $('chargeBtn');
+    btn.disabled = true;
+    btn.textContent = 'Recording sale…';
+    try {
+      const sale = await api('/api/sales', { method: 'POST', body: payload });
+      state.pendingSale = null;
+      finishSale(sale);
+    } catch (err) {
+      toast(`${err.message}. Check the connection and tap Charge again.`);
+      btn.disabled = false;
+      btn.textContent = 'Retry charge';
+    }
+  };
   $('payBack').addEventListener('click', () => go('sell'));
 
   const openPayment = () => {
@@ -375,7 +406,7 @@
   const finishSale = (sale) => {
     $('cashTender').onclick = null;
     const change = Number(sale.change);
-    $('doneKicker').textContent = change > 0.004 ? 'Change due' : 'Paid in cash';
+    $('doneKicker').textContent = change > 0.004 ? 'Change due' : 'Sale recorded · cash';
     $('doneAmount').textContent = money(change > 0.004 ? change : sale.total);
     $('doneMeta').textContent = `Sale #${sale.number} · ${money(sale.total)} · ${sale.staff} · ${state.config.locationName}`;
     state.cart = [];
