@@ -44,6 +44,8 @@ then open http://localhost:8080.
 
 ### Deploying
 
+The register is live at https://shp-pos-304363458561.northamerica-northeast1.run.app
+
 `pos/deploy.sh` deploys the service `shp-pos` to Cloud Run in
 `northamerica-northeast1` (Montreal) from source, and prints its URL. It runs
 from a Claude cloud session, a workstation, or the `deploy-pos.yml` workflow
