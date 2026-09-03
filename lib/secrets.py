@@ -114,6 +114,7 @@ def _fetch_from_secret_manager(secret_id, project, version):
     client = secretmanager.SecretManagerServiceClient()
     name = f"projects/{project}/secrets/{secret_id}/versions/{version}"
     response = client.access_secret_version(request={"name": name})
-    # Secrets are stored without a trailing newline, but strip one defensively:
-    # `echo` into `gcloud secrets versions add` is a common way to add it.
-    return response.payload.data.decode("utf-8").rstrip("\n")
+    # Secrets are stored without a trailing newline, but strip line endings
+    # defensively: `echo` into `gcloud secrets versions add` is a common way to
+    # add one, and on Windows cmd that appends "\r\n".
+    return response.payload.data.decode("utf-8").rstrip("\r\n")
