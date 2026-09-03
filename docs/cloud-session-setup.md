@@ -83,13 +83,15 @@ credential is readable inside it. Two honest options:
 Cloud Run, authenticating with `GCP_SA_KEY`. Nothing sensitive enters a
 transcript. Best for anything recurring.
 
-**A scoped key in the environment variables box.** If sessions need to
-self-serve, create one least-privilege service account, grant it
-`secretmanager.secretAccessor` on only the specific secrets sessions may read,
-and put its key in the environment's variables. It is plaintext and readable by
-every session in the org - but scoped that narrowly, its blast radius is "read
-these three secrets", which is a far better trade than pasting a
-project-Editor key into a conversation.
+**A dedicated key in the environment variables box.** This is what we do.
+`claude-sessions@shp-ai-bot-2026` is a service account that exists only for
+sessions, and its key is in the environment's variables. It is plaintext and
+readable by every session in the org. By decision (2026-09-03) it holds
+`secretmanager.secretAccessor` on the whole project so that every session can
+read every secret without a grant per secret; the command is in
+`credentials.md`. Its blast radius is therefore "read every secret", which is
+still better than pasting a project-Editor key into a conversation, because
+it can do nothing else. Keep it off every other role.
 
 Never use a broad account this way. `shp-ai-bot-2026@appspot` can enumerate
 every secret in the project; `304363458561-compute@` normally carries Editor.

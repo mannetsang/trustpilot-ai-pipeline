@@ -63,8 +63,15 @@ printf '%s' 'PASTE_THE_VALUE_HERE' \
   | gcloud secrets versions add "$NAME" --data-file=- --project="$PROJECT"
 ```
 
-Then grant the CI service account read access to **that secret only** — per
-secret, not project-wide, so a leaked key can't read everything:
+Nothing more is needed for Claude cloud sessions: their service account
+(`claude-sessions@shp-ai-bot-2026.iam.gserviceaccount.com`) holds
+`roles/secretmanager.secretAccessor` on the whole project, so every session can
+read every secret, including ones added later. See "Claude cloud sessions"
+below.
+
+For the CI service account (`GCP_SA_KEY` in GitHub), grant read access to
+**that secret only** — per secret, not project-wide, so a leaked key can't read
+everything:
 
 ```bash
 SA=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['client_email'])" /path/to/gcp-sa-key.json)
@@ -76,6 +83,26 @@ gcloud secrets add-iam-policy-binding "$NAME" \
 ```
 
 `$SA` is the `client_email` from the same JSON key stored as `GCP_SA_KEY`.
+
+## Claude cloud sessions
+
+Sessions authenticate as `claude-sessions@shp-ai-bot-2026.iam.gserviceaccount.com`
+(key written per session by `.claude/hooks/gcp-credentials.sh`). By decision
+(2026-09-03), this account reads **all** secrets in the project, so a new
+secret needs no extra grant to be usable in a session. The grant, run once by a
+project owner (one line, Windows cmd):
+
+```
+gcloud services enable cloudresourcemanager.googleapis.com --project=shp-ai-bot-2026 && gcloud projects add-iam-policy-binding shp-ai-bot-2026 --member=serviceAccount:claude-sessions@shp-ai-bot-2026.iam.gserviceaccount.com --role=roles/secretmanager.secretAccessor
+```
+
+The trade-off: the key for this account sits in the cloud environment's
+variables box, readable by anyone who can edit that environment, and it now
+opens every secret rather than a short list. Rotate the key from the console
+if that box is ever exposed, and keep this account off any other role.
+
+Note that a cloud session can still only reach services over HTTPS. A Postgres
+connection string, for example, is readable but not usable from a session.
 
 ## Rotating a credential
 
@@ -111,5 +138,7 @@ variables always win over `.env`.
 - Don't paste credentials into a Claude session, a cloud environment's
   variables box, or a GitHub Actions *variable*. All three are readable by
   anyone with access, and session content is retained in transcripts.
-- Don't grant `roles/secretmanager.secretAccessor` at the project level.
+- Don't grant `roles/secretmanager.secretAccessor` at the project level to
+  anything other than the `claude-sessions` account described above. CI and
+  Cloud Run identities stay per secret.
 - Don't commit a `.env`, a service-account JSON, or a `.pem`.
