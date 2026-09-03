@@ -193,16 +193,54 @@
     const code = $('searchInput').value.trim();
     if (!code) return;
     clearTimeout(searchTimer);
+    await scan(code);
+  });
+
+  /** A scanned or typed code: barcode lookup first, then a name/SKU search. */
+  const scan = async (code) => {
     try {
       const p = await api(`/api/barcode/${encodeURIComponent(code)}`);
       addToCart(p, code);
+      toast(`Added ${p.name}`);
       $('searchInput').value = '';
       await searchProducts();
-    } catch {
+    } catch (err) {
+      if (err.message === 'Till is locked') return;
+      $('searchInput').value = code;
       await searchProducts();
-      if (state.products.length === 1) { addToCart(state.products[0]); $('searchInput').value = ''; await searchProducts(); }
-      else if (!state.products.length) toast(`No product for "${code}"`);
+      if (state.products.length === 1) {
+        addToCart(state.products[0]);
+        toast(`Added ${state.products[0].name}`);
+        $('searchInput').value = '';
+        await searchProducts();
+      } else if (!state.products.length) {
+        toast(`No product for "${code}"`);
+      }
     }
+  };
+
+  // The scanner works without tapping the search box. A scanner is a keyboard
+  // that types the whole code in a fast burst and ends with Enter, so on the
+  // Sell screen any burst of characters arriving while no text field has focus
+  // is collected and, on Enter, treated as a scan. A pause longer than 150 ms
+  // starts a new code, so stray single keys never combine into one.
+  let scanBuffer = '';
+  let scanLastKey = 0;
+  document.addEventListener('keydown', (e) => {
+    if ($('app').hidden || !$('view-sell').classList.contains('on')) return;
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const now = Date.now();
+    if (now - scanLastKey > 150) scanBuffer = '';
+    scanLastKey = now;
+    if (e.key === 'Enter') {
+      const code = scanBuffer.trim();
+      scanBuffer = '';
+      if (code.length >= 3) { e.preventDefault(); scan(code); }
+      return;
+    }
+    if (e.key.length === 1) { scanBuffer += e.key; e.preventDefault(); }
   });
 
   // ------------------------------------------------------------ cart
