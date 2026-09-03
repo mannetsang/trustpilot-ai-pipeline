@@ -427,8 +427,9 @@ def index():
     return response
 
 
-@app.get("/healthz")
-def healthz():
+@app.get("/api/health")
+def health():
+    # Not /healthz: Google's front end answers that path itself with a 404.
     try:
         query("select 1 as ok", one=True)
         db = "ok"
@@ -445,7 +446,7 @@ def healthz():
 @app.errorhandler(409)
 @app.errorhandler(503)
 def api_error(err):
-    if request.path.startswith("/api/") or request.path == "/healthz":
+    if request.path.startswith("/api/"):
         return jsonify({"error": err.description}), err.code
     return err
 
