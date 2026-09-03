@@ -19,9 +19,6 @@ Env vars:
   POS_LOCATION_ID     Written on every sale. Default esi-montreal-2026.
   POS_LOCATION_NAME   Shown in the header. Default ESI Montreal 2026.
   POS_CURRENCY        Default CAD.
-  POS_TAX_RATE        Tax included in the shelf price, backed out for the
-                      receipt. Default 0.14975 (GST 5% + QST 9.975%).
-  POS_TAX_LABEL       Default "GST 5% + QST 9.975%".
   GCP_PROJECT         Secret Manager project. Default shp-ai-bot-2026.
 """
 
@@ -48,8 +45,6 @@ PROJECT = os.environ.get("GCP_PROJECT", "shp-ai-bot-2026")
 LOCATION_ID = os.environ.get("POS_LOCATION_ID", "esi-montreal-2026")
 LOCATION_NAME = os.environ.get("POS_LOCATION_NAME", "ESI Montreal 2026")
 CURRENCY = os.environ.get("POS_CURRENCY", "CAD")
-TAX_RATE = Decimal(os.environ.get("POS_TAX_RATE", "0.14975"))
-TAX_LABEL = os.environ.get("POS_TAX_LABEL", "GST 5% + QST 9.975%")
 CENT = Decimal("0.01")
 
 # ---------------------------------------------------------------------------
@@ -231,7 +226,6 @@ def approved_by_admin(body):
 def config():
     return jsonify({
         "locationId": LOCATION_ID, "locationName": LOCATION_NAME, "currency": CURRENCY,
-        "taxRate": str(TAX_RATE), "taxLabel": TAX_LABEL, "pricesIncludeTax": True,
         "unlocked": unlocked(), "staff": session.get("staff"), "role": session.get("role"),
         "configured": access_code() is not None,
         "hasUsers": query("select exists (select 1 from pos_users where is_active) as e", one=True)["e"],
@@ -442,14 +436,12 @@ def money(value):
 
 
 def totals(lines, discount):
-    """Tax-inclusive pricing: the shelf price is what the customer pays."""
+    """The shelf price is what the customer pays: subtotal minus discount, nothing added."""
     subtotal = sum((money(l["unit_price"]) * l["quantity"] for l in lines), Decimal("0"))
     discount = money(discount or 0)
     if discount < 0 or discount > subtotal:
         abort(400, "discount out of range")
-    grand = money(subtotal - discount)
-    tax = money(grand - grand / (1 + TAX_RATE))
-    return subtotal, discount, tax, grand
+    return subtotal, discount, money(subtotal - discount)
 
 
 @app.post("/api/sales")
@@ -478,7 +470,7 @@ def create_sale():
         lines.append({"line_no": n, "product": product, "quantity": qty, "unit_price": product["price"],
                       "barcode": (str(item.get("barcode") or "").strip() or None)})
 
-    subtotal, discount, tax, grand = totals(lines, body.get("discount"))
+    subtotal, discount, grand = totals(lines, body.get("discount"))
     cash = money(body.get("cashReceived") or 0)
     if cash < grand:
         abort(400, "cash received is less than the total")
@@ -493,12 +485,11 @@ def create_sale():
             user_id = session.get("user_id")
             txn = conn.execute(
                 """insert into pos_transactions (client_record_id, location_id, staff_name, staff_user_id, currency,
-                     payment_method, prices_include_tax, subtotal, discount_total, tax_rate, tax_label, tax_total,
-                     grand_total, amount_paid, cash_received, change_given, note)
-                   values (%s, %s, %s, %s, %s, 'cash', true, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     payment_method, subtotal, discount_total, grand_total, amount_paid, cash_received, change_given, note)
+                   values (%s, %s, %s, %s, %s, 'cash', %s, %s, %s, %s, %s, %s, %s)
                    returning *""",
                 (record_id, LOCATION_ID, session.get("staff") or "—", user_id if user_id != "master" else None, CURRENCY,
-                 subtotal, discount, TAX_RATE, TAX_LABEL, tax, grand, grand, cash, change, note),
+                 subtotal, discount, grand, grand, cash, change, note),
             ).fetchone()
             for l in lines:
                 p = l["product"]
@@ -526,8 +517,7 @@ def serialise_sale(t, items):
     return {
         "id": str(t["id"]), "number": t["transaction_number"], "status": t["status"], "staff": t["staff_name"],
         "locationId": t["location_id"], "currency": t["currency"], "paymentMethod": t["payment_method"],
-        "subtotal": s(t["subtotal"]), "discount": s(t["discount_total"]), "taxRate": s(t["tax_rate"]),
-        "taxLabel": t["tax_label"], "tax": s(t["tax_total"]), "total": s(t["grand_total"]),
+        "subtotal": s(t["subtotal"]), "discount": s(t["discount_total"]), "total": s(t["grand_total"]),
         "amountPaid": s(t["amount_paid"]), "cashReceived": s(t["cash_received"]), "change": s(t["change_given"]),
         "refundAmount": s(t["refund_amount"]), "refundReason": t["refund_reason"],
         "refundedAt": t["refunded_at"].isoformat() if t["refunded_at"] else None,
@@ -598,7 +588,7 @@ def refund(number):
 @require_unlock
 def summary():
     rows = query(
-        """select sale_day::text as day, sales, inspection_deposits, amount_paid::text, tax_total::text,
+        """select sale_day::text as day, sales, inspection_deposits, amount_paid::text,
                   cash_received::text, change_given::text, coalesce(cash_refunded, 0)::text as cash_refunded,
                   net_cash_in_drawer::text
            from pos_daily_cash_summary where location_id = %s and currency = %s order by sale_day desc limit 14""",

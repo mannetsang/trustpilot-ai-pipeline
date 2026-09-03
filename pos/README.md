@@ -32,9 +32,10 @@ it needs no redeploy.
 Five wrong PINs in a row lock a name for one minute.
 
 What it enforces server-side, so the browser can never ring a wrong amount:
-every line is priced from `pos_products`, totals are recomputed, cash received
-must cover the total, and each sale carries a `clientRecordId` from the
-browser so a retry after a dropped connection cannot record the sale twice.
+every line is priced from `pos_products`, totals are recomputed (there is no
+tax: the total is the sum of the shelf prices minus any discount), cash
+received must cover the total, and each sale carries a `clientRecordId` from
+the browser so a retry after a dropped connection cannot record the sale twice.
 Refunds are cash only and need the till code typed again as approval.
 
 Configuration is by environment variable (see the docstring in `main.py`).
@@ -81,7 +82,7 @@ are applied once each, in name order, by `apply_migration.py`.
 |---|---|
 | `pos_transactions` | One row per sale: where, who rang it, currency, totals, cash received and change, refund details. |
 | `pos_transaction_items` | One row per line sold: SKU, name, quantity, unit price, line total, and the product and barcode it came from. |
-| `pos_products` | The product list, one row per SKU: name, category, tax-inclusive price, cost, quantity brought to the show, flags, and the raw sheet row. |
+| `pos_products` | The product list, one row per SKU: name, category, price, cost, quantity brought to the show, flags, and the raw sheet row. |
 | `pos_product_barcodes` | Scannable codes (UPC, EAN, ASIN) pointing at a product. Several codes may point at one product. |
 | `pos_daily_cash_summary` | View. Per till, per Toronto calendar day, per currency: sales, cash in, change out, cash refunds, net drawer. |
 | `pos_users` | Register and admin accounts: name, role, salted PIN hash, active flag, last sign-in. |
@@ -89,9 +90,8 @@ are applied once each, in name order, by `apply_migration.py`.
 
 Rules the database enforces, so no register build can disagree:
 
-- `grand_total = subtotal - discount_total + tax_total`, or, when
-  `prices_include_tax` is set, `grand_total = subtotal - discount_total` with
-  `tax_total` being the amount backed out for the receipt.
+- `grand_total = subtotal - discount_total`. There is no tax handling anywhere:
+  the price on the shelf is what the customer pays.
 - An inspection order records `deposit_total` and `amount_paid` equals it;
   a normal sale has no deposit and `amount_paid` equals `grand_total`.
 - Cash sales must carry `cash_received`, and `change_given` must equal
@@ -147,10 +147,7 @@ from names, a SKU on several rows becomes one product with several barcodes,
 quantities such as `2+1*` become 3 with the raw text kept, and a blank
 Montreal price makes the product inactive.
 
-Prices on the sheet are whole dollars with tax included (the sheet's website
-price is exactly the show price divided by 1.13), so `price_includes_tax` is
-true on every imported product and a sale of them sets `prices_include_tax`
-on the transaction.
+Prices on the sheet are whole dollars and are charged exactly as listed.
 
 ## Adding a migration
 

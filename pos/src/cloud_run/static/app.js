@@ -256,15 +256,12 @@
     const subtotal = cents(state.cart.reduce((a, l) => a + Number(l.product.price) * l.qty, 0));
     const discount = Math.min(cents(Math.max(0, state.discount || 0)), subtotal);
     const total = cents(subtotal - discount);
-    const rate = Number(state.config.taxRate);
-    const tax = cents(total - total / (1 + rate));
-    return { subtotal, discount, total, tax };
+    return { subtotal, discount, total };
   };
 
   const totalsHtml = (t) => `
     <div class="trow"><span>Subtotal</span><span class="money">${money(t.subtotal)}</span></div>
     ${t.discount ? `<div class="trow"><span>Discount</span><span class="money">−${money(t.discount)}</span></div>` : ''}
-    <div class="trow"><span>Includes ${esc(state.config.taxLabel)}</span><span class="money">${money(t.tax)}</span></div>
     <div class="trow grand"><span>Total</span><span class="money">${money(t.total)}</span></div>`;
 
   const renderCart = () => {
@@ -420,8 +417,8 @@
 
   const renderSummary = (rows) => {
     if (!rows.length) { $('summaryTable').innerHTML = ''; return; }
-    $('summaryTable').innerHTML = `<tr><th>Day</th><th>Sales</th><th>Taken</th><th>Tax incl.</th><th>Cash refunded</th><th>Net in drawer</th></tr>`
-      + rows.map((r) => `<tr><td>${esc(r.day)}</td><td>${r.sales}</td><td class="money">${money(r.amount_paid)}</td><td class="money">${money(r.tax_total)}</td><td class="money">${money(r.cash_refunded)}</td><td class="money"><b>${money(r.net_cash_in_drawer)}</b></td></tr>`).join('');
+    $('summaryTable').innerHTML = `<tr><th>Day</th><th>Sales</th><th>Taken</th><th>Cash refunded</th><th>Net in drawer</th></tr>`
+      + rows.map((r) => `<tr><td>${esc(r.day)}</td><td>${r.sales}</td><td class="money">${money(r.amount_paid)}</td><td class="money">${money(r.cash_refunded)}</td><td class="money"><b>${money(r.net_cash_in_drawer)}</b></td></tr>`).join('');
   };
 
   $('orderList').addEventListener('click', (e) => {
@@ -446,7 +443,6 @@
       <div class="totals" style="padding:0">
         <div class="trow"><span>Subtotal</span><span class="money">${money(o.subtotal)}</span></div>
         ${Number(o.discount) ? `<div class="trow"><span>Discount</span><span class="money">−${money(o.discount)}</span></div>` : ''}
-        <div class="trow"><span>Includes ${esc(o.taxLabel || '')}</span><span class="money">${money(o.tax)}</span></div>
         <div class="trow grand"><span>Total</span><span class="money">${money(o.total)}</span></div>
         <div class="trow"><span>Cash received</span><span class="money">${money(o.cashReceived)}</span></div>
         <div class="trow"><span>Change</span><span class="money">${money(o.change)}</span></div>

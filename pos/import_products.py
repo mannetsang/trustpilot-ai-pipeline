@@ -12,8 +12,8 @@ How the sheet is read:
     line above it is skipped.
   - NAME is 'ESI Montreal - <SKU>' in this sheet, so the event prefix is
     dropped and name equals the SKU. A proper name column would flow through.
-  - 蒙特利尔定价 (Montreal price) is the selling price, tax included. A blank
-    price makes the product inactive: it cannot be rung up.
+  - 蒙特利尔定价 (Montreal price) is the selling price, exactly as charged. A
+    blank price makes the product inactive: it cannot be rung up.
   - 本次展会拿货数量 (quantity brought) is parsed leniently: '2+1*' becomes
     3 with the raw text kept; '*' alone becomes null.
   - The same SKU on several rows is one product with several barcodes; its
