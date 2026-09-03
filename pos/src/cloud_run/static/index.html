@@ -17,11 +17,13 @@
 <div class="lock" id="lock">
   <form class="box" id="lockForm">
     <h1>Superhairpieces POS</h1>
-    <p id="lockHint" style="margin:0;color:#5f666d">Enter your name and the till code to open the register.</p>
+    <p id="lockHint" style="margin:0;color:#5f666d">Pick your name and enter your PIN.</p>
+    <div class="chips" id="lockNames"></div>
     <input id="lockStaff" placeholder="Your name" autocomplete="off" autocapitalize="words" required>
-    <input id="lockCode" type="password" inputmode="numeric" placeholder="Till code" autocomplete="off" required>
+    <input id="lockCode" type="password" inputmode="numeric" placeholder="PIN" autocomplete="off" required>
     <div class="err" id="lockErr"></div>
     <button class="btn primary" type="submit" id="lockBtn">Open register</button>
+    <a href="/admin" style="text-align:center;color:#5f666d;font-size:13px">Admin portal</a>
   </form>
 </div>
 
@@ -43,8 +45,8 @@
     <div class="top-right">
       <span class="pill" id="connPill"><span class="dot"></span><span id="connText">Online</span></span>
       <span class="pill" id="locPill"></span>
-      <button class="pill" id="userBtn" title="Switch user"><span class="av" id="userAv">?</span><span id="userName"></span></button>
-      <button class="pill" id="lockOut" title="Lock the till">Lock</button>
+      <span class="pill" id="userBtn"><span class="av" id="userAv">?</span><span id="userName"></span></span>
+      <button class="pill" id="lockOut" title="Lock the till and switch user">Lock / switch</button>
     </div>
   </header>
 
@@ -133,16 +135,9 @@
 
 <div class="scrim" id="scrim"></div>
 
-<div class="sheet" id="userSheet">
-  <h3>Who is on the till?</h3>
-  <input id="userInput" placeholder="Name" autocomplete="off" autocapitalize="words">
-  <div class="err" id="userErr"></div>
-  <div class="row"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="userSave">Save</button></div>
-</div>
-
 <div class="sheet" id="refundSheet">
   <h3>Refund <span id="refundNum"></span></h3>
-  <p>Refunds are paid back in cash and need the till code to approve.</p>
+  <p>Refunds are paid back in cash and need an admin to approve.</p>
   <select id="refundReason">
     <option value="">Pick a reason</option>
     <option>Changed mind</option>
@@ -152,7 +147,11 @@
     <option>Other</option>
   </select>
   <input id="refundAmount" type="number" inputmode="decimal" min="0.01" step="0.01" placeholder="Amount (blank = full refund)">
-  <input id="refundCode" type="password" inputmode="numeric" placeholder="Till code" autocomplete="off">
+  <div id="refundApproval">
+    <input id="refundAdminName" placeholder="Admin name" autocomplete="off" autocapitalize="words" style="margin-bottom:10px">
+    <input id="refundAdminPin" type="password" inputmode="numeric" placeholder="Admin PIN (or master code below)" autocomplete="off" style="margin-bottom:10px">
+    <input id="refundCode" type="password" inputmode="numeric" placeholder="Master code (instead of admin PIN)" autocomplete="off">
+  </div>
   <div class="err" id="refundErr"></div>
   <div class="row"><button class="btn ghost" data-close>Cancel</button><button class="btn danger" id="refundConfirm">Refund</button></div>
 </div>

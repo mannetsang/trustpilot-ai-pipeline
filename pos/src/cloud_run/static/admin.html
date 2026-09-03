@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
+<link rel="icon" href="data:,">
+<title>Superhairpieces POS · Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/styles.css">
+<style>
+  .admin { max-width: 960px; margin: 0 auto; padding: 24px 20px 60px; display: flex; flex-direction: column; gap: 18px; }
+  .admin-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .admin-head h1 { margin: 0; font-size: 22px; letter-spacing: -.02em; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+  .panel h2 { margin: 0; font-size: 16px; }
+  .form { display: grid; grid-template-columns: 2fr 1fr 1fr auto; gap: 10px; align-items: end; }
+  .form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); font-weight: 600; }
+  .form input, .form select { height: 44px; border: 1px solid var(--line); border-radius: 10px; padding: 0 12px; font-size: 15px; width: 100%; background: #fff; }
+  .form .btn { height: 44px; padding: 0 18px; }
+  table.users { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.users th, table.users td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  table.users th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+  table.users tr.inactive td { color: var(--muted); }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .sm { height: 34px; padding: 0 12px; border-radius: 8px; background: var(--chip); font-weight: 600; font-size: 13px; }
+  .sm.danger { background: #fdecea; color: var(--danger); }
+  .tabs { display: flex; gap: 8px; }
+  .hint { color: var(--muted); font-size: 13px; }
+  @media (max-width: 720px) { .form { grid-template-columns: 1fr 1fr; } .form .btn { grid-column: 1 / 3; } }
+</style>
+</head>
+<body>
+
+<div class="lock" id="lock">
+  <form class="box" id="loginForm">
+    <h1>POS Admin</h1>
+    <p class="hint" id="loginHint">Sign in with an admin account, or with the master code.</p>
+    <div class="tabs">
+      <button type="button" class="chip on" id="tabUser">Admin account</button>
+      <button type="button" class="chip" id="tabMaster">Master code</button>
+    </div>
+    <div id="userFields">
+      <input id="loginName" placeholder="Name" autocomplete="username" autocapitalize="words" style="margin-bottom:10px">
+      <input id="loginPin" type="password" inputmode="numeric" placeholder="PIN" autocomplete="current-password">
+    </div>
+    <div id="masterFields" hidden>
+      <input id="loginCode" type="password" inputmode="numeric" placeholder="Master code" autocomplete="off">
+    </div>
+    <div class="err" id="loginErr"></div>
+    <button class="btn primary" type="submit" id="loginBtn">Sign in</button>
+    <a href="/" class="hint" style="text-align:center">Back to the register</a>
+  </form>
+</div>
+
+<div class="admin" id="admin" hidden>
+  <div class="admin-head">
+    <h1>POS Admin · Users</h1>
+    <div class="top-right">
+      <span class="pill" id="whoPill"></span>
+      <a class="pill" href="/">Register</a>
+      <button class="pill" id="logout">Sign out</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Add a user</h2>
+    <form class="form" id="addForm">
+      <label>Name <input id="addName" placeholder="e.g. Kelly" autocomplete="off" autocapitalize="words" required></label>
+      <label>Role
+        <select id="addRole"><option value="cashier">Cashier</option><option value="admin">Admin</option></select>
+      </label>
+      <label>PIN (4–8 digits) <input id="addPin" inputmode="numeric" pattern="\d{4,8}" placeholder="••••" autocomplete="off" required></label>
+      <button class="btn primary" type="submit">Add</button>
+    </form>
+    <div class="err" id="addErr"></div>
+    <div class="hint">Cashiers can sell and see sales. Admins can also open this page and approve refunds. Tell each person their PIN in person; it is never shown again.</div>
+  </div>
+
+  <div class="panel">
+    <h2>Users</h2>
+    <table class="users">
+      <thead><tr><th>Name</th><th>Role</th><th>Last sign-in</th><th>Status</th><th></th></tr></thead>
+      <tbody id="userRows"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="scrim" id="scrim"></div>
+<div class="sheet" id="pinSheet">
+  <h3>New PIN for <span id="pinName"></span></h3>
+  <input id="pinInput" inputmode="numeric" pattern="\d{4,8}" placeholder="4–8 digits" autocomplete="off">
+  <div class="err" id="pinErr"></div>
+  <div class="row"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="pinSave">Set PIN</button></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script src="/static/admin.js"></script>
+</body>
+</html>

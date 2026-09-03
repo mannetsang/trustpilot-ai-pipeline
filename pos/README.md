@@ -10,10 +10,26 @@ ESI Montreal trade show, selling the products on the show-prep Google Sheet.
 ## The register
 
 `src/cloud_run/` is the register: a Flask service that serves the page in
-`static/` and a JSON API over the Supabase database. Staff open it in a browser
-on the booth tablet or laptop, type their name and the till code, and sell.
-A USB or Bluetooth barcode scanner works as a keyboard: the search box treats
-a code followed by Enter as a scan.
+`static/`, the admin portal at `/admin`, and a JSON API over the Supabase
+database. Staff open it in a browser on the booth tablet or laptop, tap their
+name, enter their PIN, and sell. A USB or Bluetooth barcode scanner works as a
+keyboard: the search box treats a code followed by Enter as a scan.
+
+### Users and the admin portal
+
+Accounts live in `pos_users`. Each person has a name, a role and a personal
+PIN of 4 to 8 digits, stored as a salted hash. Cashiers can sell and see
+sales. Admins can also open `/admin` to add users, reset PINs, change roles
+and deactivate people, and they approve refunds on the register by entering
+their name and PIN.
+
+The master code (secret `POS_ACCESS_CODE`) opens the admin portal on its own.
+That is how the first admin gets created, and the recovery path if every admin
+forgets their PIN. Keep it with whoever owns the project, not with booth staff.
+The service reads it live and re-reads every minute, so creating or rotating
+it needs no redeploy.
+
+Five wrong PINs in a row lock a name for one minute.
 
 What it enforces server-side, so the browser can never ring a wrong amount:
 every line is priced from `pos_products`, totals are recomputed, cash received
@@ -23,11 +39,9 @@ Refunds are cash only and need the till code typed again as approval.
 
 Configuration is by environment variable (see the docstring in `main.py`).
 Two values come from Secret Manager: `SUPABASE_DB_URL`, mounted at deploy
-time, and `POS_ACCESS_CODE`, the till code, which the service reads itself and
-re-reads every minute, so it can be created or rotated without a redeploy.
-Until that secret exists the till stays locked and says so.
+time, and `POS_ACCESS_CODE`, the master code described above.
 
-Create the till code once (one line, Windows cmd; pick your own digits):
+Create the master code once (one line, Windows cmd; pick your own digits):
 
 ```
 echo|set /p="123456"|gcloud secrets create POS_ACCESS_CODE --replication-policy=automatic --project=shp-ai-bot-2026 --data-file=-
@@ -70,6 +84,7 @@ are applied once each, in name order, by `apply_migration.py`.
 | `pos_products` | The product list, one row per SKU: name, category, tax-inclusive price, cost, quantity brought to the show, flags, and the raw sheet row. |
 | `pos_product_barcodes` | Scannable codes (UPC, EAN, ASIN) pointing at a product. Several codes may point at one product. |
 | `pos_daily_cash_summary` | View. Per till, per Toronto calendar day, per currency: sales, cash in, change out, cash refunds, net drawer. |
+| `pos_users` | Register and admin accounts: name, role, salted PIN hash, active flag, last sign-in. |
 | `pos_schema_migrations` | Which migration files have been applied. |
 
 Rules the database enforces, so no register build can disagree:

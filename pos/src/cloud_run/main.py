@@ -1,17 +1,21 @@
 """Superhairpieces POS: the cash register for the ESI Montreal booth.
 
-Serves the register page (static/) and a small JSON API over the Supabase
-Postgres database. Cash sales only. Every sale is written as one
-pos_transactions row plus its pos_transaction_items, with the totals checked
-again on the server so the browser can never ring a wrong amount.
+Serves the register page (static/), the admin portal (/admin) and a JSON API
+over the Supabase Postgres database. Cash sales only. Every sale is written as
+one pos_transactions row plus its pos_transaction_items, with the totals
+checked again on the server so the browser can never ring a wrong amount.
+
+Accounts live in pos_users: each person has a name and a personal PIN
+(salted hash). Cashiers unlock the register; admins also open the portal and
+approve refunds. The master code (below) opens the portal on its own, which is
+how the first admin gets created and how access is recovered.
 
 Env vars:
   SUPABASE_DB_URL     Postgres connection string. If unset, read from Secret
                       Manager (secret SUPABASE_DB_URL) with the runtime identity.
-  POS_ACCESS_CODE     Code staff type to unlock the till. If unset, read from
+  POS_ACCESS_CODE     Master code for the admin portal. If unset, read from
                       Secret Manager (secret POS_ACCESS_CODE) and re-read every
                       minute, so it can be created or rotated without a deploy.
-                      Until it exists the till stays locked.
   POS_LOCATION_ID     Written on every sale. Default esi-montreal-2026.
   POS_LOCATION_NAME   Shown in the header. Default ESI Montreal 2026.
   POS_CURRENCY        Default CAD.
@@ -24,6 +28,7 @@ Env vars:
 import hashlib
 import hmac
 import os
+import secrets as pysecrets
 import re
 import threading
 import time
@@ -119,12 +124,79 @@ def query(sql, params=None, one=False):
 
 
 # ---------------------------------------------------------------------------
-# Auth: one shared access code unlocks the till for a shift
+# Auth: personal PINs from pos_users; the master code opens the admin portal
 # ---------------------------------------------------------------------------
+
+PIN_RE = re.compile(r"^\d{4,8}$")
+
+
+def hash_pin(pin, salt=None):
+    salt = salt or pysecrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", pin.encode(), bytes.fromhex(salt), 200_000).hex()
+    return f"pbkdf2${salt}${digest}"
+
+
+def pin_ok(pin, stored):
+    try:
+        _, salt, _ = stored.split("$")
+    except ValueError:
+        return False
+    return hmac.compare_digest(hash_pin(pin, salt), stored)
+
+
+def master_ok(candidate):
+    expected = access_code()
+    return bool(expected) and hmac.compare_digest(str(candidate).strip(), expected)
+
+
+# Wrong-PIN throttle, per name, per instance: five misses lock a name for a minute.
+_attempts = {}
+
+
+def throttled(key):
+    count, until = _attempts.get(key, (0, 0))
+    return count >= 5 and until > time.time()
+
+
+def record_attempt(key, ok):
+    if ok:
+        _attempts.pop(key, None)
+        return
+    count, _ = _attempts.get(key, (0, 0))
+    _attempts[key] = (count + 1, time.time() + 60)
+
+
+def clean_name(value):
+    return re.sub(r"\s+", " ", str(value or "")).strip()[:60]
+
+
+def find_user(name):
+    return query("select * from pos_users where lower(name) = lower(%s) and is_active", (name,), one=True)
+
+
+def authenticate(name, pin):
+    """Return the active user whose name and PIN match, or None. Throttles misses."""
+    name = clean_name(name)
+    key = name.lower()
+    if not name or throttled(key):
+        time.sleep(0.5)
+        return None
+    user = find_user(name)
+    ok = bool(user) and pin_ok(str(pin or ""), user["pin_hash"])
+    record_attempt(key, ok)
+    if not ok:
+        time.sleep(0.5)
+        return None
+    query("update pos_users set last_login_at = now() where id = %s returning id", (user["id"],))
+    return user
 
 
 def unlocked():
-    return bool(session.get("unlocked"))
+    return bool(session.get("user_id"))
+
+
+def is_admin():
+    return session.get("role") == "admin"
 
 
 def require_unlock(fn):
@@ -136,9 +208,23 @@ def require_unlock(fn):
     return wrapper
 
 
-def code_matches(candidate):
-    expected = access_code()
-    return bool(expected) and hmac.compare_digest(candidate.strip(), expected)
+def require_admin(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        if not is_admin():
+            abort(401, "admin sign-in required")
+        return fn(*args, **kwargs)
+    return wrapper
+
+
+def approved_by_admin(body):
+    """Refunds and other sensitive actions: an admin's name + PIN, or the master code."""
+    if master_ok(body.get("code", "")):
+        return "master code"
+    user = authenticate(body.get("adminName"), body.get("adminPin"))
+    if user and user["role"] == "admin":
+        return user["name"]
+    return None
 
 
 @app.get("/api/config")
@@ -146,26 +232,30 @@ def config():
     return jsonify({
         "locationId": LOCATION_ID, "locationName": LOCATION_NAME, "currency": CURRENCY,
         "taxRate": str(TAX_RATE), "taxLabel": TAX_LABEL, "pricesIncludeTax": True,
-        "unlocked": unlocked(), "staff": session.get("staff"),
+        "unlocked": unlocked(), "staff": session.get("staff"), "role": session.get("role"),
         "configured": access_code() is not None,
+        "hasUsers": query("select exists (select 1 from pos_users where is_active) as e", one=True)["e"],
     })
+
+
+@app.get("/api/users")
+def user_names():
+    """Active names for the lock screen. Public by design: names only."""
+    rows = query("select name, role from pos_users where is_active order by role desc, lower(name)")
+    return jsonify(rows)
 
 
 @app.post("/api/unlock")
 def unlock():
     body = request.get_json(silent=True) or {}
-    if access_code() is None:
-        abort(503, "access code not configured yet")
-    if not code_matches(str(body.get("code", ""))):
-        time.sleep(0.5)
-        abort(403, "wrong code")
-    staff = re.sub(r"\s+", " ", str(body.get("staff", ""))).strip()[:60]
-    if not staff:
-        abort(400, "staff name required")
+    user = authenticate(body.get("staff"), body.get("pin"))
+    if not user:
+        abort(403, "name or PIN wrong")
     session.permanent = True
-    session["unlocked"] = True
-    session["staff"] = staff
-    return jsonify({"ok": True, "staff": staff})
+    session["user_id"] = str(user["id"])
+    session["staff"] = user["name"]
+    session["role"] = user["role"]
+    return jsonify({"ok": True, "staff": user["name"], "role": user["role"]})
 
 
 @app.post("/api/lock")
@@ -174,14 +264,108 @@ def lock():
     return jsonify({"ok": True})
 
 
-@app.post("/api/staff")
-@require_unlock
-def set_staff():
-    staff = re.sub(r"\s+", " ", str((request.get_json(silent=True) or {}).get("staff", ""))).strip()[:60]
-    if not staff:
-        abort(400, "staff name required")
-    session["staff"] = staff
-    return jsonify({"ok": True, "staff": staff})
+# ---------------------------------------------------------------------------
+# Admin portal
+# ---------------------------------------------------------------------------
+
+
+def serialise_user(u):
+    return {"id": str(u["id"]), "name": u["name"], "role": u["role"], "isActive": u["is_active"],
+            "lastLoginAt": u["last_login_at"].isoformat() if u["last_login_at"] else None,
+            "createdAt": u["created_at"].isoformat(), "createdBy": u["created_by"]}
+
+
+@app.post("/api/admin/login")
+def admin_login():
+    body = request.get_json(silent=True) or {}
+    if body.get("code"):
+        if access_code() is None:
+            abort(503, "master code not configured yet")
+        if not master_ok(body["code"]):
+            time.sleep(0.5)
+            abort(403, "master code wrong")
+        session.permanent = True
+        session.update(user_id="master", staff="Master code", role="admin")
+        return jsonify({"ok": True, "staff": "Master code", "role": "admin"})
+    user = authenticate(body.get("staff"), body.get("pin"))
+    if not user or user["role"] != "admin":
+        abort(403, "name or PIN wrong, or not an admin")
+    session.permanent = True
+    session.update(user_id=str(user["id"]), staff=user["name"], role=user["role"])
+    return jsonify({"ok": True, "staff": user["name"], "role": user["role"]})
+
+
+@app.get("/api/admin/users")
+@require_admin
+def admin_users():
+    rows = query("select * from pos_users order by is_active desc, role desc, lower(name)")
+    return jsonify([serialise_user(u) for u in rows])
+
+
+@app.post("/api/admin/users")
+@require_admin
+def admin_create_user():
+    body = request.get_json(silent=True) or {}
+    name = clean_name(body.get("name"))
+    role = body.get("role", "cashier")
+    pin = str(body.get("pin") or "")
+    if not name:
+        abort(400, "name required")
+    if role not in ("cashier", "admin"):
+        abort(400, "role must be cashier or admin")
+    if not PIN_RE.match(pin):
+        abort(400, "PIN must be 4 to 8 digits")
+    if find_user(name):
+        abort(409, "an active user with that name already exists")
+    user = query(
+        "insert into pos_users (name, role, pin_hash, created_by) values (%s, %s, %s, %s) returning *",
+        (name, role, hash_pin(pin), session.get("staff")), one=True,
+    )
+    return jsonify(serialise_user(user)), 201
+
+
+@app.patch("/api/admin/users/<uuid:user_id>")
+@require_admin
+def admin_update_user(user_id):
+    body = request.get_json(silent=True) or {}
+    user = query("select * from pos_users where id = %s", (str(user_id),), one=True)
+    if not user:
+        abort(404, "no such user")
+    sets, params = [], []
+    if "name" in body:
+        name = clean_name(body["name"])
+        if not name:
+            abort(400, "name required")
+        clash = find_user(name)
+        if clash and str(clash["id"]) != str(user_id):
+            abort(409, "an active user with that name already exists")
+        sets.append("name = %s"); params.append(name)
+    if "role" in body:
+        if body["role"] not in ("cashier", "admin"):
+            abort(400, "role must be cashier or admin")
+        sets.append("role = %s"); params.append(body["role"])
+    if "pin" in body:
+        if not PIN_RE.match(str(body["pin"])):
+            abort(400, "PIN must be 4 to 8 digits")
+        sets.append("pin_hash = %s"); params.append(hash_pin(str(body["pin"])))
+    if "isActive" in body:
+        if body["isActive"] and find_user(user["name"]) and str(find_user(user["name"])["id"]) != str(user_id):
+            abort(409, "an active user with that name already exists")
+        sets.append("is_active = %s"); params.append(bool(body["isActive"]))
+    if not sets:
+        abort(400, "nothing to change")
+    params.append(str(user_id))
+    user = query(f"update pos_users set {', '.join(sets)} where id = %s returning *", params, one=True)
+    if str(user_id) == session.get("user_id") and (not user["is_active"] or user["role"] != "admin"):
+        session.clear()
+    return jsonify(serialise_user(user))
+
+
+@app.get("/admin")
+def admin_page():
+    response = send_from_directory(app.static_folder, "admin.html")
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -300,14 +484,15 @@ def create_sale():
             existing = conn.execute("select * from pos_transactions where client_record_id = %s", (record_id,)).fetchone()
             if existing:
                 return jsonify(sale_payload(conn, existing)), 200
+            user_id = session.get("user_id")
             txn = conn.execute(
-                """insert into pos_transactions (client_record_id, location_id, staff_name, currency, payment_method,
-                     prices_include_tax, subtotal, discount_total, tax_rate, tax_label, tax_total, grand_total,
-                     amount_paid, cash_received, change_given, note)
-                   values (%s, %s, %s, %s, 'cash', true, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """insert into pos_transactions (client_record_id, location_id, staff_name, staff_user_id, currency,
+                     payment_method, prices_include_tax, subtotal, discount_total, tax_rate, tax_label, tax_total,
+                     grand_total, amount_paid, cash_received, change_given, note)
+                   values (%s, %s, %s, %s, %s, 'cash', true, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                    returning *""",
-                (record_id, LOCATION_ID, session.get("staff") or "—", CURRENCY, subtotal, discount, TAX_RATE, TAX_LABEL,
-                 tax, grand, grand, cash, change, note),
+                (record_id, LOCATION_ID, session.get("staff") or "—", user_id if user_id != "master" else None, CURRENCY,
+                 subtotal, discount, TAX_RATE, TAX_LABEL, tax, grand, grand, cash, change, note),
             ).fetchone()
             for l in lines:
                 p = l["product"]
@@ -374,9 +559,10 @@ def list_sales():
 @require_unlock
 def refund(number):
     body = request.get_json(silent=True) or {}
-    # A refund needs the access code typed again: the till's manager approval.
-    if not code_matches(str(body.get("code", ""))):
-        abort(403, "approval code wrong")
+    # A refund needs an admin's approval: their name and PIN, or the master code.
+    approver = session.get("staff") if is_admin() else approved_by_admin(body)
+    if not approver:
+        abort(403, "admin approval failed")
     reason = str(body.get("reason") or "").strip()[:200]
     if not reason:
         abort(400, "reason required")
@@ -396,7 +582,7 @@ def refund(number):
                 """update pos_transactions set refund_amount = %s, refund_method = 'cash', refund_reason = %s,
                      refund_approved_by = %s, refunded_at = now(), status = case when %s then 'refunded' else status end
                    where id = %s returning *""",
-                (amount, reason, session.get("staff"), full, t["id"]),
+                (amount, reason, approver, full, t["id"]),
             ).fetchone()
             payload = sale_payload(conn, t)
     return jsonify(payload)
@@ -435,7 +621,7 @@ def health():
         db = "ok"
     except Exception as exc:  # noqa: BLE001
         db = f"error: {type(exc).__name__}"
-    return jsonify({"status": "ok" if db == "ok" else "degraded", "db": db, "accessCode": "set" if access_code() else "missing",
+    return jsonify({"status": "ok" if db == "ok" else "degraded", "db": db, "masterCode": "set" if access_code() else "missing",
                     "time": datetime.now(timezone.utc).isoformat()}), (200 if db == "ok" else 503)
 
 

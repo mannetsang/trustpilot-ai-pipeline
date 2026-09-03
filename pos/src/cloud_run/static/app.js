@@ -75,7 +75,7 @@
 
   // ------------------------------------------------------------ lock screen
 
-  const showLock = () => { $('lock').hidden = false; $('app').hidden = true; setTimeout(() => $('lockCode').focus(), 50); };
+  const showLock = () => { $('lock').hidden = false; $('app').hidden = true; loadNames(); setTimeout(() => $('lockCode').focus(), 50); };
   const showApp = () => { $('lock').hidden = true; $('app').hidden = false; renderUser(); go('sell'); };
 
   $('lockForm').addEventListener('submit', async (e) => {
@@ -84,9 +84,10 @@
     $('lockBtn').disabled = true;
     try {
       const staff = $('lockStaff').value.trim();
-      const data = await api('/api/unlock', { method: 'POST', body: { code: $('lockCode').value, staff } });
+      const data = await api('/api/unlock', { method: 'POST', body: { pin: $('lockCode').value, staff } });
       state.config.unlocked = true;
       state.config.staff = data.staff;
+      state.config.role = data.role;
       localStorage.setItem('pos.staff', data.staff);
       $('lockCode').value = '';
       showApp();
@@ -112,15 +113,19 @@
     $('userAv').textContent = initials(name);
     $('locPill').textContent = `${state.config.locationName} · ${state.config.currency}`;
   };
-  $('userBtn').addEventListener('click', () => { $('userInput').value = state.config.staff || ''; $('userErr').textContent = ''; openSheet('userSheet'); $('userInput').focus(); });
-  $('userSave').addEventListener('click', async () => {
+  const loadNames = async () => {
     try {
-      const data = await api('/api/staff', { method: 'POST', body: { staff: $('userInput').value } });
-      state.config.staff = data.staff;
-      localStorage.setItem('pos.staff', data.staff);
-      renderUser();
-      closeSheets();
-    } catch (err) { $('userErr').textContent = err.message; }
+      const names = await api('/api/users');
+      $('lockNames').innerHTML = names.map((u) => `<button type="button" class="chip" data-name="${esc(u.name)}">${esc(u.name)}</button>`).join('');
+      if (!names.length) $('lockHint').textContent = 'No users yet. Open the admin portal with the master code to add the first one.';
+    } catch { /* names are a convenience; typing still works */ }
+  };
+  $('lockNames').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-name]');
+    if (!b) return;
+    $('lockStaff').value = b.dataset.name;
+    document.querySelectorAll('#lockNames .chip').forEach((c) => c.classList.toggle('on', c === b));
+    $('lockCode').focus();
   });
 
   // ------------------------------------------------------------ catalogue
@@ -403,7 +408,8 @@
     const rb = $('refundBtn');
     if (rb) rb.addEventListener('click', () => {
       $('refundNum').textContent = `#${o.number}`;
-      $('refundReason').value = ''; $('refundAmount').value = ''; $('refundCode').value = ''; $('refundErr').textContent = '';
+      $('refundReason').value = ''; $('refundAmount').value = ''; $('refundCode').value = ''; $('refundAdminName').value = ''; $('refundAdminPin').value = ''; $('refundErr').textContent = '';
+      $('refundApproval').hidden = state.config.role === 'admin';
       $('refundAmount').placeholder = `Amount (blank = full ${money(o.amountPaid)})`;
       openSheet('refundSheet');
     });
@@ -412,7 +418,7 @@
   $('refundConfirm').addEventListener('click', async () => {
     const o = state.orders.find((x) => x.number === state.selectedOrder);
     if (!o) return;
-    const body = { code: $('refundCode').value, reason: $('refundReason').value };
+    const body = { reason: $('refundReason').value, code: $('refundCode').value, adminName: $('refundAdminName').value, adminPin: $('refundAdminPin').value };
     if ($('refundAmount').value) body.amount = Number($('refundAmount').value);
     if (!body.reason) { $('refundErr').textContent = 'Pick a reason'; return; }
     try {
@@ -441,9 +447,7 @@
     renderConnection();
     state.config = await api('/api/config');
     $('lockStaff').value = localStorage.getItem('pos.staff') || '';
-    if (!state.config.configured) {
-      $('lockHint').textContent = 'The till code has not been set up yet. Create the POS_ACCESS_CODE secret, then reload.';
-    }
+    await loadNames();
     if (state.config.unlocked) { showApp(); await loadCatalogue(); }
     else showLock();
   };
