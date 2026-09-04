@@ -71,10 +71,11 @@ Credentials, so the calling service account must be an Admin user on the
 Merchant Center account and the project must be registered once with
 `register_developer.py`. Account IDs are not secrets:
 
-| Merchant Center account | ID |
-|---|---|
-| Superhairpieces (all six storefronts) | `289630622` |
-| Gen'C Beauty | `670525760` |
+| Merchant Center account | ID | Service account added? |
+|---|---|---|
+| Superhairpieces.ca (standalone, CA only) | `5298296396` | yes, project registered |
+| Superhairpieces (.com and EU storefronts) | `289630622` | no |
+| Gen'C Beauty | `670525760` | no |
 
 ### Known data-quality caveats
 

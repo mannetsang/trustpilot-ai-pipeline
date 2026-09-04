@@ -4,12 +4,15 @@ Scripts that drive Merchant Center through the **Merchant API** (the successor
 to the Content API for Shopping): register the GCP project, create one product
 data source per storefront, and push products into them.
 
-| Merchant Center account | ID |
-|---|---|
-| Superhairpieces | `289630622` |
-| Gen'C Beauty | `670525760` |
+| Merchant Center account | ID | Storefronts | Service account added? |
+|---|---|---|---|
+| Superhairpieces.ca | `5298296396` | superhairpieces.ca | yes, project registered |
+| Superhairpieces | `289630622` | .com and the EU sites | no |
+| Gen'C Beauty | `670525760` | genc | no |
 
-Account IDs are not secrets. Neither is anything else here: the scripts
+The scripts only see accounts the service account has been added to, so
+`.com` and the EU storefronts need step 2 below repeated on `289630622`
+before anything can be created there. Account IDs are not secrets. Neither is anything else here: the scripts
 authenticate with Application Default Credentials, so there is no API key and
 nothing for Secret Manager to hold.
 
@@ -36,7 +39,7 @@ nothing for Secret Manager to hold.
    runs, every call fails with `GCP_NOT_REGISTERED`:
 
    ```
-   python google-merchant/register_developer.py --account 289630622 --email manne@superhairpieces.com
+   python google-merchant/register_developer.py --account 5298296396 --email manne@superhairpieces.com
    ```
 
    Google says to allow about five minutes before the next call; verify with
@@ -45,8 +48,8 @@ nothing for Secret Manager to hold.
 4. **Create the data sources**:
 
    ```
-   python google-merchant/data_sources.py create --account 289630622
-   python google-merchant/data_sources.py list --account 289630622
+   python google-merchant/data_sources.py create --account 5298296396
+   python google-merchant/data_sources.py list --account 5298296396
    ```
 
    Steps 3 and 4 can also be run from GitHub: *Actions* →
@@ -75,8 +78,8 @@ alone; the API sources sit alongside them. Edit `STOREFRONTS` in
 ## Pushing a product
 
 ```
-python google-merchant/products.py insert --account 289630622 --label CA product.json
-python google-merchant/products.py delete --account 289630622 --label CA --offer-id SHP-TEST-001
+python google-merchant/products.py insert --account 5298296396 --label CA product.json
+python google-merchant/products.py delete --account 5298296396 --label CA --offer-id SHP-TEST-001
 ```
 
 `product.json` is the Merchant API `ProductAttributes` object plus a
@@ -94,7 +97,7 @@ Set the account once in the gitignored `.env` at the repo root so `--account`
 can be dropped:
 
 ```
-GMC_ACCOUNT_ID=289630622
+GMC_ACCOUNT_ID=5298296396
 ```
 
 Install the client libraries with `pip install -r google-merchant/requirements.txt`

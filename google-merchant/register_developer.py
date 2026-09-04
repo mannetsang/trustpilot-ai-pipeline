@@ -42,9 +42,12 @@ def main(argv=None):
         sys.exit(f"error: {explain_api_error(exc)}")
 
     print(f"registration: {reg.name}")
-    print(f"registered GCP ids: {list(reg.gcp_ids) or '(none)'}")
-    if GCP_PROJECT not in reg.gcp_ids and not any(GCP_PROJECT in g for g in reg.gcp_ids):
-        print(f"warning: {GCP_PROJECT} is not in the registered list yet; allow ~5 minutes and re-run with --check")
+    # The API reports project *numbers* (e.g. 304363458561), not project ids.
+    print(f"registered GCP project numbers: {list(reg.gcp_ids) or '(none)'}")
+    if not reg.gcp_ids:
+        print("warning: nothing registered yet; allow ~5 minutes and re-run with --check")
+    else:
+        print(f"ok: {GCP_PROJECT} is registered with this account (allow ~5 minutes before other calls)")
     return 0
 
 

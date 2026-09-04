@@ -19,7 +19,7 @@ on:
       account:
         description: 'Merchant Center account id (not a secret)'
         required: false
-        default: '289630622'
+        default: '5298296396'
       only:
         description: 'Feed labels to create, space separated (blank = all six)'
         required: false
