@@ -577,7 +577,7 @@
     barChart($('figCategory'), d.byCategory.map((x) => ({ label: x.category, value: num(x.revenue), tip: `${x.category}: ${money(num(x.revenue))} · ${x.units} units${x.cost_of_goods != null ? ` · margin ${pct((num(x.revenue_with_cost) - num(x.cost_of_goods)) / num(x.revenue_with_cost) * 100)}` : ''}` })));
     barChart($('figStaff'), d.byStaff.map((x) => ({ label: x.staff, value: num(x.revenue), tip: `${x.staff}: ${money(num(x.revenue))} · ${x.sales} sales · ${money(num(x.refunds))} refunded` })));
     stackChart($('figStock'), d.stock.filter((x) => num(x.brought) > 0).map((x) => ({ label: x.category, sold: num(x.sold), total: num(x.brought), tip: `${x.category}: ${x.sold} of ${x.brought} units sold (${pct(num(x.sold) / num(x.brought) * 100)}) · ${money0(x.remaining_value)} of stock left at price` })));
-    barChart($('figTop'), d.topProducts.slice(0, 12).map((x) => ({ label: x.name || x.sku, value: num(x.revenue), tip: `${x.name || x.sku}: ${money(num(x.revenue))} · ${x.units} units${x.margin != null ? ` · margin ${money(num(x.margin))}` : ''}${x.brought ? ` · ${x.units}/${x.brought} brought` : ''}` })), { labelWidth: 220 });
+    barChart($('figTop'), d.topProducts.slice(0, 12).map((x) => ({ label: x.name || x.sku, value: num(x.revenue), tip: `${x.name || x.sku}: ${money(num(x.revenue))} · ${x.units} units${x.margin != null ? ` · margin ${money(num(x.margin))}` : ''}${x.brought ? ` · ${x.units}/${x.brought} brought` : ''}` })), { labelWidth: 330 });
 
     $('tblDay').innerHTML = table(['Day', 'Sales', 'Units', 'Sold', 'Refunds', 'Net'], d.byDay.map((x) => [x.day, x.sales, x.units, money(num(x.revenue)), money(num(x.refunds)), money(num(x.revenue) - num(x.refunds))]));
     $('tblCategory').innerHTML = table(['Category', 'Units', 'Revenue', 'Cost', 'Margin'], d.byCategory.map((x) => [x.category, x.units, money(num(x.revenue)), x.cost_of_goods == null ? '—' : money(num(x.cost_of_goods)), x.cost_of_goods == null ? '—' : pct((num(x.revenue_with_cost) - num(x.cost_of_goods)) / num(x.revenue_with_cost) * 100)]));
@@ -603,7 +603,8 @@
   const barChart = (fig, items, opts = {}) => {
     const plot = fig.querySelector('.plot');
     if (!items.length) { plot.innerHTML = '<div class="empty hint">No sales in this range.</div>'; return; }
-    const W = 560; const max = nice(Math.max(...items.map((i) => i.value)));
+    // Full-width figures get a proportionally wider canvas so text renders at the same size.
+    const W = fig.classList.contains('fig-wide') ? 1150 : 560; const max = nice(Math.max(...items.map((i) => i.value)));
     let svg = '';
     if (opts.columns) {
       const H = 220, padL = 44, padB = 26, padT = 14; const w = (W - padL) / items.length; const bw = Math.min(24, w * 0.6);
@@ -619,7 +620,7 @@
       svg += `<line class="axis" x1="${padL}" x2="${W}" y1="${y(0)}" y2="${y(0)}"/>`;
       plot.innerHTML = `<svg viewBox="0 0 ${W} ${H}">${svg}</svg>`;
     } else {
-      const lw = opts.labelWidth || 110, row = 30, padT = 6; const H = padT + row * items.length + 6; const x0 = lw + 8, x1 = W - 70;
+      const lw = opts.labelWidth || 110, row = 30, padT = 6; const H = padT + row * items.length + 6; const x0 = lw + 8, x1 = W - 80;
       const x = (v) => x0 + (x1 - x0) * v / max;
       items.forEach((it, i) => {
         const yy = padT + row * i + 5; const bw = x(it.value) - x0;
@@ -638,7 +639,7 @@
   const stackChart = (fig, items) => {
     const plot = fig.querySelector('.plot');
     if (!items.length) { plot.innerHTML = '<div class="empty hint">No stock quantities on the product list.</div>'; return; }
-    const W = 560, lw = 110, row = 30, padT = 6; const H = padT + row * items.length + 6; const x0 = lw + 8, x1 = W - 60;
+    const W = fig.classList.contains('fig-wide') ? 1150 : 560, lw = 110, row = 30, padT = 6; const H = padT + row * items.length + 6; const x0 = lw + 8, x1 = W - 60;
     const max = Math.max(...items.map((i) => i.total)); const x = (v) => x0 + (x1 - x0) * v / max;
     let svg = '';
     items.forEach((it, i) => {
