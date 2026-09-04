@@ -66,6 +66,23 @@
   </div>
 
   <div class="panel">
+    <h2>Events</h2>
+    <div class="hint">A show or any selling period. The register sells under the event chosen in its header, and Analytics reads one event at a time. The event running today is the default.</div>
+    <form class="form" id="eventForm" style="grid-template-columns: 2fr 1fr 1fr 110px auto">
+      <label>Name <input id="evName" placeholder="e.g. ESI Toronto 2027" autocomplete="off" required></label>
+      <label>Starts <input type="date" id="evStart" required></label>
+      <label>Ends <input type="date" id="evEnd" required></label>
+      <label>Currency <select id="evCurrency"><option>CAD</option><option>USD</option><option>EUR</option></select></label>
+      <button class="btn primary" type="submit">Add event</button>
+    </form>
+    <div class="err" id="evErr"></div>
+    <table class="users">
+      <thead><tr><th>Event</th><th>Dates</th><th>Currency</th><th>Status</th><th></th></tr></thead>
+      <tbody id="eventRows"></tbody>
+    </table>
+  </div>
+
+  <div class="panel">
     <h2>Products</h2>
     <div class="hint">Add or update products in bulk. Download the template, fill one row per product, and upload. Rows are matched on SKU: existing products are updated, new SKUs are added, and only the columns in your file are changed. Or download the current list, edit it, and upload it back.</div>
     <div class="tabs">
@@ -105,6 +122,14 @@
 </div>
 
 <div class="scrim" id="scrim"></div>
+<div class="sheet" id="eventSheet">
+  <h3>Edit <span id="esName"></span></h3>
+  <input id="esNameInput" placeholder="Name" autocomplete="off">
+  <div class="row"><input type="date" id="esStart" aria-label="Starts"><input type="date" id="esEnd" aria-label="Ends"></div>
+  <select id="esCurrency"><option>CAD</option><option>USD</option><option>EUR</option></select>
+  <div class="err" id="esErr"></div>
+  <div class="row"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="esSave">Save</button></div>
+</div>
 <div class="sheet" id="pinSheet">
   <h3>New PIN for <span id="pinName"></span></h3>
   <input id="pinInput" inputmode="numeric" pattern="\d{4,8}" placeholder="4–8 digits" autocomplete="off">

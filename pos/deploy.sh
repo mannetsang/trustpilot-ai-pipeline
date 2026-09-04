@@ -20,7 +20,7 @@ gcloud run deploy "$SERVICE" \
   --project "$PROJECT" \
   --allow-unauthenticated \
   --set-secrets "SUPABASE_DB_URL=SUPABASE_DB_URL:latest" \
-  --set-env-vars "^@^GCP_PROJECT=$PROJECT@POS_LOCATION_ID=${POS_LOCATION_ID:-esi-montreal-2026}@POS_LOCATION_NAME=${POS_LOCATION_NAME:-ESI Montreal 2026}@POS_CURRENCY=${POS_CURRENCY:-CAD}" \
+  --set-env-vars "GCP_PROJECT=$PROJECT" \
   --min-instances 0 \
   --max-instances 3 \
   --memory 512Mi \

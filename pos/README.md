@@ -15,6 +15,15 @@ database. Staff open it in a browser on the booth tablet or laptop, tap their
 name, enter their PIN, and sell. A USB or Bluetooth barcode scanner works as a
 keyboard: the search box treats a code followed by Enter as a scan.
 
+### Events
+
+An event is a show or any selling period: a name, a currency and a start and
+end date, managed in the admin portal. The register sells under the event
+chosen in its header (remembered per device; the event running today is the
+default), every sale carries the event it was rung under, and the Sales list
+and Analytics read one event at a time. Archiving an event hides it from the
+selector and keeps its sales.
+
 ### Users and the admin portal
 
 Accounts live in `pos_users`. Each person has a name, a role and a personal
@@ -85,6 +94,7 @@ are applied once each, in name order, by `apply_migration.py`.
 | `pos_products` | The product list, one row per SKU: name, category, price, cost, quantity brought to the show, flags, and the raw sheet row. |
 | `pos_product_barcodes` | Scannable codes (UPC, EAN, ASIN) pointing at a product. Several codes may point at one product. |
 | `pos_daily_cash_summary` | View. Per till, per Toronto calendar day, per currency: sales, cash in, change out, cash refunds, net drawer. |
+| `pos_events` | Shows and selling periods: code, name, dates, currency, active flag. Sales carry `event_id`. |
 | `pos_users` | Register and admin accounts: name, role, salted PIN hash, active flag, last sign-in. |
 | `pos_schema_migrations` | Which migration files have been applied. |
 

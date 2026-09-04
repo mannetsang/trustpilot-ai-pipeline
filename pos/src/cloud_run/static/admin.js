@@ -22,7 +22,7 @@
   const closeSheets = () => { $('scrim').classList.remove('on'); document.querySelectorAll('.sheet').forEach((s) => s.classList.remove('on')); };
 
   const showLogin = () => { $('lock').hidden = false; $('admin').hidden = true; };
-  const showAdmin = async () => { $('lock').hidden = true; $('admin').hidden = false; $('whoPill').textContent = me.staff; await loadUsers(); };
+  const showAdmin = async () => { $('lock').hidden = true; $('admin').hidden = false; $('whoPill').textContent = me.staff; await Promise.all([loadUsers(), loadEvents()]); };
 
   let mode = 'user';
   const setMode = (m) => {
@@ -108,6 +108,55 @@
       toast(`Added ${u.name}`);
       await loadUsers();
     } catch (err) { $('addErr').textContent = err.message; }
+  });
+
+  // ---- events
+  let events = [];
+  let editing = null;
+  const today = () => new Date().toISOString().slice(0, 10);
+  const loadEvents = async () => { events = await api('/api/admin/events'); renderEvents(); };
+  const renderEvents = () => {
+    const t = today();
+    $('eventRows').innerHTML = events.length ? events.map((e) => {
+      const state = !e.isActive ? ['refunded', 'Archived'] : (e.startsOn <= t && t <= e.endsOn) ? ['', 'Running'] : e.startsOn > t ? ['partial', 'Upcoming'] : ['', 'Past'];
+      return `<tr class="${e.isActive ? '' : 'inactive'}" data-id="${esc(e.id)}">
+        <td><b>${esc(e.name)}</b><div class="hint">${esc(e.code)}</div></td>
+        <td>${esc(e.startsOn)} → ${esc(e.endsOn)}</td>
+        <td>${esc(e.currency)}</td>
+        <td><span class="status ${state[0]}">${state[1]}</span></td>
+        <td class="actions">
+          <button class="sm" data-eact="edit">Edit</button>
+          <button class="sm ${e.isActive ? 'danger' : ''}" data-eact="toggle">${e.isActive ? 'Archive' : 'Restore'}</button>
+        </td></tr>`;
+    }).join('') : '<tr><td colspan="5" class="hint">No events yet. Add one above.</td></tr>';
+  };
+  $('eventForm').addEventListener('submit', async (e) => {
+    e.preventDefault(); $('evErr').textContent = '';
+    try {
+      const ev = await api('/api/admin/events', { method: 'POST', body: { name: $('evName').value, startsOn: $('evStart').value, endsOn: $('evEnd').value, currency: $('evCurrency').value } });
+      $('evName').value = ''; $('evStart').value = ''; $('evEnd').value = '';
+      toast(`Added ${ev.name}`); await loadEvents();
+    } catch (err) { $('evErr').textContent = err.message; }
+  });
+  $('eventRows').addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-eact]'); if (!btn) return;
+    const ev = events.find((x) => x.id === btn.closest('tr').dataset.id); if (!ev) return;
+    if (btn.dataset.eact === 'edit') {
+      editing = ev; $('esName').textContent = ev.name; $('esNameInput').value = ev.name; $('esStart').value = ev.startsOn; $('esEnd').value = ev.endsOn; $('esCurrency').value = ev.currency; $('esErr').textContent = '';
+      openSheet('eventSheet'); return;
+    }
+    try {
+      if (ev.isActive && !confirm(`Archive ${ev.name}? It disappears from the register's selector; its sales are kept.`)) return;
+      await api(`/api/admin/events/${ev.id}`, { method: 'PATCH', body: { isActive: !ev.isActive } });
+      toast(`Updated ${ev.name}`); await loadEvents();
+    } catch (err) { toast(err.message); }
+  });
+  $('esSave').addEventListener('click', async () => {
+    if (!editing) return;
+    try {
+      await api(`/api/admin/events/${editing.id}`, { method: 'PATCH', body: { name: $('esNameInput').value, startsOn: $('esStart').value, endsOn: $('esEnd').value, currency: $('esCurrency').value } });
+      closeSheets(); toast('Event updated'); await loadEvents();
+    } catch (err) { $('esErr').textContent = err.message; }
   });
 
   // ---- products by CSV

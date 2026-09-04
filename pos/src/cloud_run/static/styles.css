@@ -200,3 +200,7 @@ input { font: inherit; color: inherit; }
 .tbl th { color: var(--muted); font-weight: 600; font-size: 12px; }
 .an-foot { max-width: 900px; }
 @media (max-width: 900px) { .an-grid, .an-tables { grid-template-columns: 1fr; } .an-actions { margin-left: 0; } }
+
+/* Event selectors */
+select.event-pill { appearance: none; -webkit-appearance: none; border: 0; padding-right: 26px; background: var(--chip) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2314171a' stroke-width='2.5'><path d='m6 9 6 6 6-6'/></svg>") no-repeat right 10px center; cursor: pointer; max-width: 260px; text-overflow: ellipsis; }
+.an-event select { height: 36px; border: 1px solid var(--line); border-radius: 8px; padding: 0 10px; background: var(--panel); font: inherit; font-weight: 600; max-width: 280px; }

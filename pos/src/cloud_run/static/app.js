@@ -18,6 +18,7 @@
 
   const state = {
     config: null,
+    eventId: null,                // the event this device sells under
     category: 'all',
     products: [],
     cart: [],                     // [{ product, qty, barcode }]
@@ -44,9 +45,11 @@
     return data;
   };
 
+  const currentEvent = () => (state.config?.events || []).find((e) => e.id === state.eventId) || null;
+
   const money = (value) => {
     const n = Number(value || 0);
-    const cur = state.config?.currency || 'CAD';
+    const cur = currentEvent()?.currency || 'CAD';
     try {
       return new Intl.NumberFormat('en-CA', { style: 'currency', currency: cur }).format(n);
     } catch { return `${cur} ${n.toFixed(2)}`; }
@@ -91,6 +94,8 @@
     try {
       const staff = $('lockStaff').value.trim();
       const data = await api('/api/unlock', { method: 'POST', body: { pin: $('lockCode').value, staff } });
+      state.config = await api('/api/config');
+      chooseEvent();
       state.config.unlocked = true;
       state.config.staff = data.staff;
       state.config.role = data.role;
@@ -118,8 +123,34 @@
     const name = state.config?.staff || '';
     $('userName').textContent = name;
     $('userAv').textContent = initials(name);
-    $('locPill').textContent = `${state.config.locationName} · ${state.config.currency}`;
+    renderEventSelect();
   };
+
+  // Which event this device sells under. Remembered per device; falls back to
+  // the server's default (the event running today, else the next one).
+  const chooseEvent = () => {
+    const events = state.config.events || [];
+    const saved = localStorage.getItem('pos.event');
+    state.eventId = events.some((e) => e.id === saved) ? saved : state.config.defaultEventId;
+  };
+  const eventLabel = (e) => `${e.name} · ${e.currency}`;
+  const renderEventSelect = () => {
+    const events = state.config.events || [];
+    const sel = $('eventSelect');
+    sel.innerHTML = events.length
+      ? events.map((e) => `<option value="${esc(e.id)}"${e.id === state.eventId ? ' selected' : ''}>${esc(eventLabel(e))}</option>`).join('')
+      : '<option value="">No event set up</option>';
+    sel.disabled = events.length < 2;
+    const an = $('anEvent');
+    an.innerHTML = events.map((e) => `<option value="${esc(e.id)}"${e.id === state.eventId ? ' selected' : ''}>${esc(e.name)} (${esc(e.startsOn)} to ${esc(e.endsOn)})</option>`).join('');
+  };
+  $('eventSelect').addEventListener('change', () => {
+    state.eventId = $('eventSelect').value;
+    localStorage.setItem('pos.event', state.eventId);
+    renderCart();
+    renderEventSelect();
+    toast(`Selling under ${currentEvent()?.name || 'no event'}`);
+  });
   const loadNames = async () => {
     try {
       const names = await api('/api/users');
@@ -315,6 +346,7 @@
     if (!state.cart.length) return;
     const payload = state.pendingSale || {
       clientRecordId: recordId(),
+      eventId: state.eventId,
       items: state.cart.map((l) => ({ productId: l.product.id, quantity: l.qty, barcode: l.barcode })),
       discount: cartTotals().discount,
       cashReceived: cartTotals().total,
@@ -380,6 +412,7 @@
     const t = cartTotals();
     const payload = {
       clientRecordId: recordId(),
+      eventId: state.eventId,
       items: state.cart.map((l) => ({ productId: l.product.id, quantity: l.qty, barcode: l.barcode })),
       discount: t.discount,
       cashReceived: state.cashCents / 100,
@@ -410,7 +443,7 @@
     const change = Number(sale.change);
     $('doneKicker').textContent = change > 0.004 ? 'Change due' : 'Sale recorded · cash';
     $('doneAmount').textContent = money(change > 0.004 ? change : sale.total);
-    $('doneMeta').textContent = `Sale #${sale.number} · ${money(sale.total)} · ${sale.staff} · ${state.config.locationName}`;
+    $('doneMeta').textContent = `Sale #${sale.number} · ${money(sale.total)} · ${sale.staff} · ${currentEvent()?.name || ''}`;
     state.cart = [];
     state.discount = 0;
     $('discountInput').value = '';
@@ -424,9 +457,10 @@
   const loadOrders = async () => {
     try {
       const q = $('orderSearch').value.trim();
+      const ev = state.eventId || '';
       const [orders, summary] = await Promise.all([
-        api(`/api/sales?${new URLSearchParams({ q, limit: 100 })}`),
-        api('/api/summary'),
+        api(`/api/sales?${new URLSearchParams({ q, limit: 100, event: ev })}`),
+        api(`/api/summary?${new URLSearchParams({ event: ev })}`),
       ]);
       state.orders = orders;
       renderOrders();
@@ -530,6 +564,7 @@
   const loadAnalytics = async () => {
     const [from, to] = rangeDates();
     const params = new URLSearchParams(); if (from) params.set('from', from); if (to) params.set('to', to);
+    params.set('event', $('anEvent').value || state.eventId || '');
     $('anExport').href = `/api/analytics/export.csv${params.toString() ? '?' + params : ''}`;
     try {
       an.data = await api(`/api/analytics?${params}`);
@@ -551,15 +586,17 @@
     loadAnalytics();
   });
   $('anRefresh').addEventListener('click', loadAnalytics);
+  $('anEvent').addEventListener('change', loadAnalytics);
 
   const kpiTile = (label, value, detail, hero) => `<div class="kpi"><div class="l">${esc(label)}</div><div class="v${hero ? ' hero' : ''} money">${esc(value)}</div>${detail ? `<div class="d">${esc(detail)}</div>` : ''}</div>`;
 
   const renderAnalytics = () => {
     const d = an.data; const k = d.kpi;
     const r = d.range;
+    const ev = d.event;
     $('anRangeNote').textContent = (r.from || r.to)
-      ? `Showing ${r.from || 'the start'} to ${r.to || 'today'} · ${k.sales} sales`
-      : `Showing everything recorded · ${k.sales} sales${k.firstSale ? ` since ${new Date(k.firstSale).toLocaleDateString('en-CA')}` : ''}`;
+      ? `${ev.name} · showing ${r.from || 'the start'} to ${r.to || 'today'} · ${k.sales} sales`
+      : `${ev.name} · ${ev.startsOn} to ${ev.endsOn} · whole event · ${k.sales} sales`;
     const coverage = k.costCoveragePct == null ? '' : `cost known for ${pct(k.costCoveragePct)} of revenue`;
     $('anKpis').innerHTML = [
       kpiTile('Net revenue', money0(k.netRevenue), `${money0(k.grossRevenue)} sold, ${money0(k.refunds)} refunded`, true),
@@ -674,6 +711,7 @@
   const boot = async () => {
     renderConnection();
     state.config = await api('/api/config');
+    chooseEvent();
     $('lockStaff').value = localStorage.getItem('pos.staff') || '';
     await loadNames();
     if (state.config.unlocked) { showApp(); await loadCatalogue(); }

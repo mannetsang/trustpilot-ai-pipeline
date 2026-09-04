@@ -16,9 +16,10 @@ Env vars:
   POS_ACCESS_CODE     Master code for the admin portal. If unset, read from
                       Secret Manager (secret POS_ACCESS_CODE) and re-read every
                       minute, so it can be created or rotated without a deploy.
-  POS_LOCATION_ID     Written on every sale. Default esi-montreal-2026.
-  POS_LOCATION_NAME   Shown in the header. Default ESI Montreal 2026.
-  POS_CURRENCY        Default CAD.
+
+Events (pos_events) give each show a name, currency and date range. The
+register sells under the event chosen in its header; Analytics reads one
+event at a time.
   GCP_PROJECT         Secret Manager project. Default shp-ai-bot-2026.
 """
 
@@ -45,9 +46,6 @@ from psycopg_pool import ConnectionPool
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 
 PROJECT = os.environ.get("GCP_PROJECT", "shp-ai-bot-2026")
-LOCATION_ID = os.environ.get("POS_LOCATION_ID", "esi-montreal-2026")
-LOCATION_NAME = os.environ.get("POS_LOCATION_NAME", "ESI Montreal 2026")
-CURRENCY = os.environ.get("POS_CURRENCY", "CAD")
 CENT = Decimal("0.01")
 
 # ---------------------------------------------------------------------------
@@ -225,14 +223,131 @@ def approved_by_admin(body):
     return None
 
 
+# ---------------------------------------------------------------------------
+# Events
+# ---------------------------------------------------------------------------
+
+
+def serialise_event(e):
+    return {"id": str(e["id"]), "code": e["code"], "name": e["name"], "startsOn": e["starts_on"].isoformat(),
+            "endsOn": e["ends_on"].isoformat(), "currency": e["currency"], "isActive": e["is_active"]}
+
+
+def active_events():
+    return query("select * from pos_events where is_active order by starts_on desc, name")
+
+
+def default_event(events):
+    """The event running today, else the next upcoming one, else the most recent."""
+    from datetime import date
+    today = date.today()
+    running = [e for e in events if e["starts_on"] <= today <= e["ends_on"]]
+    if running:
+        return running[0]
+    upcoming = sorted([e for e in events if e["starts_on"] > today], key=lambda e: e["starts_on"])
+    if upcoming:
+        return upcoming[0]
+    return events[0] if events else None
+
+
+def event_from_request(required=True):
+    """The event named by ?event= (id or code) or the JSON body's eventId, else the default."""
+    body = request.get_json(silent=True) or {}
+    key = (request.args.get("event") or body.get("eventId") or "").strip()
+    if key:
+        e = query("select * from pos_events where id::text = %s or code = %s", (key, key), one=True)
+        if not e:
+            abort(404, "no such event")
+        return e
+    e = default_event(active_events())
+    if not e and required:
+        abort(503, "no event set up: add one in the admin portal")
+    return e
+
+
 @app.get("/api/config")
 def config():
+    events = active_events()
+    default = default_event(events)
     return jsonify({
-        "locationId": LOCATION_ID, "locationName": LOCATION_NAME, "currency": CURRENCY,
+        "events": [serialise_event(e) for e in events],
+        "defaultEventId": str(default["id"]) if default else None,
         "unlocked": unlocked(), "staff": session.get("staff"), "role": session.get("role"),
         "configured": access_code() is not None,
         "hasUsers": query("select exists (select 1 from pos_users where is_active) as e", one=True)["e"],
     })
+
+
+@app.get("/api/admin/events")
+@require_admin
+def admin_events():
+    return jsonify([serialise_event(e) for e in query("select * from pos_events order by starts_on desc, name")])
+
+
+def event_fields(body, creating):
+    from datetime import date
+    fields = {}
+    if "name" in body or creating:
+        name = clean_name(body.get("name"))
+        if not name:
+            abort(400, "name required")
+        fields["name"] = name
+    for key, col in (("startsOn", "starts_on"), ("endsOn", "ends_on")):
+        if key in body or creating:
+            v = str(body.get(key) or "").strip()
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
+                abort(400, f"{key} must be YYYY-MM-DD")
+            fields[col] = date.fromisoformat(v)
+    if "currency" in body or creating:
+        cur = str(body.get("currency") or "CAD").upper()
+        if cur not in ("CAD", "USD", "EUR"):
+            abort(400, "currency must be CAD, USD or EUR")
+        fields["currency"] = cur
+    if "isActive" in body:
+        fields["is_active"] = bool(body["isActive"])
+    if "starts_on" in fields and "ends_on" in fields and fields["ends_on"] < fields["starts_on"]:
+        abort(400, "end date is before start date")
+    return fields
+
+
+def slug(name):
+    base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40] or "event"
+    code, n = base, 2
+    while query("select 1 from pos_events where code = %s", (code,), one=True):
+        code, n = f"{base}-{n}", n + 1
+    return code
+
+
+@app.post("/api/admin/events")
+@require_admin
+def admin_create_event():
+    body = request.get_json(silent=True) or {}
+    fields = event_fields(body, creating=True)
+    code = re.sub(r"[^a-z0-9-]+", "-", str(body.get("code") or "").lower()).strip("-") or slug(fields["name"])
+    if query("select 1 from pos_events where code = %s", (code,), one=True):
+        abort(409, "an event with that code already exists")
+    cols = ["code", *fields, "created_by"]
+    e = query(f"insert into pos_events ({', '.join(cols)}) values ({', '.join(['%s'] * len(cols))}) returning *",
+              [code, *fields.values(), session.get("staff")], one=True)
+    return jsonify(serialise_event(e)), 201
+
+
+@app.patch("/api/admin/events/<uuid:event_id>")
+@require_admin
+def admin_update_event(event_id):
+    body = request.get_json(silent=True) or {}
+    e = query("select * from pos_events where id = %s", (str(event_id),), one=True)
+    if not e:
+        abort(404, "no such event")
+    fields = event_fields(body, creating=False)
+    if not fields:
+        abort(400, "nothing to change")
+    starts = fields.get("starts_on", e["starts_on"]); ends = fields.get("ends_on", e["ends_on"])
+    if ends < starts:
+        abort(400, "end date is before start date")
+    sets = ", ".join(f"{k} = %s" for k in fields)
+    e = query(f"update pos_events set {sets} where id = %s returning *", [*fields.values(), str(event_id)], one=True)
+    return jsonify(serialise_event(e))
 
 
 @app.get("/api/users")
@@ -705,6 +820,7 @@ def create_sale():
         lines.append({"line_no": n, "product": product, "quantity": qty, "unit_price": product["price"],
                       "barcode": (str(item.get("barcode") or "").strip() or None)})
 
+    event = event_from_request()
     subtotal, discount, grand = totals(lines, body.get("discount"))
     cash = money(body.get("cashReceived") or 0)
     if cash < grand:
@@ -719,12 +835,12 @@ def create_sale():
                 return jsonify(sale_payload(conn, existing)), 200
             user_id = session.get("user_id")
             txn = conn.execute(
-                """insert into pos_transactions (client_record_id, location_id, staff_name, staff_user_id, currency,
+                """insert into pos_transactions (client_record_id, event_id, location_id, staff_name, staff_user_id, currency,
                      payment_method, subtotal, discount_total, grand_total, amount_paid, cash_received, change_given, note)
-                   values (%s, %s, %s, %s, %s, 'cash', %s, %s, %s, %s, %s, %s, %s)
+                   values (%s, %s, %s, %s, %s, %s, 'cash', %s, %s, %s, %s, %s, %s, %s)
                    returning *""",
-                (record_id, LOCATION_ID, session.get("staff") or "—", user_id if user_id != "master" else None, CURRENCY,
-                 subtotal, discount, grand, grand, cash, change, note),
+                (record_id, event["id"], event["code"], session.get("staff") or "—", user_id if user_id != "master" else None,
+                 event["currency"], subtotal, discount, grand, grand, cash, change, note),
             ).fetchone()
             for l in lines:
                 p = l["product"]
@@ -751,7 +867,8 @@ def serialise_sale(t, items):
         return None if v is None else str(v)
     return {
         "id": str(t["id"]), "number": t["transaction_number"], "status": t["status"], "staff": t["staff_name"],
-        "locationId": t["location_id"], "currency": t["currency"], "paymentMethod": t["payment_method"],
+        "eventId": str(t["event_id"]) if t.get("event_id") else None, "locationId": t["location_id"],
+        "currency": t["currency"], "paymentMethod": t["payment_method"],
         "subtotal": s(t["subtotal"]), "discount": s(t["discount_total"]), "total": s(t["grand_total"]),
         "amountPaid": s(t["amount_paid"]), "cashReceived": s(t["cash_received"]), "change": s(t["change_given"]),
         "refundAmount": s(t["refund_amount"]), "refundReason": t["refund_reason"],
@@ -767,8 +884,9 @@ def serialise_sale(t, items):
 def list_sales():
     q = request.args.get("q", "").strip()
     limit = min(int(request.args.get("limit", 50)), 200)
-    params = [LOCATION_ID]
-    where = "location_id = %s"
+    event = event_from_request()
+    params = [event["id"]]
+    where = "event_id = %s"
     if q:
         where += " and (transaction_number::text = %s or staff_name ilike %s)"
         params += [q, f"%{q}%"]
@@ -799,8 +917,7 @@ def refund(number):
         abort(400, "reason required")
     with pool().connection() as conn:
         with conn.transaction():
-            t = conn.execute("select * from pos_transactions where transaction_number = %s and location_id = %s for update",
-                             (number, LOCATION_ID)).fetchone()
+            t = conn.execute("select * from pos_transactions where transaction_number = %s for update", (number,)).fetchone()
             if not t:
                 abort(404, "no such sale")
             if t["refund_amount"] is not None:
@@ -822,12 +939,13 @@ def refund(number):
 @app.get("/api/summary")
 @require_unlock
 def summary():
+    event = event_from_request()
     rows = query(
         """select sale_day::text as day, sales, inspection_deposits, amount_paid::text,
                   cash_received::text, change_given::text, coalesce(cash_refunded, 0)::text as cash_refunded,
                   net_cash_in_drawer::text
            from pos_daily_cash_summary where location_id = %s and currency = %s order by sale_day desc limit 14""",
-        (LOCATION_ID, CURRENCY),
+        (event["code"], event["currency"]),
     )
     return jsonify(rows)
 
@@ -852,9 +970,10 @@ def date_range():
 
 
 def range_sql(alias="t"):
-    """WHERE fragment and params limiting sold_at to the local-date range."""
+    """WHERE fragment and params limiting to the event and the local-date range."""
     start, end = date_range()
-    where, params = [f"{alias}.location_id = %s", f"{alias}.status <> 'void'"], [LOCATION_ID]
+    event = event_from_request()
+    where, params = [f"{alias}.event_id = %s", f"{alias}.status <> 'void'"], [event["id"]]
     if start:
         where.append(f"({alias}.sold_at at time zone %s)::date >= %s"); params += [TZ, start]
     if end:
@@ -920,17 +1039,19 @@ def analytics():
                    sum(price * greatest(coalesce(show_qty, 0) - coalesce(sold.units, 0), 0)) filter (where price is not null) as remaining_value
             from pos_products p
             left join (select i.product_id, sum(i.quantity) as units from pos_transaction_items i
-                       join pos_transactions t on t.id = i.transaction_id where t.location_id = %s and t.status <> 'void'
+                       join pos_transactions t on t.id = i.transaction_id where t.event_id = %s and t.status <> 'void'
                        group by i.product_id) sold on sold.product_id = p.id
-            where p.is_active group by 1 order by brought desc nulls last""", (LOCATION_ID,)).fetchall()
+            where p.is_active group by 1 order by brought desc nulls last""", (event_from_request()["id"],)).fetchall()
 
     def n(v):
         return None if v is None else (str(v) if isinstance(v, Decimal) else v)
     def rows(rs):
         return [{k: (v.isoformat() if hasattr(v, "isoformat") else n(v)) for k, v in r.items()} for r in rs]
     cogs = margin["cost_of_goods"]; rwc = margin["revenue_with_cost"]
+    event = event_from_request()
     return jsonify({
-        "range": {"from": date_range()[0], "to": date_range()[1], "timezone": TZ, "currency": CURRENCY},
+        "event": serialise_event(event),
+        "range": {"from": date_range()[0], "to": date_range()[1], "timezone": TZ, "currency": event["currency"]},
         "kpi": {
             "sales": kpi["sales"], "units": int(kpi["units"]), "grossRevenue": n(kpi["gross_revenue"]), "discounts": n(kpi["discounts"]),
             "refunds": n(kpi["refunds"]), "refundedSales": kpi["refunded_sales"], "netRevenue": n(kpi["net_revenue"]),
@@ -952,22 +1073,22 @@ def analytics():
 def analytics_export():
     where, params = range_sql()
     rows = query(f"""
-        select t.transaction_number, (t.sold_at at time zone %s) as sold_local, t.staff_name, t.status,
+        select t.transaction_number, t.location_id as event_code, (t.sold_at at time zone %s) as sold_local, t.staff_name, t.status,
                t.subtotal, t.discount_total, t.grand_total, t.cash_received, t.change_given, t.refund_amount, t.refund_reason,
                i.line_no, i.sku, i.product_name, i.category, i.quantity, i.unit_price, i.line_total, p.cost
         from pos_transactions t
         join pos_transaction_items i on i.transaction_id = t.id
         left join pos_products p on p.id = i.product_id
         where {where} order by t.sold_at, t.transaction_number, i.line_no""", [TZ] + params)
-    header = ["sale_number", "sold_at_local", "staff", "status", "sale_subtotal", "sale_discount", "sale_total", "cash_received",
+    header = ["sale_number", "event", "sold_at_local", "staff", "status", "sale_subtotal", "sale_discount", "sale_total", "cash_received",
               "change_given", "refund_amount", "refund_reason", "line_no", "sku", "product", "category", "quantity", "unit_price",
               "line_total", "unit_cost"]
-    body = [header] + [[r["transaction_number"], r["sold_local"].strftime("%Y-%m-%d %H:%M:%S"), r["staff_name"], r["status"],
+    body = [header] + [[r["transaction_number"], r["event_code"], r["sold_local"].strftime("%Y-%m-%d %H:%M:%S"), r["staff_name"], r["status"],
                         r["subtotal"], r["discount_total"], r["grand_total"], r["cash_received"], r["change_given"],
                         r["refund_amount"] if r["refund_amount"] is not None else "", r["refund_reason"] or "",
                         r["line_no"], r["sku"], r["product_name"] or "", r["category"] or "", r["quantity"], r["unit_price"],
                         r["line_total"], r["cost"] if r["cost"] is not None else ""] for r in rows]
-    return csv_response(body, f"pos-sales-{datetime.now(timezone.utc):%Y%m%d}.csv")
+    return csv_response(body, f"pos-sales-{event_from_request()['code']}-{datetime.now(timezone.utc):%Y%m%d}.csv")
 
 
 # ---------------------------------------------------------------------------

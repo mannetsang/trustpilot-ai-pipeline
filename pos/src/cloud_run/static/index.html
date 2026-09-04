@@ -48,7 +48,7 @@
     <div class="title" id="pageTitle">Sell</div>
     <div class="top-right">
       <span class="pill" id="connPill"><span class="dot"></span><span id="connText">Online</span></span>
-      <span class="pill" id="locPill"></span>
+      <select class="pill event-pill" id="eventSelect" aria-label="Event" title="Event being sold under"></select>
       <span class="pill" id="userBtn"><span class="av" id="userAv">?</span><span id="userName"></span></span>
       <button class="pill" id="lockOut" title="Lock the till and switch user">Lock / switch</button>
     </div>
@@ -134,6 +134,9 @@
         <div class="an-dates">
           <input type="date" id="anFrom" aria-label="From date"> <span class="hint">to</span> <input type="date" id="anTo" aria-label="To date">
           <button class="chip" id="anApply">Apply</button>
+        </div>
+        <div class="an-event">
+          <select id="anEvent" aria-label="Event"></select>
         </div>
         <div class="an-actions">
           <a class="chip" id="anExport" href="/api/analytics/export.csv" download>Download sales CSV</a>
