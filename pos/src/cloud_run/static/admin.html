@@ -57,12 +57,28 @@
 
 <div class="admin" id="admin" hidden>
   <div class="admin-head">
-    <h1>POS Admin · Users</h1>
+    <h1>POS Admin</h1>
     <div class="top-right">
       <span class="pill" id="whoPill"></span>
       <a class="pill" href="/">Register</a>
       <button class="pill" id="logout">Sign out</button>
     </div>
+  </div>
+
+  <div class="panel">
+    <h2>Products</h2>
+    <div class="hint">Add or update products in bulk. Download the template, fill one row per product, and upload. Rows are matched on SKU: existing products are updated, new SKUs are added, and only the columns in your file are changed. Or download the current list, edit it, and upload it back.</div>
+    <div class="tabs">
+      <a class="chip" href="/api/admin/products/template.csv" download>Download CSV template</a>
+      <a class="chip" href="/api/admin/products/export.csv" download>Download current products</a>
+    </div>
+    <form class="form" id="csvForm" style="grid-template-columns: 1fr auto auto">
+      <label>CSV file <input type="file" id="csvFile" accept=".csv,text/csv" required></label>
+      <button class="btn ghost" type="button" id="csvPreview">Preview</button>
+      <button class="btn primary" type="submit" id="csvUpload">Upload</button>
+    </form>
+    <div class="err" id="csvErr"></div>
+    <div id="csvResult" class="hint"></div>
   </div>
 
   <div class="panel">

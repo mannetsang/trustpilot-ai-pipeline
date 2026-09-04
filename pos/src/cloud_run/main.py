@@ -22,8 +22,11 @@ Env vars:
   GCP_PROJECT         Secret Manager project. Default shp-ai-bot-2026.
 """
 
+import csv
 import hashlib
 import hmac
+import io
+import json
 import os
 import secrets as pysecrets
 import re
@@ -35,7 +38,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from functools import wraps
 
 import psycopg
-from flask import Flask, abort, jsonify, request, send_from_directory, session
+from flask import Flask, Response, abort, jsonify, request, send_from_directory, session
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
@@ -353,6 +356,238 @@ def admin_update_user(user_id):
     if str(user_id) == session.get("user_id") and (not user["is_active"] or user["role"] != "admin"):
         session.clear()
     return jsonify(serialise_user(user))
+
+
+# ---------------------------------------------------------------------------
+# Admin: products by CSV
+# ---------------------------------------------------------------------------
+
+CSV_COLUMNS = ["sku", "name", "category", "price", "cost", "quantity", "barcodes", "is_set", "is_clearance", "is_active", "note"]
+CSV_HELP = {
+    "sku": "required, unique; matches an existing product to update it",
+    "name": "shown on the register; defaults to the SKU",
+    "category": "e.g. CN, KR, US, Clearance",
+    "price": "selling price, e.g. 8 or 8.00; blank makes the product unsellable",
+    "cost": "optional",
+    "quantity": "quantity brought to the show, whole number",
+    "barcodes": "one or more scan codes separated by |, e.g. 3331684142074|X004MQWD9P",
+    "is_set": "TRUE or FALSE",
+    "is_clearance": "TRUE or FALSE",
+    "is_active": "TRUE or FALSE; FALSE hides the product from the register",
+    "note": "optional",
+}
+MAX_CSV_BYTES = 2 * 1024 * 1024
+MAX_CSV_ROWS = 5000
+
+
+def csv_response(rows, filename):
+    out = io.StringIO()
+    writer = csv.writer(out, lineterminator="\r\n")
+    for row in rows:
+        writer.writerow(row)
+    # A BOM makes Excel open UTF-8 (accents, Chinese) correctly.
+    body = "\ufeff" + out.getvalue()
+    return Response(body, mimetype="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"})
+
+
+@app.get("/api/admin/products/template.csv")
+@require_admin
+def products_template():
+    rows = [CSV_COLUMNS,
+            ["EXAMPLE-SKU-1", "Example shampoo 350ml", "KR", "16.00", "7.50", "20", "8809640735561", "FALSE", "FALSE", "TRUE", ""],
+            ["EXAMPLE-SKU-2", "Example brush set", "CN", "8", "3.10", "12", "3331684122427|3331684122434", "TRUE", "FALSE", "TRUE", "two barcodes"],
+            ["# delete the two example rows above; column meanings: " + "; ".join(f"{k} = {v}" for k, v in CSV_HELP.items())]]
+    return csv_response(rows, "pos-products-template.csv")
+
+
+@app.get("/api/admin/products/export.csv")
+@require_admin
+def products_export():
+    rows = query(
+        """select p.sku, p.name, p.category, p.price, p.cost, p.show_qty, p.is_set, p.is_clearance, p.is_active, p.note,
+                  coalesce((select string_agg(b.barcode, '|' order by b.barcode) from pos_product_barcodes b where b.product_id = p.id), '') as barcodes
+           from pos_products p order by p.category, p.name"""
+    )
+    def flag(v):
+        return "TRUE" if v else "FALSE"
+    def num(v):
+        return "" if v is None else str(v)
+    body = [CSV_COLUMNS] + [[r["sku"], r["name"], r["category"], num(r["price"]), num(r["cost"]), num(r["show_qty"]),
+                            r["barcodes"], flag(r["is_set"]), flag(r["is_clearance"]), flag(r["is_active"]), r["note"] or ""]
+                           for r in rows]
+    return csv_response(body, f"pos-products-{datetime.now(timezone.utc):%Y%m%d}.csv")
+
+
+def parse_money_cell(text):
+    text = (text or "").strip().replace(",", "")
+    if not text:
+        return None
+    m = re.fullmatch(r"(?:CA\$|US\$|€|\$)?(-?\d+(?:\.\d+)?)", text)
+    if not m:
+        raise ValueError(f"not a price: {text!r}")
+    value = Decimal(m.group(1))
+    if value < 0:
+        raise ValueError(f"negative: {text!r}")
+    return money(value)
+
+
+def parse_flag(text):
+    t = (text or "").strip().lower()
+    if t in ("", None):
+        return None
+    if t in ("true", "yes", "y", "1", "x"):
+        return True
+    if t in ("false", "no", "n", "0"):
+        return False
+    raise ValueError(f"not TRUE/FALSE: {text!r}")
+
+
+def parse_products_csv(raw):
+    """Return (rows, problems).
+
+    A blank cell means "leave unchanged" for an existing product and "use the
+    default" for a new one, so a file with just sku and price can fix prices
+    without touching anything else. Only non-blank cells make it into a record.
+    """
+    text = raw.decode("utf-8-sig", errors="replace")
+    reader = csv.reader(io.StringIO(text))
+    header = None
+    rows, problems, seen = [], [], {}
+    for n, cells in enumerate(reader, start=1):
+        if not any(c.strip() for c in cells) or cells[0].strip().startswith("#"):
+            continue
+        if header is None:
+            header = [c.strip().lower().lstrip("\ufeff") for c in cells]
+            unknown = [h for h in header if h and h not in CSV_COLUMNS]
+            if "sku" not in header:
+                raise ValueError("the header row must include a 'sku' column")
+            if unknown:
+                problems.append(f"ignored unknown column(s): {', '.join(unknown)}")
+            continue
+        if len(rows) >= MAX_CSV_ROWS:
+            problems.append(f"stopped after {MAX_CSV_ROWS} rows")
+            break
+        cell = {h: (cells[i].strip() if i < len(cells) else "") for i, h in enumerate(header) if h}
+        sku = cell.get("sku", "")
+        blank_price = "price" in cell and not cell["price"]
+        cell = {k: v for k, v in cell.items() if v}
+        if not sku:
+            problems.append(f"row {n}: blank sku, skipped")
+            continue
+        if sku.upper().startswith("EXAMPLE-SKU-"):
+            problems.append(f"row {n}: example row skipped")
+            continue
+        if sku in seen:
+            problems.append(f"row {n}: duplicate sku {sku!r}, first row wins")
+            continue
+        record = {"sku": sku, "row": n}
+        try:
+            if "name" in cell:
+                record["name"] = cell["name"]
+            if "category" in cell:
+                record["category"] = cell["category"]
+            if "price" in cell:
+                record["price"] = parse_money_cell(cell["price"])
+            record["blank_price"] = blank_price
+            if "cost" in cell:
+                record["cost"] = parse_money_cell(cell["cost"])
+            if "quantity" in cell:
+                q = cell["quantity"]
+                if re.fullmatch(r"-?\d+", q):
+                    record["show_qty"] = int(q)
+                else:
+                    problems.append(f"row {n} {sku}: quantity {q!r} is not a whole number, ignored")
+            for key in ("is_set", "is_clearance", "is_active"):
+                if key in cell:
+                    v = parse_flag(cell[key])
+                    if v is not None:
+                        record[key] = v
+            if "note" in cell:
+                record["note"] = cell["note"]
+            if "barcodes" in cell:
+                record["barcodes"] = [b.strip() for b in re.split(r"[|;]", cell["barcodes"]) if b.strip()]
+        except ValueError as exc:
+            problems.append(f"row {n} {sku}: {exc}, row skipped")
+            continue
+        seen[sku] = n
+        rows.append(record)
+    if header is None:
+        raise ValueError("the file is empty")
+    return rows, problems
+
+
+@app.post("/api/admin/products/import")
+@require_admin
+def products_import():
+    upload = request.files.get("file")
+    raw = upload.read(MAX_CSV_BYTES + 1) if upload else request.get_data(cache=False)[: MAX_CSV_BYTES + 1]
+    if not raw:
+        abort(400, "no file")
+    if len(raw) > MAX_CSV_BYTES:
+        abort(400, "file larger than 2 MB")
+    preview = request.args.get("preview") == "1" or request.form.get("preview") == "1"
+    try:
+        rows, problems = parse_products_csv(raw)
+    except ValueError as exc:
+        abort(400, str(exc))
+
+    skus = [r["sku"] for r in rows]
+    existing = {r["sku"]: r for r in query("select * from pos_products where sku = any(%s)", (skus,))} if skus else {}
+    to_add = [r for r in rows if r["sku"] not in existing]
+    to_update = [r for r in rows if r["sku"] in existing]
+    # A brand-new product with no price cannot be sold: say so up front.
+    for r in to_add:
+        if r.get("price") is None:
+            problems.append(f"row {r['row']} {r['sku']}: new product without a price, imported as unsellable")
+    unchanged = [r for r in to_update if not any(k in r for k in ("name", "category", "price", "cost", "show_qty", "is_set", "is_clearance", "is_active", "note", "barcodes"))]
+    if unchanged:
+        problems.append(f"{len(unchanged)} row(s) had only a sku and change nothing")
+    summary = {"rows": len(rows), "added": len(to_add), "updated": len(to_update), "problems": problems, "preview": preview}
+    if preview:
+        return jsonify(summary)
+
+    imported_at = datetime.now(timezone.utc)
+    with pool().connection() as conn:
+        with conn.transaction():
+            for r in rows:
+                fields = {k: v for k, v in r.items() if k in ("name", "category", "price", "cost", "show_qty", "is_set", "is_clearance", "is_active", "note")}
+                is_new = r["sku"] not in existing
+                if is_new:
+                    fields.setdefault("name", r["sku"])
+                    fields.setdefault("category", "Uncategorised")
+                    if "price" not in fields:
+                        fields["price"] = None
+                # A product becomes sellable when it gets a price, unless is_active says otherwise.
+                if "price" in fields and "is_active" not in fields:
+                    fields["is_active"] = fields["price"] is not None
+                fields["sheet"] = json.dumps({k: (str(v) if isinstance(v, Decimal) else v) for k, v in r.items() if k not in ("row", "blank_price")}, ensure_ascii=False)
+                fields["sheet_row"] = r["row"]
+                fields["imported_at"] = imported_at
+                if not is_new:
+                    sets = ", ".join(f"{k} = %s" for k in fields)
+                    conn.execute(f"update pos_products set {sets} where sku = %s", [*fields.values(), r["sku"]])
+                else:
+                    cols = ["sku", *fields]
+                    conn.execute(
+                        f"insert into pos_products ({', '.join(cols)}) values ({', '.join(['%s'] * len(cols))})",
+                        [r["sku"], *fields.values()],
+                    )
+                if "barcodes" in r:
+                    conn.execute("delete from pos_product_barcodes where product_id = (select id from pos_products where sku = %s)", (r["sku"],))
+                    for code in r["barcodes"]:
+                        conn.execute(
+                            """insert into pos_product_barcodes (barcode, product_id)
+                               select %s, id from pos_products where sku = %s
+                               on conflict (barcode) do update set product_id = excluded.product_id""",
+                            (code, r["sku"]),
+                        )
+            totals = conn.execute(
+                "select (select count(*) from pos_products) as products, (select count(*) from pos_products where is_active and price is not null) as sellable,"
+                " (select count(*) from pos_product_barcodes) as barcodes"
+            ).fetchone()
+    summary["database"] = totals
+    return jsonify(summary)
 
 
 @app.get("/admin")

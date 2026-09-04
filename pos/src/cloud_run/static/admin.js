@@ -110,6 +110,31 @@
     } catch (err) { $('addErr').textContent = err.message; }
   });
 
+  // ---- products by CSV
+  const sendCsv = async (preview) => {
+    const file = $('csvFile').files[0];
+    $('csvErr').textContent = ''; $('csvResult').textContent = '';
+    if (!file) { $('csvErr').textContent = 'Choose a CSV file first.'; return; }
+    const body = new FormData(); body.append('file', file);
+    $('csvPreview').disabled = $('csvUpload').disabled = true;
+    try {
+      const response = await fetch(`/api/admin/products/import${preview ? '?preview=1' : ''}`, { method: 'POST', body, credentials: 'same-origin' });
+      const data = await response.json().catch(() => null);
+      if (response.status === 401) { showLogin(); return; }
+      if (!response.ok) throw new Error((data && data.error) || `Upload failed (${response.status})`);
+      const lines = [
+        `${preview ? 'Preview: would' : 'Done:'} ${preview ? 'add' : 'added'} ${data.added} and ${preview ? 'update' : 'updated'} ${data.updated} product(s) from ${data.rows} row(s).`,
+        ...(data.database ? [`Database now has ${data.database.products} products, ${data.database.sellable} sellable, ${data.database.barcodes} barcodes.`] : []),
+        ...(data.problems.length ? ['Notes:', ...data.problems.map((p) => `• ${p}`)] : []),
+      ];
+      $('csvResult').innerHTML = lines.map((l) => `<div>${esc(l)}</div>`).join('');
+      if (!preview) { toast('Products imported'); $('csvFile').value = ''; }
+    } catch (err) { $('csvErr').textContent = err.message; }
+    finally { $('csvPreview').disabled = $('csvUpload').disabled = false; }
+  };
+  $('csvPreview').addEventListener('click', () => sendCsv(true));
+  $('csvForm').addEventListener('submit', (e) => { e.preventDefault(); sendCsv(false); });
+
   document.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', closeSheets));
   $('scrim').addEventListener('click', closeSheets);
 
