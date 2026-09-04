@@ -38,6 +38,10 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg>
       Sales
     </button>
+    <button class="nav-btn" data-view="analytics" id="navAnalytics" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V5M4 19h16"/><path d="M8 16v-5M12 16V8M16 16v-3M20 16V6"/></svg>
+      Analytics
+    </button>
   </aside>
 
   <header class="topbar">
@@ -114,6 +118,43 @@
       <div class="big money" id="doneAmount"></div>
       <div class="meta" id="doneMeta"></div>
       <button class="btn primary" id="newSaleBtn">New sale</button>
+    </div>
+  </section>
+
+  <!-- ANALYTICS -->
+  <section class="view" id="view-analytics">
+    <div class="an viz-root">
+      <div class="an-filters">
+        <div class="chips" id="anRanges">
+          <button class="chip on" data-range="all">Whole show</button>
+          <button class="chip" data-range="today">Today</button>
+          <button class="chip" data-range="yesterday">Yesterday</button>
+          <button class="chip" data-range="7d">Last 7 days</button>
+        </div>
+        <div class="an-dates">
+          <input type="date" id="anFrom" aria-label="From date"> <span class="hint">to</span> <input type="date" id="anTo" aria-label="To date">
+          <button class="chip" id="anApply">Apply</button>
+        </div>
+        <div class="an-actions">
+          <a class="chip" id="anExport" href="/api/analytics/export.csv" download>Download sales CSV</a>
+          <button class="chip" id="anRefresh">Refresh</button>
+        </div>
+      </div>
+      <div class="an-note hint" id="anRangeNote"></div>
+      <div class="kpis" id="anKpis"></div>
+      <div class="an-grid">
+        <figure class="fig" id="figDay"><figcaption><h3>Net revenue by day</h3><span class="hint">Sales minus cash refunds, Toronto time</span></figcaption><div class="plot"></div></figure>
+        <figure class="fig" id="figHour"><figcaption><h3>Revenue by hour of day</h3><span class="hint">All days in range combined</span></figcaption><div class="plot"></div></figure>
+        <figure class="fig" id="figCategory"><figcaption><h3>Revenue by category</h3><span class="hint">Line totals before whole-sale discounts</span></figcaption><div class="plot"></div></figure>
+        <figure class="fig" id="figStaff"><figcaption><h3>Revenue by cashier</h3><span class="hint">Sale totals per person who rang them</span></figcaption><div class="plot"></div></figure>
+        <figure class="fig fig-wide" id="figStock"><figcaption><h3>Sell-through by category</h3><span class="hint">Units sold against units brought to the show, whole show</span></figcaption><div class="plot"></div></figure>
+        <figure class="fig fig-wide" id="figTop"><figcaption><h3>Top products by revenue</h3><span class="hint">Margin uses the cost on the product list where known</span></figcaption><div class="plot"></div></figure>
+      </div>
+      <div class="an-tables">
+        <div class="panel"><h3>By day</h3><div class="tbl" id="tblDay"></div></div>
+        <div class="panel"><h3>By category</h3><div class="tbl" id="tblCategory"></div></div>
+      </div>
+      <div class="hint an-foot">Definitions: net revenue = sale totals minus cash refunds. Gross margin = line revenue minus unit cost × quantity, over lines whose product has a cost. Discounts are whole-sale amounts and are not allocated to products, so category and product revenue are before discounts.</div>
     </div>
   </section>
 

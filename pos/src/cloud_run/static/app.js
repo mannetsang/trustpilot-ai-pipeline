@@ -70,9 +70,10 @@
   const go = (view) => {
     document.querySelectorAll('.view').forEach((v) => v.classList.toggle('on', v.id === `view-${view}`));
     document.querySelectorAll('.nav-btn').forEach((b) => b.classList.toggle('on', b.dataset.view === view || (view === 'pay' && b.dataset.view === 'sell') || (view === 'done' && b.dataset.view === 'sell')));
-    $('pageTitle').textContent = { sell: 'Sell', pay: 'Payment', done: 'Sale complete', orders: 'Sales' }[view] || 'Sell';
+    $('pageTitle').textContent = { sell: 'Sell', pay: 'Payment', done: 'Sale complete', orders: 'Sales', analytics: 'Analytics' }[view] || 'Sell';
     if (view === 'sell') setTimeout(() => $('searchInput').focus(), 50);
     if (view === 'orders') loadOrders();
+    if (view === 'analytics') loadAnalytics();
   };
 
   const openSheet = (id) => { $('scrim').classList.add('on'); $(id).classList.add('on'); };
@@ -113,6 +114,7 @@
   // ------------------------------------------------------------ user
 
   const renderUser = () => {
+    $('navAnalytics').hidden = state.config?.role !== 'admin';
     const name = state.config?.staff || '';
     $('userName').textContent = name;
     $('userAv').textContent = initials(name);
@@ -504,6 +506,156 @@
       renderDetail();
     } catch (err) { $('refundErr').textContent = err.message; }
   });
+
+  // ------------------------------------------------------------ analytics (admins)
+
+  const an = { range: 'all', from: '', to: '', data: null };
+  const num = (v) => Number(v || 0);
+  const money0 = (v) => { const n = num(v); return Math.abs(n) >= 10000 ? money(n).replace(/\.\d\d$/, '') : money(n); };
+  const pct = (v) => (v == null ? '—' : `${Number(v).toFixed(v >= 10 ? 0 : 1)}%`);
+  const localDate = (d) => { const z = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return z.toISOString().slice(0, 10); };
+
+  const rangeDates = () => {
+    const today = new Date();
+    const day = (offset) => { const d = new Date(today); d.setDate(d.getDate() + offset); return localDate(d); };
+    switch (an.range) {
+      case 'today': return [day(0), day(0)];
+      case 'yesterday': return [day(-1), day(-1)];
+      case '7d': return [day(-6), day(0)];
+      case 'custom': return [an.from, an.to];
+      default: return ['', ''];
+    }
+  };
+
+  const loadAnalytics = async () => {
+    const [from, to] = rangeDates();
+    const params = new URLSearchParams(); if (from) params.set('from', from); if (to) params.set('to', to);
+    $('anExport').href = `/api/analytics/export.csv${params.toString() ? '?' + params : ''}`;
+    try {
+      an.data = await api(`/api/analytics?${params}`);
+      renderAnalytics();
+    } catch (err) { toast(err.message); }
+  };
+
+  $('anRanges').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-range]'); if (!b) return;
+    an.range = b.dataset.range; $('anFrom').value = ''; $('anTo').value = '';
+    document.querySelectorAll('#anRanges .chip').forEach((c) => c.classList.toggle('on', c === b));
+    loadAnalytics();
+  });
+  $('anApply').addEventListener('click', () => {
+    an.from = $('anFrom').value; an.to = $('anTo').value;
+    if (!an.from && !an.to) { toast('Pick a from or to date'); return; }
+    an.range = 'custom';
+    document.querySelectorAll('#anRanges .chip').forEach((c) => c.classList.remove('on'));
+    loadAnalytics();
+  });
+  $('anRefresh').addEventListener('click', loadAnalytics);
+
+  const kpiTile = (label, value, detail, hero) => `<div class="kpi"><div class="l">${esc(label)}</div><div class="v${hero ? ' hero' : ''} money">${esc(value)}</div>${detail ? `<div class="d">${esc(detail)}</div>` : ''}</div>`;
+
+  const renderAnalytics = () => {
+    const d = an.data; const k = d.kpi;
+    const r = d.range;
+    $('anRangeNote').textContent = (r.from || r.to)
+      ? `Showing ${r.from || 'the start'} to ${r.to || 'today'} · ${k.sales} sales`
+      : `Showing everything recorded · ${k.sales} sales${k.firstSale ? ` since ${new Date(k.firstSale).toLocaleDateString('en-CA')}` : ''}`;
+    const coverage = k.costCoveragePct == null ? '' : `cost known for ${pct(k.costCoveragePct)} of revenue`;
+    $('anKpis').innerHTML = [
+      kpiTile('Net revenue', money0(k.netRevenue), `${money0(k.grossRevenue)} sold, ${money0(k.refunds)} refunded`, true),
+      kpiTile('Gross margin', k.grossMargin == null ? '—' : money0(k.grossMargin), k.grossMarginPct == null ? 'no product costs yet' : `${pct(k.grossMarginPct)} · ${coverage}`),
+      kpiTile('Sales', String(k.sales), `${k.units} units · ${k.refundedSales} refunded`),
+      kpiTile('Average sale', k.avgBasket == null ? '—' : money(k.avgBasket), k.sales ? `${(k.units / k.sales).toFixed(1)} units per sale` : ''),
+      kpiTile('Discounts given', money0(k.discounts), k.grossRevenue > 0 ? `${pct(num(k.discounts) / (num(k.grossRevenue) + num(k.discounts)) * 100)} of list` : ''),
+    ].join('');
+
+    barChart($('figDay'), d.byDay.map((x) => ({ label: x.day.slice(5), value: num(x.revenue) - num(x.refunds), tip: `${x.day}: ${money(num(x.revenue) - num(x.refunds))} net · ${x.sales} sales · ${x.units} units` })), { columns: true });
+    const hours = Array.from({ length: 24 }, (_, h) => ({ h, sales: 0, revenue: 0 }));
+    d.byHour.forEach((x) => { hours[x.hour] = { h: x.hour, sales: x.sales, revenue: num(x.revenue) }; });
+    const active = hours.filter((x, i, a) => x.sales || (a.slice(0, i).some((y) => y.sales) && a.slice(i).some((y) => y.sales)));
+    barChart($('figHour'), active.map((x) => ({ label: `${x.h}h`, value: x.revenue, tip: `${x.h}:00–${x.h}:59: ${money(x.revenue)} · ${x.sales} sales` })), { columns: true, labelEvery: active.length > 12 ? 2 : 1 });
+    barChart($('figCategory'), d.byCategory.map((x) => ({ label: x.category, value: num(x.revenue), tip: `${x.category}: ${money(num(x.revenue))} · ${x.units} units${x.cost_of_goods != null ? ` · margin ${pct((num(x.revenue_with_cost) - num(x.cost_of_goods)) / num(x.revenue_with_cost) * 100)}` : ''}` })));
+    barChart($('figStaff'), d.byStaff.map((x) => ({ label: x.staff, value: num(x.revenue), tip: `${x.staff}: ${money(num(x.revenue))} · ${x.sales} sales · ${money(num(x.refunds))} refunded` })));
+    stackChart($('figStock'), d.stock.filter((x) => num(x.brought) > 0).map((x) => ({ label: x.category, sold: num(x.sold), total: num(x.brought), tip: `${x.category}: ${x.sold} of ${x.brought} units sold (${pct(num(x.sold) / num(x.brought) * 100)}) · ${money0(x.remaining_value)} of stock left at price` })));
+    barChart($('figTop'), d.topProducts.slice(0, 12).map((x) => ({ label: x.name || x.sku, value: num(x.revenue), tip: `${x.name || x.sku}: ${money(num(x.revenue))} · ${x.units} units${x.margin != null ? ` · margin ${money(num(x.margin))}` : ''}${x.brought ? ` · ${x.units}/${x.brought} brought` : ''}` })), { labelWidth: 220 });
+
+    $('tblDay').innerHTML = table(['Day', 'Sales', 'Units', 'Sold', 'Refunds', 'Net'], d.byDay.map((x) => [x.day, x.sales, x.units, money(num(x.revenue)), money(num(x.refunds)), money(num(x.revenue) - num(x.refunds))]));
+    $('tblCategory').innerHTML = table(['Category', 'Units', 'Revenue', 'Cost', 'Margin'], d.byCategory.map((x) => [x.category, x.units, money(num(x.revenue)), x.cost_of_goods == null ? '—' : money(num(x.cost_of_goods)), x.cost_of_goods == null ? '—' : pct((num(x.revenue_with_cost) - num(x.cost_of_goods)) / num(x.revenue_with_cost) * 100)]));
+  };
+
+  const table = (head, rows) => rows.length
+    ? `<table><tr>${head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr>${rows.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</table>`
+    : '<div class="hint">No sales in this range.</div>';
+
+  const attachTips = (fig) => {
+    const plot = fig.querySelector('.plot');
+    let tip = plot.querySelector('.tip');
+    if (!tip) { tip = document.createElement('div'); tip.className = 'tip'; plot.appendChild(tip); }
+    plot.querySelectorAll('[data-tip]').forEach((el) => {
+      el.addEventListener('mousemove', (e) => { const r = plot.getBoundingClientRect(); tip.textContent = el.dataset.tip; tip.style.left = `${e.clientX - r.left}px`; tip.style.top = `${e.clientY - r.top}px`; tip.classList.add('on'); });
+      el.addEventListener('mouseleave', () => tip.classList.remove('on'));
+    });
+  };
+
+  const nice = (max) => { if (max <= 0) return 1; const p = 10 ** Math.floor(Math.log10(max)); const m = max / p; const step = m <= 1 ? 0.25 : m <= 2 ? 0.5 : m <= 5 ? 1 : 2; return Math.ceil(m / step) * step * p; };
+
+  /** Horizontal bars (default) or columns; single series, sequential hue; hover tooltips; end labels. */
+  const barChart = (fig, items, opts = {}) => {
+    const plot = fig.querySelector('.plot');
+    if (!items.length) { plot.innerHTML = '<div class="empty hint">No sales in this range.</div>'; return; }
+    const W = 560; const max = nice(Math.max(...items.map((i) => i.value)));
+    let svg = '';
+    if (opts.columns) {
+      const H = 220, padL = 44, padB = 26, padT = 14; const w = (W - padL) / items.length; const bw = Math.min(24, w * 0.6);
+      const y = (v) => padT + (H - padT - padB) * (1 - v / max);
+      for (let g = 0; g <= 4; g++) { const v = max * g / 4; svg += `<line class="grid" x1="${padL}" x2="${W}" y1="${y(v)}" y2="${y(v)}"/><text x="${padL - 6}" y="${y(v) + 3}" text-anchor="end">${money0(v)}</text>`; }
+      items.forEach((it, i) => {
+        const x = padL + w * i + (w - bw) / 2; const top = y(it.value); const h = Math.max(0, y(0) - top);
+        svg += `<rect class="hit" data-tip="${esc(it.tip)}" x="${padL + w * i}" y="${padT}" width="${w}" height="${H - padT - padB}"/>`;
+        svg += `<path class="bar" data-tip="${esc(it.tip)}" d="${roundTop(x, top, bw, h)}"/>`;
+        if (!opts.labelEvery || i % opts.labelEvery === 0) svg += `<text x="${x + bw / 2}" y="${H - 8}" text-anchor="middle">${esc(it.label)}</text>`;
+        if (items.length <= 8 && it.value > 0) svg += `<text class="val" x="${x + bw / 2}" y="${top - 4}" text-anchor="middle">${money0(it.value)}</text>`;
+      });
+      svg += `<line class="axis" x1="${padL}" x2="${W}" y1="${y(0)}" y2="${y(0)}"/>`;
+      plot.innerHTML = `<svg viewBox="0 0 ${W} ${H}">${svg}</svg>`;
+    } else {
+      const lw = opts.labelWidth || 110, row = 30, padT = 6; const H = padT + row * items.length + 6; const x0 = lw + 8, x1 = W - 70;
+      const x = (v) => x0 + (x1 - x0) * v / max;
+      items.forEach((it, i) => {
+        const yy = padT + row * i + 5; const bw = x(it.value) - x0;
+        svg += `<rect class="hit" data-tip="${esc(it.tip)}" x="0" y="${padT + row * i}" width="${W}" height="${row}"/>`;
+        svg += `<text class="cat" x="${lw}" y="${yy + 14}" text-anchor="end">${esc(truncate(it.label, lw / 6.2))}</text>`;
+        svg += `<path class="bar" data-tip="${esc(it.tip)}" d="${roundRight(x0, yy, bw, 20)}"/>`;
+        svg += `<text class="val" x="${x0 + bw + 6}" y="${yy + 14}">${money0(it.value)}</text>`;
+      });
+      svg += `<line class="axis" x1="${x0}" x2="${x0}" y1="${padT}" y2="${H - 6}"/>`;
+      plot.innerHTML = `<svg viewBox="0 0 ${W} ${H}">${svg}</svg>`;
+    }
+    attachTips(fig);
+  };
+
+  /** Sold (accent) against brought (context), one row per category, with a legend and percent label. */
+  const stackChart = (fig, items) => {
+    const plot = fig.querySelector('.plot');
+    if (!items.length) { plot.innerHTML = '<div class="empty hint">No stock quantities on the product list.</div>'; return; }
+    const W = 560, lw = 110, row = 30, padT = 6; const H = padT + row * items.length + 6; const x0 = lw + 8, x1 = W - 60;
+    const max = Math.max(...items.map((i) => i.total)); const x = (v) => x0 + (x1 - x0) * v / max;
+    let svg = '';
+    items.forEach((it, i) => {
+      const yy = padT + row * i + 5;
+      svg += `<rect class="hit" data-tip="${esc(it.tip)}" x="0" y="${padT + row * i}" width="${W}" height="${row}"/>`;
+      svg += `<text class="cat" x="${lw}" y="${yy + 14}" text-anchor="end">${esc(truncate(it.label, 17))}</text>`;
+      svg += `<path class="bar ctx" data-tip="${esc(it.tip)}" d="${roundRight(x0, yy, x(it.total) - x0, 20)}"/>`;
+      if (it.sold > 0) svg += `<rect class="bar" data-tip="${esc(it.tip)}" x="${x0}" y="${yy}" width="${Math.max(0, x(Math.min(it.sold, it.total)) - x0 - 2)}" height="20"/>`;
+      svg += `<text class="val" x="${x(it.total) + 6}" y="${yy + 14}">${pct(it.sold / it.total * 100)}</text>`;
+    });
+    plot.innerHTML = `<div class="legend"><span><i style="background:var(--series-1)"></i>Sold</span><span><i style="background:var(--context)"></i>Still on the shelf</span></div><svg viewBox="0 0 ${W} ${H}">${svg}</svg>`;
+    attachTips(fig);
+  };
+
+  const roundTop = (x, y, w, h, r = 4) => h <= 0 ? '' : `M${x},${y + h} V${y + Math.min(r, h)} Q${x},${y} ${x + Math.min(r, w / 2)},${y} H${x + w - Math.min(r, w / 2)} Q${x + w},${y} ${x + w},${y + Math.min(r, h)} V${y + h} Z`;
+  const roundRight = (x, y, w, h, r = 4) => w <= 0 ? '' : `M${x},${y} H${x + w - Math.min(r, w)} Q${x + w},${y} ${x + w},${y + r} V${y + h - r} Q${x + w},${y + h} ${x + w - Math.min(r, w)},${y + h} H${x} Z`;
+  const truncate = (t, n) => (t.length > n ? t.slice(0, n - 1) + '…' : t);
 
   // ------------------------------------------------------------ shell
 

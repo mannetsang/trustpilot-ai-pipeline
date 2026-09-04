@@ -833,6 +833,144 @@ def summary():
 
 
 # ---------------------------------------------------------------------------
+# Analytics (admins): what the CFO asks for
+# ---------------------------------------------------------------------------
+
+TZ = "America/Toronto"
+
+
+def date_range():
+    """from/to query params as inclusive local dates; defaults to everything."""
+    def parse(name):
+        v = request.args.get(name, "").strip()
+        if not v:
+            return None
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
+            abort(400, f"{name} must be YYYY-MM-DD")
+        return v
+    return parse("from"), parse("to")
+
+
+def range_sql(alias="t"):
+    """WHERE fragment and params limiting sold_at to the local-date range."""
+    start, end = date_range()
+    where, params = [f"{alias}.location_id = %s", f"{alias}.status <> 'void'"], [LOCATION_ID]
+    if start:
+        where.append(f"({alias}.sold_at at time zone %s)::date >= %s"); params += [TZ, start]
+    if end:
+        where.append(f"({alias}.sold_at at time zone %s)::date <= %s"); params += [TZ, end]
+    return " and ".join(where), params
+
+
+@app.get("/api/analytics")
+@require_admin
+def analytics():
+    where, params = range_sql()
+    with pool().connection() as conn:
+        kpi = conn.execute(f"""
+            select count(*)                                   as sales,
+                   coalesce(sum(t.grand_total), 0)            as gross_revenue,
+                   coalesce(sum(t.discount_total), 0)         as discounts,
+                   coalesce(sum(t.refund_amount), 0)          as refunds,
+                   count(*) filter (where t.refund_amount is not null) as refunded_sales,
+                   coalesce(sum(t.grand_total), 0) - coalesce(sum(t.refund_amount), 0) as net_revenue,
+                   min(t.sold_at) as first_sale, max(t.sold_at) as last_sale,
+                   (select coalesce(sum(i.quantity), 0) from pos_transaction_items i join pos_transactions t2 on t2.id = i.transaction_id
+                     where {where.replace('t.', 't2.')}) as units
+            from pos_transactions t where {where}""", params + params).fetchone()
+        margin = conn.execute(f"""
+            select coalesce(sum(i.line_total), 0) as line_revenue,
+                   coalesce(sum(i.line_total) filter (where p.cost is not null), 0) as revenue_with_cost,
+                   coalesce(sum(p.cost * i.quantity) filter (where p.cost is not null), 0) as cost_of_goods
+            from pos_transaction_items i
+            join pos_transactions t on t.id = i.transaction_id
+            left join pos_products p on p.id = i.product_id
+            where {where}""", params).fetchone()
+        by_day = conn.execute(f"""
+            select (t.sold_at at time zone %s)::date::text as day, count(*) as sales,
+                   sum(t.grand_total) as revenue, coalesce(sum(t.refund_amount), 0) as refunds,
+                   (select coalesce(sum(i.quantity), 0) from pos_transaction_items i where i.transaction_id = any(array_agg(t.id))) as units
+            from pos_transactions t where {where}
+            group by 1 order by 1""", [TZ] + params).fetchall()
+        by_hour = conn.execute(f"""
+            select extract(hour from t.sold_at at time zone %s)::int as hour, count(*) as sales, sum(t.grand_total) as revenue
+            from pos_transactions t where {where} group by 1 order by 1""", [TZ] + params).fetchall()
+        by_category = conn.execute(f"""
+            select coalesce(i.category, 'Uncategorised') as category, sum(i.quantity) as units, sum(i.line_total) as revenue,
+                   sum(p.cost * i.quantity) filter (where p.cost is not null) as cost_of_goods,
+                   sum(i.line_total) filter (where p.cost is not null) as revenue_with_cost
+            from pos_transaction_items i join pos_transactions t on t.id = i.transaction_id
+            left join pos_products p on p.id = i.product_id
+            where {where} group by 1 order by revenue desc""", params).fetchall()
+        top_products = conn.execute(f"""
+            select i.sku, max(i.product_name) as name, max(i.category) as category, sum(i.quantity) as units,
+                   sum(i.line_total) as revenue, max(p.cost) as cost, max(p.show_qty) as brought,
+                   case when max(p.cost) is not null then sum(i.line_total) - max(p.cost) * sum(i.quantity) end as margin
+            from pos_transaction_items i join pos_transactions t on t.id = i.transaction_id
+            left join pos_products p on p.id = i.product_id
+            where {where} group by i.sku order by revenue desc, units desc limit 15""", params).fetchall()
+        by_staff = conn.execute(f"""
+            select t.staff_name as staff, count(*) as sales, sum(t.grand_total) as revenue,
+                   coalesce(sum(t.refund_amount), 0) as refunds, coalesce(sum(t.discount_total), 0) as discounts
+            from pos_transactions t where {where} group by 1 order by revenue desc""", params).fetchall()
+        stock = conn.execute("""
+            select coalesce(category, 'Uncategorised') as category,
+                   sum(show_qty) filter (where show_qty > 0) as brought,
+                   sum(coalesce(sold.units, 0)) as sold,
+                   sum(price * greatest(coalesce(show_qty, 0) - coalesce(sold.units, 0), 0)) filter (where price is not null) as remaining_value
+            from pos_products p
+            left join (select i.product_id, sum(i.quantity) as units from pos_transaction_items i
+                       join pos_transactions t on t.id = i.transaction_id where t.location_id = %s and t.status <> 'void'
+                       group by i.product_id) sold on sold.product_id = p.id
+            where p.is_active group by 1 order by brought desc nulls last""", (LOCATION_ID,)).fetchall()
+
+    def n(v):
+        return None if v is None else (str(v) if isinstance(v, Decimal) else v)
+    def rows(rs):
+        return [{k: (v.isoformat() if hasattr(v, "isoformat") else n(v)) for k, v in r.items()} for r in rs]
+    cogs = margin["cost_of_goods"]; rwc = margin["revenue_with_cost"]
+    return jsonify({
+        "range": {"from": date_range()[0], "to": date_range()[1], "timezone": TZ, "currency": CURRENCY},
+        "kpi": {
+            "sales": kpi["sales"], "units": int(kpi["units"]), "grossRevenue": n(kpi["gross_revenue"]), "discounts": n(kpi["discounts"]),
+            "refunds": n(kpi["refunds"]), "refundedSales": kpi["refunded_sales"], "netRevenue": n(kpi["net_revenue"]),
+            "avgBasket": n(money(kpi["gross_revenue"] / kpi["sales"])) if kpi["sales"] else None,
+            "lineRevenue": n(margin["line_revenue"]), "revenueWithCost": n(rwc), "costOfGoods": n(cogs),
+            "grossMargin": n(money(rwc - cogs)) if rwc else None,
+            "grossMarginPct": (float((rwc - cogs) / rwc * 100) if rwc else None),
+            "costCoveragePct": (float(rwc / margin["line_revenue"] * 100) if margin["line_revenue"] else None),
+            "firstSale": kpi["first_sale"].isoformat() if kpi["first_sale"] else None,
+            "lastSale": kpi["last_sale"].isoformat() if kpi["last_sale"] else None,
+        },
+        "byDay": rows(by_day), "byHour": rows(by_hour), "byCategory": rows(by_category),
+        "topProducts": rows(top_products), "byStaff": rows(by_staff), "stock": rows(stock),
+    })
+
+
+@app.get("/api/analytics/export.csv")
+@require_admin
+def analytics_export():
+    where, params = range_sql()
+    rows = query(f"""
+        select t.transaction_number, (t.sold_at at time zone %s) as sold_local, t.staff_name, t.status,
+               t.subtotal, t.discount_total, t.grand_total, t.cash_received, t.change_given, t.refund_amount, t.refund_reason,
+               i.line_no, i.sku, i.product_name, i.category, i.quantity, i.unit_price, i.line_total, p.cost
+        from pos_transactions t
+        join pos_transaction_items i on i.transaction_id = t.id
+        left join pos_products p on p.id = i.product_id
+        where {where} order by t.sold_at, t.transaction_number, i.line_no""", [TZ] + params)
+    header = ["sale_number", "sold_at_local", "staff", "status", "sale_subtotal", "sale_discount", "sale_total", "cash_received",
+              "change_given", "refund_amount", "refund_reason", "line_no", "sku", "product", "category", "quantity", "unit_price",
+              "line_total", "unit_cost"]
+    body = [header] + [[r["transaction_number"], r["sold_local"].strftime("%Y-%m-%d %H:%M:%S"), r["staff_name"], r["status"],
+                        r["subtotal"], r["discount_total"], r["grand_total"], r["cash_received"], r["change_given"],
+                        r["refund_amount"] if r["refund_amount"] is not None else "", r["refund_reason"] or "",
+                        r["line_no"], r["sku"], r["product_name"] or "", r["category"] or "", r["quantity"], r["unit_price"],
+                        r["line_total"], r["cost"] if r["cost"] is not None else ""] for r in rows]
+    return csv_response(body, f"pos-sales-{datetime.now(timezone.utc):%Y%m%d}.csv")
+
+
+# ---------------------------------------------------------------------------
 # Pages and health
 # ---------------------------------------------------------------------------
 
