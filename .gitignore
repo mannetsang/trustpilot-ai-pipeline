@@ -22,6 +22,7 @@ helperconnect/
 /.claude/*
 !/.claude/settings.json
 !/.claude/hooks/
+!/.claude/skills/
 
 # Scaffolding written by `npx skills add` (Stripe docs skills). The skills
 # themselves live in .agents/; .kiro/ and .trae/ are symlink trees it makes
