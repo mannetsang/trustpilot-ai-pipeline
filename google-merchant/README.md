@@ -83,13 +83,72 @@ python google-merchant/products.py delete --account 5298296396 --label CA --offe
 ```
 
 `product.json` is the Merchant API `ProductAttributes` object plus a
-top-level `offerId`; `products.py --help` shows a minimal example. Inserting
-an offer id that already exists in that data source replaces it. Products
-show up in Merchant Center under *Products* within a few minutes and go
-through the normal review.
+top-level `offerId`; `products.py --help` shows a minimal example. Useful for
+one-off tests; the catalogue itself is pushed by the sync below.
 
-A scheduled sync from the BigCommerce catalogue into these data sources is the
-natural next step and is **not** included here.
+## Catalogue sync from BigCommerce
+
+`sync_bigcommerce.py` rebuilds the whole feed from the BigCommerce catalogue
+on every run and pushes it into the storefront's API data source:
+
+```
+python google-merchant/sync_bigcommerce.py --label CA --dry-run --sample 3
+python google-merchant/sync_bigcommerce.py --label CA --limit 25
+python google-merchant/sync_bigcommerce.py --label CA
+```
+
+It runs daily from GitHub (*Google Merchant Center product sync*, 05:30
+Toronto) and can be triggered by hand with a dry-run or a limit.
+
+### What becomes an offer
+
+One offer per **variant** of every visible product. Variants of one product
+share an `item_group_id` (the product SKU) so Merchant Center groups them.
+
+| Merchant Center | From BigCommerce |
+|---|---|
+| offer id | variant SKU, or `bc-v<variant id>` when the SKU has spaces/quotes |
+| title | product name, plus the option labels for multi-variant products |
+| link | storefront URL, with `?sku=` so the variant is preselected |
+| image / additional images | variant image, else thumbnail then the rest |
+| price / sale price | variant price (falls back to product), sale only when lower |
+| availability | inventory tracking mode and level; `preorder` passes through |
+| brand | BigCommerce brand, default Superhairpieces |
+| gtin / mpn | only when valid (see below), else `identifier_exists=false` |
+| shipping weight | variant calculated weight in the store's unit |
+| shipping | free-shipping products get a 0.00 CA shipping line |
+| product_type | full category paths |
+
+Skipped, and listed in the report CSV: hidden products, `availability:
+disabled`, digital products, variants with no price or no image,
+`purchasing_disabled` variants.
+
+A full run also **deletes** offers that are in the data source but not in the
+catalogue any more, so hiding a product in BigCommerce removes it from Google
+the next morning. Safety valve: if more than a quarter of the feed would go,
+nothing is deleted and the run says so. `--limit`/`--sku` runs never delete.
+
+### Data-quality findings from the first run
+
+- `upc`/`mpn` hold Excel-mangled values like `6.14043E+11`, and `gtin`
+  sometimes holds `Default Tax Class` (a shifted import column). The sync
+  drops these, so supplies from Walker Tape etc. go out without a GTIN. Fixing
+  the UPCs in BigCommerce would improve their Shopping performance.
+- 179 variants have no weight; Google disapproves those when shipping is
+  weight-based (the shampoo in the old autofeed was one). Set weights in
+  BigCommerce.
+- Google's own **autofeed** (`PRODUCTS SOURCE 1`) crawls the site and creates
+  duplicate, poorer offers. Turn it off in Merchant Center once this feed is
+  approved: Data sources → PRODUCTS SOURCE 1 → disable automatic feeds.
+
+### Adding the .com and EU storefronts
+
+Each needs: its BigCommerce store hash and a `BIGCOMMERCE_<hash>_ACCESS_TOKEN`
+secret with catalogue read scope, an entry in `STORES` in
+`sync_bigcommerce.py`, the service account added to Merchant Center account
+`289630622`, that account registered with `register_developer.py`, and
+`data_sources.py create` run there. Then add the label to the workflow's
+`options`.
 
 ## Local runs
 
