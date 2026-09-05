@@ -4,6 +4,11 @@
     python google-merchant/data_sources.py create --account 123456789
     python google-merchant/data_sources.py create --account 123456789 --only CA US
     python google-merchant/data_sources.py delete --account 123456789 --only CA
+    python google-merchant/data_sources.py autofeed --account 123456789 --off
+
+`autofeed` shows or switches Google's automatic website-crawl source
+("PRODUCTS SOURCE 1"), which duplicates the API feed once that carries the
+catalogue.
 
 `create` is idempotent: a data source whose display name already exists is
 left alone and reported as "exists". It makes one API-input primary product
@@ -138,9 +143,31 @@ def cmd_delete(client, parent, args):
         print(f"deleted  {label}  {ds.name}")
 
 
+def cmd_autofeed(client, parent, args):
+    import google.shopping.merchant_accounts_v1 as accounts
+    from google.protobuf import field_mask_pb2
+
+    svc = accounts.AutofeedSettingsServiceClient()
+    name = f"{parent}/autofeedSettings"
+    if args.on or args.off:
+        if args.dry_run:
+            print(f"would set enable_products={bool(args.on)} on {name}")
+            return
+        svc.update_autofeed_settings(
+            request=accounts.UpdateAutofeedSettingsRequest(
+                autofeed_settings=accounts.AutofeedSettings(name=name, enable_products=bool(args.on)),
+                update_mask=field_mask_pb2.FieldMask(paths=["enable_products"]),
+            )
+        )
+    settings = svc.get_autofeed_settings(request=accounts.GetAutofeedSettingsRequest(name=name))
+    print(f"autofeed products: {'enabled' if settings.enable_products else 'disabled'} (eligible: {settings.eligible})")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=["list", "create", "delete"])
+    parser.add_argument("command", choices=["list", "create", "delete", "autofeed"])
+    parser.add_argument("--on", action="store_true", help="autofeed: enable Google's automatic product source")
+    parser.add_argument("--off", action="store_true", help="autofeed: disable it")
     add_account_argument(parser)
     parser.add_argument("--only", nargs="+", metavar="LABEL", help="Restrict to these feed labels, e.g. CA US")
     parser.add_argument("--dry-run", action="store_true", help="Print what would change without calling the API")
@@ -150,7 +177,9 @@ def main(argv=None):
     parent = account_parent(account)
     client = DataSourcesServiceClient()
     try:
-        {"list": cmd_list, "create": cmd_create, "delete": cmd_delete}[args.command](client, parent, args)
+        {"list": cmd_list, "create": cmd_create, "delete": cmd_delete, "autofeed": cmd_autofeed}[args.command](
+            client, parent, args
+        )
     except gexc.GoogleAPICallError as exc:
         sys.exit(f"error: {explain_api_error(exc)}")
     return 0
