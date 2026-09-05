@@ -95,9 +95,9 @@ def cmd_delete(parent, storefront, args):
         sys.exit("error: delete needs --offer-id")
     _, label, lang, _ = storefront
     data_source = _data_source_name(parent, storefront)
-    # productInput names are {channel}~{contentLanguage}~{feedLabel}~{offerId};
-    # ONLINE is the only channel for non-local sources.
-    name = f"{parent}/productInputs/online~{lang}~{label}~{args.offer_id}"
+    # productInput names are {contentLanguage}~{feedLabel}~{offerId} (v1 has no
+    # channel segment; local offers are flagged with legacy_local instead).
+    name = f"{parent}/productInputs/{lang}~{label}~{args.offer_id}"
     if args.dry_run:
         print(f"would delete {name} from {data_source}")
         return

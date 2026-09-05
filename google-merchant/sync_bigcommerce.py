@@ -484,7 +484,7 @@ def main(argv=None):
             print(f"refusing to delete {len(stale)} stale offers (more than a quarter of the catalogue); pass --no-delete or check the feed")
         else:
             for oid in stale:
-                name = f"{parent}/productInputs/online~{ctx['language']}~{label}~{oid}"
+                name = f"{parent}/productInputs/{ctx['language']}~{label}~{oid}"
                 try:
                     client.delete_product_input(request=DeleteProductInputRequest(name=name, data_source=data_source))
                     deleted += 1
