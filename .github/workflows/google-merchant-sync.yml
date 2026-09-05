@@ -1,0 +1,72 @@
+name: Google Merchant Center product sync
+
+# Pushes the BigCommerce catalogue into the Merchant Center API data source
+# once a day, and on demand. Credentials: GCP_SA_KEY (GitHub secret) reads
+# the BigCommerce token from Secret Manager and is itself an Admin user on
+# the Merchant Center account, so nothing else is needed.
+
+on:
+  schedule:
+    - cron: '30 9 * * *'   # 09:30 UTC = 05:30 Toronto (EDT), before the workday
+  workflow_dispatch:
+    inputs:
+      label:
+        description: 'Feed label / storefront to sync'
+        type: choice
+        default: CA
+        options: [CA]
+      dry_run:
+        description: 'Build the feed but send nothing to Google'
+        type: boolean
+        default: false
+      limit:
+        description: 'Only send this many offers (testing; disables stale deletion)'
+        required: false
+        default: ''
+
+concurrency:
+  group: merchant-sync-${{ inputs.label || 'CA' }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Install dependencies
+        run: pip install --quiet -r google-merchant/requirements.txt
+
+      - name: Sync
+        env:
+          GCP_PROJECT: shp-ai-bot-2026
+          GMC_ACCOUNT_ID: '5298296396'
+          LABEL: ${{ inputs.label || 'CA' }}
+        run: |
+          set -o pipefail
+          python3 google-merchant/sync_bigcommerce.py --label "$LABEL" \
+            ${{ inputs.dry_run && '--dry-run' || '' }} \
+            ${{ inputs.limit && format('--limit {0}', inputs.limit) || '' }} \
+            --report sync-report.csv | tee sync.log
+          {
+            echo "## Merchant Center sync — $LABEL"
+            echo '```'
+            grep -vE '^\s+[0-9]+/[0-9]+ sent' sync.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sync-report-${{ inputs.label || 'CA' }}
+          path: sync-report.csv
+          if-no-files-found: ignore

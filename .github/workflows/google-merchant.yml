@@ -1,0 +1,68 @@
+name: Google Merchant Center (Merchant API)
+
+# Manual runs of the google-merchant/ scripts from GitHub, so nobody needs a
+# local Python setup. Authenticates as the GCP_SA_KEY service account, which
+# must be an Admin user on the Merchant Center account.
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'What to do'
+        type: choice
+        required: true
+        default: list-data-sources
+        options:
+          - register-developer
+          - list-data-sources
+          - create-data-sources
+      account:
+        description: 'Merchant Center account id (not a secret)'
+        required: false
+        default: '5298296396'
+      only:
+        description: 'Feed labels to create, space separated (blank = all six)'
+        required: false
+        default: ''
+      developer_email:
+        description: 'Contact email for register-developer'
+        required: false
+        default: 'manne@superhairpieces.com'
+
+jobs:
+  merchant:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Install dependencies
+        run: pip install --quiet -r google-merchant/requirements.txt
+
+      - name: Run
+        env:
+          GCP_PROJECT: shp-ai-bot-2026
+          GMC_ACCOUNT_ID: ${{ inputs.account }}
+        run: |
+          set -o pipefail
+          case "${{ inputs.action }}" in
+            register-developer)
+              python3 google-merchant/register_developer.py --email "${{ inputs.developer_email }}" ;;
+            list-data-sources)
+              python3 google-merchant/data_sources.py list ;;
+            create-data-sources)
+              python3 google-merchant/data_sources.py create ${{ inputs.only && format('--only {0}', inputs.only) || '' }} ;;
+          esac | tee out.txt
+          {
+            echo '## ${{ inputs.action }} — account ${{ inputs.account }}'
+            echo '```'
+            cat out.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

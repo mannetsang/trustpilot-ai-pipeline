@@ -63,6 +63,20 @@ across currencies.
 Secrets follow `BIGCOMMERCE_<store_hash>_<CREDENTIAL>`, e.g.
 `BIGCOMMERCE_gmosz3ja_ACCESS_TOKEN`. The store hash itself is not sensitive.
 
+### Google Merchant Center
+
+Driven through the **Merchant API** (`merchantapi.googleapis.com`, enabled on
+the project) by the scripts in `google-merchant/`. Auth is Application Default
+Credentials, so the calling service account must be an Admin user on the
+Merchant Center account and the project must be registered once with
+`register_developer.py`. Account IDs are not secrets:
+
+| Merchant Center account | ID | Service account added? |
+|---|---|---|
+| Superhairpieces.ca (standalone, CA only) | `5298296396` | yes, project registered |
+| Superhairpieces (.com and EU storefronts) | `289630622` | no |
+| Gen'C Beauty | `670525760` | no |
+
 ### Known data-quality caveats
 
 - `payment_method` on orders contains free text in places (service-request
