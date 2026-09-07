@@ -70,3 +70,42 @@ jobs:
           name: sync-report-${{ inputs.label || 'CA' }}
           path: sync-report.csv
           if-no-files-found: ignore
+
+  # Rebuild the Google Shopping dashboard from fresh data and redeploy it once
+  # the sync has finished, so the Cloud Run page always reflects today's feed.
+  dashboard:
+    needs: sync
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Install dependencies
+        run: pip install --quiet -r google-merchant/requirements.txt
+
+      - name: Build dashboard data and page
+        env:
+          GCP_PROJECT: shp-ai-bot-2026
+          GMC_ACCOUNT_ID: '5298296396'
+        run: |
+          python3 google-merchant/dashboard/build_data.py --label "${{ inputs.label || 'CA' }}"
+          python3 google-merchant/dashboard/build_site.py
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy merchant-dashboard \
+            --source ./google-merchant/dashboard \
+            --region us-central1 \
+            --project shp-ai-bot-2026 \
+            --allow-unauthenticated \
+            --quiet
