@@ -118,6 +118,43 @@ share an `item_group_id` (the product SKU) so Merchant Center groups them.
 | shipping weight | variant calculated weight in the store's unit |
 | shipping | free-shipping products get a 0.00 CA shipping line |
 | product_type | full category paths |
+| google_product_category | mapped from the product name, then its BigCommerce categories (see below) |
+
+### Google product category mapping
+
+Google needs its own taxonomy id per offer; without it Google guesses and filed
+toupees under Hats and tape under First Aid. `CATEGORY_RULES` in
+`sync_bigcommerce.py` tries these in order, on the product name first and the
+BigCommerce category paths second. A rule can carry a veto so "Clip-In Topper"
+is a wig, not a clip.
+
+| Line | Google category | ID |
+|---|---|---|
+| Mannequin heads, stands | Business & Industrial › Retail › Display Mannequins | 3803 |
+| Microblading, eyelash and academy kits | Health & Beauty › Cosmetics › Cosmetic Tools | 2619 |
+| Shampoo and conditioner gift sets | Health & Beauty › Hair Care › Hair Care Kits | 8452 |
+| Clips, combs, wig caps, colour rings, needles | Hair Accessories › Wig Accessories | 7305 |
+| Tape-in, nail tip, I-tip, weft, clip-in, halo, ponytail | Hair Accessories › Hair Extensions | 4057 |
+| Tape, glue, adhesive, solvent, remover, scalp protector | Hair Accessories › Wig Accessories › Wig Glue & Tape | 7306 |
+| Toupees, toppers, wigs, hair systems, hairpieces | Hair Accessories › Wigs | 181 |
+| Scissors, brushes, applicators, templates | Hair Accessories › Wig Accessories | 7305 |
+| Thinning-hair products | Hair Care › Hair Loss Treatments | 4766 |
+| Shampoo, conditioner, styling, colour | Health & Beauty › Personal Care › Hair Care | 486 |
+
+A dry run prints the resulting distribution (`google categories: {...}`), so
+check it after changing the rules.
+
+### Internal items never reach Google
+
+BigCommerce doubles as an internal ordering system: office coffee, garbage bags,
+surcharges such as "Extra Charge", catalogues, price lists, services and
+zero-priced placeholders are all visible products. `is_internal()` skips
+anything in an Office Supplies or Services category, any zero-priced product,
+and names matching `INTERNAL_NAME` (extra charge, coffee, battery, catalog,
+service, consultation, certification and so on). They appear in the report CSV
+as `internal item`, and a full run deletes them from Google if an earlier run
+had sent them. Hiding them on the storefront in BigCommerce is still the
+better fix.
 
 Skipped, and listed in the report CSV: hidden products, `availability:
 disabled`, digital products, variants with no price or no image,
