@@ -79,6 +79,44 @@ STORES = {
 }
 
 BC_API = "https://api.bigcommerce.com/stores/{hash}"
+
+# Google product taxonomy ids (taxonomy-with-ids.en-US.txt). Rules are tried in
+# order against the product's BigCommerce category paths and name; the first
+# match wins. Without this Google guesses, and it filed toupees under Hats.
+GOOGLE_CATEGORIES = {
+    "hair_extensions": "4057",   # Apparel & Accessories > Clothing Accessories > Hair Accessories > Hair Extensions
+    "wig_glue_tape": "7306",     # ... > Hair Accessories > Wig Accessories > Wig Glue & Tape
+    "wig_accessories": "7305",   # ... > Hair Accessories > Wig Accessories
+    "wigs": "181",               # ... > Hair Accessories > Wigs
+    "hair_care": "486",          # Health & Beauty > Personal Care > Hair Care
+    "hair_loss": "4766",         # ... > Hair Care > Hair Loss Treatments
+    "mannequins": "3803",        # Business & Industrial > Retail > Display Mannequins
+    "hair_care_kits": "8452",    # Health & Beauty > Personal Care > Hair Care > Hair Care Kits
+    "cosmetic_tools": "2619",    # Health & Beauty > Personal Care > Cosmetics > Cosmetic Tools
+}
+CATEGORY_RULES = [
+    # (key, match regex, veto regex) tried in order on "category paths | name", lowercase.
+    # A rule only fires when the match hits and the veto (if any) does not.
+    ("mannequins", r"mannequin|styling block|wig head|wig holder|wig stand", None),
+    ("cosmetic_tools", r"microblad|microshad|lip blush|eyelash|makeup|academy|training kit", None),
+    ("hair_care_kits", r"gift set|\bkit\b", r"extension|toupee|hairpiece|starter"),
+    ("wig_accessories", r"\bclips?\b|\bcombs?\b|wig cap|hook needle|colou?r ring|needle|hair ?net", r"topper|toupee|\bextensions?\b|hair system|\bwigs?\b"),
+    ("hair_extensions", r"\bextensions?\b|\bweft\b|tape[- ]in\b|nail[- ]tip|i-?tip|micro ?link|clip[- ]in\b|\bhalo\b|pony ?tail", r"topper|toupee|\bwigs?\b|\btabs?\b|remover|\brolls?\b|pliers|\btools?\b|beads"),
+    ("wig_glue_tape", r"\btapes?\b|\bglue\b|adhesive|solvent|remover|scalp protector|\bliner\b|\bbond\b|knot sealer|c-22|no shine|attachment & removal", None),
+    ("wigs", r"toupee|topper|hair system|\bwigs?\b|sheitel|hair unit|hairpieces?\b|hair replacement", r"\bclips?\b|\bcombs?\b|\bstand\b|catalog"),
+    ("wig_accessories", r"scissor|brush|applicator|glove|template|swatch|spray bottle|\btools?\b", None),
+    ("hair_loss", r"thinning|hair loss|regrowth|minoxidil", None),
+    ("hair_care", r"shampoo|conditioner|mousse|\bgel\b|serum|hair care|styling|leave-in|spray|cream|\boil\b|detangl|\bperm\b|color|colour|dye", None),
+    ("wig_accessories", r"supplies", None),
+    ("wigs", r"\bmen\b|\bwomen\b|frontal|closure|\bbase\b|\blace\b|\bdensity\b", None),
+]
+# Products that exist in BigCommerce for internal ordering and must never reach Google.
+INTERNAL_CATEGORY = re.compile(r"office supplies|services?$", re.I)
+INTERNAL_NAME = re.compile(
+    r"extra charge|coffee|sugar|garbage|envelope|thermal paper|batter(y|ies)|catalog|price list|handling fee|"
+    r"^ou_|\\bpens\\b|toilet paper|paper towel|\\bservices?\\b|base cut|deposit|gift card|consultation|certificad|certification|nanatest|\\btest\\d*\\b",
+    re.I,
+)
 SAFE_ID = re.compile(r"^[A-Za-z0-9._-]{1,50}$")
 WEIGHT_UNITS = {"LBS": "lb", "KGS": "kg", "Ounces": "oz", "Grams": "g", "Pounds": "lb", "Kilograms": "kg"}
 TITLE_MAX = 150
@@ -218,6 +256,31 @@ def group_id_for(product):
     return f"bc-p{product['id']}"
 
 
+def google_category(product, category_paths):
+    """Pick a Google product category id from the product name, then its BigCommerce categories.
+
+    The name is tried first because category paths are noisy (a glue sits under
+    "Hairpiece Tape", a topper under "Women > Wigs"); vetoes are checked against
+    the name only.
+    """
+    name = (product["name"] or "").lower()
+    paths = " | ".join(category_paths[c] for c in product.get("categories", []) if c in category_paths).lower()
+    for haystack in (name, paths):
+        for key, pattern, veto in CATEGORY_RULES:
+            if re.search(pattern, haystack) and not (veto and re.search(veto, name)):
+                return GOOGLE_CATEGORIES[key]
+    return None
+
+
+def is_internal(product, category_paths):
+    """True for office stock, surcharges, services and other non-merchandise."""
+    if any(INTERNAL_CATEGORY.search(category_paths[c]) for c in product.get("categories", []) if c in category_paths):
+        return True
+    if INTERNAL_NAME.search(product["name"] or ""):
+        return True
+    return not product.get("price") or float(product["price"]) <= 0
+
+
 def money(amount, currency):
     return gtype.Price(amount_micros=int(round(float(amount) * 1_000_000)), currency_code=currency)
 
@@ -241,6 +304,8 @@ def build_offers(product, ctx, brands, category_paths):
 
     if product["type"] != "physical":
         return offers, [(offer_id_for(v), f"type {product['type']}") for v in variants]
+    if is_internal(product, ctx["category_paths"]):
+        return offers, [(offer_id_for(v), "internal item") for v in variants]
     if product["availability"] == "disabled":
         return offers, [(offer_id_for(v), "availability disabled") for v in variants]
     if product.get("is_price_hidden"):
@@ -251,6 +316,7 @@ def build_offers(product, ctx, brands, category_paths):
     description = clean_text(product.get("description"), DESCRIPTION_MAX) or product["name"].strip()
     brand = brands.get(product.get("brand_id")) or ctx["brand_default"]
     product_types = [category_paths[c] for c in product.get("categories", []) if c in category_paths][:10]
+    gpc = google_category(product, category_paths)
     multi = len(variants) > 1
     group_id = group_id_for(product) if multi else None
     base_link = ctx["url"] + product["custom_url"]["url"]
@@ -294,6 +360,8 @@ def build_offers(product, ctx, brands, category_paths):
             brand=brand,
             product_types=product_types,
         )
+        if gpc:
+            attrs.google_product_category = gpc
 
         sale = v.get("sale_price") if v.get("sale_price") is not None else product.get("sale_price")
         if sale and 0 < float(sale) < float(price):
@@ -401,6 +469,7 @@ def main(argv=None):
 
     brands = load_brands(bc)
     category_paths, _ = load_categories(bc)
+    ctx["category_paths"] = category_paths
 
     t0 = time.time()
     offers, skipped, seen_products = [], [], 0
@@ -439,6 +508,9 @@ def main(argv=None):
         if "sale_price" in a:
             stats["on_sale"] += 1
     print(f"offer stats: {dict(stats)}")
+    names = {v: k for k, v in GOOGLE_CATEGORIES.items()}
+    gpc_counts = Counter(names.get(pi.product_attributes.google_product_category, "unmapped") for _, pi in offers)
+    print(f"google categories: {dict(gpc_counts.most_common())}")
 
     for _, pi in offers[: args.sample]:
         print(json.dumps(json.loads(ProductInput.to_json(pi)), indent=1)[:2500])
