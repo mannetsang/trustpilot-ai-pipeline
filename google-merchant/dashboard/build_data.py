@@ -48,12 +48,29 @@ def money(p):
     return int(p.get("amount_micros", 0)) / 1e6 if p else 0.0
 
 
+def retry(fn, what, attempts=5):
+    """Run fn() with exponential backoff; Google APIs return transient 429/503s after a big sync."""
+    import time
+    from google.api_core import exceptions as gexc
+    for i in range(attempts):
+        try:
+            return fn()
+        except (gexc.ResourceExhausted, gexc.ServiceUnavailable, gexc.DeadlineExceeded, gexc.InternalServerError, gexc.Aborted) as exc:
+            if i == attempts - 1:
+                raise
+            wait = min(60, 5 * 2 ** i)
+            print(f"{what}: {type(exc).__name__}, retrying in {wait}s", flush=True)
+            time.sleep(wait)
+
+
 def search(client, parent, query):
-    rows = []
-    for r in client.search(request=SearchRequest(parent=parent, query=query, page_size=1000)):
-        d = MessageToDict(r._pb, preserving_proto_field_name=True)
-        rows.append(next(iter(d.values())))
-    return rows
+    def run():
+        rows = []
+        for r in client.search(request=SearchRequest(parent=parent, query=query, page_size=1000)):
+            d = MessageToDict(r._pb, preserving_proto_field_name=True)
+            rows.append(next(iter(d.values())))
+        return rows
+    return retry(run, f"report {query.split(' FROM ')[1].split(' ')[0]}")
 
 
 def nm(x):
@@ -87,17 +104,20 @@ def main(argv=None):
     ds_name = display_name_for(storefront[0])
     from google.shopping.merchant_datasources_v1 import DataSourcesServiceClient, ListDataSourcesRequest
     ds_id = next((d.name for d in DataSourcesServiceClient().list_data_sources(request=ListDataSourcesRequest(parent=parent)) if d.display_name == ds_name), None)
-    statuses = []
-    for p in ProductsServiceClient().list_products(request=ListProductsRequest(parent=parent, page_size=1000)):
-        if ds_id and p.data_source != ds_id:
-            continue
-        a, st = p.product_attributes, p.product_status
-        dest = {}
-        for d in st.destination_statuses:
-            dest[nm(d.reporting_context)] = "disapproved" if d.disapproved_countries else "pending" if d.pending_countries else "approved" if d.approved_countries else "none"
-        statuses.append({"offer_id": p.offer_id, "brand": a.brand, "price": a.price.amount_micros / 1e6, "availability": nm(a.availability), "gtin": list(a.gtins),
-                         "weight": a.shipping_weight.value if "shipping_weight" in a else None, "image": a.image_link, "dest": dest,
-                         "issues": [(i.code, nm(i.severity)) for i in st.item_level_issues]})
+    def list_statuses():
+        out = []
+        for p in ProductsServiceClient().list_products(request=ListProductsRequest(parent=parent, page_size=1000)):
+            if ds_id and p.data_source != ds_id:
+                continue
+            a, st = p.product_attributes, p.product_status
+            dest = {}
+            for d in st.destination_statuses:
+                dest[nm(d.reporting_context)] = "disapproved" if d.disapproved_countries else "pending" if d.pending_countries else "approved" if d.approved_countries else "none"
+            out.append({"offer_id": p.offer_id, "brand": a.brand, "price": a.price.amount_micros / 1e6, "availability": nm(a.availability), "gtin": list(a.gtins),
+                        "weight": a.shipping_weight.value if "shipping_weight" in a else None, "image": a.image_link, "dest": dest,
+                        "issues": [(i.code, nm(i.severity)) for i in st.item_level_issues]})
+        return out
+    statuses = retry(list_statuses, "products.list")
 
     print("bigcommerce: catalogue")
     store = STORES[label]
