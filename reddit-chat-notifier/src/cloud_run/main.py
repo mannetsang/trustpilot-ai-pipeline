@@ -199,6 +199,9 @@ def post_to_chat(sub, kind, entry):
         }]
     }
     resp = requests.post(GCHAT_WEBHOOK_URL, json=card, timeout=10)
+    if resp.status_code == 429:  # Chat webhook limit ~1 msg/s: back off, retry once
+        time.sleep(5)
+        resp = requests.post(GCHAT_WEBHOOK_URL, json=card, timeout=10)
     resp.raise_for_status()
 
 
@@ -235,7 +238,9 @@ def poll_feed(sub, kind):
     sent = []
     watermark_dt = last_dt
     advance = True
-    for e in new_items:
+    for i, e in enumerate(new_items):
+        if i:
+            time.sleep(1.1)  # pace card sends under Chat's ~1 msg/s webhook limit
         try:
             post_to_chat(sub, kind, e)
             notified_ids.add(e["id"])
