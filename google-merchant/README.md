@@ -108,14 +108,14 @@ share an `item_group_id` (the product SKU) so Merchant Center groups them.
 | Merchant Center | From BigCommerce |
 |---|---|
 | offer id | variant SKU, or `bc-v<variant id>` when the SKU has spaces/quotes |
-| title | product name, plus the option labels for multi-variant products |
+| title / description | product name and description, with Personal Hardships wording removed (see below), plus the option labels for multi-variant products |
 | link | storefront URL, with `?sku=` so the variant is preselected |
 | image / additional images | variant image, else thumbnail then the rest |
 | price / sale price | variant price (falls back to product), sale only when lower |
 | availability | inventory tracking mode and level; `preorder` passes through |
 | brand | BigCommerce brand, default Superhairpieces |
 | gtin / mpn | only when valid (see below), else `identifier_exists=false` |
-| shipping weight | variant calculated weight in the store's unit |
+| shipping weight | variant calculated weight in the store's unit; a per-category default in grams when BigCommerce has none (see below) |
 | shipping | free-shipping products get a 0.00 CA shipping line |
 | product_type | full category paths |
 | google_product_category | mapped from the product name, then its BigCommerce categories (see below) |
@@ -151,7 +151,8 @@ surcharges such as "Extra Charge", catalogues, price lists, services and
 zero-priced placeholders are all visible products. `is_internal()` skips
 anything in an Office Supplies or Services category, any zero-priced product,
 and names matching `INTERNAL_NAME` (extra charge, coffee, battery, catalog,
-service, consultation, certification and so on). They appear in the report CSV
+service, consultation, certification, repairs, academy courses and so on). They
+appear in the report CSV
 as `internal item`, and a full run deletes them from Google if an earlier run
 had sent them. Hiding them on the storefront in BigCommerce is still the
 better fix.
@@ -165,6 +166,32 @@ catalogue any more, so hiding a product in BigCommerce removes it from Google
 the next morning. Safety valve: if more than a quarter of the feed would go,
 nothing is deleted and the run says so. `--limit`/`--sku` runs never delete.
 
+### Policy wording and shipping weights
+
+Two disapproval causes from Google's first review are handled in the feed
+rather than one product at a time:
+
+- **Personal Hardships policy** (67 offers). Google disapproves listings whose
+  text targets hair loss, alopecia, chemotherapy or medical conditions. The
+  storefront copy can say "Medical Wig for chemo and alopecia hair loss"; the
+  feed cannot. `neutralize()` removes those phrases, together with a leading
+  "for"/"due to" and qualifiers such as "frontal", from the title and
+  description that go to Google, so "Custom made Silk Top Hair Loss Medical
+  Wig Monica" is sent as "Custom made Silk Top Wig Monica". The BigCommerce
+  page is untouched. The run summary counts the products affected as
+  `neutralized_text`. Google re-reviews changed offers within a few days; if a
+  policy flag persists on an offer whose text is clean, request a manual
+  review in Merchant Center (Products › Needs attention).
+- **Missing shipping weight** (127 offers, including the Six Teeth Comb Clips).
+  The account's shipping rates are weight-based, so an offer with no weight is
+  disapproved outright. Products with no weight in BigCommerce are sent with a
+  conservative per-category default in grams (`DEFAULT_WEIGHT_G`: 150 g for
+  hairpieces and extensions, 120 g for tape and glue, 350 g for hair care,
+  1.5 kg for mannequins). It keeps the offer live, but the shipping estimate
+  Google shows is only as good as the guess, so real weights in BigCommerce
+  are still the fix; the run summary counts the offers concerned as
+  `default_weight`.
+
 ### Data-quality findings from the first run
 
 - `upc`/`mpn` hold Excel-mangled values like `6.14043E+11`, and `gtin`
@@ -172,8 +199,8 @@ nothing is deleted and the run says so. `--limit`/`--sku` runs never delete.
   drops these, so supplies from Walker Tape etc. go out without a GTIN. Fixing
   the UPCs in BigCommerce would improve their Shopping performance.
 - 179 variants have no weight; Google disapproves those when shipping is
-  weight-based (the shampoo in the old autofeed was one). Set weights in
-  BigCommerce.
+  weight-based (the shampoo in the old autofeed was one). The sync now sends a
+  category default (above), but set real weights in BigCommerce.
 - Google's own **autofeed** (`PRODUCTS SOURCE 1`) crawls the site and creates
   duplicate, poorer offers. Turn it off in Merchant Center once this feed is
   approved: Data sources → PRODUCTS SOURCE 1 → disable automatic feeds.
