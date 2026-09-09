@@ -25,6 +25,14 @@ Known data-quality handling, from inspecting the store:
   they look like part numbers. Otherwise identifier_exists=false is sent.
 - Offer ids are the variant SKU when it is URL-safe, else bc-v<variant id>,
   because SKUs like TP BLUE BAG "ST" cannot sit in a resource path.
+- Google's Personal Hardships policy disapproves feed text that targets hair
+  loss, alopecia or medical conditions, which the storefront copy does freely.
+  Those phrases are stripped from the title and description that go to Google
+  (HARDSHIP / neutralize); the storefront page itself is untouched.
+- The account's shipping rates are weight-based, so an offer without a
+  shipping weight is disapproved outright. Products with no weight in
+  BigCommerce get a per-category default in grams (DEFAULT_WEIGHT_G) until a
+  real weight is entered; the run summary counts how many needed it.
 """
 
 import argparse
@@ -114,7 +122,8 @@ CATEGORY_RULES = [
 INTERNAL_CATEGORY = re.compile(r"office supplies|services?$", re.I)
 INTERNAL_NAME = re.compile(
     r"extra charge|coffee|sugar|garbage|envelope|thermal paper|batter(y|ies)|catalog|price list|handling fee|"
-    r"^ou_|\\bpens\\b|toilet paper|paper towel|\\bservices?\\b|base cut|deposit|gift card|consultation|certificad|certification|nanatest|\\btest\\d*\\b",
+    r"^ou_|\\bpens\\b|toilet paper|paper towel|\\bservices?\\b|base cut|deposit|gift card|consultation|certificad|certification|nanatest|\\btest\\d*\\b|"
+    r"^hairpiece repair|specialist program|\\bcourse\\b",
     re.I,
 )
 SAFE_ID = re.compile(r"^[A-Za-z0-9._-]{1,50}$")
@@ -122,6 +131,38 @@ WEIGHT_UNITS = {"LBS": "lb", "KGS": "kg", "Ounces": "oz", "Grams": "g", "Pounds"
 TITLE_MAX = 150
 DESCRIPTION_MAX = 5000
 MAX_ADDITIONAL_IMAGES = 10
+
+# Google's Personal Hardships policy disapproves listings whose text targets hair
+# loss, alopecia, chemotherapy or medical conditions (67 offers in the first
+# review). The storefront may say it; the feed may not. A term, any qualifier in
+# front of it ("frontal hair loss"), a leading "for"/"due to", and chained terms
+# ("chemo and alopecia hair loss") are removed as one phrase.
+_HARDSHIP_TERM = r"(?:hair[- ]?loss|thinning(?:[- ]hair)?|alopecia|chemo(?:therapy)?|cancer(?:\s+patients?)?|medical(?!\s+(?:grade|stainless))|receding(?:\s+hairlines?)?|balding)"
+_HARDSHIP_QUAL = r"(?:(?:frontal|crown|partial|female|male|early|advanced|severe|genetic|hereditary|temporary|permanent|pattern|bald(?:ing)?)\s+)*"
+HARDSHIP = re.compile(
+    r"(?:\b(?:for|from|due to|with|caused by|after|during|suffering from|experiencing)\s+)?"
+    + _HARDSHIP_QUAL + r"\b" + _HARDSHIP_TERM + r"\b"
+    + r"(?:(?:\s*(?:and|&|,|/|or)\s*|\s+)" + _HARDSHIP_QUAL + _HARDSHIP_TERM + r"\b)*",
+    re.I,
+)
+
+# Shipping weight in grams by Google product category, used only when
+# BigCommerce holds no weight. The account's shipping rates are weight-based,
+# so Google disapproves weightless offers (127 in the first review, including
+# the Six Teeth Comb Clips). A conservative default keeps them live until real
+# weights are entered; the run summary reports how many still need one.
+DEFAULT_WEIGHT_G = {
+    GOOGLE_CATEGORIES["wigs"]: 150,
+    GOOGLE_CATEGORIES["hair_extensions"]: 150,
+    GOOGLE_CATEGORIES["wig_glue_tape"]: 120,
+    GOOGLE_CATEGORIES["wig_accessories"]: 60,
+    GOOGLE_CATEGORIES["hair_care"]: 350,
+    GOOGLE_CATEGORIES["hair_loss"]: 350,
+    GOOGLE_CATEGORIES["mannequins"]: 1500,
+    GOOGLE_CATEGORIES["hair_care_kits"]: 500,
+    GOOGLE_CATEGORIES["cosmetic_tools"]: 200,
+    None: 200,
+}
 
 
 # --------------------------------------------------------------------------- BigCommerce
@@ -219,6 +260,18 @@ def clean_text(raw, limit):
     return text[:limit].rstrip()
 
 
+def neutralize(text):
+    """Remove Personal Hardships phrasing from feed text and tidy what is left."""
+    if not text or not HARDSHIP.search(text):
+        return text
+    out = HARDSHIP.sub(" ", text)
+    out = re.sub(r"\(\s*\)|\[\s*\]", " ", out)  # brackets emptied by the removal
+    out = re.sub(r"\s+([,.;:)\]])", r"\1", out)  # space left before punctuation
+    out = re.sub(r"\b(?:for|with|and|or|to|of)\s*(?=[)\]\-\u2013|,.;:]|$)", "", out, flags=re.I)  # dangling connectors
+    out = re.sub(r"(\s[-\u2013|]\s*){2,}", r"\1", out)  # doubled separators
+    return re.sub(r"\s+", " ", out).strip(" -\u2013|,")
+
+
 def valid_gtin(value):
     digits = re.sub(r"\D", "", str(value or ""))
     if digits != str(value or "").strip() or len(digits) not in (8, 12, 13, 14):
@@ -295,9 +348,14 @@ def availability_for(product, variant):
     return Availability.IN_STOCK if (level or 0) > 0 else Availability.OUT_OF_STOCK
 
 
-def build_offers(product, ctx, brands, category_paths):
-    """Return ([(offer_id, ProductInput)], [(offer_id, reason)]) for one product."""
+def build_offers(product, ctx, brands, category_paths, stats=None):
+    """Return ([(offer_id, ProductInput)], [(offer_id, reason)]) for one product.
+
+    stats, if given, is a Counter that receives per-offer notes such as
+    default_weight and neutralized_text.
+    """
     offers, skipped = [], []
+    stats = stats if stats is not None else Counter()
     variants = product.get("variants") or []
     if not variants:
         return offers, [(f"bc-p{product['id']}", "no variants")]
@@ -313,7 +371,11 @@ def build_offers(product, ctx, brands, category_paths):
 
     images = sorted(product.get("images") or [], key=lambda i: (not i.get("is_thumbnail"), i.get("sort_order", 0)))
     image_urls = [i["url_zoom"] for i in images if i.get("url_zoom")]
-    description = clean_text(product.get("description"), DESCRIPTION_MAX) or product["name"].strip()
+    raw_name, raw_description = product["name"].strip(), clean_text(product.get("description"), DESCRIPTION_MAX)
+    name, description = neutralize(raw_name), neutralize(raw_description)
+    description = description or name
+    if (name, description) != (raw_name, raw_description or raw_name):
+        stats["neutralized_text"] += 1
     brand = brands.get(product.get("brand_id")) or ctx["brand_default"]
     product_types = [category_paths[c] for c in product.get("categories", []) if c in category_paths][:10]
     gpc = google_category(product, category_paths)
@@ -337,7 +399,7 @@ def build_offers(product, ctx, brands, category_paths):
             skipped.append((oid, "no image"))
             continue
 
-        title = product["name"].strip()
+        title = name
         if multi:
             labels = [o["label"].strip() for o in v.get("option_values", []) if o.get("label")]
             if labels:
@@ -379,6 +441,9 @@ def build_offers(product, ctx, brands, category_paths):
         weight = v.get("calculated_weight") or v.get("weight") or product.get("weight")
         if weight and float(weight) > 0:
             attrs.shipping_weight = ShippingWeight(value=float(weight), unit=ctx["weight_unit"])
+        else:
+            attrs.shipping_weight = ShippingWeight(value=DEFAULT_WEIGHT_G.get(gpc, DEFAULT_WEIGHT_G[None]), unit="g")
+            stats["default_weight"] += 1
 
         if product.get("is_free_shipping") or v.get("is_free_shipping"):
             attrs.shipping = [Shipping(country=ctx["country"], price=money(0, ctx["currency"]))]
@@ -473,12 +538,13 @@ def main(argv=None):
 
     t0 = time.time()
     offers, skipped, seen_products = [], [], 0
+    notes = Counter()
     params = {"is_visible": "true", "include": "variants,images,custom_fields"}
     if args.sku:
         params["sku:in"] = ",".join(args.sku)
     for product in bc.pages("/v3/catalog/products", **params):
         seen_products += 1
-        built, skips = build_offers(product, ctx, brands, category_paths)
+        built, skips = build_offers(product, ctx, brands, category_paths, notes)
         offers.extend(built)
         skipped.extend(skips)
         if args.limit and len(offers) >= args.limit:
@@ -508,6 +574,8 @@ def main(argv=None):
         if "sale_price" in a:
             stats["on_sale"] += 1
     print(f"offer stats: {dict(stats)}")
+    print(f"notes: {dict(notes)} (default_weight = offers sent with a category default because BigCommerce has no weight; "
+          f"neutralized_text = products whose title/description lost policy wording)")
     names = {v: k for k, v in GOOGLE_CATEGORIES.items()}
     gpc_counts = Counter(names.get(pi.product_attributes.google_product_category, "unmapped") for _, pi in offers)
     print(f"google categories: {dict(gpc_counts.most_common())}")

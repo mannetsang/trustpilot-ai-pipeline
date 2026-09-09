@@ -73,6 +73,25 @@ GCP_SA_KEY_B64=<the service-account JSON key, base64-encoded on one line>
 Rotating the key is just replacing the second value; the next new session picks
 it up with no snapshot rebuild.
 
+### A second hook keeps the CLIs available
+
+[`.claude/hooks/dev-clis.sh`](../.claude/hooks/dev-clis.sh) runs at the start of
+every session and makes sure the two CLIs this repo's work needs are present:
+
+| CLI | State in the cloud image | What the hook does |
+|---|---|---|
+| `gcloud` | already installed and **preconfigured for the agent proxy** | verifies and prints the version; never reinstalls, because a fresh SDK would lose that proxy configuration |
+| `gh` | not installed | installs it from Ubuntu's own repo, about 4 seconds, no third-party apt repo needed |
+
+Both paths are quick: half a second when everything is already there. Like the
+credentials hook it always exits 0, does nothing on Windows (no `apt-get`), and
+reports what is missing rather than failing the session.
+
+`gh` authenticates through the same agent proxy as `git`, so there is no login
+step. Its value is diagnostic as much as functional: when the org's Claude
+GitHub App connection is down, `git push` only says *could not read Username*,
+while `gh api` says so in plain words.
+
 ## 3. Credentials — the part that actually cost the time
 
 API credentials, where the agent proxy injects a key it never sees, aren't
