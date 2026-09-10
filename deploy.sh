@@ -4,7 +4,7 @@
 # Deploys:
 #   - Cloud Run service `trustpilot-webhook` (Flask app in src/cloud_run/)
 #   - Cloud Run Job    `trustpilot-reconciler` (src/python/reconcile_reviews.py)
-#   - Cloud Scheduler  `trustpilot-reconciler-hourly` (runs the job hourly)
+#   - Cloud Scheduler  `trustpilot-reconciler-hourly` (runs the job every 10 min — the primary trigger)
 #   - Secret Manager entries for the four runtime secrets
 #   - A runtime service account with the roles it needs
 #
@@ -30,7 +30,7 @@ REGION="${REGION:-us-central1}"
 SERVICE_NAME="${SERVICE_NAME:-trustpilot-webhook}"
 JOB_NAME="${JOB_NAME:-trustpilot-reconciler}"
 SCHEDULER_NAME="${SCHEDULER_NAME:-trustpilot-reconciler-hourly}"
-SCHEDULE="${SCHEDULE:-17 * * * *}"
+SCHEDULE="${SCHEDULE:-*/10 * * * *}"
 SA_NAME="${SA_NAME:-trustpilot-runtime}"
 INVOKER_SA_NAME="${INVOKER_SA_NAME:-trustpilot-scheduler}"
 TP_BUSINESS_UNIT_ID="${TP_BUSINESS_UNIT_ID:-5e44f707d7d8c700011eaa10}"
@@ -149,9 +149,12 @@ Manual next steps (once):
        $SA_EMAIL
      as Editor. Without this the sheet writes will fail.
 
-  2. Register the webhook URL with Trustpilot:
-       export APPS_SCRIPT_URL="$WEBHOOK_URL"
-       python src/python/register_webhook.py
+  2. (Optional) Trustpilot has no public API for registering webhooks
+     (register_webhook.py hits a non-existent endpoint). If you want
+     real-time delivery in addition to the 10-minute reconciler, add a
+     webhook manually in Trustpilot Business Admin Centre -> Integrations -> Developers -> Webhook Notifications
+     pointing at:
+       $WEBHOOK_URL
 
   3. Kick off a one-off historical backfill:
        gcloud run jobs execute $JOB_NAME --region $REGION \\

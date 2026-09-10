@@ -63,11 +63,13 @@ python src/python/reconcile_reviews.py --since 2020-01-01T00:00:00Z --dry-run
 python src/python/reconcile_reviews.py --since 2020-01-01T00:00:00Z --max 50
 ```
 
-### Scheduled reconciler
-Deploy the script as a **Cloud Run Job** and trigger it from **Cloud
-Scheduler** (hourly is plenty). The same env vars apply. With
-`--since-hours 48` it stays cheap while still catching any drop from
-the last two days:
-```bash
-python src/python/reconcile_reviews.py --since-hours 48
-```
+### Scheduled reconciler (primary trigger)
+`deploy.sh` runs the reconciler as a **Cloud Run Job** every 10 minutes
+via **Cloud Scheduler**, with a 24h lookback (`--since-hours 24`). This
+is the *primary* way new reviews reach Chat and the Sheet, not a
+fallback: Trustpilot exposes no public API for registering webhooks
+(`/v1/private/webhooks` does not exist; `register_webhook.py` gets a
+404), so the `/webhook` receiver in `src/cloud_run/main.py` is only ever
+invoked by the reconciler's replays unless you configure one manually
+(Trustpilot Business Admin Centre -> Integrations -> Developers ->
+Webhook Notifications).
