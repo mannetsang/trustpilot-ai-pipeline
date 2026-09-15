@@ -1,17 +1,23 @@
 # Google Ads API — Basic Access application, compliance follow-up answers (Gen'C Beauty)
 
-Written 2026-09-10. Gen'C Beauty (gencbeauty.com) version of the reply to the
-Google Ads API compliance team's two follow-up questions (core business
-model; functional API necessity). The Superhairpieces version, the
-placeholders convention and the **9 September 2026 process change** (Google
-closed pending API Center applications and moved Basic Access to the Cloud
-Console with brand verification) are in `google-ads-api-application-answers.md`;
-that process note applies equally here. Business facts come from
-`amazon-spapi-application-answers.md`, `walmart-supabase-sync/HANDOVER.md`
-and the live storefront.
+Written 2026-09-10, rewritten 2026-09-15 once it was confirmed that the Google
+Ads account on this application belongs to **Gen'C Beauty (gencbeauty.com)**.
+The design document originally submitted (`google-ads-api-application/
+Superhairpieces_Google_Ads_API_Design_Document.pdf`, v1.0, 2 September 2026)
+described the tool for Superhairpieces, which is the likely reason Google
+asked for "a clearer picture of your business model". The corrected document
+is `google-ads-api-application/GenC_Beauty_Google_Ads_API_Design_Document.pdf`
+(v2.0, 15 September 2026, built by `build_design_doc_gencbeauty.py`); attach
+it to the reply. Same tool, same API services and guardrails; company,
+channels, users and mockups rewritten.
 
-Fill the `[...]` placeholders before sending and read the notes at the end,
-especially the one about which design document Google is holding.
+The **9 September 2026 process change** (Google closed pending API Center
+applications and moved Basic Access to the Cloud Console with brand
+verification) is documented in `google-ads-api-application-answers.md` and
+applies here too: send this reply, and in parallel re-apply from the Cloud
+project's Google Ads API Overview page after brand verification.
+
+Fill the `[...]` placeholders before sending and read the notes at the end.
 
 ---
 
@@ -21,7 +27,9 @@ especially the one about which design document Google is holding.
 
 Hello,
 
-Thank you for the follow-up. Our answers to both questions are below. In short: Gen'C Beauty is an online retailer of beauty and salon-professional products, and we are the advertiser. The tool described in our design document is an internal reporting and campaign-management console for our own Google Ads account[s]. It is not a platform, it has no external users, and it is not offered to anyone else.
+Thank you for the follow-up. Our answers to both questions are below. In short: Gen'C Beauty is an online retailer of beauty and salon-professional products, and we are the advertiser. The tool described in our design document is an internal reporting and campaign-management console for our own Google Ads account. It is not a platform, it has no external users, and it is not offered to anyone else.
+
+We have also attached an updated design document (version 2.0). The version 1.0 document submitted with the application described the tool in the context of Superhairpieces, our sister company, which shares our e-commerce team and the internal platform the tool runs on. Version 2.0 describes the same tool for the Gen'C Beauty account this application concerns. The API services, guardrails and data handling are unchanged.
 
 **1. Core business model**
 
@@ -38,11 +46,11 @@ Thank you for the follow-up. Our answers to both questions are below. In short: 
 
 **2. Functional API necessity**
 
-*Why the API rather than the Google Ads interface.* We already operate one internal operations dashboard for our own selling accounts. It integrates the Walmart Marketplace API, the Amazon Selling Partner API and our inventory system (SkuVault), and it computes per-SKU profit using actual marketplace fees, promotional discounts and cost of goods, alongside live stock per SKU across our warehouses and the marketplace fulfilment centres. Google Ads is the one sales channel whose cost data is not in that system. Today its performance data is exported from the Google Ads interface into spreadsheets and matched to gencbeauty.com orders by hand. With a catalogue of more than 10,000 low-unit-price SKUs, hand matching cannot tell us which products are profitable to advertise, which are being advertised while out of stock, and how the storefront's true return compares with Amazon and Walmart. We need to (a) pull campaign, keyword, search-term and product-level performance from our Google Ads account[s] automatically into the same database, where it joins the margin and stock data Google Ads does not have, and (b) apply the resulting decisions back to the account in a controlled, logged way. Neither is possible through the interface alone, and the interface's automated rules and Google Ads Scripts operate inside the Google Ads account with no visibility of our margin or inventory data.
+*Why the API rather than the Google Ads interface.* We already operate one internal operations dashboard for our own selling accounts. It integrates the Walmart Marketplace API, the Amazon Selling Partner API and our inventory system (SkuVault), and it computes per-SKU profit using actual marketplace fees, promotional discounts and cost of goods, alongside live stock per SKU across our warehouses and the marketplace fulfilment centres. Google Ads is the one sales channel whose cost data is not in that system. Today its performance data is exported from the Google Ads interface into spreadsheets and matched to gencbeauty.com orders by hand. With a catalogue of more than 10,000 low-unit-price SKUs, hand matching cannot tell us which products are profitable to advertise, which are being advertised while out of stock, and how the storefront's true return compares with Amazon and Walmart. We need to (a) pull campaign, keyword, search-term and product-level performance from our Google Ads account automatically into the same database, where it joins the margin and stock data Google Ads does not have, and (b) apply the resulting decisions back to the account in a controlled, logged way. Neither is possible through the interface alone, and the interface's automated rules and Google Ads Scripts operate inside the Google Ads account with no visibility of our margin or inventory data.
 
 *Which services are critical.*
 
-Read (Phase 1, roughly 30 operations per account per day, fewer than 100 in total):
+Read (Phase 1, roughly 30 to 70 operations per day):
 
 - GoogleAdsService.SearchStream with GAQL, reading the campaign, campaign_budget, ad_group, ad_group_criterion / keyword_view, search_term_view, shopping_performance_view (segmented by product item ID, which is how we join to our SKUs), asset_group, ad_group_ad and change_event resources with cost, impression, click, conversion, conversion-value, CTR and impression-share metrics. Results are stored in our private Postgres database. The staff dashboard reads from that database, never from the API directly.
 - The recommendation resource, so that Google's own suggestions appear beside our tool's proposals.
@@ -50,7 +58,7 @@ Read (Phase 1, roughly 30 operations per account per day, fewer than 100 in tota
 Write (Phase 2, fewer than 50 operations per day, every one approved by a staff member before it is sent):
 
 - CampaignBudgetService.MutateCampaignBudgets: adjust a campaign's daily budget, capped at plus or minus 20% per day.
-- CampaignService.MutateCampaigns and AdGroupService.MutateAdGroups: pause or re-enable a campaign or ad group after a sustained period below our return-on-ad-spend floor, or while the products it promotes are out of stock.
+- CampaignService.MutateCampaigns and AdGroupService.MutateAdGroups: pause or re-enable a campaign or ad group after a sustained period below our return-on-ad-spend floor, or while every product it promotes is out of stock.
 - CampaignCriterionService.MutateCampaignCriteria: add negative keywords identified from search terms with clicks and no conversions.
 - AdGroupCriterionService.MutateAdGroupCriteria: pause under-performing keywords (pause only, never remove).
 - CampaignService bidding-strategy fields: step changes to target ROAS or target CPA of at most 10%, no more than once every seven days.
@@ -68,49 +76,46 @@ Our e-commerce team is the only user of the tool. Everyone signs in with a compa
 
 *Details for your review.*
 
-- Google Ads account ID(s): [xxx-xxx-xxxx] [under manager account xxx-xxx-xxxx, if applicable]
+- Google Ads account ID: [xxx-xxx-xxxx] [under manager account xxx-xxx-xxxx, if applicable]
 - Google Cloud project holding the OAuth client: [project ID]
-- API contact: [manne@superhairpieces.com] (monitored daily)
-- Design document: re-attached
-
-[Optional, if the API contact is a superhairpieces.com address: "Gen'C Beauty is operated by the same e-commerce team as our sister company Superhairpieces, which is why the API contact uses a superhairpieces.com address."]
+- API contact: manne@superhairpieces.com (monitored daily; a Superhairpieces address because the two companies share one e-commerce team)
+- Design document version 2.0, 15 September 2026: attached
 
 [Optional, if you have re-applied through Cloud Console by the time you send this: "Following the 9 September transition to Cloud-managed access, we have also submitted a Basic Access application from Google Cloud project [project ID]. If that application supersedes this thread, please let us know."]
 
 Thank you again for your help. We are happy to provide a screen-share walkthrough of the tool or anything else you need.
 
 Manne Tsang
-[Title], Gen'C Beauty
+Head of Digital Transformation, Gen'C Beauty
 gencbeauty.com
 
 ---
 
 ## Before sending
 
-- **Which design document does Google hold?** The only design document in
-  this repo is the Superhairpieces one (`google-ads-api-application/`, "SHP
-  Ads Console", six storefronts). If this application was filed under Gen'C
-  Beauty and that document was attached, the reply above contradicts it and
-  Google will notice. Either attach a Gen'C version of the document (the
-  build script can be adapted: one storefront, Merchant Center 670525760,
-  the existing dashboard as the host) or send the Superhairpieces reply for
-  that thread instead. Do not mix the two.
-- **Fill the placeholders:** account ID(s) and whether there is a manager
-  account, the Cloud project, the API contact address actually on file, your
-  title at Gen'C, and the optional monthly order volume.
+- **Attach the v2.0 design document**, not the Superhairpieces v1.0. The
+  reply and the document both say v2.0 supersedes v1.0 and explain why; if
+  v1.0 was in fact never sent to Google, delete the second paragraph of the
+  reply and the "Document history" paragraph in the PDF (section 1) and
+  rebuild.
+- **Fill the placeholders:** account ID and whether a manager account exists,
+  the Cloud project, and the optional monthly order volume.
+- **Sister-company wording.** The reply, the PDF and the API-contact line all
+  describe Superhairpieces as a sister company sharing one e-commerce team.
+  Change the wording if that is not how the relationship should be described
+  to Google.
+- **Title and contact.** Both documents use "Head of Digital Transformation,
+  Gen'C Beauty" and manne@superhairpieces.com. Change them if the contact on
+  file with Google is different.
 - **Verify the stated scale.** "Roughly 10,600 products and 2,800 kits" and
   "about 5,100 Amazon SKUs" are the 2026-08-19 figures from the Amazon
-  application; "more than 10,000 SKUs" follows from them. Update if the
-  catalogue has moved materially.
-- **Sister-company sentence.** Only send it if it describes the actual
-  corporate relationship between Gen'C Beauty and Superhairpieces.
+  application; "more than 10,000 SKUs" follows from them.
 - **Google Ads usage claims.** The reply says Google Ads advertises only
-  gencbeauty.com and that Shopping runs through Merchant Center 670525760.
-  Confirm both, and that the account currency and target countries (Canada
-  and the United States) are right; the storefront shows USD pricing.
-- **Consistency with the design document's commitments.** Services,
-  guardrails (20% budget cap, 10% bid-target steps, pause-never-remove,
-  ads created paused), phases and the approval-before-write rule are
-  unchanged from the Superhairpieces document. The only additions are the
-  out-of-stock pause reason and per-product Shopping segmentation, both
-  within the same services.
+  gencbeauty.com, that Shopping runs through Merchant Center 670525760, and
+  that the targets are Canada and the United States. Confirm all three; the
+  storefront shows USD pricing, so check the account currency too.
+- **Consistency.** Services, guardrails (20% budget cap, 10% bid-target
+  steps, pause-never-remove, ads created paused), phases and the
+  approval-before-write rule are identical in the reply, the v2.0 PDF and
+  the v1.0 PDF. The only additions are the out-of-stock pause reason and the
+  per-product Shopping segmentation, both within the same services.
