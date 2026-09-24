@@ -176,8 +176,19 @@
     await searchProducts();
   };
 
+  const renderSearchClear = () => { $('searchClear').hidden = !$('searchInput').value; };
+  $('searchClear').addEventListener('click', () => {
+    $('searchInput').value = '';
+    renderSearchClear();
+    clearTimeout(searchTimer);
+    $('searchInput').focus({ preventScroll: true });
+    searchProducts().catch((err) => toast(err.message));
+  });
+  $('searchInput').addEventListener('input', renderSearchClear);
+
   let searchTimer;
   const searchProducts = async () => {
+    renderSearchClear();
     const q = $('searchInput').value.trim();
     const params = new URLSearchParams({ q, category: state.category });
     state.products = await api(`/api/products?${params}`);

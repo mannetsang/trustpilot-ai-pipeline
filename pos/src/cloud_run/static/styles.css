@@ -38,6 +38,9 @@ input { font: inherit; color: inherit; }
 .search { flex: 1; display: flex; align-items: center; gap: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 0 14px; height: 46px; }
 .search input { flex: 1; border: 0; outline: 0; background: none; font-size: 16px; }
 .search input::placeholder { color: var(--muted); }
+.search input::-webkit-search-cancel-button { display: none; }
+.clear-btn { width: 30px; height: 30px; border-radius: 50%; background: var(--chip); color: var(--muted); display: grid; place-items: center; flex: 0 0 30px; }
+.clear-btn:active { background: #d5d8dc; }
 .chips { display: flex; gap: 8px; flex-wrap: wrap; }
 .chip { padding: 8px 14px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line); font-size: 13px; font-weight: 600; }
 .chip.on { background: var(--ink); color: #fff; border-color: var(--ink); }
