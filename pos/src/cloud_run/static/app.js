@@ -695,6 +695,82 @@
   const roundRight = (x, y, w, h, r = 4) => w <= 0 ? '' : `M${x},${y} H${x + w - Math.min(r, w)} Q${x + w},${y} ${x + w},${y + r} V${y + h - r} Q${x + w},${y + h} ${x + w - Math.min(r, w)},${y + h} H${x} Z`;
   const truncate = (t, n) => (t.length > n ? t.slice(0, n - 1) + '…' : t);
 
+  // ------------------------------------------------------------ on-screen keys (touch devices)
+  //
+  // iPadOS treats a Bluetooth barcode scanner as a hardware keyboard and, once it
+  // has typed, stops showing the on-screen keyboard. So on touch devices the
+  // register carries its own keys: a PIN pad on the lock screen, a floating
+  // numeric keypad for money and PIN fields, and a keyboard for the search box.
+  // The fields keep inputmode="none" on touch so iOS never fights over them.
+
+  const touch = window.matchMedia('(pointer: coarse)').matches;
+
+  const typeInto = (input, key) => {
+    if (key === 'back') input.value = input.value.slice(0, -1);
+    else if (key === 'clear') input.value = '';
+    else if (key === '.' && (input.value.includes('.') || input.dataset.numpad === 'pin')) return;
+    else input.value += key;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+
+  const padKeys = (mode) => ['1', '2', '3', '4', '5', '6', '7', '8', '9', mode === 'pin' ? '' : '.', '0', 'back'];
+  const keyHtml = (k) => (k === '' ? '<span></span>' : `<button type="button" data-key="${k}" aria-label="${k === 'back' ? 'Delete' : k}">${k === 'back' ? '⌫' : k}</button>`);
+
+  // Lock screen PIN pad: inline, always visible on touch devices.
+  $('lockPad').innerHTML = padKeys('pin').map(keyHtml).join('');
+  $('lockPad').addEventListener('click', (e) => { const b = e.target.closest('[data-key]'); if (b) typeInto($('lockCode'), b.dataset.key); });
+
+  // Floating keypad for any input marked data-numpad, opened on focus.
+  const numpad = $('numpad');
+  let padTarget = null;
+  const closePad = () => { numpad.hidden = true; padTarget = null; };
+  const openPad = (input) => {
+    padTarget = input;
+    numpad.innerHTML = padKeys(input.dataset.numpad).map(keyHtml).join('') + '<button type="button" class="done" data-key="done">Done</button>';
+    numpad.hidden = false;
+    const r = input.getBoundingClientRect(); const w = 232, h = numpad.offsetHeight || 260;
+    let left = Math.min(Math.max(8, r.left), window.innerWidth - w - 8);
+    let top = r.bottom + 8;
+    if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 8);
+    numpad.style.left = `${left}px`; numpad.style.top = `${top}px`;
+  };
+  numpad.addEventListener('pointerdown', (e) => e.preventDefault());   // keep the field focused
+  numpad.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-key]'); if (!b || !padTarget) return;
+    if (b.dataset.key === 'done') { padTarget.blur(); closePad(); return; }
+    typeInto(padTarget, b.dataset.key);
+  });
+  if (touch) {
+    document.querySelectorAll('[data-numpad]').forEach((input) => {
+      input.setAttribute('inputmode', 'none');
+      if (input.id !== 'lockCode') {
+        input.addEventListener('focus', () => openPad(input));
+        input.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== input) closePad(); }, 120));
+      }
+    });
+  }
+
+  // Search keyboard: toggled by the key button beside the search box.
+  const softkb = $('softkb');
+  const KB_ROWS = [['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'], ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'], ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', '-'], ['z', 'x', 'c', 'v', 'b', 'n', 'm', '_', '#', 'back'], ['clear', 'space', 'enter']];
+  softkb.innerHTML = KB_ROWS.map((row) => `<div class="row">${row.map((k) => {
+    const label = { back: '⌫', clear: 'Clear', space: 'Space', enter: 'Add' }[k] || k;
+    const cls = k === 'space' ? ' class="space"' : ['clear', 'enter', 'back'].includes(k) ? ' class="wide"' : '';
+    return `<button type="button"${cls} data-key="${k}">${label}</button>`;
+  }).join('')}</div>`).join('');
+  softkb.addEventListener('pointerdown', (e) => e.preventDefault());
+  softkb.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-key]'); if (!b) return;
+    const k = b.dataset.key; const input = $('searchInput');
+    if (k === 'enter') { const code = input.value.trim(); if (code) scan(code); return; }
+    typeInto(input, k === 'space' ? ' ' : k);
+  });
+  $('kbBtn').addEventListener('click', () => {
+    softkb.hidden = !softkb.hidden;
+    $('kbBtn').classList.toggle('on', !softkb.hidden);
+    if (!softkb.hidden) $('searchInput').focus({ preventScroll: true });
+  });
+
   // ------------------------------------------------------------ shell
 
   document.querySelectorAll('.nav-btn').forEach((b) => b.addEventListener('click', () => go(b.dataset.view)));
