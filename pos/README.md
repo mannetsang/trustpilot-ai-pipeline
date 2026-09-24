@@ -142,12 +142,20 @@ override it with the `SUPABASE_PROJECT_REF` environment variable).
 
 ## Importing the product list
 
-Products come from the tab `所有拿货及定价` of the show-prep sheet, which is
-shared with the sessions' service account. One line, Windows cmd:
+Products come from a Google Sheet shared with the sessions' service account.
+Two layouts are recognised from the header row: the show-prep tab
+`所有拿货及定价` (the default) and a Clover inventory export (`Items` tab with
+`SKU`, `Product Code`, `Price`, `Quantity`, `Categories`, `Hidden?`). One line,
+Windows cmd:
 
 ```
 python pos\import_products.py
+python pos\import_products.py --sheet-id <id> --tab Items --skip-sku Test1 --deactivate-missing
 ```
+
+A blank cell, or a column the layout lacks (Clover has no cost), keeps the
+value already in the database, so a price list without costs never wipes the
+costs that margin depends on.
 
 `--dry-run` reads and reports without writing. `--deactivate-missing` also
 marks SKUs that are no longer on the sheet as not sellable. Re-running is

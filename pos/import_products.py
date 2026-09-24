@@ -54,17 +54,18 @@ DEFAULT_TAB = "所有拿货及定价"
 SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly"
 USER_AGENT = "trustpilot-ai-pipeline pos/import_products"
 
-# Sheet header -> meaning. Headers are matched exactly after trimming.
-COL = {
-    "category": "类别",
-    "name": "NAME",
-    "sku": "SKU",
-    "upc": "UPC",
-    "qty": "本次展会拿货数量",
-    "cost": "成本",
-    "price": "蒙特利尔定价",
-    "note": "Note",
-    "clearance": "清仓",
+# Sheet header -> meaning, for each layout we accept. Headers are matched
+# exactly after trimming; the layout is picked by which set is present.
+LAYOUTS = {
+    "show-prep": {
+        "category": "类别", "name": "NAME", "sku": "SKU", "upc": "UPC", "qty": "本次展会拿货数量",
+        "cost": "成本", "price": "蒙特利尔定价", "note": "Note", "clearance": "清仓",
+    },
+    # Clover's inventory export. No cost column; Hidden? = Yes hides the item.
+    "clover": {
+        "category": "Categories", "name": "Name", "sku": "SKU", "upc": "Product Code", "qty": "Quantity",
+        "price": "Price", "hidden": "Hidden?",
+    },
 }
 NAME_PREFIX = re.compile(r"^ESI\s+\w+\s*-\s*", re.IGNORECASE)
 BATCH = 100
@@ -120,21 +121,27 @@ def quantity(text):
     return (sum(int(n) for n in numbers) if numbers else None), raw
 
 
-def parse(values):
-    """Return (products, problems). products: OrderedDict sku -> dict."""
-    header_index = next(
-        (i for i, row in enumerate(values) if any(c.strip() == COL["sku"] for c in row)), None
-    )
+def parse(values, skip_skus=()):
+    """Return (products, problems). products: OrderedDict sku -> dict.
+
+    A value the sheet does not carry (no column, or a blank cell for cost,
+    quantity, category, note, flags) is left as None and the upsert keeps
+    whatever the database already has for it.
+    """
+    header_index = next((i for i, row in enumerate(values) if any(c.strip() == "SKU" for c in row)), None)
     if header_index is None:
-        raise SystemExit(f"no header row with a {COL['sku']!r} column found")
+        raise SystemExit("no header row with a 'SKU' column found")
     header = [c.strip() for c in values[header_index]]
-    idx = {}
-    for key, title in COL.items():
-        if title not in header:
-            raise SystemExit(f"column {title!r} ({key}) missing from the header row")
-        idx[key] = header.index(title)
+    layout = next((name for name, cols in LAYOUTS.items() if all(t in header for t in cols.values())), None)
+    if layout is None:
+        raise SystemExit(f"header row matches no known layout: {header}")
+    COL = LAYOUTS[layout]
+    idx = {key: header.index(title) for key, title in COL.items()}
+    print(f"layout: {layout}")
 
     def cell(row, key):
+        if key not in idx:
+            return ""
         i = idx[key]
         return row[i].strip() if i < len(row) else ""
 
@@ -147,6 +154,9 @@ def parse(values):
         if not sku:
             problems.append(f"row {offset}: blank SKU, skipped")
             continue
+        if sku in skip_skus:
+            problems.append(f"row {offset} {sku}: skipped on request")
+            continue
         try:
             price = money(cell(row, "price"))
             cost = money(cell(row, "cost"))
@@ -158,17 +168,18 @@ def parse(values):
         barcode = cell(row, "upc")
         raw = {header[i]: (row[i] if i < len(row) else "") for i in range(len(header)) if header[i]}
 
+        hidden = cell(row, "hidden").lower() in ("yes", "true")
         record = {
             "sku": sku,
             "name": name,
-            "category": cell(row, "category") or "Uncategorised",
+            "category": cell(row, "category") or None,
             "price": price,
             "cost": cost,
             "show_qty": qty,
             "show_qty_raw": qty_raw,
-            "is_set": cell(row, "note").lower() == "set",
-            "is_clearance": cell(row, "clearance").upper() == "TRUE",
-            "is_active": price is not None,
+            "is_set": (cell(row, "note").lower() == "set") if "note" in idx else None,
+            "is_clearance": (cell(row, "clearance").upper() == "TRUE") if "clearance" in idx else None,
+            "is_active": price is not None and not hidden,
             "note": cell(row, "note") or None,
             "barcodes": [barcode] if barcode else [],
             "sheet": raw,
@@ -233,8 +244,16 @@ def upsert_sql(batch, imported_at):
     rows = []
     for record in batch:
         values = dict(record, imported_at=imported_at)
+        # Defaults for a brand-new row; an existing row keeps its own via coalesce above.
+        values["category"] = values["category"] or "Uncategorised"
+        values["is_set"] = False if values["is_set"] is None else values["is_set"]
+        values["is_clearance"] = False if values["is_clearance"] is None else values["is_clearance"]
         rows.append("(" + ", ".join(lit(values[c]) for c in PRODUCT_COLUMNS) + ")")
-    updates = ", ".join(f"{c} = excluded.{c}" for c in PRODUCT_COLUMNS if c != "sku")
+    keep = {"category", "cost", "show_qty", "show_qty_raw", "is_set", "is_clearance", "note"}
+    updates = ", ".join(
+        f"{c} = coalesce(excluded.{c}, pos_products.{c})" if c in keep else f"{c} = excluded.{c}"
+        for c in PRODUCT_COLUMNS if c != "sku"
+    )
     sql = (
         f"insert into pos_products ({', '.join(PRODUCT_COLUMNS)}) values\n"
         + ",\n".join(rows)
@@ -260,10 +279,11 @@ def main():
     parser.add_argument("--deactivate-missing", action="store_true",
                         help="set is_active = false on products whose SKU is not in the sheet")
     parser.add_argument("--via", choices=["auto", "api", "db"], default="auto")
+    parser.add_argument("--skip-sku", action="append", default=[], help="a SKU to ignore (repeatable), e.g. a test row")
     args = parser.parse_args()
 
     values = sheet_values(args.sheet_id, args.tab)
-    products, problems = parse(values)
+    products, problems = parse(values, skip_skus=set(args.skip_sku))
 
     active = sum(1 for p in products.values() if p["is_active"])
     barcodes = sum(len(p["barcodes"]) for p in products.values())
