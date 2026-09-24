@@ -17,6 +17,28 @@ data_path = args[0] if args else os.path.join(HERE, "dashboard_data.json")
 artifact = sys.argv[sys.argv.index("--artifact") + 1] if "--artifact" in sys.argv else None
 
 data = json.load(open(data_path, encoding="utf-8"))
+
+
+def pack(report):
+    """Store rows as [cols, [values...]] so repeated keys are not sent once per row (about 60% smaller)."""
+    rows = report.get("rows") or []
+    if not rows or not isinstance(rows[0], dict):
+        return
+    cols = []
+    seen = set()
+    for r in rows:
+        for k in r:
+            if k not in seen:
+                seen.add(k)
+                cols.append(k)
+    report["cols"] = cols
+    report["rows"] = [[r.get(c) for c in cols] for r in rows]
+
+
+for account in data.get("accounts", []):
+    for report in account.get("reports", {}).values():
+        pack(report)
+data["packed"] = True
 html = open(os.path.join(HERE, "template.html"), encoding="utf-8").read()
 # </script> inside a JSON string would end the script block early; escape it.
 payload = json.dumps(data, separators=(",", ":"), ensure_ascii=False).replace("</", "<\\/")

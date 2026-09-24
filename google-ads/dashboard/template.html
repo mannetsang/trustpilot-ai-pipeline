@@ -245,6 +245,7 @@ pre.gaql{white-space:pre-wrap;word-break:break-word;font-family:var(--mono);font
 
 <script>
 const D = __DATA__;
+if (D.packed) for (const acc of D.accounts) for (const k in acc.reports) { const rep = acc.reports[k]; if (rep.cols) { rep.rows = rep.rows.map(v => { const o = {}; rep.cols.forEach((c, i) => { if (v[i] !== null && v[i] !== undefined) o[c] = v[i]; }); return o; }); delete rep.cols; } }
 const NOTES = {"8654921686": "used mainly for gencbeauty.com campaigns"};
 const MC_NAMES = {"670525760": "Gen'C Beauty", "5298296396": "Superhairpieces.ca", "289630622": "Superhairpieces (.com and EU)"};
 let ai = 0, range = 30;
