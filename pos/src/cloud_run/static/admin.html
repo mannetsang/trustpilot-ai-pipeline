@@ -84,13 +84,14 @@
 
   <div class="panel">
     <h2>Products</h2>
-    <div class="hint">Add or update products in bulk. Download the template, fill one row per product, and upload. Rows are matched on SKU: existing products are updated, new SKUs are added, and only the columns in your file are changed. Or download the current list, edit it, and upload it back.</div>
+    <div class="hint">Add or update products in bulk from a CSV or Excel file. Three layouts are accepted and recognised automatically: the template below, a Clover inventory export (Items tab), or the show-prep sheet. Rows are matched on SKU: existing products are updated, new SKUs are added, and only the columns in your file are changed, so a Clover file without costs keeps the costs already here. Or download the current list, edit it, and upload it back.</div>
     <div class="tabs">
       <a class="chip" href="/api/admin/products/template.csv" download>Download CSV template</a>
       <a class="chip" href="/api/admin/products/export.csv" download>Download current products</a>
     </div>
-    <form class="form" id="csvForm" style="grid-template-columns: 1fr auto auto">
-      <label>CSV file <input type="file" id="csvFile" accept=".csv,text/csv" required></label>
+    <form class="form" id="csvForm" style="grid-template-columns: 1fr auto auto auto">
+      <label>CSV or Excel file <input type="file" id="csvFile" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required></label>
+      <label style="flex-direction:row;align-items:center;gap:8px;height:44px"><input type="checkbox" id="csvDeactivate" style="width:auto;height:auto"> Hide products not in this file</label>
       <button class="btn ghost" type="button" id="csvPreview">Preview</button>
       <button class="btn primary" type="submit" id="csvUpload">Upload</button>
     </form>

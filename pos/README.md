@@ -66,6 +66,16 @@ set SUPABASE_DB_URL=... && set POS_ACCESS_CODE=1234 && python pos\src\cloud_run\
 
 then open http://localhost:8080.
 
+### Uploading a price list in the portal
+
+The Products panel of the admin portal accepts a CSV or Excel file in any of
+three layouts, recognised from the header row: the template it offers, a
+Clover inventory export (the `Items` sheet of the .xlsx), or the show-prep
+sheet. Preview shows what would change; Upload applies it. Blank cells and
+absent columns keep existing values, duplicate SKUs merge into one product
+with all their barcodes, test and example rows are skipped, and the "hide
+products not in this file" box deactivates whatever the file no longer lists.
+
 ### Deploying
 
 The register is live at https://shp-pos-304363458561.northamerica-northeast1.run.app

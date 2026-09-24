@@ -164,7 +164,7 @@
     const file = $('csvFile').files[0];
     $('csvErr').textContent = ''; $('csvResult').textContent = '';
     if (!file) { $('csvErr').textContent = 'Choose a CSV file first.'; return; }
-    const body = new FormData(); body.append('file', file);
+    const body = new FormData(); body.append('file', file); if ($('csvDeactivate').checked) body.append('deactivate_missing', '1');
     $('csvPreview').disabled = $('csvUpload').disabled = true;
     try {
       const response = await fetch(`/api/admin/products/import${preview ? '?preview=1' : ''}`, { method: 'POST', body, credentials: 'same-origin' });
@@ -173,6 +173,7 @@
       if (!response.ok) throw new Error((data && data.error) || `Upload failed (${response.status})`);
       const lines = [
         `${preview ? 'Preview: would' : 'Done:'} ${preview ? 'add' : 'added'} ${data.added} and ${preview ? 'update' : 'updated'} ${data.updated} product(s) from ${data.rows} row(s).`,
+        ...(data.deactivated ? [`${preview ? 'Would hide' : 'Hid'} ${data.deactivated} product(s) not in the file.`] : []),
         ...(data.database ? [`Database now has ${data.database.products} products, ${data.database.sellable} sellable, ${data.database.barcodes} barcodes.`] : []),
         ...(data.problems.length ? ['Notes:', ...data.problems.map((p) => `• ${p}`)] : []),
       ];

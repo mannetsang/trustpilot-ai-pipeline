@@ -558,27 +558,66 @@ def parse_flag(text):
     raise ValueError(f"not TRUE/FALSE: {text!r}")
 
 
-def parse_products_csv(raw):
+# Other layouts the upload accepts, mapped onto the template's column names.
+# Clover's inventory export and the show-prep sheet. Picked by header match.
+LAYOUTS = {
+    "clover": {"sku": "SKU", "name": "Name", "category": "Categories", "price": "Price", "quantity": "Quantity",
+               "barcodes": "Product Code", "hidden": "Hidden?"},
+    "show-prep": {"sku": "SKU", "name": "NAME", "category": "类别", "price": "蒙特利尔定价", "cost": "成本",
+                  "quantity": "本次展会拿货数量", "barcodes": "UPC", "note": "Note", "clearance": "清仓"},
+}
+EVENT_PREFIX = re.compile(r"^ESI\s+\w+\s*-\s*", re.IGNORECASE)
+
+
+def read_rows(raw, filename):
+    """Rows of cell strings from a CSV or an Excel workbook (first sheet, or 'Items')."""
+    if (filename or "").lower().endswith((".xlsx", ".xlsm")) or raw[:2] == b"PK":
+        try:
+            import openpyxl
+        except ImportError:
+            raise ValueError("Excel upload needs the openpyxl package") from None
+        wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+        ws = wb["Items"] if "Items" in wb.sheetnames else wb[wb.sheetnames[0]]
+        for row in ws.iter_rows(values_only=True):
+            yield ["" if v is None else (f"{v:.2f}".rstrip("0").rstrip(".") if isinstance(v, float) else str(v)) for v in row]
+        wb.close()
+        return
+    text = raw.decode("utf-8-sig", errors="replace")
+    yield from csv.reader(io.StringIO(text))
+
+
+def parse_products_csv(raw, filename=None):
     """Return (rows, problems).
 
-    A blank cell means "leave unchanged" for an existing product and "use the
-    default" for a new one, so a file with just sku and price can fix prices
-    without touching anything else. Only non-blank cells make it into a record.
+    Accepts the template layout, a Clover inventory export or the show-prep
+    sheet, picked from the header row. A blank cell means "leave unchanged"
+    for an existing product and "use the default" for a new one, so a file
+    with just sku and price can fix prices without touching anything else.
+    Only non-blank cells make it into a record. The same SKU on several rows
+    is one product with all their barcodes.
     """
-    text = raw.decode("utf-8-sig", errors="replace")
-    reader = csv.reader(io.StringIO(text))
     header = None
+    layout = "template"
     rows, problems, seen = [], [], {}
-    for n, cells in enumerate(reader, start=1):
+    for n, cells in enumerate(read_rows(raw, filename), start=1):
+        cells = [str(c) for c in cells]
         if not any(c.strip() for c in cells) or cells[0].strip().startswith("#"):
             continue
         if header is None:
-            header = [c.strip().lower().lstrip("\ufeff") for c in cells]
-            unknown = [h for h in header if h and h not in CSV_COLUMNS]
-            if "sku" not in header:
-                raise ValueError("the header row must include a 'sku' column")
-            if unknown:
-                problems.append(f"ignored unknown column(s): {', '.join(unknown)}")
+            raw_header = [c.strip().lstrip("\ufeff") for c in cells]
+            for name, cols in LAYOUTS.items():
+                if all(t in raw_header for t in cols.values()):
+                    layout = name
+                    header = [next((k for k, t in cols.items() if t == h), "") for h in raw_header]
+                    break
+            else:
+                header = [h.lower() for h in raw_header]
+                unknown = [h for h in header if h and h not in CSV_COLUMNS]
+                if "sku" not in header:
+                    raise ValueError("the header row must include a 'sku' column (or be a Clover export / show-prep sheet)")
+                if unknown:
+                    problems.append(f"ignored unknown column(s): {', '.join(unknown)}")
+            problems.append(f"layout: {layout}")
             continue
         if len(rows) >= MAX_CSV_ROWS:
             problems.append(f"stopped after {MAX_CSV_ROWS} rows")
@@ -590,11 +629,39 @@ def parse_products_csv(raw):
         if not sku:
             problems.append(f"row {n}: blank sku, skipped")
             continue
-        if sku.upper().startswith("EXAMPLE-SKU-"):
-            problems.append(f"row {n}: example row skipped")
+        if sku.upper().startswith("EXAMPLE-SKU-") or re.fullmatch(r"test\d*", sku, re.IGNORECASE):
+            problems.append(f"row {n}: {sku} looks like an example or test row, skipped")
             continue
+        if layout != "template":
+            if "name" in cell:
+                cell["name"] = EVENT_PREFIX.sub("", cell["name"]) or sku
+            if "hidden" in cell:
+                cell["is_active"] = "FALSE" if cell.pop("hidden").lower() in ("yes", "true") else "TRUE"
+            if "clearance" in cell:
+                cell["is_clearance"] = cell.pop("clearance")
+            if layout == "show-prep" and "note" in cell:
+                cell["is_set"] = "TRUE" if cell["note"].lower() == "set" else "FALSE"
+            if "quantity" in cell and not re.fullmatch(r"-?\d+", cell["quantity"]):
+                digits = re.findall(r"\d+", cell["quantity"])      # '2+1*' -> 3
+                cell["quantity"] = str(sum(int(d) for d in digits)) if digits else ""
+                if not cell["quantity"]:
+                    cell.pop("quantity")
         if sku in seen:
-            problems.append(f"row {n}: duplicate sku {sku!r}, first row wins")
+            first = rows[seen[sku]]
+            extra = [b.strip() for b in re.split(r"[|;]", cell.get("barcodes", "")) if b.strip()]
+            for code in extra:
+                if code not in first.setdefault("barcodes", []):
+                    first["barcodes"].append(code)
+            if "quantity" in cell and first.get("show_qty") is not None and re.fullmatch(r"-?\d+", cell["quantity"]):
+                first["show_qty"] += int(cell["quantity"])
+            try:
+                other_price = parse_money_cell(cell.get("price", ""))
+            except ValueError:
+                other_price = None
+            if other_price is not None and first.get("price") != other_price:
+                problems.append(f"row {n}: {sku} listed again at {other_price} vs {first.get('price')}; keeping the first")
+            else:
+                problems.append(f"row {n}: {sku} listed again, barcodes merged into row {first['row']}")
             continue
         record = {"sku": sku, "row": n}
         try:
@@ -625,10 +692,19 @@ def parse_products_csv(raw):
         except ValueError as exc:
             problems.append(f"row {n} {sku}: {exc}, row skipped")
             continue
-        seen[sku] = n
+        seen[sku] = len(rows)
         rows.append(record)
     if header is None:
         raise ValueError("the file is empty")
+    # A barcode opens exactly one product: a code seen on two SKUs stays on the first.
+    owner = {}
+    for r in rows:
+        for code in list(r.get("barcodes", [])):
+            if code in owner and owner[code] != r["sku"]:
+                problems.append(f"barcode {code} is on both {owner[code]} and {r['sku']}; left on {owner[code]}")
+                r["barcodes"].remove(code)
+            else:
+                owner[code] = r["sku"]
     return rows, problems
 
 
@@ -642,8 +718,9 @@ def products_import():
     if len(raw) > MAX_CSV_BYTES:
         abort(400, "file larger than 2 MB")
     preview = request.args.get("preview") == "1" or request.form.get("preview") == "1"
+    deactivate_missing = request.form.get("deactivate_missing") == "1"
     try:
-        rows, problems = parse_products_csv(raw)
+        rows, problems = parse_products_csv(raw, upload.filename if upload else None)
     except ValueError as exc:
         abort(400, str(exc))
 
@@ -658,7 +735,11 @@ def products_import():
     unchanged = [r for r in to_update if not any(k in r for k in ("name", "category", "price", "cost", "show_qty", "is_set", "is_clearance", "is_active", "note", "barcodes"))]
     if unchanged:
         problems.append(f"{len(unchanged)} row(s) had only a sku and change nothing")
-    summary = {"rows": len(rows), "added": len(to_add), "updated": len(to_update), "problems": problems, "preview": preview}
+    missing = query("select sku from pos_products where is_active and not (sku = any(%s)) order by sku", (skus,)) if deactivate_missing else []
+    summary = {"rows": len(rows), "added": len(to_add), "updated": len(to_update), "deactivated": len(missing),
+               "problems": problems, "preview": preview}
+    if missing:
+        problems.append("not in the file, will be hidden from the register: " + ", ".join(r["sku"] for r in missing[:30]) + (" …" if len(missing) > 30 else ""))
     if preview:
         return jsonify(summary)
 
@@ -697,6 +778,8 @@ def products_import():
                                on conflict (barcode) do update set product_id = excluded.product_id""",
                             (code, r["sku"]),
                         )
+            if missing:
+                conn.execute("update pos_products set is_active = false where sku = any(%s)", ([r["sku"] for r in missing],))
             totals = conn.execute(
                 "select (select count(*) from pos_products) as products, (select count(*) from pos_products where is_active and price is not null) as sellable,"
                 " (select count(*) from pos_product_barcodes) as barcodes"
