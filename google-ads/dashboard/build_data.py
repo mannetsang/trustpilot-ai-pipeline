@@ -154,6 +154,16 @@ def catalog(w):
                   f"metrics.search_exact_match_impression_share, metrics.impressions FROM campaign WHERE {d} AND campaign.advertising_channel_type IN ('SEARCH', 'SHOPPING')"),
         dict(key="campaigns_device", section="audience", title="Campaign by device", what="Device split per campaign.",
              gaql=f"SELECT campaign.name, segments.device, {CORE} FROM campaign WHERE {d}"),
+        dict(key="campaigns_network", section="campaigns", title="Campaign by network", what="Network split per campaign.",
+             gaql=f"SELECT campaign.id, campaign.name, segments.ad_network_type, {CORE} FROM campaign WHERE {d}"),
+        dict(key="campaigns_dow_hour", section="campaigns", title="Campaign by day of week and hour", what="When each campaign gets its clicks, spend and conversions.",
+             gaql=f"SELECT campaign.id, campaign.name, segments.day_of_week, segments.hour, {CORE} FROM campaign WHERE {d} AND campaign.status != 'REMOVED'"),
+        dict(key="campaigns_conversion_actions", section="campaigns", title="Campaign conversions by action", what="Which conversion actions each campaign drives.",
+             gaql=f"SELECT campaign.id, campaign.name, segments.conversion_action_name, segments.conversion_action_category, metrics.conversions, "
+                  f"metrics.conversions_value, metrics.all_conversions, metrics.all_conversions_value FROM campaign WHERE {d}"),
+        dict(key="campaigns_geo", section="campaigns", title="Campaign by region", what="Where each campaign's clicks come from, by region.",
+             gaql=f"SELECT campaign.id, campaign.name, geographic_view.country_criterion_id, segments.geo_target_region, {CORE} FROM geographic_view WHERE {d} "
+                  f"ORDER BY metrics.clicks DESC LIMIT 2000"),
         dict(key="budgets", section="campaigns", title="Budgets", what="Daily budgets, delivery, sharing and Google's recommended amounts.",
              gaql="SELECT campaign_budget.id, campaign_budget.name, campaign_budget.amount_micros, campaign_budget.total_amount_micros, campaign_budget.delivery_method, "
                   "campaign_budget.period, campaign_budget.explicitly_shared, campaign_budget.reference_count, campaign_budget.status, "
@@ -237,7 +247,7 @@ def catalog(w):
         dict(key="shopping_products", section="shopping", title="Products", what="Product-level performance across Shopping and Performance Max.",
              gaql=f"SELECT segments.product_item_id, segments.product_title, segments.product_brand, segments.product_type_l1, segments.product_type_l2, "
                   f"segments.product_category_level1, segments.product_category_level2, segments.product_channel, segments.product_condition, campaign.name, "
-                  f"campaign.advertising_channel_type, {CORE}, metrics.ctr FROM shopping_performance_view WHERE {d} ORDER BY metrics.cost_micros DESC LIMIT 1000"),
+                  f"campaign.advertising_channel_type, {CORE}, metrics.ctr FROM shopping_performance_view WHERE {d} ORDER BY metrics.cost_micros DESC LIMIT 2500"),
         dict(key="product_groups", section="shopping", title="Shopping product groups", what="Standard Shopping product partitions with bids.",
              gaql=f"SELECT campaign.name, ad_group.name, ad_group_criterion.criterion_id, ad_group_criterion.listing_group.type, "
                   f"ad_group_criterion.listing_group.case_value.product_brand.value, ad_group_criterion.listing_group.case_value.product_type.value, "
@@ -265,7 +275,7 @@ def catalog(w):
              gaql=f"SELECT campaign.name, campaign_criterion.type, campaign_criterion.user_list.user_list, campaign_criterion.user_interest.user_interest_category, "
                   f"campaign_criterion.bid_modifier, {CORE} FROM campaign_audience_view WHERE {d} LIMIT 500"),
         dict(key="landing_pages", section="assets", title="Landing pages", what="Performance by final URL.",
-             gaql=f"SELECT landing_page_view.unexpanded_final_url, {CORE} FROM landing_page_view WHERE {d} ORDER BY metrics.clicks DESC LIMIT 300"),
+             gaql=f"SELECT landing_page_view.unexpanded_final_url, campaign.name, {CORE} FROM landing_page_view WHERE {d} ORDER BY metrics.clicks DESC LIMIT 500"),
         dict(key="pmax_placements", section="assets", title="Performance Max placements", what="Sites, apps and channels where Performance Max ads showed.",
              gaql=f"SELECT campaign.name, performance_max_placement_view.display_name, performance_max_placement_view.placement, "
                   f"performance_max_placement_view.placement_type, performance_max_placement_view.target_url, metrics.impressions FROM performance_max_placement_view "
@@ -394,7 +404,8 @@ def main(argv=None):
 
         geo_ids = set(_ids_from(reports.get("campaign_criteria", {}).get("rows", []), "campaignCriterion.location.geoTargetConstant"))
         for key, field in (("geo", "geographicView.countryCriterionId"), ("geo", "segments.geoTargetRegion"), ("geo", "segments.geoTargetCity"),
-                           ("user_locations", "userLocationView.countryCriterionId")):
+                           ("user_locations", "userLocationView.countryCriterionId"), ("campaigns_geo", "segments.geoTargetRegion"),
+                           ("campaigns_geo", "geographicView.countryCriterionId")):
             geo_ids.update(_ids_from(reports.get(key, {}).get("rows", []), field))
         lang_ids = set(_ids_from(reports.get("campaign_criteria", {}).get("rows", []), "campaignCriterion.language.languageConstant"))
         geo_names = lookup_constants(api, cid, "geo_target_constant", geo_ids,

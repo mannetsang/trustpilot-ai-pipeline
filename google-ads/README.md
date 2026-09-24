@@ -44,7 +44,7 @@ approves the request (multi-party approval is on).
 | File | Purpose |
 |---|---|
 | `ads_api.py` | REST client: ADC token with the `adwords` scope, `searchStream`, retries, `login-customer-id`, row flattening (micros → currency units) |
-| `dashboard/build_data.py` | Runs the report catalog (67 GAQL queries) for every client under the manager and writes `dashboard_data.json` |
+| `dashboard/build_data.py` | Runs the report catalog (71 GAQL queries) for every client under the manager and writes `dashboard_data.json` |
 | `dashboard/template.html` | The dashboard page; inline SVG charts, no build step |
 | `dashboard/build_site.py` | Injects the JSON into the template → `site/index.html` (and an artifact copy with `--artifact`) |
 | `dashboard/server.py`, `Dockerfile` | Static server for Cloud Run |
@@ -87,14 +87,22 @@ workflow*; the step summary lists the report coverage.
 - **Overview**: spend, clicks, impressions, CTR, CPC, conversions, cost per
   conversion and value with a 7/14/30/90-day range and comparison; daily and
   monthly trends; clicks by hour and weekday, by network and click type.
-- **Campaigns**: every campaign with type, status, bidding, budget, budget
-  use and results; click one for settings, targeting, devices, Google's
-  budget forecast, daily trend and recommendations. Budgets and impression
-  share tables.
+- **Campaigns**: a card per campaign with its spend trend for the chosen
+  range, then every campaign in a table with type, status, bidding, budget,
+  budget use and results. Budgets and impression share tables.
+- **Campaign explorer**: pick one campaign (or click it anywhere above) and
+  see everything about it in place: settings and targeting, results with a
+  comparison to the previous period, daily spend and conversions, its own
+  hour-by-weekday pattern, conversions by action, network, device, region,
+  age and gender, then only the tables that apply to that campaign type: ad
+  groups, keywords, search terms, Performance Max search categories,
+  products, asset groups, ads and their assets, extensions, landing pages,
+  placements, audiences, impression share, Google's budget forecast,
+  recommendations and its change history.
 - **Search**: search terms (top 2,000 by impressions), keywords with quality
   score, ad groups, Performance Max search categories, ad positions,
   negative keywords.
-- **Shopping**: products (top 1,000 by spend), brands, Google product
+- **Shopping**: products (top 2,500 by spend), brands, Google product
   categories, Shopping product groups, Performance Max product filters.
 - **Ads and assets**: ads with strength and policy status (click for
   headlines, descriptions, URLs), responsive search ad asset ratings,
