@@ -77,6 +77,28 @@ Merchant Center account and the project must be registered once with
 | Superhairpieces (.com and EU storefronts) | `289630622` | no |
 | Gen'C Beauty | `670525760` | no |
 
+### Google Ads
+
+Read through the **Google Ads API** (`googleads.googleapis.com`, enabled on the
+project) by the scripts in `google-ads/`, over REST with Application Default
+Credentials. Since 2026-09-09 Google grants API access to the Cloud project
+that issued the OAuth credentials, so there is **no developer token** and
+nothing for Secret Manager. The identity must be a user on the manager account;
+requests to a client account carry the manager id as `login-customer-id`.
+Google Ads matches "Allowed domains" exactly: the service account's domain is
+`shp-ai-bot-2026.iam.gserviceaccount.com`. Account IDs are not secrets:
+
+| Google Ads account | ID | Type | Service account added? |
+|---|---|---|---|
+| Super Hair Pieces | `4233688880` | manager | yes, Standard |
+| Superhairpieces (mainly gencbeauty.com campaigns) | `8654921686` | client, CAD | yes, Standard |
+| second manager above `8654921686` | `9703293352` | manager | no |
+
+The US and EU storefront accounts are not linked under the manager. The
+dashboard (`google-ads/dashboard/`) is rebuilt daily by
+`.github/workflows/google-ads-dashboard.yml` and deployed to Cloud Run as
+`google-ads-dashboard`.
+
 ### Known data-quality caveats
 
 - `payment_method` on orders contains free text in places (service-request

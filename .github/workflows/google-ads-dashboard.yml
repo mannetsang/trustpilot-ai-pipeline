@@ -1,0 +1,70 @@
+name: Google Ads dashboard
+
+# Rebuilds the Google Ads dashboard from the Google Ads API once a day and on
+# demand, then redeploys it to Cloud Run. Credentials: GCP_SA_KEY (GitHub
+# secret), whose service account must be a user on the Google Ads manager
+# account 4233688880 (see google-ads/README.md). No developer token: access is
+# granted to the Cloud project.
+
+on:
+  schedule:
+    - cron: '45 9 * * *'   # 09:45 UTC = 05:45 Toronto (EDT), after the Merchant sync
+  workflow_dispatch:
+    inputs:
+      detail_days:
+        description: 'Days covered by the detail reports (keywords, products, geo...)'
+        required: false
+        default: '30'
+      deploy:
+        description: 'Deploy to Cloud Run after building'
+        type: boolean
+        default: true
+
+concurrency:
+  group: google-ads-dashboard
+  cancel-in-progress: false
+
+jobs:
+  dashboard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Install dependencies
+        run: pip install --quiet google-auth requests
+
+      - name: Build dashboard data and page
+        env:
+          GCP_PROJECT: shp-ai-bot-2026
+        run: |
+          set -o pipefail
+          python3 google-ads/dashboard/build_data.py --detail-days "${{ inputs.detail_days || '30' }}" | tee build.log
+          python3 google-ads/dashboard/build_site.py
+          {
+            echo '## Google Ads dashboard build'
+            echo '```'
+            cat build.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Deploy to Cloud Run
+        if: ${{ inputs.deploy != false }}
+        run: |
+          gcloud run deploy google-ads-dashboard \
+            --source ./google-ads/dashboard \
+            --region us-central1 \
+            --project shp-ai-bot-2026 \
+            --allow-unauthenticated \
+            --quiet
+          echo "URL: $(gcloud run services describe google-ads-dashboard --region us-central1 --project shp-ai-bot-2026 --format='value(status.url)')" >> "$GITHUB_STEP_SUMMARY"
