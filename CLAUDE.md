@@ -97,7 +97,7 @@ Google Ads matches "Allowed domains" exactly: the service account's domain is
 The US and EU storefront accounts are not linked under the manager. The
 dashboard (`google-ads/dashboard/`) is rebuilt daily by
 `.github/workflows/google-ads-dashboard.yml` and deployed to Cloud Run as
-`google-ads-dashboard`.
+`google-ads-dashboard`: <https://google-ads-dashboard-304363458561.us-central1.run.app>.
 
 ### Known data-quality caveats
 

@@ -78,8 +78,8 @@ the GitHub workflow and cloud sessions are the intended way to run the build.
 
 `.github/workflows/google-ads-dashboard.yml` builds the data and page every
 morning (05:45 Toronto) and on demand, then deploys `dashboard/` to Cloud Run
-as `google-ads-dashboard` (us-central1, unauthenticated URL like the Merchant
-dashboard). Run it by hand from *Actions → Google Ads dashboard → Run
+as `google-ads-dashboard` (us-central1, unauthenticated like the Merchant
+dashboard): <https://google-ads-dashboard-304363458561.us-central1.run.app>. Run it by hand from *Actions → Google Ads dashboard → Run
 workflow*; the step summary lists the report coverage.
 
 ## What the page shows
