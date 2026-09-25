@@ -1,4 +1,4 @@
-"""Superhairpieces POS: the cash register for the ESI Montreal booth.
+"""GenC Beauty POS: the cash register for the ESI Montreal booth.
 
 Serves the register page (static/), the admin portal (/admin) and a JSON API
 over the Supabase Postgres database. Cash sales only. Every sale is written as
