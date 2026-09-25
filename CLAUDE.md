@@ -80,7 +80,7 @@ Merchant Center account and the project must be registered once with
 ### Google Ads
 
 Read through the **Google Ads API** (`googleads.googleapis.com`, enabled on the
-project) by the scripts in `google-ads/`, over REST with Application Default
+project) by the scripts in [`mannetsang/google-ads-dashboard`](https://github.com/mannetsang/google-ads-dashboard), over REST with Application Default
 Credentials. Since 2026-09-09 Google grants API access to the Cloud project
 that issued the OAuth credentials, so there is **no developer token** and
 nothing for Secret Manager. The identity must be a user on the manager account;
@@ -95,9 +95,10 @@ Google Ads matches "Allowed domains" exactly: the service account's domain is
 | second manager above `8654921686` | `9703293352` | manager | no |
 
 The US and EU storefront accounts are not linked under the manager. The
-dashboard (`google-ads/dashboard/`) is rebuilt daily by
-`.github/workflows/google-ads-dashboard.yml` and deployed to Cloud Run as
-`google-ads-dashboard`: <https://google-ads-dashboard-304363458561.us-central1.run.app>.
+dashboard lives in that repository too, is rebuilt daily by its own workflow
+and is deployed to Cloud Run as `google-ads-dashboard`:
+<https://google-ads-dashboard-304363458561.us-central1.run.app>. Google Ads
+work happens there, not in this repository.
 
 ### Known data-quality caveats
 
