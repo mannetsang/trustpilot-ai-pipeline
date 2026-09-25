@@ -820,8 +820,11 @@ def products():
     if q:
         where.append("(p.name ilike %s or p.sku ilike %s or exists (select 1 from pos_product_barcodes b where b.product_id = p.id and b.barcode = %s))")
         params += [f"%{q}%", f"%{q}%", q]
+    # Clearance goes last, in price order; everything else by category then name.
     rows = query(
-        f"select {PRODUCT_COLS} from pos_products p where {' and '.join(where)} order by p.category, p.name limit 300",
+        f"select {PRODUCT_COLS} from pos_products p where {' and '.join(where)} "
+        "order by (p.category = 'Clearance' or p.is_clearance), p.category, "
+        "case when p.category = 'Clearance' or p.is_clearance then p.price end, p.name limit 300",
         params,
     )
     return jsonify([serialise_product(r) for r in rows])
@@ -830,7 +833,7 @@ def products():
 @app.get("/api/categories")
 @require_unlock
 def categories():
-    rows = query("select category, count(*) as n from pos_products where is_active and price is not null group by 1 order by 1")
+    rows = query("select category, count(*) as n from pos_products where is_active and price is not null group by 1 order by (category = 'Clearance'), 1")
     return jsonify(rows)
 
 
