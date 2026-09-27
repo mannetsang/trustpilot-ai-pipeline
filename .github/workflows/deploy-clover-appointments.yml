@@ -1,0 +1,33 @@
+name: Deploy Clover appointments sync to Cloud Run
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'clover-appointments/src/cloud_run/**'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      # Credentials come from Secret Manager at runtime; nothing sensitive is
+      # passed through this workflow. The service is private: only the
+      # scheduler's OIDC identity (granted run.invoker by setup) can call it.
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy clover-appointments \
+            --source ./clover-appointments/src/cloud_run \
+            --region us-central1 \
+            --project shp-ai-bot-2026 \
+            --no-allow-unauthenticated \
+            --set-secrets "EMAIL_USER=EMAIL_USER:latest,GOOGLE_APP_PASSWORD=GOOGLE_APP_PASSWORD:latest,TEAMDESK_TOKEN=TEAMDESK_TOKEN:latest" \
+            --quiet
