@@ -182,11 +182,8 @@ def appointment_exists(pos_id):
 
 def build_record(booking, receipt):
     items = receipt["items"]
+    # Hairstylist and client name are left for staff to fill in.
     notes = [f"Booked via Clover at {booking['salon']}."]
-    if receipt["customer_name"]:
-        notes.append(f"Client: {receipt['customer_name']}")
-    if receipt["customer_phone"]:
-        notes.append(f"Phone: {receipt['customer_phone']}")
     if receipt["employee"]:
         notes.append(f"Booked by (Clover employee): {receipt['employee']}")
     record = {

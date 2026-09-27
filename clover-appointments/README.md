@@ -26,9 +26,9 @@ price, customer and order ID, and creates the record unless one with that
 | Location ID | Clover merchant ID |
 | Receipt Link | the email's receipt link |
 | Client Email | from the receipt |
-| Internal Notes | salon, client name, phone, Clover employee who booked |
+| Internal Notes | salon, Clover employee who booked |
 
-Hairstylist is left blank: Clover's email and receipt don't name the stylist.
+Hairstylist and client name are left blank for staff to fill in (Clover's email and receipt don't name the stylist).
 
 ## Credentials
 
