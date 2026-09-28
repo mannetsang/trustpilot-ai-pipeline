@@ -4,22 +4,34 @@ Scripts that read Google Chat **as you** through the Chat API, so a Claude
 session (or any script) can see every space, group chat and DM you are a
 member of. Read-only scopes; nothing here can post.
 
-## Why a user token and not the service account
+## Acting as you, not as a Chat app
 
 The Chat API has two identities, and only one of them sees "all my chats":
 
-| Authenticated as | Sees | Setup |
-|---|---|---|
-| A **Chat app** (service account) | Only spaces the app was explicitly added to. Never DMs between people. | Already works on `shp-ai-bot-2026`; the app is in zero spaces. |
-| **You** (user token) | Everything you see, with full history. | One browser sign-in, below. |
+| Authenticated as | Sees |
+|---|---|
+| A **Chat app** (service account) | Only spaces the app was explicitly added to. Never DMs between people. |
+| **You** | Everything you see: every space, group chat and DM, with full history. |
 
-Longer term the cleaner route is domain-wide delegation — a Workspace admin
-grants the Chat scopes to the service account's client ID and it impersonates
-you with no token to babysit (`trustpilot-pipeline/src/cloud_run/main.py`
-already does this for Gmail). Until that grant can be made, the user token is
-the way in.
+`chat_api.py` gets a "you" identity two ways, in this order:
 
-## One-time setup
+1. **Domain-wide delegation (primary, set up).** The service account in
+   `GOOGLE_APPLICATION_CREDENTIALS` impersonates `CHAT_IMPERSONATE_USER`
+   (default `manne@superhairpieces.com`). This works in Claude cloud sessions
+   with no token to store. The grant lives in admin.google.com → Security →
+   API controls → Manage Domain Wide Delegation, on client ID
+   `111336930970488121514` (`claude-sessions@shp-ai-bot-2026`), with:
+
+   ```
+   https://www.googleapis.com/auth/chat.spaces.readonly,https://www.googleapis.com/auth/chat.messages.readonly,https://www.googleapis.com/auth/chat.memberships.readonly
+   ```
+
+   Without `chat.memberships.readonly` the scripts still run, but DMs and
+   group chats show as unnamed (they have no display name, only members).
+2. **A user OAuth token (fallback)** from a one-time browser sign-in, for a
+   machine with no delegated service account. Setup below.
+
+## Browser sign-in (fallback only)
 
 Console steps, all on project `shp-ai-bot-2026`:
 

@@ -1,17 +1,23 @@
 """Google Chat API, authenticated as a Workspace user (not as a Chat app).
 
-A Chat *app* only sees the spaces it has been added to. A *user* token sees
+A Chat *app* only sees the spaces it has been added to. A *user* identity sees
 everything that user sees: every space, group chat and DM they are a member
 of, with full history. This module holds the shared plumbing for the scripts
-in this folder: load the user's OAuth token, keep it fresh, page through
+in this folder: get credentials for the user, keep them fresh, page through
 results.
 
-The token is the `authorized_user` JSON that `oauth_login.py` stores after a
-one-time browser sign-in. It resolves like every other credential in this
-repo: the GOOGLE_CHAT_USER_TOKEN environment variable first (local .env),
-then Secret Manager (`google-chat-user-token`).
+Two ways to act as the user, tried in this order:
 
-The scopes are read-only. Widening them means signing in again.
+1. Domain-wide delegation. When GOOGLE_APPLICATION_CREDENTIALS points at a
+   service-account key whose client ID a Workspace admin has granted the Chat
+   scopes, the service account impersonates CHAT_IMPERSONATE_USER (default
+   manne@superhairpieces.com). Nothing to store or refresh by hand.
+2. A user OAuth token: the `authorized_user` JSON that `oauth_login.py` stores
+   after a one-time browser sign-in, resolved like every other credential in
+   this repo (GOOGLE_CHAT_USER_TOKEN env var, then Secret Manager
+   `google-chat-user-token`).
+
+The scopes are read-only.
 """
 
 import json
@@ -37,6 +43,47 @@ SCOPES = [
 
 API_ROOT = "https://chat.googleapis.com/v1"
 
+DEFAULT_IMPERSONATE_USER = "manne@superhairpieces.com"
+
+
+def load_credentials():
+    """Delegated service-account credentials if available, else the stored user token."""
+    creds = load_delegated_credentials()
+    return creds or load_user_credentials()
+
+
+def load_delegated_credentials(subject=None):
+    """Impersonate a Workspace user via domain-wide delegation; None if no SA key is available.
+
+    Requests all SCOPES; if the admin grant is missing the memberships scope,
+    falls back to spaces + messages only (DMs then show without member names).
+    """
+    key_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    if not key_path or not os.path.isfile(key_path):
+        return None
+    with open(key_path, encoding="utf-8") as handle:
+        if json.load(handle).get("type") != "service_account":
+            return None
+
+    from google.auth.exceptions import RefreshError
+    from google.auth.transport.requests import Request
+    from google.oauth2 import service_account
+
+    subject = subject or os.environ.get("CHAT_IMPERSONATE_USER") or DEFAULT_IMPERSONATE_USER
+    for scopes in (SCOPES, SCOPES[:2]):
+        creds = service_account.Credentials.from_service_account_file(key_path, scopes=scopes, subject=subject)
+        try:
+            creds.refresh(Request())
+        except RefreshError as exc:
+            if "unauthorized_client" not in str(exc):
+                raise
+            continue
+        if scopes is not SCOPES:
+            print("note: chat.memberships.readonly isn't granted for delegation; DMs will show without member names",
+                  file=sys.stderr)
+        return creds
+    return None  # SA not granted the Chat scopes; fall back to a user token
+
 
 def load_user_credentials(token_json=None):
     """Build refreshed google-auth Credentials from the stored authorized_user JSON."""
@@ -58,7 +105,7 @@ class ChatClient:
     """Thin requests wrapper over the Chat REST API with a user token."""
 
     def __init__(self, credentials=None):
-        self.creds = credentials or load_user_credentials()
+        self.creds = credentials or load_credentials()
         self.session = requests.Session()
 
     def _headers(self):
@@ -128,6 +175,8 @@ def describe_space(client, space):
     name = space.get("displayName")
     if name:
         return name
+    if SCOPES[2] not in (getattr(client.creds, "scopes", None) or SCOPES):
+        return f"(unnamed {space['name']})"  # no memberships scope: skip a 403 per DM
     try:
         members = client.list_members(space["name"])
     except ChatApiError:
