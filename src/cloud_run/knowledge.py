@@ -87,6 +87,13 @@ def company_background():
     return _company_cache
 
 
+def vocabulary(store):
+    """Words a voice line must hear right: the company background, plus every project and system name."""
+    names = lambda kind: ", ".join(sorted({i.get("name", "") for i in store.list_items(kind)} - {""}))  # noqa: E731
+    return "\n\n".join(part for part in (company_background(), f"Projects: {names('projects')}",
+                                           f"Systems: {names('systems')}") if not part.endswith(": "))
+
+
 def slug(text, prefix=""):
     base = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")[:48] or "item"
     digest = hashlib.sha1((text or "").lower().encode("utf-8")).hexdigest()[:6]

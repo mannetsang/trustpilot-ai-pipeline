@@ -35,9 +35,12 @@ LIVE_MODEL = os.environ.get("LIVE_MODEL", "gemini-3.8-live")
 LIVE_VOICE = os.environ.get("LIVE_VOICE", "")  # empty = the model's default voice
 IN_RATE = 16000
 CONNECT_TIMEOUT = 20
+# In a relayed call each turn becomes one message to Claude/ChatGPT, so a mid-sentence pause mustn't end
+# the turn: with Gemini's default, 0.9 s of silence split one request into two messages.
+RELAY_END_SILENCE_MS = int(os.environ.get("RELAY_END_SILENCE_MS", "1500"))
 
 
-def live_config(system_instruction, specs):
+def live_config(system_instruction, specs, end_silence_ms=None):
     from google.genai import types
 
     decls = []
@@ -55,14 +58,19 @@ def live_config(system_instruction, specs):
         # Sliding-window compression lets a conversation run past the raw context limit.
         "context_window_compression": types.ContextWindowCompressionConfig(sliding_window=types.SlidingWindow()),
     }
+    if end_silence_ms:
+        config["realtime_input_config"] = types.RealtimeInputConfig(
+            automatic_activity_detection=types.AutomaticActivityDetection(
+                end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_LOW,
+                silence_duration_ms=end_silence_ms))
     if LIVE_VOICE:
         config["speech_config"] = types.SpeechConfig(
             voice_config=types.VoiceConfig(prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=LIVE_VOICE)))
     return types.LiveConnectConfig(**config)
 
 
-def relay_instruction(label, tool):
-    return f"""\
+def relay_instruction(label, tool, vocabulary=""):
+    text = f"""\
 You are the voice line between Manne and {label}. You don't answer anything yourself and you have no
 opinions of your own: {label} does all the thinking.
 
@@ -71,9 +79,15 @@ he used (fix only obvious transcription slips). Say nothing while you wait. When
 it out loud exactly as written, in a natural speaking voice: don't summarize, add, soften or leave anything
 out, and don't read out markdown symbols. If {label} asks a question, ask it.
 
-If you didn't catch what Manne said, ask him to repeat it instead of calling the tool. If the tool returns
-an error, tell Manne in one sentence that {label} couldn't answer, and why.
+Pass on everything he said since the last answer as one message, even if he paused in the middle. If you
+didn't catch what Manne said, ask him to repeat it instead of calling the tool. If the tool returns an
+error, tell Manne in one sentence that {label} couldn't answer, and why.
 """
+    if vocabulary:
+        # The assistant's own calls have the whole company background, which is why it hears names right.
+        text += ("\nNAMES AND TERMS YOU WILL HEAR. Use this only to write down what Manne says correctly "
+                 "(people, salons, brands, systems, projects); never answer from it.\n" + vocabulary)
+    return text
 
 
 class RelayTools:
@@ -113,13 +127,14 @@ def default_connect():
 class VoiceBridge:
     """One voice call. ws is a flask-sock/simple-websocket connection (blocking receive/send)."""
 
-    def __init__(self, ws, store, toolset, system_instruction, connect=None, save_as="assistant"):
+    def __init__(self, ws, store, toolset, system_instruction, connect=None, save_as="assistant", end_silence_ms=None):
         self.ws = ws
         self.store = store
         self.toolset = toolset
         self.system_instruction = system_instruction
         self.connect = connect or default_connect()
         self.save_as = save_as  # conversation the finished turns go to; None when a relayed partner saves its own
+        self.end_silence_ms = end_silence_ms  # how long a pause ends Manne's turn; None = Gemini's default
         self.stopped = False
         self.turn = {"you": [], "assistant": []}
 
@@ -147,7 +162,7 @@ class VoiceBridge:
             self._save_turn()
 
     async def _run(self):
-        config = live_config(self.system_instruction, self.toolset.specs())
+        config = live_config(self.system_instruction, self.toolset.specs(), self.end_silence_ms)
         self.send_json(type="status", text="Connecting to Gemini Live…")
         manager = self.connect(config)
         try:

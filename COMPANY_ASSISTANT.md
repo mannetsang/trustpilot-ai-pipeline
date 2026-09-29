@@ -87,12 +87,20 @@ model, tools and conversation history (in a spoken style), and Gemini reads the
 answer out word for word. The partner saves those turns into its own conversation.
 Expect a pause while the partner thinks; the call shows "Claude is thinking…".
 
+Because the partner only sees Gemini's transcript, a relayed call waits for a longer
+pause before it treats your turn as finished (`RELAY_END_SILENCE_MS`, 1.5 s; with
+Gemini's default a 0.9 s pause split one request into two messages). It also gives
+Gemini the company's names and terms, so "SkuVault", "Gen'C Beauty" and staff names
+come through right, and the partner is told the words were spoken, so it reads
+misheard names charitably.
+
 ## Configuration
 
 | Env var | Default |
 |---|---|
 | `TALK_MODEL` | `gemini-2.5-pro` (falls back to `GEMINI_MODEL`) |
 | `LIVE_MODEL` / `LIVE_VOICE` / `LIVE_LOCATION` | `gemini-3.8-live` / model default / `us-central1` |
+| `RELAY_END_SILENCE_MS` | `1500` (pause that ends your turn in a call with Claude or ChatGPT) |
 | `CLAUDE_MODEL` / `CLAUDE_FALLBACK_MODEL` | `claude-opus-5-5` / `claude-opus-4-8` |
 | `CLAUDE_BACKEND` / `CLAUDE_REGION` / `CLAUDE_EFFORT` | `auto` / `global` / `medium` |
 | `OPENAI_MODEL` / `OPENAI_KEY_SECRET` | `gpt-5` / `CHATGPT_API_KEY` |

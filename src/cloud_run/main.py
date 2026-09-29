@@ -480,10 +480,11 @@ def voice_ws(ws):
                 ws.send(_json.dumps({"type": "error", "message": f"{label} isn't available: {why}"}))
                 return
             toolset = voice.RelayTools(partner, label, lambda m: service.ask(partner, m, voice=True)["text"])
-            instruction = voice.relay_instruction(label, toolset.name)
+            instruction = voice.relay_instruction(label, toolset.name, knowledge.vocabulary(store))
             save_as = None
         bridge = voice.VoiceBridge(ws, store, toolset, instruction, connect=app.config.get("VOICE_CONNECT"),
-                                   save_as=save_as)
+                                   save_as=save_as,
+                                   end_silence_ms=voice.RELAY_END_SILENCE_MS if partner != "assistant" else None)
     except Exception as exc:  # noqa: BLE001 - without this the socket would stay open and silent
         import traceback
 
