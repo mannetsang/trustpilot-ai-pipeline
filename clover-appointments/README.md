@@ -1,12 +1,13 @@
 # Clover appointments → TeamDesk
 
-Every Clover "Appointment confirmed" email becomes an Appointment record in
+Every Clover booking confirmation becomes an Appointment record in
 TeamDesk (database 56554, table `t_504863`).
 
 Clover's public API has no appointment endpoint or webhook, so the email is the
 only place the appointment date and time appear. A Cloud Scheduler job calls
 `/poll` every 5 minutes. For each booking email in the last two days the service
-reads the salon, date and time, opens the receipt link for the service items,
+reads the salon, date and time (the salon's copy, "An appointment was
+confirmed", carries the same details as the customer's email), opens the receipt link for the service items,
 price, customer and order ID, and creates the record unless one with that
 **POS ID** (the Clover order ID) already exists.
 

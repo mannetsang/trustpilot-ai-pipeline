@@ -4,8 +4,8 @@ Clover appointment emails -> TeamDesk Appointment records.
 Clover's public API has no appointments endpoint and no appointment webhook,
 so the booking confirmation email is the only source that carries the
 appointment date and time. This service polls the mailbox on a schedule
-(Cloud Scheduler hitting /poll every 5 minutes), and for every
-"Appointment confirmed" email from app@clover.com it:
+(Cloud Scheduler hitting /poll every 5 minutes), and for every booking
+confirmation from app@clover.com it:
 
   1. reads the salon name, date, time and receipt link from the email,
   2. opens the public receipt page for the service line items, price,
@@ -56,7 +56,10 @@ LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "2"))
 
 TEAMDESK_API = f"https://www.teamdesk.net/secure/api/v2/{TEAMDESK_DB}/{TEAMDESK_TABLE}"
 CLOVER_SENDER = "app@clover.com"
-CLOVER_SUBJECT = "Appointment confirmed"
+# The salon gets "An appointment was confirmed", a copy of the customer's
+# "Appointment confirmed". Both match; a self-booking yields both, and the POS
+# ID check keeps that to one record.
+CLOVER_SUBJECT = re.compile(r"\bappointment\b.*\bconfirmed\b", re.I)
 SOURCE = "CLOVER"
 
 # Clover writes the zone as an abbreviation ("04:45 PM EDT").
@@ -78,13 +81,13 @@ def fetch_clover_emails(days):
         mail.login(EMAIL_USER, EMAIL_PASSWORD)
         mail.select('"[Gmail]/All Mail"', readonly=True)
         _, data = mail.search(
-            None, "FROM", CLOVER_SENDER, "SUBJECT", f'"{CLOVER_SUBJECT}"', "SINCE", since
+            None, "FROM", CLOVER_SENDER, "SUBJECT", "confirmed", "SINCE", since
         )
         for num in data[0].split():
             _, parts = mail.fetch(num, "(RFC822)")
             msg = email.message_from_bytes(parts[0][1])
             subject = str(make_header(decode_header(msg.get("Subject", ""))))
-            if CLOVER_SUBJECT.lower() not in subject.lower():
+            if not CLOVER_SUBJECT.search(subject):
                 continue
             yield msg.get("Message-ID", num.decode()), _html_body(msg)
     finally:
