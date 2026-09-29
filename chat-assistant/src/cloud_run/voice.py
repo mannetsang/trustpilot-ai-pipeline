@@ -29,6 +29,7 @@ LIVE_LOCATION = os.environ.get("LIVE_LOCATION", "us-central1")
 LIVE_MODEL = os.environ.get("LIVE_MODEL", "gemini-3.8-live")
 LIVE_VOICE = os.environ.get("LIVE_VOICE", "")  # empty = the model's default voice
 IN_RATE = 16000
+CONNECT_TIMEOUT = 20
 
 
 def live_config(system_instruction, specs):
@@ -90,13 +91,22 @@ class VoiceBridge:
         try:
             asyncio.run(self._run())
         except Exception as exc:  # noqa: BLE001 - reported to the browser, then the call ends
-            self.send_json(type="error", message=str(exc)[:300])
+            import traceback
+
+            print(f"voice call failed: {exc!r}\n{traceback.format_exc()}")
+            self.send_json(type="error", message=f"Voice stopped: {str(exc)[:300]}")
         finally:
             self._save_turn()
 
     async def _run(self):
         config = live_config(self.system_instruction, self.toolset.specs())
-        async with self.connect(config) as session:
+        self.send_json(type="status", text="Connecting to Gemini Live…")
+        manager = self.connect(config)
+        try:
+            session = await asyncio.wait_for(manager.__aenter__(), timeout=CONNECT_TIMEOUT)
+        except asyncio.TimeoutError as exc:
+            raise RuntimeError(f"Gemini Live ({LIVE_MODEL}) didn't answer within {CONNECT_TIMEOUT} seconds") from exc
+        try:
             self.send_json(type="ready", model=LIVE_MODEL)
             upstream = asyncio.create_task(self._upstream(session))
             downstream = asyncio.create_task(self._downstream(session))
@@ -107,6 +117,8 @@ class VoiceBridge:
             for task in done:
                 if task.exception():
                     raise task.exception()
+        finally:
+            await manager.__aexit__(None, None, None)
 
     async def _upstream(self, session):
         from google.genai import types

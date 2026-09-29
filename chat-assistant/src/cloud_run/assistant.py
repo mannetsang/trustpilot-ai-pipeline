@@ -380,13 +380,18 @@ def _blocked_reason(action, raw_message, settings, now, category="internal_chat"
     return ""
 
 
+def _local_naive(dt):
+    """Event times are local wall-clock times; drop any offset Gemini added, after converting to local."""
+    return dt.astimezone(TZ).replace(tzinfo=None) if dt.tzinfo else dt
+
+
 def _event_fields(action, directory):
     try:
-        start = datetime.fromisoformat(action.get("event_start") or "")
+        start = _local_naive(datetime.fromisoformat(action.get("event_start") or ""))
     except ValueError:
         return None
     try:
-        end = datetime.fromisoformat(action.get("event_end") or "")
+        end = _local_naive(datetime.fromisoformat(action.get("event_end") or ""))
     except ValueError:
         end = start + timedelta(minutes=30)
     if end <= start:

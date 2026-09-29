@@ -19,25 +19,43 @@
     }
 
     async start() {
-      setState("Connecting…");
       $("voicebar").hidden = false;
       $("startVoice").disabled = true;
+      // Each step says what it's waiting for, so a stall is never just "Connecting…".
+      setState("Allow the microphone: look for the prompt next to the address bar");
       this.stream = await navigator.mediaDevices.getUserMedia({
         audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
+      setState("Starting the microphone…");
       this.inCtx = new AudioContext();
       await this.inCtx.audioWorklet.addModule("/static/pcm-capture.js");
       this.node = new AudioWorkletNode(this.inCtx, "pcm-capture", { processorOptions: { targetRate: 16000 } });
       this.inCtx.createMediaStreamSource(this.stream).connect(this.node);
       this.node.port.onmessage = (e) => this.onMic(e.data);
+      if (this.inCtx.state === "suspended") await this.inCtx.resume();
       this.outCtx = new AudioContext({ sampleRate: OUT_RATE });
 
+      setState("Opening the voice line…");
       const scheme = location.protocol === "https:" ? "wss" : "ws";
       this.ws = new WebSocket(`${scheme}://${location.host}/ws/voice`);
       this.ws.binaryType = "arraybuffer";
+      this.ws.onopen = () => {
+        setState("Connecting to Gemini…");
+        this.watchdog = setTimeout(() => {
+          if (!this.ready) this.fail("Gemini didn't answer within 25 seconds. Try again in a moment.");
+        }, 25000);
+      };
       this.ws.onmessage = (e) => (typeof e.data === "string" ? this.onJson(JSON.parse(e.data)) : this.play(e.data));
-      this.ws.onclose = () => this.end(false);
-      this.ws.onerror = () => A.toast("Voice connection failed");
+      this.ws.onclose = (e) => {
+        if (!this.ready && !this.ended) this.fail(e.code === 1006 ? "The voice line dropped before it was ready." : `The voice line closed (${e.code}).`);
+        else this.end(false);
+      };
+      this.ws.onerror = () => { if (!this.ready) this.fail("Couldn't open the voice line."); };
+    }
+
+    fail(message) {
+      A.toast(message);
+      this.end(false);
     }
 
     onMic(buffer) {
@@ -49,7 +67,8 @@
     }
 
     onJson(msg) {
-      if (msg.type === "ready") { this.ready = true; setState("Listening. Go ahead and talk"); }
+      if (msg.type === "ready") { this.ready = true; clearTimeout(this.watchdog); setState("Listening. Go ahead and talk"); }
+      else if (msg.type === "status") setState(msg.text);
       else if (msg.type === "transcript") {
         this.live[msg.who] += msg.text;
         if (msg.who === "assistant") setState("Speaking…");
@@ -64,7 +83,10 @@
         this.renderLive();
         setState("Listening…");
         A.refreshKnowledge();
-      } else if (msg.type === "error") { A.toast(msg.message); setState(msg.message); }
+      } else if (msg.type === "error") {
+        if (!this.ready) this.fail(msg.message);  // couldn't start: say why and close the bar
+        else { A.toast(msg.message); setState(msg.message); }
+      }
     }
 
     renderLive() {
@@ -105,6 +127,7 @@
     end(sendStop = true) {
       if (this.ended) return;
       this.ended = true;
+      clearTimeout(this.watchdog);
       try { if (sendStop && this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: "stop" })); } catch { /* closing */ }
       try { this.ws && this.ws.close(); } catch { /* closing */ }
       this.stopPlayback();
@@ -127,7 +150,15 @@
     if (!navigator.mediaDevices || !window.AudioWorkletNode) { A.toast("This browser can't do live voice. Try Chrome or Edge."); return; }
     call = new VoiceCall();
     try { await call.start(); }
-    catch (e) { A.toast(e.name === "NotAllowedError" ? "Allow the microphone to talk to the assistant" : e.message); call && call.end(false); }
+    catch (e) {
+      const why = {
+        NotAllowedError: "The microphone is blocked. Allow it in the site settings (lock icon in the address bar) and try again.",
+        NotFoundError: "No microphone found. Plug one in or pick one in your system settings.",
+        NotReadableError: "The microphone is busy in another app. Close it there and try again.",
+      }[e.name] || e.message;
+      A.toast(why);
+      call && call.end(false);
+    }
   };
   $("vend").onclick = () => call && call.end();
   $("vmute").onclick = () => call && call.toggleMute();

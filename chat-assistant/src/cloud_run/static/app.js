@@ -99,7 +99,10 @@ function renderHeader() {
   $("dot").classList.toggle("on", state.connected && !state.status.connection_error);
   $("autoAct").checked = !!state.settings.auto_act;
   if (!run) { $("lastrun").textContent = "No runs yet. It reads your chats every hour, or press Run now."; return; }
-  if (run.error) { $("lastrun").textContent = `Last run ${ago(run.started_at)} failed: ${run.error}`; return; }
+  if (run.error) {
+    $("lastrun").textContent = `Last run ${ago(run.started_at)} failed: ${run.error}${run.trace ? " (details in Activity → Runs)" : ""}`;
+    return;
+  }
   const learned = (run.projects || 0) + (run.facts || 0);
   $("lastrun").textContent = `Last run ${ago(run.finished_at || run.started_at)} · ${plural(run.spaces_processed, "conversation")} · `
     + `${plural(run.tasks_created, "new task")} · ${plural(learned, "thing")} learned · ${plural(run.actions_done, "action")} taken`;
@@ -498,7 +501,9 @@ function renderActivity() {
     el("td", {}, r.error ? "–" : `${r.projects || 0} projects · ${r.facts || 0} facts · ${r.questions || 0} questions`),
     el("td", {}, r.error ? "–" : `${r.actions_done} / ${r.actions_suggested}`),
     el("td", { class: (r.error || (r.errors || []).length) ? "err" : "" },
-      r.error || (r.errors || []).map((e) => `${e.space}: ${e.error}`).join("; ") || "–")))
+      r.error || (r.errors || []).map((e) => `${e.space}: ${e.error}`).join("; ") || "–",
+      r.trace ? el("details", {}, el("summary", {}, "Technical details"),
+        el("pre", { style: "white-space:pre-wrap;font-size:11px;max-height:260px;overflow:auto" }, r.trace)) : null)))
     : [el("tr", {}, el("td", { colspan: "8", class: "empty" }, "No runs yet"))]));
 }
 
