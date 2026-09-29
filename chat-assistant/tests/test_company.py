@@ -334,6 +334,7 @@ class VoiceTests(unittest.TestCase):
                          [("user", "Jill covers outreach"), ("assistant", "Got it, noted.")])
         self.assertTrue(turns[0]["voice"])
         self.assertEqual(session.texts, ["hello"])
+        self.assertIsNone(seen["config"].realtime_input_config)  # the assistant keeps Gemini's own turn-taking
         names = [d.name for d in seen["config"].tools[0].function_declarations]
         self.assertIn("record_fact", names)
         self.assertEqual(seen["config"].response_modalities, ["AUDIO"])
@@ -576,8 +577,18 @@ class WebTests(unittest.TestCase):
         self.assertIn({"type": "tool", "name": "ask_claude"}, frames)
         self.assertEqual([d.name for d in config.tools[0].function_declarations], ["ask_claude"])
         self.assertEqual(session.tool_responses[0].response, {"answer": "claude here"})
-        # Claude answered with its own prompt (in voice style) and saved the turns; the bridge saved nothing.
+        # A mid-sentence pause must not split one request into two messages to Claude.
+        import voice
+
+        self.assertEqual(config.realtime_input_config.automatic_activity_detection.silence_duration_ms,
+                         voice.RELAY_END_SILENCE_MS)
+        # The relay gets the company's names so it writes them down right.
+        self.assertIn("Ridgeway", str(config.system_instruction))
+        self.assertIn("SkuVault", str(config.system_instruction))
+        # Claude answered with its own prompt (in voice style, warned about misheard names) and saved the
+        # turns; the bridge saved nothing.
         self.assertIn("speaking out loud", self.fake["claude"].calls[-1]["system"])
+        self.assertIn("speech recognition", self.fake["claude"].calls[-1]["system"])
         turns = self.store.get_talk("claude")
         self.assertEqual([(t["role"], t["text"], t["voice"]) for t in turns],
                          [("user", "What should we tackle first?", True), ("assistant", "claude here", True)])

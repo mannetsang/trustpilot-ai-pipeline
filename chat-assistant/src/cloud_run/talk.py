@@ -50,6 +50,12 @@ If Manne interrupts, stop and listen. Confirm actions in plain words before doin
 other people.
 """
 
+HEARD_NOTE = """\
+Manne is talking, not typing: his words reach you through speech recognition, relayed by the company's
+voice line. Names and terms can come through misheard ("SKU vault" is SkuVault, "Ruby" may be Ruvy). Read
+them charitably using the company background; if something is too garbled to act on, ask him to repeat it.
+"""
+
 CONSULT_NOTE = """\
 You're being consulted by the company's AI assistant for a second opinion or a draft. Answer the request
 directly and completely; you can use the knowledge tools, but you can't send messages to anyone.
@@ -64,6 +70,8 @@ def system_prompt(store, partner, voice=False, consulted=False, owner_email="man
                      "important plans, or for drafting.")
     if voice:
         parts.append(VOICE_STYLE)
+        if partner != "assistant":  # the assistant hears the audio itself; partners get a transcript
+            parts.append(HEARD_NOTE)
     if consulted:
         parts.append(CONSULT_NOTE)
     parts.append(f"Now: {now}")
