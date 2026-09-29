@@ -25,6 +25,16 @@ ASSISTANT_SCOPES = IDENTITY_SCOPES + [
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/directory.readonly",
 ]
+# Google tools the partners use through integrations.py (Access tab: Gmail, Drive/Sheets, Analytics, Search Console).
+GOOGLE_TOOL_SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.compose",        # drafts, sent only after Manne's OK
+    "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/spreadsheets.readonly",
+    "https://www.googleapis.com/auth/analytics.readonly",
+    "https://www.googleapis.com/auth/webmasters.readonly",
+]
+ASSISTANT_SCOPES = ASSISTANT_SCOPES + GOOGLE_TOOL_SCOPES
 
 
 class GoogleApiError(RuntimeError):
@@ -61,6 +71,10 @@ class GoogleClient:
             if not self.creds.valid:
                 self.creds.refresh(Request())
             return {"Authorization": f"Bearer {self.creds.token}"}
+
+    def auth_header(self):
+        """For integrations.py: Google APIs called with Manne's own sign-in."""
+        return self._auth()
 
     def request(self, method, url, params=None, body=None):
         resp = requests.request(method, url, headers=self._auth(), params=params, json=body, timeout=60)

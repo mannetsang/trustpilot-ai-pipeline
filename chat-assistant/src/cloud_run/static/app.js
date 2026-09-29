@@ -249,18 +249,89 @@ $("message").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
 });
 
-// Try each company system with its key from Secret Manager (the server does it; keys never reach the page).
-$("checkSystems").onclick = async () => {
+// Connecting for real: a stored key needs the one owner approval (/connect/setup), a missing key is pasted
+// here and saved straight into Secret Manager, a Google tool is part of the Google sign-in.
+function connectButton(s) {
+  const c = s.connect;
+  if (c.kind === "paste") return el("button", { class: "btn primary", onclick: () => openConnect(s) }, "Connect");
+  const href = c.kind === "google" ? "/login?connect=1&back=access" : `/connect/setup?then=${encodeURIComponent(s.id)}`;
+  return el("a", { class: "btn primary", href }, "Connect");
+}
+
+let connecting = null;
+function openConnect(s) {
+  connecting = s;
+  $("connectTitle").textContent = `Connect ${s.name}`;
+  $("connectHelp").textContent = s.connect.help || "";
+  $("connectFields").replaceChildren(...s.connect.fields.map((f) => el("label", {}, f.label,
+    el("input", { name: f.secret, type: f.hidden ? "password" : "text", placeholder: f.placeholder || "",
+      autocomplete: "off", required: true, spellcheck: "false" }))));
+  $("connectDialog").showModal();
+}
+$("cancelConnect").onclick = () => $("connectDialog").close();
+$("connectForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const s = connecting;
+  const values = Object.fromEntries([...$("connectFields").querySelectorAll("input")].map((i) => [i.name, i.value.trim()]));
+  $("saveConnect").disabled = true; $("saveConnect").textContent = "Connecting…";
+  try {
+    const resp = await fetch(`/api/connect/${encodeURIComponent(s.connect.integration)}`, {
+      method: "POST", credentials: "same-origin",
+      headers: { "Content-Type": "application/json", "X-Chat-Assistant": "1" }, body: JSON.stringify({ values }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (resp.status === 409 && data.needs_setup) {  // the one owner approval hasn't happened yet
+      toast("One Google approval first; then paste it again.");
+      location.href = data.url;
+      return;
+    }
+    if (!resp.ok) throw new Error(data.error || `Couldn't connect (${resp.status})`);
+    $("connectDialog").close();
+    toast(data.result && data.result.ok ? `${s.name} is connected` : `Saved, but ${s.name} said: ${(data.result || {}).detail || "no answer"}`);
+    refreshKnowledge();
+  } catch (err) { toast(err.message); }
+  finally { $("saveConnect").disabled = false; $("saveConnect").textContent = "Connect"; }
+};
+
+// Try each system with its key (the server does it; keys never reach the page). Right after the owner approval,
+// Google can take a minute to apply new access, so "can't read" results are retried a few times.
+async function checkConnections(retries = 0) {
   const button = $("checkSystems");
   button.disabled = true; button.textContent = "Checking…";
   try {
     const { results } = await api("POST", "/api/integrations/check");
     const all = Object.values(results), ok = all.filter((r) => r.ok).length;
-    toast(`${ok} of ${all.length} systems connected`);
+    const waiting = all.filter((r) => !r.ok && /can't read/.test(r.detail || "")).length;
     refreshKnowledge();
+    if (waiting && retries > 0) {
+      showSetupBanner(`${ok} of ${all.length} systems connected. Google is still applying access for ${waiting}; checking again shortly…`);
+      setTimeout(() => checkConnections(retries - 1), 15000);
+    } else {
+      showSetupBanner(retries || waiting ? `${ok} of ${all.length} systems connected.` : "");
+      toast(`${ok} of ${all.length} systems connected`);
+    }
   } catch (e) { toast(e.message); }
   finally { button.disabled = false; button.textContent = "Check connections"; }
-};
+}
+function showSetupBanner(text) { $("setupBanner").hidden = !text; $("setupBanner").textContent = text; }
+$("checkSystems").onclick = () => checkConnections();
+
+// Back from the owner approval (/connect/setup) or a Google reconnect: test everything, open a pending paste.
+function afterConnectRedirect() {
+  const params = new URLSearchParams(location.search);
+  if (params.get("tab") !== "access") return;
+  switchTab("access");
+  if (params.get("setup") === "done") {
+    const report = kb.setup || {};
+    const errors = (report.errors || []).length;
+    showSetupBanner(errors ? `Access set up with ${errors} problem(s): ${report.errors.join("; ")}` : "Access set up. Testing every system…");
+    checkConnections(4);
+  }
+  const open = params.get("open");
+  const system = open && kb.systems.find((s) => s.id === open && s.connect && s.connect.kind === "paste");
+  if (system) openConnect(system);
+  history.replaceState(null, "", "/");
+}
 
 // -- Board -----------------------------------------------------------------------------
 function renderFilters() {
@@ -502,7 +573,7 @@ function renderSystems() {
         s.unlocks ? el("div", { class: "reply" }, s.unlocks) : null,
         s.why ? el("div", { class: "why" }, status === "no_access" || status === "error" ? s.why : `Why the assistant asked: ${s.why}`) : null,
         status !== "connected" && status !== "not_used" ? el("div", { class: "actions" },
-          el("button", { class: "btn", onclick: () => {
+          s.connect ? connectButton(s) : el("button", { class: "btn", onclick: () => {
             switchTab("talk");
             if (partner !== "assistant") selectPartner("assistant");
             $("message").value = `How do I give you access to ${s.name}? Walk me through it step by step.`;
@@ -744,7 +815,7 @@ window.companyAssistant = { el, toast, api, renderThread, turnNode, loadTalk, re
   let tab = "talk";
   try { tab = localStorage.getItem("tab") || "talk"; } catch { /* storage unavailable */ }
   switchTab(tab);
-  try { await load(); await loadTalk(); await pollProgress(); } catch (e) { $("lastrun").textContent = e.message; }
+  try { await load(); afterConnectRedirect(); await loadTalk(); await pollProgress(); } catch (e) { $("lastrun").textContent = e.message; }
 })();
 // Every minute: notice an hourly run starting, and refresh unless a dialog is open or a reply is pending.
 setInterval(() => {

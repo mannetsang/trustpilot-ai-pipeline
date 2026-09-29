@@ -111,32 +111,42 @@ and staff names reach Claude spelled right, and Claude is told the words were sp
 so it reads misheard names charitably. On Gemini's line a turn ends after a 1.5 s pause
 (`RELAY_END_SILENCE_MS`; Gemini's default split a request at a 0.9 s pause).
 
-## Company systems (keys from Secret Manager)
+## Company systems (connected for real)
 
-Every partner (typed or on a call) has two tools for company systems whose keys are
-already in Secret Manager: `list_integrations` (which systems, whether each is ready,
-useful paths) and `call_api` (one request). Wired up so far: BigCommerce
-superhairpieces.ca (`gmosz3ja`), BigCommerce `qet21urb3p`, BigCommerce Gen'C Beauty,
-Airtable, Trustpilot, Stamped.io, Omnisend, Notion and Figma (`integrations.py`).
+Every partner (typed or on a call) has two tools for company systems:
+`list_integrations` (which systems, whether each is ready, useful paths) and
+`call_api` (one request). Wired up (`integrations.py`):
+
+| How it connects | Systems |
+|---|---|
+| Key already in Secret Manager | BigCommerce superhairpieces.ca, BigCommerce `qet21urb3p`, BigCommerce Gen'C Beauty, Airtable, Trustpilot, Stamped.io, Omnisend, Notion, Figma; SkuVault and Amazon SP-API (their stored logins are exchanged for tokens on the server) |
+| Paste a key in the app | HubSpot (private app token), Re:amaze (brand, email, API token), TeamDesk (database id; the token is stored) |
+| Your Google sign-in | Gmail (read, drafts), Drive and Sheets (read), Google Analytics and Search Console (read) |
+
+**Access → Connect everything** (or Connect on one row) asks Google once for your OK
+as the project's owner. With that one-hour token, which is used right away and never
+stored (`cloud_setup.py`), the app gives its own service account read access to each
+secret it needs, one secret at a time and never project-wide; creates an empty secret
+for each key you'll paste, which the app may fill; and switches on the Analytics and
+Search Console APIs. It then tests every system (Google can take a minute to apply new
+access, so it re-checks) and marks each Connected. A **paste** row opens a form with
+the steps for finding the key; what you paste goes straight into Secret Manager and is
+tested at once. A **Google** row reconnects your Google sign-in with those permissions.
 
 The assistant reads chats written by many people, so the design assumes someone may
 try to talk it into misusing a key:
 
-- Key values never reach a model. The server adds them to each request and scrubs
-  them from anything a system sends back.
+- Key values never reach a model. The server adds them to each request (logins are
+  exchanged for tokens on the server) and scrubs them from anything a system returns.
 - Each system has one pinned address; a path can't send a request (or its key)
   anywhere else.
 - Reads run at once. Anything that changes data needs `confirmed=true`, which a model
   may set only after you agreed to that exact change in the conversation; a
   consulted partner can't confirm at all. Confirmed changes are listed under Activity.
-- Only systems with a plain API key or token are wired up. Logins (SkuVault, Walmart,
-  the MySQL database, the Gmail app password) and OAuth apps (Amazon) are not.
 
-The app runs as its own service account, `chat-assistant@`, which reads only the keys
-it uses, each granted on its own: run `bash chat-assistant/grant_integrations.sh` in
-Cloud Shell as an Owner. Then **Access → Check connections** tries each system with a
-cheap read and updates its status (and names the storefront behind each BigCommerce
-store hash).
+Not wired up yet: Meta/Instagram, Google Ads (needs a developer token), accounting,
+the .com and EU BigCommerce stores (unless `qet21urb3p` turns out to be one of them),
+Walmart, and the MySQL database.
 
 ## Read aloud
 

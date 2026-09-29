@@ -19,6 +19,7 @@ Only OWNER_EMAIL can sign in. The owner's Google token lives in Secret Manager
 
 import hmac
 import json
+import re
 import os
 import secrets as pysecrets
 from datetime import timedelta
@@ -27,6 +28,7 @@ from flask import Flask, jsonify, redirect, render_template, request, session
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 import assistant
+import integrations
 import knowledge
 from google_apis import ASSISTANT_SCOPES, IDENTITY_SCOPES, GoogleClient, credentials_from_json
 from store import AUTONOMY_CATEGORIES, make_secrets, make_store, utcnow_iso
@@ -54,6 +56,7 @@ store = make_store()
 secret_store = make_secrets()
 app.secret_key = store.session_key()
 knowledge.ensure_seeded(store)
+integrations.seed_systems(store)
 app.config.update(
     SESSION_COOKIE_SECURE=not LOCAL,
     SESSION_COOKIE_HTTPONLY=True,
@@ -141,7 +144,26 @@ def login():
     flow = make_flow(ASSISTANT_SCOPES if connect else IDENTITY_SCOPES)
     extra = {"prompt": "consent", "access_type": "offline"} if connect else {"prompt": "select_account"}
     url, state = flow.authorization_url(login_hint=OWNER_EMAIL, hd=OWNER_DOMAIN, **extra)
-    session["oauth"] = {"state": state, "verifier": flow.code_verifier, "connect": connect}
+    session["oauth"] = {"state": state, "verifier": flow.code_verifier, "connect": connect,
+                        "back": "access" if request.args.get("back") == "access" else ""}
+    return redirect(url)
+
+
+@app.get("/connect/setup")
+def connect_setup():
+    """Connect everything: one Google approval as the project owner (see cloud_setup.py)."""
+    import cloud_setup
+
+    if not signed_in():
+        return redirect("/login")
+    if not oauth_client_config():
+        return login_page()
+    flow = make_flow(IDENTITY_SCOPES + [cloud_setup.CLOUD_SCOPE])
+    # online: only a one-hour token, no refresh token (the library asks for offline unless told otherwise)
+    url, state = flow.authorization_url(login_hint=OWNER_EMAIL, hd=OWNER_DOMAIN, access_type="online")
+    then = request.args.get("then", "")
+    session["oauth"] = {"state": state, "verifier": flow.code_verifier, "connect": False, "mode": "setup",
+                        "then": then if re.fullmatch(r"[a-z0-9_]{1,40}", then) else ""}
     return redirect(url)
 
 
@@ -156,7 +178,11 @@ def oauth_callback():
     from google.auth.transport.requests import Request
     from google.oauth2 import id_token
 
-    flow = make_flow(ASSISTANT_SCOPES if pending["connect"] else IDENTITY_SCOPES, state=pending["state"])
+    import cloud_setup
+
+    setup = pending.get("mode") == "setup"
+    scopes = IDENTITY_SCOPES + [cloud_setup.CLOUD_SCOPE] if setup else ASSISTANT_SCOPES if pending["connect"] else IDENTITY_SCOPES
+    flow = make_flow(scopes, state=pending["state"])
     flow.code_verifier = pending["verifier"]
     try:
         flow.fetch_token(code=request.args.get("code", ""))
@@ -173,6 +199,13 @@ def oauth_callback():
     session.permanent = True
     session["email"] = email
 
+    if setup:
+        # The owner's token is used here and dropped: nothing about it is stored.
+        report = cloud_setup.run(creds.token)
+        secret_store.invalidate()
+        store.set_flag("connect_setup", {"at": utcnow_iso(), **report})
+        return redirect("/?tab=access&setup=done" + (f"&open={pending['then']}" if pending.get("then") else ""))
+
     if pending["connect"]:
         if not creds.refresh_token:
             return login_page("Google didn't return long-term access. Remove the app at "
@@ -183,7 +216,7 @@ def oauth_callback():
         secret_store.put(USER_TOKEN_SECRET_ID, creds.to_json())
         store.set_owner({"user": f"users/{claims['sub']}", "email": email})
         store.set_status({"connected_at": utcnow_iso(), "connection_error": "", "missing_scopes": missing})
-    return redirect("/")
+    return redirect("/?tab=access&setup=done" if pending.get("back") == "access" else "/")
 
 
 @app.post("/logout")
@@ -308,7 +341,8 @@ def api_knowledge():
     return jsonify(
         projects=store.list_items("projects"),
         questions=store.list_items("questions"),
-        systems=store.list_items("systems"),
+        systems=[{**s, "connect": integrations.connect_info(s["id"])} for s in store.list_items("systems")],
+        setup=store.get_flag("connect_setup"),
         facts=store.list_items("facts")[:200],
         autonomy_categories=[[k, v] for k, v in AUTONOMY_CATEGORIES.items()],  # lists keep their order in JSON
         partners=[{"name": name, "label": module.LABEL, "available": ok, "detail": why, "models": partner_models(name)}
@@ -452,9 +486,36 @@ def api_test_partners():
 @app.post("/api/integrations/check")
 def api_check_integrations():
     """Try each company system with its stored key (a cheap read) and update the Access tab."""
-    import integrations
+    return jsonify(results=integrations.check_all(secret_store, store, google=_google_or_none()))
 
-    return jsonify(results=integrations.check_all(secret_store, store))
+
+def _google_or_none():
+    try:
+        return app.config["MAKE_GOOGLE"]()
+    except Exception:  # noqa: BLE001 - not connected: Google tools report that
+        return None
+
+
+@app.post("/api/connect/<integration_id>")
+def api_connect(integration_id):
+    """Save a pasted key straight into Secret Manager, then try the system with it. Values are never echoed."""
+    integration = integrations.BY_ID.get(integration_id)
+    if not integration or integration.kind != "paste":
+        return jsonify(error="That system doesn't take a pasted key."), 404
+    values = (request.get_json(force=True) or {}).get("values") or {}
+    provided = {name: str(values.get(name, "")).strip() for name in integration.paste_names()}
+    if not all(provided.values()):
+        return jsonify(error="Fill in every field."), 400
+    try:
+        for name, value in provided.items():
+            secret_store.put(name, value)
+    except Exception as exc:  # noqa: BLE001 - usually: the one-time setup hasn't made this secret yet
+        if type(exc).__name__ in ("PermissionDenied", "NotFound", "Forbidden"):
+            return jsonify(needs_setup=True, url=f"/connect/setup?then={integration.system_id}"), 409
+        print(f"connect[{integration_id}] failed: {type(exc).__name__}")
+        return jsonify(error=f"Couldn't save it: {type(exc).__name__}"), 502
+    result = integrations.check_all(secret_store, store, google=_google_or_none(), only={integration.id})
+    return jsonify(result=result.get(integration.id))
 
 
 _speaker = None

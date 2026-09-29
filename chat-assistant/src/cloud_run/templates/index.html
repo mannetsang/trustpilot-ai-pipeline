@@ -247,8 +247,11 @@
 
   <section id="view-access" hidden>
     <p class="hint">Systems the assistant can use, and the ones it still needs. Ask it in Talk how to connect any of them; it will walk you through it.</p>
-    <p class="actions"><button class="btn primary" id="checkSystems">Check connections</button>
-      <span class="hint">Tries each system with its key from Secret Manager. The keys stay on the server.</span></p>
+    <div class="banner" id="setupBanner" hidden></div>
+    <p class="actions"><a class="btn primary" href="/connect/setup" id="connectAll">Connect everything</a>
+      <button class="btn" id="checkSystems">Check connections</button>
+      <span class="hint">Connect everything asks Google once for your OK as the project owner, gives the app access to
+        each stored key it needs, and tests every system. Keys stay on the server; the AI never sees them.</span></p>
     <div id="systems"></div>
   </section>
 
@@ -319,6 +322,19 @@
     <div class="dialog-foot">
       <button type="button" class="btn" id="cancelSend">Cancel</button>
       <button type="submit" class="btn primary">Send</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="connectDialog">
+  <form method="dialog" id="connectForm">
+    <h2 id="connectTitle">Connect</h2>
+    <p class="why" id="connectHelp"></p>
+    <div id="connectFields"></div>
+    <p class="hint">Saved straight into Secret Manager. It isn't shown again, and the AI never sees it.</p>
+    <div class="dialog-foot">
+      <button type="button" class="btn" id="cancelConnect">Cancel</button>
+      <button type="submit" class="btn primary" id="saveConnect">Connect</button>
     </div>
   </form>
 </dialog>
