@@ -5,8 +5,47 @@ All credentials for this repo live in **GCP Secret Manager**, on project
 *variable*, or in a Claude cloud environment's *environment variables* box —
 those are all plaintext and readable by anyone with access.
 
-`GCP_SA_KEY` in GitHub repository secrets is the one exception, and the only
-secret GitHub needs: it's the key that lets workflows read everything else.
+GitHub Actions needs **no secret at all** to reach Google Cloud: it uses
+Workload Identity Federation (below). The old `GCP_SA_KEY` JSON-key secret is
+retired.
+
+## GitHub Actions: Workload Identity Federation (since 2026-09-29)
+
+Each job asks GitHub for a short-lived OIDC token and Google's STS swaps it
+for credentials of `claude-sessions@shp-ai-bot-2026.iam.gserviceaccount.com`.
+Nothing long-lived is stored in GitHub.
+
+```yaml
+permissions:
+  contents: read
+  id-token: write   # required: lets the job request the OIDC token
+
+steps:
+  - uses: google-github-actions/auth@v2
+    with:
+      workload_identity_provider: projects/304363458561/locations/global/workloadIdentityPools/github-actions/providers/github
+      service_account: claude-sessions@shp-ai-bot-2026.iam.gserviceaccount.com
+```
+
+Who may use it — three locks, all must hold:
+
+| Lock | Where | Value |
+|---|---|---|
+| Owner | provider attribute condition | `assertion.repository_owner_id == '213646871'` (mannetsang — the numeric id, so a renamed or re-registered account name can't match) |
+| Branch | provider attribute condition | `assertion.ref == 'refs/heads/main'` — pushes, schedules and manual runs on `main` only; pull-request and feature-branch runs get no Google credentials |
+| Repository | `roles/iam.workloadIdentityUser` on the service account | `principalSet://…/workloadIdentityPools/github-actions/attribute.repository/<owner>/<repo>` for `mannetsang/trustpilot-ai-pipeline` and `mannetsang/genc-sales-dashboard` |
+
+To let another repository use it:
+
+```bash
+gcloud iam service-accounts add-iam-policy-binding claude-sessions@shp-ai-bot-2026.iam.gserviceaccount.com \
+  --project=shp-ai-bot-2026 --role=roles/iam.workloadIdentityUser \
+  --member="principalSet://iam.googleapis.com/projects/304363458561/locations/global/workloadIdentityPools/github-actions/attribute.repository/mannetsang/<repo>"
+```
+
+The permissions are the service account's own — the same account the old key
+belonged to (the audit log shows every key-based deploy as claude-sessions), so
+federation changed how workflows sign in, not what they may do.
 
 ## How scripts get credentials
 
@@ -14,8 +53,8 @@ Every script resolves credentials through [`lib/secrets.py`](../lib/secrets.py):
 
 1. **An environment variable**, if the caller names one. This reads a
    gitignored `.env`, so you can run anything locally without touching GCP.
-2. **Secret Manager**, via Application Default Credentials — the `GCP_SA_KEY`
-   service account in GitHub Actions, the service identity on Cloud Run, or
+2. **Secret Manager**, via Application Default Credentials — claude-sessions
+   through federation in GitHub Actions, the service identity on Cloud Run, or
    `gcloud auth application-default login` on your machine.
 
 ```python
@@ -75,7 +114,8 @@ gcloud secrets add-iam-policy-binding "$NAME" \
   --project="$PROJECT"
 ```
 
-`$SA` is the `client_email` from the same JSON key stored as `GCP_SA_KEY`.
+`$SA` is `claude-sessions@shp-ai-bot-2026.iam.gserviceaccount.com`, the account
+GitHub Actions signs in as.
 
 ## Rotating a credential
 

@@ -1,9 +1,10 @@
 name: Google Merchant Center product sync
 
 # Pushes the BigCommerce catalogue into the Merchant Center API data source
-# once a day, and on demand. Credentials: GCP_SA_KEY (GitHub secret) reads
-# the BigCommerce token from Secret Manager and is itself an Admin user on
-# the Merchant Center account, so nothing else is needed.
+# once a day, and on demand. Credentials: the claude-sessions service account,
+# via Workload Identity Federation (no stored key), reads the BigCommerce
+# token from Secret Manager and must itself be an Admin user on the Merchant
+# Center account, so nothing else is needed.
 
 on:
   schedule:
@@ -28,6 +29,13 @@ concurrency:
   group: merchant-sync-${{ inputs.label || 'CA' }}
   cancel-in-progress: false
 
+# Keyless Google Cloud auth (Workload Identity Federation): the job asks GitHub
+# for an OIDC token and Google swaps it for claude-sessions' credentials. No
+# JSON key is stored — GCP_SA_KEY is retired. See docs/credentials.md.
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   sync:
     runs-on: ubuntu-latest
@@ -41,7 +49,8 @@ jobs:
 
       - uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          workload_identity_provider: projects/304363458561/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: claude-sessions@shp-ai-bot-2026.iam.gserviceaccount.com
 
       - name: Install dependencies
         run: pip install --quiet -r google-merchant/requirements.txt
@@ -86,7 +95,8 @@ jobs:
 
       - uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          workload_identity_provider: projects/304363458561/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: claude-sessions@shp-ai-bot-2026.iam.gserviceaccount.com
 
       - uses: google-github-actions/setup-gcloud@v2
 

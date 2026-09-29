@@ -1,8 +1,9 @@
 name: Google Merchant Center (Merchant API)
 
 # Manual runs of the google-merchant/ scripts from GitHub, so nobody needs a
-# local Python setup. Authenticates as the GCP_SA_KEY service account, which
-# must be an Admin user on the Merchant Center account.
+# local Python setup. Authenticates as the claude-sessions service account via
+# Workload Identity Federation; it must be an Admin user on the Merchant Center
+# account.
 
 on:
   workflow_dispatch:
@@ -29,6 +30,13 @@ on:
         required: false
         default: 'manne@superhairpieces.com'
 
+# Keyless Google Cloud auth (Workload Identity Federation): the job asks GitHub
+# for an OIDC token and Google swaps it for claude-sessions' credentials. No
+# JSON key is stored — GCP_SA_KEY is retired. See docs/credentials.md.
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   merchant:
     runs-on: ubuntu-latest
@@ -41,7 +49,8 @@ jobs:
 
       - uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          workload_identity_provider: projects/304363458561/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: claude-sessions@shp-ai-bot-2026.iam.gserviceaccount.com
 
       - name: Install dependencies
         run: pip install --quiet -r google-merchant/requirements.txt
