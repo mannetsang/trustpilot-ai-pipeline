@@ -13,39 +13,21 @@ The Chat API has two identities, and only one of them sees "all my chats":
 | A **Chat app** (service account) | Only spaces the app was explicitly added to. Never DMs between people. |
 | **You** | Everything you see: every space, group chat and DM, with full history. |
 
-`chat_api.py` gets a "you" identity two ways, in this order:
+`chat_api.py` gets the "you" identity from a **user OAuth token**: you sign
+in once in a browser, and the token can only ever act as you.
 
-1. **Domain-wide delegation (interim).** The service account in
-   `GOOGLE_APPLICATION_CREDENTIALS` impersonates the one person
-   `DELEGATION_MAP` in `chat_api.py` assigns it:
+### Why not domain-wide delegation
 
-   | Service account | Acts as |
-   |---|---|
-   | `claude-sessions@shp-ai-bot-2026.iam.gserviceaccount.com` | `manne@superhairpieces.com` |
+Delegation would avoid the sign-in, but Google grants it **domain-wide**:
+the service account could then act as *any* person in the company, and
+whoever holds its key could read anyone's chats. Code can't narrow that
+(a hard-coded "only Manne" in the scripts is bypassed by calling Google
+directly). It was tried and deliberately removed, so the delegation entry
+for client ID `111336930970488121514` (`claude-sessions@shp-ai-bot-2026`)
+in admin.google.com → Security → API controls → Manage Domain Wide
+Delegation should carry **no Chat scopes**.
 
-   The map is hard-coded on purpose: no argument or environment variable
-   overrides it, and a service account missing from it gets no delegation.
-   Changing who it acts as takes a commit.
-
-   **This is a guardrail, not a security boundary.** Google's delegation grant
-   is domain-wide: whoever holds the `claude-sessions` key can bypass these
-   scripts and call Google as *any* user. The map only guarantees that these
-   scripts never do. To actually confine access to one person, use the
-   browser sign-in below and remove the delegation grant.
-
-   The grant lives in admin.google.com → Security → API controls → Manage
-   Domain Wide Delegation, on client ID `111336930970488121514`, with:
-
-   ```
-   https://www.googleapis.com/auth/chat.spaces.readonly,https://www.googleapis.com/auth/chat.messages.readonly,https://www.googleapis.com/auth/chat.memberships.readonly
-   ```
-
-   Without `chat.memberships.readonly` the scripts still run, but DMs and
-   group chats show as unnamed (they have no display name, only members).
-2. **A user OAuth token (fallback)** from a one-time browser sign-in, for a
-   machine with no delegated service account. Setup below.
-
-## Browser sign-in (confined to your own account)
+## One-time setup
 
 Console steps, all on project `shp-ai-bot-2026`:
 
@@ -70,10 +52,14 @@ Console steps, all on project `shp-ai-bot-2026`:
    python google-chat/oauth_login.py --client-secrets %USERPROFILE%\Downloads\client_secret.json
    ```
 
+   Use the actual filename; the download is usually named
+   `client_secret_<id>.apps.googleusercontent.com.json`.
+
    This stores the token as Secret Manager secret `google-chat-user-token`
    and grants `claude-sessions@shp-ai-bot-2026.iam.gserviceaccount.com`
    read access to that one secret. Add `--grant <other-sa>` for more, or
-   `--no-grant` to store only.
+   `--no-grant` to store only. Whoever can read that secret can read **your**
+   chats, and only yours.
 
 ## Use
 
@@ -92,6 +78,10 @@ local `.env` first, then Secret Manager.
 - Group chats and DMs are listed only once at least one message has been
   sent in them. DMs have no display name; the table shows the other members
   instead (that's what the `chat.memberships.readonly` scope is for).
+- The sign-in doesn't lapse on its own as long as the consent screen is
+  **Internal** (External apps in Testing mode expire tokens after 7 days).
+  It ends if you revoke it, an admin blocks the app, or it goes unused for
+  6 months. Changing your password doesn't end it.
 - Re-running `oauth_login.py` adds a new secret version. To widen the scopes,
   edit `SCOPES` in `chat_api.py` and sign in again.
 - Revoke access any time at <https://myaccount.google.com/permissions>, then
