@@ -684,6 +684,93 @@ class IntegrationTests(unittest.TestCase):
         self.assertIsNone(self.integrations.connect_info("meta"))
 
 
+class ResearchAndWorkTests(unittest.TestCase):
+    """Web research through Firecrawl, and the assistant working its own board tasks."""
+
+    def setUp(self):
+        import integrations
+
+        integrations._exchanged.clear()
+        self.store = MemoryStore()
+        knowledge.ensure_seeded(self.store)
+        self.secrets = MemorySecrets({"FIRECRAWL_API": "fc-secret"})
+        self.session = IntegrationTests.Session()
+        self.session.routes = {
+            "https://api.firecrawl.dev/v1/search": json.dumps({"success": True, "data": [
+                {"title": "Hair System Prices 2026", "url": "https://example.com/prices", "description": "Compare..."}]}),
+            "https://api.firecrawl.dev/v1/scrape": json.dumps({"success": True, "data": {
+                "markdown": "# Prices\nA base costs $300.", "metadata": {"title": "Prices"}}}),
+        }
+        patcher = mock.patch.object(integrations.requests, "request", self.session.request)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_web_search_and_read_webpage(self):
+        tools = Toolset(self.store, None, secrets=self.secrets)
+        found = tools.call("web_search", {"query": "hair system prices canada", "limit": 50})
+        self.assertEqual(found["results"][0]["url"], "https://example.com/prices")
+        self.assertEqual(self.session.calls[0]["json"], {"query": "hair system prices canada", "limit": 10})
+        self.assertEqual(self.session.calls[0]["headers"]["Authorization"], "Bearer fc-secret")
+        page = tools.call("read_webpage", {"url": "https://example.com/prices"})
+        self.assertIn("$300", page["text"])
+        self.assertIn("error", tools.call("read_webpage", {"url": "file:///etc/passwd"}))
+        self.assertIn("can't read the FIRECRAWL_API", Toolset(self.store, None).call("web_search", {"query": "x"})["error"])
+
+    def test_working_alone_never_sends_a_message(self):
+        _, google, _ = scenario()
+        tools = Toolset(self.store, google, secrets=self.secrets, may_change=False)
+        result = tools.call("send_chat_message", {"conversation": "spaces/S1", "text": "hi", "confirmed": True})
+        self.assertTrue(result.get("not_sent"))
+
+    def test_the_assistant_works_a_task_and_reports(self):
+        import worker
+
+        task = self.store.save_task("t1", {"title": "Find the three cheapest lace suppliers", "status": "todo",
+                                           "priority": "high", "owner": "Assistant", "created_at": "2026-09-29T10:00:00"})
+        fake = FakePartner("Found three suppliers: A ($12/m), B ($14/m), C ($15/m). Nothing needs your OK.",
+                           tool=("update_task", {"task_id": "t1", "status": "done"}))
+        with mock.patch.dict(talk.PARTNERS, {"assistant": fake}):
+            service = talk.Talk(self.store, self.secrets, lambda: None, "manne@superhairpieces.com")
+            outcome = worker.work_on(service, self.store, "t1")
+        self.assertTrue(outcome["done"])
+        prompt = fake.calls[-1]["history"][0]["text"]
+        self.assertIn("Find the three cheapest lace suppliers", prompt)
+        self.assertIn("web_search", fake.calls[-1]["tools"])
+        saved = self.store.get_task("t1")
+        self.assertEqual((saved["status"], saved["working_since"]), ("done", ""))
+        self.assertIn("Found three suppliers", saved["result"])
+        self.assertIn("update_task", saved["work_tools"])
+        said = self.store.get_talk("assistant")[-1]
+        self.assertEqual(said["task_id"], "t1")
+        self.assertIn("(done)", said["text"])
+
+    def test_the_hourly_run_picks_only_the_assistants_open_tasks(self):
+        import worker
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime.now(timezone.utc)
+        recent = (now - timedelta(hours=1)).isoformat()
+        stale = (now - timedelta(hours=7)).isoformat()
+        for tid, fields in {"mine": {"owner": "Assistant", "status": "todo"},
+                            "stale": {"owner": "assistant", "status": "in_progress", "worked_at": stale},
+                            "recent": {"owner": "Assistant", "status": "in_progress", "worked_at": recent},
+                            "busy": {"owner": "Assistant", "status": "in_progress", "working_since": recent[:-6] and now.isoformat()},
+                            "done": {"owner": "Assistant", "status": "done"},
+                            "sydney": {"owner": "Sydney", "status": "todo"}}.items():
+            self.store.save_task(tid, {"title": tid, **fields})
+        due = sorted(t["id"] for t in self.store.list_tasks() if worker.due_for_work(t, now))
+        self.assertEqual(due, ["mine", "stale"])
+        with mock.patch.dict(talk.PARTNERS, {"assistant": FakePartner("Report.")}):
+            service = talk.Talk(self.store, self.secrets, lambda: None, "manne@superhairpieces.com")
+            worked = worker.work_due(service, self.store, limit=1)
+        self.assertEqual(len(worked), 1)
+
+    def test_partners_are_told_to_use_their_access(self):
+        prompt = talk.system_prompt(self.store, "chatgpt")
+        self.assertIn("live access to the company's systems and the web", prompt)
+        self.assertIn("never say you\n  can't see something until you've tried", prompt)
+
+
 class CloudSetupTests(unittest.TestCase):
     """The one owner approval: grant per secret, create the ones to paste, switch on Google APIs."""
 
@@ -1127,6 +1214,18 @@ class WebTests(unittest.TestCase):
             self.assertEqual(s.get("email"), self.main.OWNER_EMAIL)   # still signed in
             self.assertNotIn("ya29.owner-cloud-token", json.dumps(dict(s)))  # the owner token is gone
         self.assertNotIn("ya29.owner-cloud-token", json.dumps(self.store.get_flag("connect_setup")))
+
+    def test_give_a_task_to_the_assistant(self):
+        self.store.save_task("t9", {"title": "Check yesterday's CA orders", "status": "todo"})
+        self.fake["assistant"].text = "12 orders yesterday, CAD 4,380."
+        r = self.call("POST", "/api/tasks/t9/work")
+        self.assertEqual(r.status_code, 200)
+        body = r.get_json()
+        self.assertEqual(body["task"]["owner"], "Assistant")
+        self.assertEqual(body["report"], "12 orders yesterday, CAD 4,380.")
+        self.assertEqual(self.call("POST", "/api/tasks/nope/work").status_code, 404)
+        self.store.save_task("t9", {"working_since": __import__("store").utcnow_iso()})
+        self.assertEqual(self.call("POST", "/api/tasks/t9/work").status_code, 409)  # already on it
 
     def test_access_tab_rows_carry_how_to_connect(self):
         systems = {s["id"]: s for s in self.call("GET", "/api/knowledge").get_json()["systems"]}

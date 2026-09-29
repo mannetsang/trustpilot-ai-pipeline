@@ -24,7 +24,7 @@ CLAUDE_FALLBACK_MODEL = os.environ.get("CLAUDE_FALLBACK_MODEL", "claude-opus-4-8
 CLAUDE_REGION = os.environ.get("CLAUDE_REGION", "global")
 CLAUDE_EFFORT = os.environ.get("CLAUDE_EFFORT", "medium")  # Opus 5.5's default, stated explicitly
 API_KEY_SECRET = "ANTHROPIC_API_KEY"
-MAX_STEPS = 10
+MAX_STEPS = 24  # research chains many lookups: search, read, query, compare
 
 LABEL = "Claude"
 _clients = {}

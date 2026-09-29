@@ -9,7 +9,7 @@ import os
 
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5")
 API_KEY_SECRET = os.environ.get("OPENAI_KEY_SECRET", "CHATGPT_API_KEY")
-MAX_STEPS = 10
+MAX_STEPS = 24  # research chains many lookups: search, read, query, compare
 
 LABEL = "ChatGPT"
 

@@ -224,6 +224,27 @@ REGISTRY += [
         probe="/describe.json", system_id="teamdesk", category="Operations"),
 ]
 
+REGISTRY += [  # research
+    Integration(
+        id="firecrawl", label="Web research (Firecrawl)", secrets=["FIRECRAWL_API"], base="https://api.firecrawl.dev",
+        headers=lambda v: {"Authorization": f"Bearer {v['FIRECRAWL_API']}", "Content-Type": "application/json"},
+        hint=('Used by web_search and read_webpage. Directly: POST /v1/search {"query": "...", "limit": 5}, '
+              'POST /v1/scrape {"url": "...", "formats": ["markdown"], "onlyMainContent": true}, '
+              'POST /v1/map {"url": "https://site"} (a site\'s pages). All are reads.'),
+        probe=("POST", "/v1/search", {"query": "superhairpieces", "limit": 1}),
+        read_posts=(r"^/v1/(search|scrape|map)$",), system_id="web_research", category="Research"),
+    Integration(
+        id="dataforseo", label="SEO research (DataForSEO)", secrets=["DATAFORSEO_LOGIN", "DATAFORSEO_API_TOKEN"],
+        base="https://api.dataforseo.com", auth=lambda v: (v["DATAFORSEO_LOGIN"], v["DATAFORSEO_API_TOKEN"]),
+        hint=("Each call costs a few cents: batch keywords into one request. Bodies are JSON arrays of tasks. "
+              "POST /v3/serp/google/organic/live/advanced [{\"keyword\": \"...\", \"location_code\": 2124, "
+              "\"language_code\": \"en\"}] (2124 Canada, 2840 US), POST /v3/keywords_data/google_ads/search_volume/live "
+              "[{\"keywords\": [...], \"location_code\": 2124}], POST /v3/dataforseo_labs/google/ranked_keywords/live "
+              "[{\"target\": \"superhairpieces.ca\", \"location_code\": 2124}]. GET /v3/appendix/user_data (balance)."),
+        probe="/v3/appendix/user_data", read_posts=(r"^/v3/.+/live(/\w+)?$",),
+        system_id="seo_research", category="Research"),
+]
+
 GOOGLE = [  # used with Manne's own Google sign-in; their scopes are in google_apis.GOOGLE_TOOL_SCOPES
     Integration(id="gmail", label="Gmail", secrets=[], base="https://gmail.googleapis.com", kind="google",
                 hint=("/gmail/v1/users/me/messages?q=from:x newer_than:7d&maxResults=20, /gmail/v1/users/me/messages/{id}"
