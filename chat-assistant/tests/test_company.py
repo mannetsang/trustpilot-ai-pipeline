@@ -393,7 +393,7 @@ class RobustnessTests(unittest.TestCase):
 
 
 class ClaudeBackendTests(unittest.TestCase):
-    """Vertex AI first, the Claude API second; a backend that can't serve at all is skipped."""
+    """The Claude API first, Vertex AI second; a backend that can't serve at all is skipped."""
 
     @staticmethod
     def error(cls, status, message):
@@ -423,15 +423,20 @@ class ClaudeBackendTests(unittest.TestCase):
             self.addCleanup(patch.stop)
         return partner_claude, fakes
 
-    def test_no_vertex_quota_falls_back_to_the_claude_api(self):
+    def test_the_claude_api_is_tried_first(self):
+        claude, fakes = self.clients("vertex", "api")
+        self.assertEqual(claude.ping(MemorySecrets()), "api")
+        self.assertIn("fallbacks", fakes["anthropic"].calls[0])   # server-side fallback only on the Claude API
+        self.assertEqual(fakes["vertex"].calls, [])
+
+    def test_no_credit_falls_back_to_vertex(self):
         import anthropic
 
-        claude, fakes = self.clients(self.error(anthropic.RateLimitError, 429, "Quota exceeded for aiplatform"), "ready")
+        claude, fakes = self.clients("ready", self.error(anthropic.BadRequestError, 400, "Your credit balance is too low"))
         self.assertEqual(claude.ping(MemorySecrets()), "ready")
-        self.assertIn("fallbacks", fakes["anthropic"].calls[0])   # server-side fallback only on the Claude API
         self.assertNotIn("fallbacks", fakes["vertex"].calls[0])
         claude.ping(MemorySecrets())
-        self.assertEqual(len(fakes["vertex"].calls), 1)            # the working backend is tried first next time
+        self.assertEqual(len(fakes["anthropic"].calls), 1)         # the working backend is tried first next time
 
     def test_both_blocked_says_what_each_needs(self):
         import anthropic
@@ -446,10 +451,10 @@ class ClaudeBackendTests(unittest.TestCase):
     def test_an_ordinary_request_error_is_not_hidden(self):
         import anthropic
 
-        claude, fakes = self.clients(self.error(anthropic.BadRequestError, 400, "messages: invalid"), "ready")
+        claude, fakes = self.clients("ready", self.error(anthropic.BadRequestError, 400, "messages: invalid"))
         with self.assertRaises(anthropic.BadRequestError):
             claude.ping(MemorySecrets())
-        self.assertEqual(fakes["anthropic"].calls, [])
+        self.assertEqual(fakes["vertex"].calls, [])
 
     def test_relay_tool_reports_a_partner_failure(self):
         import voice

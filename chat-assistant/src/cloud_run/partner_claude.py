@@ -1,12 +1,13 @@
 """Claude as a partner: the Anthropic SDK with a manual tool-use loop.
 
 Two ways to reach Claude, tried in order (CLAUDE_BACKEND=auto, the default):
-Google Vertex AI (AnthropicVertex, the service account's credentials, billed
-through Google Cloud; needs Claude enabled in Model Garden and Claude quota on
-the project), then the Claude API with the ANTHROPIC_API_KEY secret. A way that
-can't serve at all (no quota, no credit, no key) is skipped and the other one
-used; if neither works, the error says what each one needs. Set
-CLAUDE_BACKEND=vertex or =anthropic to use only one.
+the Claude API with the ANTHROPIC_API_KEY secret (Anthropic's own service, where
+new features land first), then Google Vertex AI (AnthropicVertex, the service
+account's credentials, billed through Google Cloud; needs Claude enabled in
+Model Garden and Claude quota on the project). A way that can't serve at all
+(no key, no credit, no quota) is skipped and the other one used; if neither
+works, the error says what each one needs. Set CLAUDE_BACKEND=anthropic or
+=vertex to use only one.
 
 Refusal fallback is on: if the requested model declines, the request is re-run
 on CLAUDE_FALLBACK_MODEL (client-side middleware on Vertex, server-side
@@ -50,7 +51,7 @@ def _key(secrets):
 def _backends():
     if CLAUDE_BACKEND in ("vertex", "anthropic"):
         return [CLAUDE_BACKEND]
-    return sorted(["vertex", "anthropic"], key=lambda b: b != _working)
+    return sorted(["anthropic", "vertex"], key=lambda b: b != _working)  # stable: Claude API first
 
 
 def _client(backend, secrets):
