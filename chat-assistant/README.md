@@ -57,9 +57,14 @@ sent or held, is logged with the message it answers and the reason.
   Google account is refused after Google verifies it.
 - The token is **Manne's own OAuth sign-in**, so it can reach only Manne's
   chats and calendar. There is no domain-wide delegation.
-- It lives in Secret Manager as `chat-assistant-user-token`, readable only by
-  the dedicated `chat-assistant@` service account. Other Cloud Run services
-  and `claude-sessions` can't read it. A new sign-in disables the old version.
+- It lives in Secret Manager as `chat-assistant-user-token`, and the workflow
+  grants read access on it only to the dedicated `chat-assistant@` service
+  account. A new sign-in disables the old version.
+- **That isolation holds only if nothing else has project-wide Secret Manager
+  read access.** A project-level *Secret Manager Secret Accessor* (or Admin)
+  grant lets its holder read this token and post as the owner. Keep such
+  grants per secret, as `docs/credentials.md` says. Check before connecting:
+  IAM & Admin → IAM, look for Secret Manager roles granted on the project.
 - Scheduler calls `/run` with a shared token (`chat-assistant-run-token`);
   UI writes need the signed-in session plus a custom header (CSRF).
 - Revoke everything at <https://myaccount.google.com/permissions>.
