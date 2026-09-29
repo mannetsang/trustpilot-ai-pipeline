@@ -1,13 +1,10 @@
-name: Chat assistant (deploy + hourly schedule)
+name: Deploy chat assistant to Cloud Run
 
-# Deploys chat-assistant to Cloud Run and keeps its hourly Cloud Scheduler job.
-# Idempotent: safe to re-run. Runs on push to main when the service changes, or by hand.
+# Builds and deploys chat-assistant. Runs on push to main when the service changes, or by hand.
 #
-# Before the first sign-in (Cloud console, project shp-ai-bot-2026), see chat-assistant/README.md:
-#   - Google Chat API -> Configuration filled in
-#   - OAuth consent screen, audience Internal
-#   - OAuth client of type "Web application" with the redirect URIs printed in this run's summary
-#   - That client's JSON stored in Secret Manager as chat-assistant-oauth-client
+# Prerequisite, once: a project Owner runs chat-assistant/setup.sh in Cloud Shell. It creates
+# what this workflow's identity may not: the app's service account and grants, the secrets'
+# access policies, and the hourly Cloud Scheduler job. See chat-assistant/README.md.
 
 on:
   push:
@@ -17,13 +14,10 @@ on:
       - '.github/workflows/chat-assistant.yml'
   workflow_dispatch:
 
-env:
-  PROJECT: shp-ai-bot-2026
-  PROJECT_NUMBER: '304363458561'
-  REGION: us-central1
-  SERVICE: chat-assistant
-  SA_NAME: chat-assistant
-  OWNER_EMAIL: manne@superhairpieces.com
+# Keyless Google Cloud auth (Workload Identity Federation), as in the other workflows.
+permissions:
+  contents: read
+  id-token: write
 
 jobs:
   deploy:
@@ -33,78 +27,21 @@ jobs:
 
       - uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          workload_identity_provider: projects/304363458561/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: claude-sessions@shp-ai-bot-2026.iam.gserviceaccount.com
 
       - uses: google-github-actions/setup-gcloud@v2
 
-      - name: Enable APIs
+      - name: Deploy to Cloud Run
         run: |
-          gcloud services enable chat.googleapis.com people.googleapis.com calendar-json.googleapis.com \
-            aiplatform.googleapis.com firestore.googleapis.com secretmanager.googleapis.com \
-            cloudscheduler.googleapis.com run.googleapis.com cloudbuild.googleapis.com --project "$PROJECT"
-
-      # A dedicated identity: the owner's Google token (which can post as them) is
-      # readable by this service account only, not by the project's other services.
-      - name: Service account
-        run: |
-          SA="$SA_NAME@$PROJECT.iam.gserviceaccount.com"
-          echo "SA=$SA" >> "$GITHUB_ENV"
-          gcloud iam service-accounts describe "$SA" --project "$PROJECT" >/dev/null 2>&1 \
-            || gcloud iam service-accounts create "$SA_NAME" --project "$PROJECT" --display-name "Chat assistant (Cloud Run)"
-          for role in roles/datastore.user roles/aiplatform.user; do
-            gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$SA" --role "$role" \
-              --condition=None --quiet >/dev/null \
-            || echo "::warning::Couldn't grant $role to $SA. A project Owner must run: gcloud projects add-iam-policy-binding $PROJECT --member serviceAccount:$SA --role $role"
-          done
-
-      - name: Secrets
-        run: |
-          ensure() { gcloud secrets describe "$1" --project "$PROJECT" >/dev/null 2>&1 \
-            || gcloud secrets create "$1" --replication-policy automatic --project "$PROJECT"; }
-          grant() { gcloud secrets add-iam-policy-binding "$1" --member "serviceAccount:$SA" --role "$2" \
-            --project "$PROJECT" --quiet >/dev/null; }
-
-          ensure chat-assistant-user-token
-          grant chat-assistant-user-token roles/secretmanager.secretAccessor
-          grant chat-assistant-user-token roles/secretmanager.secretVersionManager
-
-          ensure chat-assistant-run-token
-          if ! gcloud secrets versions access latest --secret chat-assistant-run-token --project "$PROJECT" >/dev/null 2>&1; then
-            openssl rand -hex 32 | tr -d '\n' \
-              | gcloud secrets versions add chat-assistant-run-token --data-file=- --project "$PROJECT"
-          fi
-          grant chat-assistant-run-token roles/secretmanager.secretAccessor
-
-          if gcloud secrets describe chat-assistant-oauth-client --project "$PROJECT" >/dev/null 2>&1; then
-            grant chat-assistant-oauth-client roles/secretmanager.secretAccessor
-          else
-            echo "::warning::Secret chat-assistant-oauth-client doesn't exist yet. Store the OAuth client JSON there (see chat-assistant/README.md) and re-run this workflow."
-          fi
-
-      - name: Deploy
-        run: |
-          gcloud run deploy "$SERVICE" \
+          gcloud run deploy chat-assistant \
             --source ./chat-assistant/src/cloud_run \
-            --region "$REGION" --project "$PROJECT" \
-            --service-account "$SA" \
+            --region us-central1 \
+            --project shp-ai-bot-2026 \
+            --service-account chat-assistant@shp-ai-bot-2026.iam.gserviceaccount.com \
             --allow-unauthenticated \
             --timeout 3600 --memory 1Gi --max-instances 3 \
-            --set-env-vars "OWNER_EMAIL=$OWNER_EMAIL,GCP_PROJECT=$PROJECT" \
+            --set-env-vars "OWNER_EMAIL=manne@superhairpieces.com,GCP_PROJECT=shp-ai-bot-2026" \
             --quiet
-
-      - name: Hourly schedule
-        run: |
-          URL=$(gcloud run services describe "$SERVICE" --region "$REGION" --project "$PROJECT" --format 'value(status.url)')
-          TOKEN=$(gcloud secrets versions access latest --secret chat-assistant-run-token --project "$PROJECT")
-          echo "::add-mask::$TOKEN"
-          args=(--location "$REGION" --project "$PROJECT" --schedule "0 * * * *" --time-zone "America/Toronto"
-                --uri "$URL/run" --http-method POST --attempt-deadline 1800s --quiet)
-          gcloud scheduler jobs update http chat-assistant-hourly "${args[@]}" --update-headers "X-Run-Token=$TOKEN" \
-            || gcloud scheduler jobs create http chat-assistant-hourly "${args[@]}" --headers "X-Run-Token=$TOKEN"
-          {
-            echo "### Chat assistant deployed"
-            echo "- App: $URL"
-            echo "- OAuth client redirect URIs (add both):"
-            echo "  - \`$URL/oauth/callback\`"
-            echo "  - \`https://$SERVICE-$PROJECT_NUMBER.$REGION.run.app/oauth/callback\`"
-          } >> "$GITHUB_STEP_SUMMARY"
+          URL=$(gcloud run services describe chat-assistant --region us-central1 --project shp-ai-bot-2026 --format 'value(status.url)')
+          echo "### Chat assistant deployed: $URL" >> "$GITHUB_STEP_SUMMARY"
