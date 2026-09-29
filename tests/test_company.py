@@ -292,6 +292,69 @@ class FakeLiveSession:
         yield types.LiveServerMessage(server_content=types.LiveServerContent(turn_complete=True))
 
 
+class FakeRealtime:
+    """Scripted OpenAI Realtime connection: hears speech, calls one tool, then answers out loud."""
+
+    def __init__(self):
+        from types import SimpleNamespace as NS
+
+        self.updates, self.items, self.audio_in, self.follow_ups = [], [], 0, 0
+        self._events = asyncio.Queue()
+        self.session = NS(update=self._update)
+        self.input_audio_buffer = NS(append=self._append)
+        self.conversation = NS(item=NS(create=self._item))
+        self.response = NS(create=self._response)
+
+    async def _update(self, session):
+        self.updates.append(session)
+
+    async def _append(self, audio):
+        import base64
+        from types import SimpleNamespace as NS
+
+        before, self.audio_in = self.audio_in, self.audio_in + len(base64.b64decode(audio))
+        if before < 1920 <= self.audio_in:  # after the first 40 ms of (24 kHz) speech
+            for e in (NS(type="input_audio_buffer.speech_started"),
+                      NS(type="conversation.item.input_audio_transcription.completed", transcript="Jill covers outreach"),
+                      NS(type="response.function_call_arguments.done", name="record_fact", call_id="c1",
+                         arguments=json.dumps({"text": "Voice says: Jill covers outreach"})),
+                      NS(type="response.done", response=NS(status="completed"))):
+                await self._events.put(e)
+
+    async def _item(self, item):
+        self.items.append(item)
+
+    async def _response(self, **kw):
+        import base64
+        from types import SimpleNamespace as NS
+
+        self.follow_ups += 1
+        for e in (NS(type="response.output_audio.delta", delta=base64.b64encode(b"\x01\x02" * 480).decode()),
+                  NS(type="response.output_audio_transcript.delta", delta="Noted."),
+                  NS(type="response.done", response=NS(status="completed"))):
+            await self._events.put(e)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        return await self._events.get()
+
+
+class FakeRealtimeConnect:
+    def __init__(self, conn):
+        self.conn = conn
+
+    def __call__(self):
+        return self
+
+    async def __aenter__(self):
+        return self.conn
+
+    async def __aexit__(self, *exc):
+        return False
+
+
 class VoiceTests(unittest.TestCase):
     def test_bridge_streams_audio_runs_tools_and_saves_the_turn(self):
         import voice
@@ -338,6 +401,47 @@ class VoiceTests(unittest.TestCase):
         names = [d.name for d in seen["config"].tools[0].function_declarations]
         self.assertIn("record_fact", names)
         self.assertEqual(seen["config"].response_modalities, ["AUDIO"])
+
+
+class RealtimeVoiceTests(unittest.TestCase):
+    def test_chatgpt_hears_runs_tools_answers_and_saves(self):
+        import voice_openai
+
+        store, conn = MemoryStore(), FakeRealtime()
+        ws = FakeWS([b"\x00\x00" * 640, b"\x00\x00" * 640, 0.3])
+        voice_openai.RealtimeVoiceBridge(ws, store, Toolset(store, None, caller="chatgpt (voice)"), "system",
+                                         FakeRealtimeConnect(conn), hints="SkuVault, Ruvy").run()
+        frames = [json.loads(f) for f in ws.sent if isinstance(f, str)]
+        self.assertEqual([f["type"] for f in frames[:2]], ["status", "ready"])
+        self.assertIn({"type": "tool", "name": "record_fact"}, frames)
+        self.assertIn({"type": "transcript", "who": "assistant", "text": "Noted."}, frames)
+        self.assertEqual(sum(len(f) for f in ws.sent if isinstance(f, bytes)), 960)
+        self.assertEqual(conn.audio_in, 3840)  # 2 x 40 ms at 16 kHz arrive as 2 x 40 ms at 24 kHz
+        self.assertEqual(conn.items[0]["type"], "function_call_output")
+        self.assertEqual(conn.items[0]["call_id"], "c1")
+        self.assertEqual(conn.follow_ups, 1)  # asked to answer once the tool result was in
+        self.assertTrue(any("Jill covers outreach" in f["text"] for f in store.list_items("facts")))
+        turns = store.get_talk("chatgpt")
+        self.assertEqual([(t["role"], t["text"]) for t in turns], [("user", "Jill covers outreach"), ("assistant", "Noted.")])
+        session = conn.updates[0]
+        self.assertEqual(session["audio"]["input"]["turn_detection"], {
+            "type": "semantic_vad", "eagerness": "low", "create_response": True, "interrupt_response": True})
+        self.assertEqual(session["audio"]["input"]["format"], {"type": "audio/pcm", "rate": 24000})
+        self.assertEqual(session["audio"]["input"]["transcription"]["prompt"], "SkuVault, Ruvy")
+        self.assertIn("record_fact", [t["name"] for t in session["tools"]])
+        self.assertTrue(session["instructions"].endswith(voice_openai.SPOKEN_REMINDER))
+
+    def test_upsampler_is_continuous_across_chunks(self):
+        from array import array
+
+        import voice_openai
+
+        ramp = array("h", range(0, 3200, 2))  # 1600 samples = 100 ms at 16 kHz
+        up, out = voice_openai.Upsampler(), array("h")
+        for i in range(0, len(ramp), 160):
+            out.frombytes(up(ramp[i:i + 160].tobytes()))
+        self.assertAlmostEqual(len(out), 2400, delta=2)                # 100 ms at 24 kHz
+        self.assertTrue(all(b >= a for a, b in zip(out, out[1:])))    # no jumps back at chunk edges
 
 
 class RobustnessTests(unittest.TestCase):
@@ -593,6 +697,17 @@ class WebTests(unittest.TestCase):
         self.assertEqual([(t["role"], t["text"], t["voice"]) for t in turns],
                          [("user", "What should we tackle first?", True), ("assistant", "claude here", True)])
         self.assertEqual(self.store.get_talk("assistant"), [])
+
+    def test_voice_with_chatgpt_goes_to_chatgpt_itself(self):
+        conn = FakeRealtime()
+        with mock.patch.dict(self.main.app.config, {"OPENAI_VOICE_CONNECT": FakeRealtimeConnect(conn)}):
+            frames, gemini_config = self._voice_call("chatgpt", FakeLiveSession(), [b"\x00\x00" * 640] * 2 + [0.3])
+        self.assertIsNone(gemini_config)                       # Gemini isn't on this call at all
+        self.assertIn({"type": "status", "text": "Connecting to ChatGPT…"}, frames)
+        self.assertIn("ChatGPT, made by OpenAI", conn.updates[0]["instructions"])
+        self.assertNotIn("speech recognition", conn.updates[0]["instructions"])  # it hears the audio itself
+        self.assertIn("Ruvy", conn.updates[0]["audio"]["input"]["transcription"]["prompt"])
+        self.assertEqual([t["text"] for t in self.store.get_talk("chatgpt")], ["Jill covers outreach", "Noted."])
 
     def test_voice_with_an_unavailable_partner_says_why(self):
         self.store.update_settings({"partners_enabled": False})

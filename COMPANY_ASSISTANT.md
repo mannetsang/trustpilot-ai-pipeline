@@ -80,12 +80,21 @@ text: it can look things up, record what you tell it, and queue or answer questi
 Use Chrome or Edge. Only your signed-in session, from the app's own page, can open
 the voice socket.
 
-Claude and ChatGPT have no live voice here, so a call with either one uses Gemini
-Live only as ears and voice. Gemini gets a single tool (`ask_claude` or
-`ask_chatgpt`) that passes your words to the partner, which answers with its own
-model, tools and conversation history (in a spoken style), and Gemini reads the
-answer out word for word. The partner saves those turns into its own conversation.
-Expect a pause while the partner thinks; the call shows "Claude is thinking…".
+**ChatGPT** calls work the same way as the Assistant's, on OpenAI's own live model
+(`gpt-realtime-2.1` through the Realtime API, with the `CHATGPT_API_KEY` secret):
+ChatGPT hears your audio directly, answers in its own voice, and uses the same tools,
+company background and conversation history as typed ChatGPT. Its turn detection is
+semantic (it waits for the end of a thought, not a fixed pause), and the on-screen
+transcript is primed with staff, salon, project and system names. Turns are saved
+into the ChatGPT conversation. OpenAI bills live audio per minute, noticeably more
+than typed chat. `CHATGPT_VOICE=relay` switches ChatGPT to the relay below instead.
+
+**Claude** has no audio input in Anthropic's API, so a call with Claude uses Gemini
+Live only as ears and voice. Gemini gets a single tool (`ask_claude`) that passes
+your words to Claude, which answers with its own model, tools and conversation
+history (in a spoken style), and Gemini reads the answer out word for word. Claude
+saves those turns into its own conversation. Expect a pause while it thinks; the
+call shows "Claude is thinking…".
 
 Because the partner only sees Gemini's transcript, a relayed call waits for a longer
 pause before it treats your turn as finished (`RELAY_END_SILENCE_MS`, 1.5 s; with
@@ -100,7 +109,10 @@ misheard names charitably.
 |---|---|
 | `TALK_MODEL` | `gemini-2.5-pro` (falls back to `GEMINI_MODEL`) |
 | `LIVE_MODEL` / `LIVE_VOICE` / `LIVE_LOCATION` | `gemini-3.8-live` / model default / `us-central1` |
-| `RELAY_END_SILENCE_MS` | `1500` (pause that ends your turn in a call with Claude or ChatGPT) |
+| `RELAY_END_SILENCE_MS` | `1500` (pause that ends your turn in a relayed call) |
+| `CHATGPT_VOICE` | `realtime` (ChatGPT hears you) or `relay` (through Gemini) |
+| `OPENAI_LIVE_MODEL` / `OPENAI_LIVE_VOICE` / `OPENAI_LIVE_REASONING` | `gpt-realtime-2.1` / model default / `low` |
+| `OPENAI_TRANSCRIBE_MODEL` | `gpt-4o-transcribe` (on-screen transcript of ChatGPT calls) |
 | `CLAUDE_MODEL` / `CLAUDE_FALLBACK_MODEL` | `claude-opus-5-5` / `claude-opus-4-8` |
 | `CLAUDE_BACKEND` / `CLAUDE_REGION` / `CLAUDE_EFFORT` | `auto` / `global` / `medium` |
 | `OPENAI_MODEL` / `OPENAI_KEY_SECRET` | `gpt-5` / `CHATGPT_API_KEY` |
