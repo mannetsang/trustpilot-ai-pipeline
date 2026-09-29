@@ -70,6 +70,55 @@ def stable_id(*parts):
     return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:20]
 
 
+class Progress:
+    """Live status of a run, kept in the store so whichever instance serves the UI can show it.
+
+    Written at every step and at the start and end of each conversation.
+    """
+
+    def __init__(self, store, trigger="manual"):
+        self.store = store
+        self._lock = threading.Lock()
+        self.state = {"running": True, "trigger": trigger, "phase": "Starting", "started_at": utcnow_iso(),
+                      "reading_started_at": "", "total": 0, "done": 0, "current": {}, "tasks_created": 0,
+                      "tasks_updated": 0, "actions_done": 0, "actions_suggested": 0, "problems": 0}
+        self._flush()
+
+    def _flush(self):
+        state = dict(self.state, current=sorted(set(self.state["current"].values())), updated_at=utcnow_iso())
+        self.store.set_progress(state)
+
+    def phase(self, text, **fields):
+        with self._lock:
+            self.state.update(fields, phase=text)
+            self._flush()
+
+    def reading(self, total):
+        self.phase("Reading conversations", total=total, reading_started_at=utcnow_iso())
+
+    def working_on(self, space_name, label):
+        with self._lock:
+            self.state["current"][space_name] = label
+            self._flush()
+
+    def space_done(self, space_name, stats=None):
+        with self._lock:
+            self.state["current"].pop(space_name, None)
+            self.state["done"] += 1
+            if stats is None:
+                self.state["problems"] += 1
+            else:
+                for k in ("tasks_created", "tasks_updated", "actions_done", "actions_suggested"):
+                    self.state[k] += stats[k]
+            self._flush()
+
+    def finish(self, error=""):
+        with self._lock:
+            self.state.update(running=False, phase="Failed" if error else "Done", current={},
+                              finished_at=utcnow_iso(), error=error[:500])
+            self._flush()
+
+
 class Budget:
     def __init__(self, limit):
         self.left = limit
@@ -132,6 +181,7 @@ def process_space(ctx, space, since_iso):
     google, store, llm, directory, owner = ctx["google"], ctx["store"], ctx["llm"], ctx["directory"], ctx["owner"]
     name = space["name"]
     since = parse_ts(since_iso)
+    ctx["progress"].working_on(name, space.get("displayName") or ctx["label_cache"].get(name) or "a direct message")
 
     new_raw = google.list_messages_since(name, since_iso, limit=MAX_NEW_MESSAGES)
     new_raw = [m for m in new_raw if not m.get("deleteTime")]
@@ -151,6 +201,7 @@ def process_space(ctx, space, since_iso):
 
     owner_ids = owner["ids"]
     label = _label(google, space, directory, owner_ids, ctx["label_cache"])
+    ctx["progress"].working_on(name, label)
     new = [_compact(m, directory, owner_ids) for m in new_raw]
     context = [_compact(m, directory, owner_ids) for m in context_raw]
     by_name = {m["name"]: m for m in new}
@@ -357,8 +408,9 @@ def _resolve_owner(google, spaces, directory, owner):
 
 # -- the whole pass ---------------------------------------------------------------
 
-def run(store, google, llm, now=None):
+def run(store, google, llm, now=None, progress=None):
     now = now or datetime.now(timezone.utc)
+    progress = progress or Progress(store)
     summary = {"started_at": now.isoformat(), "spaces_total": 0, "spaces_processed": 0, "messages": 0,
                "tasks_created": 0, "tasks_updated": 0, "actions_done": 0, "actions_suggested": 0,
                "actions_failed": 0, "errors": []}
@@ -368,6 +420,7 @@ def run(store, google, llm, now=None):
 
     from google.auth.exceptions import RefreshError
 
+    progress.phase("Listing your conversations")
     try:
         spaces = google.list_spaces()
     except RefreshError as exc:
@@ -376,6 +429,7 @@ def run(store, google, llm, now=None):
         if exc.status in (401, 403):
             raise ReconnectNeeded(str(exc)) from exc
         raise
+    progress.phase("Loading the company directory")
     try:
         directory = google.load_directory()
     except GoogleApiError as exc:
@@ -400,8 +454,10 @@ def run(store, google, llm, now=None):
 
     ctx = {"google": google, "store": store, "llm": llm, "directory": directory, "owner": owner,
            "settings": store.get_settings(), "now": now, "now_local": now.astimezone(TZ).strftime("%A %Y-%m-%d %H:%M"),
-           "budget": Budget(MAX_ACTIONS_PER_RUN), "tasks_by_space": tasks_by_space, "label_cache": {}}
+           "budget": Budget(MAX_ACTIONS_PER_RUN), "tasks_by_space": tasks_by_space, "label_cache": {},
+           "progress": progress}
 
+    progress.reading(len(due))
     with ThreadPoolExecutor(max_workers=PARALLEL_SPACES) as pool:
         futures = {pool.submit(process_space, ctx, s, since): s for s, since in due}
         for fut in as_completed(futures):
@@ -409,9 +465,11 @@ def run(store, google, llm, now=None):
             try:
                 watermark, stats = fut.result()
             except Exception as exc:  # noqa: BLE001 - one bad space must not stop the rest
-                label = space.get("displayName") or space["name"]
+                label = space.get("displayName") or ctx["label_cache"].get(space["name"]) or space["name"]
                 summary["errors"].append({"space": label, "error": str(exc)[:300]})
+                progress.space_done(space["name"])
                 continue
+            progress.space_done(space["name"], stats)
             store.set_watermarks({space_key(space["name"]): watermark})
             summary["spaces_processed"] += 1
             for k in ("messages", "tasks_created", "tasks_updated", "actions_done", "actions_suggested",
@@ -419,4 +477,5 @@ def run(store, google, llm, now=None):
                 summary[k] += stats[k]
 
     summary["finished_at"] = utcnow_iso()
+    progress.phase("Finishing")
     return summary

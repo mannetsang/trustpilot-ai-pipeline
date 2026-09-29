@@ -101,6 +101,13 @@ class MemoryStore:
     def get_status(self):
         return self._get("chat_assistant", "status") or {}
 
+    def set_progress(self, state):
+        """The running (or last) pass's live progress; replaced wholesale on every update."""
+        self._set("chat_assistant", "progress", state)
+
+    def get_progress(self):
+        return self._get("chat_assistant", "progress") or {}
+
     def session_key(self):
         config = self._get("chat_assistant", "config") or {}
         if not config.get("session_key"):

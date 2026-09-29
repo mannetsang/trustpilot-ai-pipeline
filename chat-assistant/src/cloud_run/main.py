@@ -6,6 +6,7 @@ Routes
   GET  /oauth/callback   OAuth redirect target
   POST /logout
   GET  /api/state        tasks, activity, runs, settings, connection status
+  GET  /api/progress     live progress of the running (or last) pass
   POST/PATCH/DELETE /api/tasks[/<id>]
   POST /api/actions/<id>/send | /dismiss
   PATCH /api/settings
@@ -287,30 +288,40 @@ def do_run(trigger):
     if not store.acquire_run_lock():
         return {"error": "A run is already in progress."}, 409
     started = utcnow_iso()
+    progress = assistant.Progress(store, trigger)
     try:
         google = app.config["MAKE_GOOGLE"]()
         if not google:
             raise assistant.ReconnectNeeded("Google isn't connected yet.")
-        summary = assistant.run(store, google, app.config["MAKE_LLM"]())
+        summary = assistant.run(store, google, app.config["MAKE_LLM"](), progress=progress)
         summary["trigger"] = trigger
         store.add_run(summary)
         store.set_status({"last_run": summary, "connection_error": ""})
+        progress.finish()
         return summary, 200
     except assistant.ReconnectNeeded as exc:
         failed = {"started_at": started, "finished_at": utcnow_iso(), "trigger": trigger, "error": str(exc)[:500]}
         store.add_run(failed)
         store.set_status({"last_run": failed, "connection_error": str(exc)[:500]})
+        progress.finish(str(exc))
         return failed, 503
     except Exception as exc:  # noqa: BLE001 - recorded, then surfaced to the caller
         failed = {"started_at": started, "finished_at": utcnow_iso(), "trigger": trigger, "error": str(exc)[:500]}
         store.add_run(failed)
         store.set_status({"last_run": failed})
+        progress.finish(str(exc))
         import traceback
 
         print(f"run failed: {exc!r}\n{traceback.format_exc()}")
         return failed, 500
     finally:
         store.release_run_lock()
+
+
+@app.get("/api/progress")
+def api_progress():
+    """Small and cheap, so the page can poll it every couple of seconds during a run."""
+    return jsonify(store.get_progress())
 
 
 @app.post("/api/run")

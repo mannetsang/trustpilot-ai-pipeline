@@ -237,6 +237,29 @@ class RunTests(unittest.TestCase):
         self.assertIn("DM1", store.get_watermarks())
         self.assertEqual(summary["errors"][0]["space"], "D Team")
 
+    def test_progress_is_live_during_the_run(self):
+        store, google, llm = scenario()
+        seen = []
+        real_analyze = llm.analyze
+
+        def analyze(prompt):  # snapshot what the UI would see while Gemini is working
+            seen.append(store.get_progress())
+            return real_analyze(prompt)
+
+        llm.analyze = analyze
+        assistant.run(store, google, llm, now=NOW)
+        self.assertTrue(all(s["running"] and s["phase"] == "Reading conversations" and s["total"] == 3 for s in seen))
+        self.assertIn("Kathy", {label for s in seen for label in s["current"]})  # DM shown by the other person's name
+        final = store.get_progress()
+        self.assertEqual((final["done"], final["total"], final["tasks_created"], final["actions_done"]), (3, 3, 1, 2))
+        self.assertEqual(final["current"], [])
+
+    def test_progress_counts_problems(self):
+        store, google, llm = scenario()
+        llm.fail_for = {"spaces/S1"}
+        assistant.run(store, google, llm, now=NOW)
+        self.assertEqual((store.get_progress()["done"], store.get_progress()["problems"]), (3, 1))
+
     def test_no_owner_means_reconnect(self):
         store, google, llm = scenario()
         store._delete("chat_assistant", "owner")
@@ -311,6 +334,19 @@ class WebTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200, resp.data)
         self.assertEqual(resp.get_json()["trigger"], "schedule")
         self.assertEqual(self.store.get_status()["last_run"]["spaces_processed"], 3)
+        self.assertEqual(self.call("GET", "/api/progress").status_code, 401)  # signed out
+        self.sign_in()
+        progress = self.call("GET", "/api/progress").get_json()
+        self.assertEqual((progress["running"], progress["phase"], progress["trigger"]), (False, "Done", "schedule"))
+        self.assertEqual(progress["done"], progress["total"])
+
+    def test_failed_run_marks_progress_failed(self):
+        self.sign_in()
+        self.main.app.config["MAKE_GOOGLE"] = lambda: None  # not connected
+        self.assertEqual(self.call("POST", "/api/run").status_code, 503)
+        progress = self.call("GET", "/api/progress").get_json()
+        self.assertEqual((progress["running"], progress["phase"]), (False, "Failed"))
+        self.assertIn("isn't connected", progress["error"])
 
     def test_send_suggestion_with_edit(self):
         self.sign_in()
