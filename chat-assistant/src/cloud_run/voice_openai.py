@@ -130,7 +130,7 @@ class RealtimeVoiceBridge(VoiceBridge):
         try:
             await conn.session.update(session=session_config(self.system_instruction, self.toolset.specs(), self.hints,
                                                              self.voice, self.reminder))
-            self.send_json(type="ready", model=OPENAI_LIVE_MODEL)
+            self.send_json(type="ready", model=self.shown_model or OPENAI_LIVE_MODEL)
             upstream = asyncio.create_task(self._upstream(conn))
             downstream = asyncio.create_task(self._downstream(conn))
             done, pending = await asyncio.wait({upstream, downstream}, return_when=asyncio.FIRST_COMPLETED)

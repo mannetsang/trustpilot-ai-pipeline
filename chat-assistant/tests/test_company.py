@@ -494,6 +494,9 @@ class SpeechTests(unittest.TestCase):
             self.assertEqual(len(calls), parts)                        # the second press is served from cache
             b"".join(speaker.stream("claude", "Hi from Claude."))
             self.assertEqual(calls[parts:], [("openai", "cedar"), ("gemini", "Charon")])  # OpenAI down: Gemini reads
+            with self.assertRaises(RuntimeError):
+                speaker.stream("chatgpt", "Hi from ChatGPT.")
+            self.assertEqual(calls[-1], ("openai", "marin"))           # ChatGPT is OpenAI only: no Gemini stand-in
             with self.assertRaises(ValueError):
                 speaker.stream("assistant", " ")
         with mock.patch.dict(speech.PROVIDERS, {"gemini": fake("gemini", True), "openai": fake("openai", True)}):
@@ -671,6 +674,10 @@ class WebTests(unittest.TestCase):
         data = self.call("GET", "/api/knowledge").get_json()
         self.assertEqual(len(data["questions"]), len(knowledge.SEED_QUESTIONS))
         self.assertEqual([p["name"] for p in data["partners"]], ["assistant", "claude", "chatgpt"])
+        models = {p["name"]: p["models"] for p in data["partners"]}
+        self.assertEqual(models["chatgpt"], "OpenAI: gpt-5 when typing, gpt-realtime-2.1 on calls")
+        self.assertNotIn("gemini", models["chatgpt"].lower())
+        self.assertTrue(models["claude"].startswith("Anthropic: claude-opus-5-5"))
         self.assertIn("money", [k for k, _ in data["autonomy_categories"]])
 
     def test_talk_endpoints(self):
@@ -777,6 +784,7 @@ class WebTests(unittest.TestCase):
             frames, gemini_config = self._voice_call("chatgpt", FakeLiveSession(), [b"\x00\x00" * 640] * 2 + [0.3])
         self.assertIsNone(gemini_config)                       # Gemini isn't on this call at all
         self.assertIn({"type": "status", "text": "Connecting to ChatGPT…"}, frames)
+        self.assertIn({"type": "ready", "model": "gpt-realtime-2.1"}, frames)
         self.assertIn("ChatGPT, made by OpenAI", conn.updates[0]["instructions"])
         self.assertEqual(conn.updates[0]["audio"]["output"]["voice"], "marin")  # the voice replies are read in
         self.assertNotIn("speech recognition", conn.updates[0]["instructions"])  # it hears the audio itself
@@ -790,6 +798,7 @@ class WebTests(unittest.TestCase):
             frames, gemini_config = self._voice_call("claude", FakeLiveSession(), [b"\x00\x00" * 640] * 2 + [0.3])
         self.assertIsNone(gemini_config)
         self.assertIn({"type": "status", "text": "Connecting to Claude…"}, frames)
+        self.assertIn({"type": "ready", "model": "Claude, voice by gpt-realtime-2.1"}, frames)
         session = conn.updates[0]
         self.assertEqual([t["name"] for t in session["tools"]], ["ask_claude"])   # it can only pass words on
         self.assertIn("voice line between Manne and Claude", session["instructions"])

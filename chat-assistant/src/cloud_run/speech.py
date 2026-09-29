@@ -2,7 +2,8 @@
 
 Each bot reads in the same voice it has on a live call (VOICES): the Assistant with
 Gemini text-to-speech on Vertex AI, Claude and ChatGPT with OpenAI's. If a provider
-fails before speaking, the other one reads instead.
+fails before speaking, the other one reads instead, except for ChatGPT, which is
+OpenAI only.
 
 Speech is streamed: the page starts playing as the first audio arrives (about 1.6 s
 with Gemini, 0.5 s with OpenAI) instead of waiting for a whole reply, which took
@@ -32,7 +33,8 @@ VOICES = {
     "claude": ("openai", os.environ.get("VOICE_CLAUDE", "cedar")),        # ChatGPT's voice line on calls
     "chatgpt": ("openai", os.environ.get("VOICE_CHATGPT", "marin")),      # OpenAI Realtime on calls
 }
-FALLBACK = {"assistant": ("openai", "sage"), "claude": ("gemini", "Charon"), "chatgpt": ("gemini", "Kore")}
+# ChatGPT has none: clicking ChatGPT means OpenAI only, so a failed reading says so rather than use Gemini.
+FALLBACK = {"assistant": ("openai", "sage"), "claude": ("gemini", "Charon"), "chatgpt": None}
 STYLE = "Read this aloud in a warm, natural, conversational voice, like a helpful colleague:"
 PART_CHARS = 800   # per provider request; parts are read back to back in one stream
 MAX_CHARS = 20000
@@ -135,7 +137,7 @@ class Speaker:
             if key in self._cache:
                 self._cache.move_to_end(key)
                 return iter([self._cache[key]])
-        attempts = [(provider, voice), FALLBACK.get(partner, FALLBACK["assistant"])]
+        attempts = [(provider, voice)] + ([FALLBACK[partner]] if FALLBACK.get(partner) else [])
         problems = []
         for name, name_voice in attempts:
             chunks = PROVIDERS[name](parts[0], name_voice, self.secrets)

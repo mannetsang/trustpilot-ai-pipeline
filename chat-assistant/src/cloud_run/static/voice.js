@@ -70,7 +70,10 @@
     }
 
     onJson(msg) {
-      if (msg.type === "ready") { this.ready = true; clearTimeout(this.watchdog); setState("Listening. Go ahead and talk"); }
+      if (msg.type === "ready") {  // names the model on the line, so it's plain who's answering
+        this.ready = true; clearTimeout(this.watchdog);
+        setState(msg.model ? `Listening (${msg.model}). Go ahead and talk` : "Listening. Go ahead and talk");
+      }
       else if (msg.type === "status") setState(msg.text);
       else if (msg.type === "transcript") {
         this.live[msg.who] += msg.text;

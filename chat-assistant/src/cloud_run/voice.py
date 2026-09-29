@@ -139,6 +139,7 @@ class VoiceBridge:
         self.save_as = save_as  # conversation the finished turns go to; None when a relayed partner saves its own
         self.end_silence_ms = end_silence_ms  # how long a pause ends Manne's turn; None = Gemini's default
         self.voice = voice  # the bot's own voice, the same one its replies are read aloud in
+        self.shown_model = None  # what the call bar names; a relay names the partner, not the voice model
         self.stopped = False
         self.turn = {"you": [], "assistant": []}
 
@@ -174,7 +175,7 @@ class VoiceBridge:
         except asyncio.TimeoutError as exc:
             raise RuntimeError(f"Gemini Live ({LIVE_MODEL}) didn't answer within {CONNECT_TIMEOUT} seconds") from exc
         try:
-            self.send_json(type="ready", model=LIVE_MODEL)
+            self.send_json(type="ready", model=self.shown_model or LIVE_MODEL)
             upstream = asyncio.create_task(self._upstream(session))
             downstream = asyncio.create_task(self._downstream(session))
             done, pending = await asyncio.wait({upstream, downstream}, return_when=asyncio.FIRST_COMPLETED)
