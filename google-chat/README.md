@@ -15,12 +15,26 @@ The Chat API has two identities, and only one of them sees "all my chats":
 
 `chat_api.py` gets a "you" identity two ways, in this order:
 
-1. **Domain-wide delegation (primary, set up).** The service account in
-   `GOOGLE_APPLICATION_CREDENTIALS` impersonates `CHAT_IMPERSONATE_USER`
-   (default `manne@superhairpieces.com`). This works in Claude cloud sessions
-   with no token to store. The grant lives in admin.google.com → Security →
-   API controls → Manage Domain Wide Delegation, on client ID
-   `111336930970488121514` (`claude-sessions@shp-ai-bot-2026`), with:
+1. **Domain-wide delegation (interim).** The service account in
+   `GOOGLE_APPLICATION_CREDENTIALS` impersonates the one person
+   `DELEGATION_MAP` in `chat_api.py` assigns it:
+
+   | Service account | Acts as |
+   |---|---|
+   | `claude-sessions@shp-ai-bot-2026.iam.gserviceaccount.com` | `manne@superhairpieces.com` |
+
+   The map is hard-coded on purpose: no argument or environment variable
+   overrides it, and a service account missing from it gets no delegation.
+   Changing who it acts as takes a commit.
+
+   **This is a guardrail, not a security boundary.** Google's delegation grant
+   is domain-wide: whoever holds the `claude-sessions` key can bypass these
+   scripts and call Google as *any* user. The map only guarantees that these
+   scripts never do. To actually confine access to one person, use the
+   browser sign-in below and remove the delegation grant.
+
+   The grant lives in admin.google.com → Security → API controls → Manage
+   Domain Wide Delegation, on client ID `111336930970488121514`, with:
 
    ```
    https://www.googleapis.com/auth/chat.spaces.readonly,https://www.googleapis.com/auth/chat.messages.readonly,https://www.googleapis.com/auth/chat.memberships.readonly
@@ -31,7 +45,7 @@ The Chat API has two identities, and only one of them sees "all my chats":
 2. **A user OAuth token (fallback)** from a one-time browser sign-in, for a
    machine with no delegated service account. Setup below.
 
-## Browser sign-in (fallback only)
+## Browser sign-in (confined to your own account)
 
 Console steps, all on project `shp-ai-bot-2026`:
 
