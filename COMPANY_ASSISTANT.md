@@ -56,7 +56,7 @@ or voice, it sends a Chat message only after you approve the exact text.
 | Partner | How it's called | Setup |
 |---|---|---|
 | Assistant | Gemini (`TALK_MODEL`, default `gemini-2.5-pro`) on Vertex AI | none |
-| Claude | Claude Opus 5.5 (`claude-opus-5-5`) via the Anthropic SDK, with automatic refusal fallback to Claude Opus 4.8. Tries Vertex AI first, then the Claude API with the `ANTHROPIC_API_KEY` secret | Either: Claude quota on Vertex AI for `shp-ai-bot-2026` (IAM & Admin > Quotas, `global_online_prediction_requests_per_base_model`, base model `anthropic-claude-opus`), or credit on the Anthropic account behind `ANTHROPIC_API_KEY` plus Secret Accessor on it for the app's service account |
+| Claude | Claude Opus 5.5 (`claude-opus-5-5`) via the Anthropic SDK, with automatic refusal fallback to Claude Opus 4.8. Tries the Claude API with the `ANTHROPIC_API_KEY` secret first, then Vertex AI | Either: credit on the Anthropic account behind `ANTHROPIC_API_KEY` plus Secret Accessor on it for the app's service account, or Claude quota on Vertex AI for `shp-ai-bot-2026` (IAM & Admin > Quotas, `global_online_prediction_requests_per_base_model`, base model `anthropic-claude-opus`) |
 | ChatGPT | OpenAI SDK, model from Settings (default `gpt-5`) | Re-run `setup.sh` so the app can read the `CHATGPT_API_KEY` secret |
 
 The Assistant can consult either partner (`consult_partner`), for example for a
@@ -67,7 +67,7 @@ Settings switches that off. **Test partners** in Settings checks all three.
 
 With `CLAUDE_BACKEND=auto` (the default) a route that can't serve at all (no quota,
 no credit, no readable key) is skipped, and when neither works the error says what
-each needs. `CLAUDE_BACKEND=vertex` or `=anthropic` pins one route.
+each needs. `CLAUDE_BACKEND=anthropic` or `=vertex` pins one route.
 
 ## Live voice
 
