@@ -39,6 +39,7 @@ OWNER_EMAIL = os.environ.get("OWNER_EMAIL", "manne@superhairpieces.com").lower()
 OWNER_DOMAIN = OWNER_EMAIL.split("@")[-1]
 OAUTH_CLIENT_SECRET_ID = os.environ.get("OAUTH_CLIENT_SECRET_ID", "chat-assistant-oauth-client")
 USER_TOKEN_SECRET_ID = os.environ.get("USER_TOKEN_SECRET_ID", "chat-assistant-user-token")
+CHATGPT_VOICE = os.environ.get("CHATGPT_VOICE", "realtime")  # realtime (ChatGPT hears you) | relay (via Gemini)
 RUN_TOKEN_SECRET_ID = os.environ.get("RUN_TOKEN_SECRET_ID", "chat-assistant-run-token")
 PUBLIC_URL = os.environ.get("PUBLIC_URL", "").rstrip("/")
 CSRF_HEADER = "X-Chat-Assistant"
@@ -465,26 +466,34 @@ def voice_ws(ws):
         label = PARTNERS[partner].LABEL if partner != "assistant" else "your assistant"
         ws.send(_json.dumps({"type": "status", "text": f"Preparing {label}…"}))
         service = talk_service()
-        if partner == "assistant":
-            toolset = service.toolset("assistant", voice=True)
-            recent = [t for t in store.get_talk("assistant") if t.get("text")][-8:]
+        ok, why = service.partner_status(partner)
+        if not ok:
+            ws.send(_json.dumps({"type": "error", "message": f"{label} isn't available: {why}"}))
+            return
+
+        def live_instruction():
+            recent = [t for t in store.get_talk(partner) if t.get("text")][-8:]
             history = "\n".join(f"{'Manne' if t['role'] == 'user' else 'You'}: {t['text'][:500]}" for t in recent)
-            instruction = system_prompt(store, "assistant", voice=True, owner_email=OWNER_EMAIL)
-            if history:
-                instruction += "\n\nRECENT CONVERSATION (continue from here)\n" + history
-            save_as = "assistant"
+            text = system_prompt(store, partner, voice=True, owner_email=OWNER_EMAIL)
+            return text + ("\n\nRECENT CONVERSATION (continue from here)\n" + history if history else "")
+
+        if partner == "assistant":  # Gemini Live hears and answers
+            bridge = voice.VoiceBridge(ws, store, service.toolset("assistant", voice=True), live_instruction(),
+                                       connect=app.config.get("VOICE_CONNECT"))
+        elif partner == "chatgpt" and CHATGPT_VOICE == "realtime":  # ChatGPT hears and answers, same as Gemini
+            import voice_openai
+
+            connect = app.config.get("OPENAI_VOICE_CONNECT") or voice_openai.default_connect(secret_store)
+            bridge = voice_openai.RealtimeVoiceBridge(ws, store, service.toolset("chatgpt", voice=True),
+                                                      live_instruction(), connect, save_as="chatgpt",
+                                                      hints=knowledge.name_hints(store))
         else:
-            # Gemini Live listens and speaks; the partner's own model answers (see voice.RelayTools).
-            ok, why = service.partner_status(partner)
-            if not ok:
-                ws.send(_json.dumps({"type": "error", "message": f"{label} isn't available: {why}"}))
-                return
+            # Claude has no audio input: Gemini Live listens and speaks, Claude answers (see voice.RelayTools).
             toolset = voice.RelayTools(partner, label, lambda m: service.ask(partner, m, voice=True)["text"])
-            instruction = voice.relay_instruction(label, toolset.name, knowledge.vocabulary(store))
-            save_as = None
-        bridge = voice.VoiceBridge(ws, store, toolset, instruction, connect=app.config.get("VOICE_CONNECT"),
-                                   save_as=save_as,
-                                   end_silence_ms=voice.RELAY_END_SILENCE_MS if partner != "assistant" else None)
+            bridge = voice.VoiceBridge(ws, store, toolset,
+                                       voice.relay_instruction(label, toolset.name, knowledge.vocabulary(store)),
+                                       connect=app.config.get("VOICE_CONNECT"), save_as=None,
+                                       end_silence_ms=voice.RELAY_END_SILENCE_MS)
     except Exception as exc:  # noqa: BLE001 - without this the socket would stay open and silent
         import traceback
 

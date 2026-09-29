@@ -1,4 +1,4 @@
-// Live voice with the assistant: mic -> /ws/voice -> Gemini Live -> speaker, with a live transcript.
+// Live voice calls: mic -> /ws/voice -> Gemini Live or the OpenAI Realtime API -> speaker, with a live transcript.
 "use strict";
 
 (function () {
@@ -10,7 +10,7 @@
 
   class VoiceCall {
     constructor(partner) {
-      this.partner = partner;                   // assistant, or claude/chatgpt relayed through Gemini Live
+      this.partner = partner;                   // assistant and chatgpt hear you directly; claude is relayed
       this.label = A.partnerInfo(partner).label;
       this.muted = false;
       this.ready = false;
@@ -42,9 +42,9 @@
       this.ws = new WebSocket(`${scheme}://${location.host}/ws/voice?partner=${encodeURIComponent(this.partner)}`);
       this.ws.binaryType = "arraybuffer";
       this.ws.onopen = () => {
-        setState("Connecting to Gemini…");
+        setState("Connecting the call…");  // the server names the model it's reaching next
         this.watchdog = setTimeout(() => {
-          if (!this.ready) this.fail("Gemini didn't answer within 25 seconds. Try again in a moment.");
+          if (!this.ready) this.fail("The voice service didn't answer within 25 seconds. Try again in a moment.");
         }, 25000);
       };
       this.ws.onmessage = (e) => (typeof e.data === "string" ? this.onJson(JSON.parse(e.data)) : this.play(e.data));

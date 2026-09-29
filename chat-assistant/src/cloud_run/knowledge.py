@@ -94,6 +94,23 @@ def vocabulary(store):
                                            f"Systems: {names('systems')}") if not part.endswith(": "))
 
 
+def name_hints(store, limit=900):
+    """A short list of names for speech-to-text: company terms, people and places, projects, systems."""
+    names = ["Superhairpieces", "Gen'C Beauty", "Tier 1"]
+    for line in company_background().splitlines():
+        if line.startswith("|") and not line.startswith("|--") and "`" not in line:
+            for cell in line.strip("|").split("|"):
+                names += [n.strip() for n in cell.split(",") if re.fullmatch(r"[A-Z][\w' .-]{1,30}", n.strip())]
+    for kind in ("projects", "systems"):
+        names += [i.get("name", "") for i in store.list_items(kind)]
+    seen, out = set(), []
+    for n in names:
+        if n and n.lower() not in seen:
+            seen.add(n.lower())
+            out.append(n)
+    return ", ".join(out)[:limit]
+
+
 def slug(text, prefix=""):
     base = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")[:48] or "item"
     digest = hashlib.sha1((text or "").lower().encode("utf-8")).hexdigest()[:6]

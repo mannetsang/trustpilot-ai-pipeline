@@ -62,7 +62,7 @@ directly and completely; you can use the knowledge tools, but you can't send mes
 """
 
 
-def system_prompt(store, partner, voice=False, consulted=False, owner_email="manne@superhairpieces.com"):
+def system_prompt(store, partner, voice=False, consulted=False, owner_email="manne@superhairpieces.com", relayed=False):
     now = datetime.now(timezone.utc).astimezone(TZ).strftime("%A %Y-%m-%d %H:%M %Z")
     parts = [ROLE[partner], MISSION.format(owner=owner_email)]
     if partner == "assistant":
@@ -70,8 +70,8 @@ def system_prompt(store, partner, voice=False, consulted=False, owner_email="man
                      "important plans, or for drafting.")
     if voice:
         parts.append(VOICE_STYLE)
-        if partner != "assistant":  # the assistant hears the audio itself; partners get a transcript
-            parts.append(HEARD_NOTE)
+    if relayed:  # a relayed partner gets a transcript; models on a live voice line hear the audio itself
+        parts.append(HEARD_NOTE)
     if consulted:
         parts.append(CONSULT_NOTE)
     parts.append(f"Now: {now}")
@@ -129,7 +129,9 @@ class Talk:
         history = [t for t in self.store.get_talk(partner) if t.get("role") in ("user", "assistant")][-24:]
         user_turn = {"role": "user", "text": message.strip()[:8000], "at": utcnow_iso()}
         toolset = self.toolset(partner, voice=voice)
-        result = PARTNERS[partner].respond(system_prompt(self.store, partner, voice=voice, owner_email=self.owner_email),
+        prompt = system_prompt(self.store, partner, voice=voice, owner_email=self.owner_email,
+                               relayed=voice and partner != "assistant")  # ask(voice=True) is the voice relay
+        result = PARTNERS[partner].respond(prompt,
                                            history + [user_turn], toolset, self.secrets, self._model(partner))
         reply = {"role": "assistant", "text": result["text"], "at": utcnow_iso(), "tools": result.get("tools", [])}
         if voice:
