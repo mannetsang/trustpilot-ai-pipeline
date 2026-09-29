@@ -80,6 +80,25 @@ function todayStr() {
 async function load() {
   [state, kb] = await Promise.all([api("GET", "/api/state"), api("GET", "/api/knowledge")]);
   render();
+  checkVersion();
+}
+
+// A new deploy changes the server's version; an open tab would otherwise keep running the old
+// scripts. Reload when nothing is in progress, or say so when something is.
+function checkVersion() {
+  const mine = document.body.dataset.version;
+  if (!state.version || !mine || state.version === mine) return;
+  const busy = talkBusy || !$("voicebar").hidden || document.querySelector("dialog[open]") || $("message").value.trim();
+  let tried = null;
+  try { tried = sessionStorage.getItem("reloadedFor"); } catch { /* storage unavailable */ }
+  if (!busy && tried !== state.version) {   // once per version, so a stuck mismatch can't loop
+    try { sessionStorage.setItem("reloadedFor", state.version); } catch { /* storage unavailable */ }
+    location.reload(); return;
+  }
+  if ($("updateBanner")) return;
+  $("banners").append(el("div", { class: "banner", id: "updateBanner" },
+    el("span", {}, el("b", {}, "A new version is ready. "), "Reload when you're done to get it."),
+    el("button", { class: "btn primary", onclick: () => location.reload() }, "Reload")));
 }
 
 function render() {
