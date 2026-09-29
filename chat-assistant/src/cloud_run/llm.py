@@ -57,6 +57,23 @@ RESPONSE_SCHEMA = {
                 "required": ["type", "source_message", "directed_at_me", "confidence", "reason"],
             },
         },
+        "project": {
+            "type": "OBJECT",
+            "description": "The project this conversation is about, if it is one",
+            "properties": {
+                "is_project": {**_B, "description": "False for day-to-day channels, notifications, social chat"},
+                "project_id": {**_S, "description": "Id from KNOWN PROJECTS if it matches one, else empty"},
+                "name": _S,
+                "summary": {**_S, "description": "One or two sentences: goal and current state"},
+                "status": {"type": "STRING", "enum": ["active", "paused", "blocked", "done", "unknown"]},
+                "owner": _S,
+            },
+            "required": ["is_project"],
+        },
+        "facts": {"type": "ARRAY", "description": "Up to 3 durable facts worth remembering (not tasks)",
+                  "items": _S},
+        "questions": {"type": "ARRAY", "description": "Up to 2 questions for the owner about important gaps",
+                      "items": _S},
     },
     "required": ["tasks", "actions"],
 }
@@ -93,15 +110,23 @@ ACTIONS (things you do as {owner_name}, sent under their name)
   If anything is ambiguous, use a low confidence; it goes to {owner_name} for approval.
 - No action is a fine answer. Most conversations need none.
 
+LEARNING (you are building a picture of every project in both companies)
+- project: say whether this conversation is about a project (a piece of work with a goal) or a day-to-day
+  channel. If it matches one in KNOWN PROJECTS, give its project_id; otherwise name it.
+- facts: at most 3 durable things worth remembering (who owns what, decisions, how a process works,
+  which systems are used). Skip anything already known and anything transient.
+- questions: at most 2 questions for {owner_name} about important gaps you can't answer from the chat.
+
 Refer to messages by their "name" field exactly as given.
 """
 
 
-def build_prompt(owner, now_local, time_zone, conversation, open_tasks):
+def build_prompt(owner, now_local, time_zone, conversation, open_tasks, known_projects=""):
     head = INSTRUCTIONS.format(owner_name=owner["name"], owner_email=owner["email"],
                                now_local=now_local, time_zone=time_zone)
     return (
         f"{head}\n"
+        f"KNOWN {known_projects or 'PROJECTS: none yet'}\n\n"
         f"CONVERSATION\n{json.dumps(conversation['header'], ensure_ascii=False)}\n\n"
         f"EARLIER MESSAGES (context only; already processed)\n"
         f"{json.dumps(conversation['context'], ensure_ascii=False, indent=1)}\n\n"
@@ -142,4 +167,6 @@ class Gemini:
         parts = resp.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
         text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
         result = json.loads(text)
-        return {"tasks": result.get("tasks") or [], "actions": result.get("actions") or []}
+        return {"tasks": result.get("tasks") or [], "actions": result.get("actions") or [],
+                "project": result.get("project") or {}, "facts": result.get("facts") or [],
+                "questions": result.get("questions") or []}

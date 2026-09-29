@@ -22,9 +22,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+import knowledge
 from google_apis import Directory, GoogleApiError
 from llm import build_prompt
-from store import utcnow_iso
+from store import AUTONOMY_CATEGORIES, utcnow_iso
 
 TIME_ZONE = os.environ.get("TIME_ZONE", "America/Toronto")
 INITIAL_LOOKBACK_HOURS = float(os.environ.get("INITIAL_LOOKBACK_HOURS", "24"))
@@ -214,20 +215,52 @@ def process_space(ctx, space, since_iso):
             participants[user] = {"name": directory.name(user), "email": directory.email(user)}
 
     key = space_key(name)
+    store.save_item("spaces", key, {"label": label, "type": space.get("spaceType", ""), "uri": space.get("spaceUri", ""),
+                                    "last_active": space.get("lastActiveTime", ""), "updated_at": utcnow_iso()})
     open_tasks = [t for t in ctx["tasks_by_space"].get(key, []) if t.get("status") != "done"][:30]
     header = {"space": label, "type": space.get("spaceType"), "participants": list(participants.values())}
     prompt = build_prompt(owner, ctx["now_local"], TIME_ZONE,
                           {"header": header, "context": context, "new": new},
                           [{"task_id": t["id"], "title": t.get("title"), "status": t.get("status"),
                             "owner": t.get("owner"), "due": t.get("due"), "detail": t.get("detail", "")}
-                           for t in open_tasks])
+                           for t in open_tasks],
+                          known_projects=ctx["projects_brief"])
     result = llm.analyze(prompt)
 
     where = {"space": key, "space_name": name, "space_label": label, "space_uri": space.get("spaceUri", "")}
     known_messages = set(by_name) | {m["name"] for m in context}
+    external = any(not p["email"] for p in participants.values())  # someone outside the company directory
+    project_id = _apply_learning(store, result, where, stats)
+    if project_id:
+        where = {**where, "project_id": project_id}  # new tasks from this conversation belong to its project
     _apply_tasks(store, result["tasks"], open_tasks, where, known_messages, by_name, stats)
-    _apply_actions(ctx, result["actions"], where, by_name, raw_by_name, new_raw, stats)
+    _apply_actions(ctx, result["actions"], where, by_name, raw_by_name, new_raw, stats, external)
     return watermark, stats
+
+
+def _apply_learning(store, result, where, stats):
+    """Projects, facts and questions the conversation revealed."""
+    source = f"chat: {where['space_label']}"
+    project = result.get("project") or {}
+    project_id = ""
+    if project.get("is_project") and (project.get("project_id") or project.get("name")):
+        saved = knowledge.save_project(store, {
+            "project_id": project.get("project_id"), "name": project.get("name") or where["space_label"],
+            "summary": project.get("summary"), "status": project.get("status") if project.get("status") != "unknown" else "",
+            "owner": project.get("owner"),
+        }, source=source)
+        if saved:
+            project_id = saved["id"]
+            spaces = sorted(set(saved.get("spaces") or []) | {where["space"]})
+            store.save_item("projects", project_id, {"spaces": spaces})
+            stats["projects"] = stats.get("projects", 0) + 1
+    for fact in (result.get("facts") or [])[:3]:
+        if knowledge.add_fact(store, fact, "project" if project_id else "general", project_id, source):
+            stats["facts"] = stats.get("facts", 0) + 1
+    for question in (result.get("questions") or [])[:2]:
+        if knowledge.add_question(store, question, f"Came up in {where['space_label']}", project_id, 2, source):
+            stats["questions"] = stats.get("questions", 0) + 1
+    return project_id
 
 
 def _apply_tasks(store, tasks, open_tasks, where, known_messages, by_name, stats):
@@ -281,7 +314,7 @@ def _answered_later(new_raw, source, owner_ids):
                for m in new_raw)
 
 
-def _apply_actions(ctx, actions, where, by_name, raw_by_name, new_raw, stats):
+def _apply_actions(ctx, actions, where, by_name, raw_by_name, new_raw, stats, external=False):
     store, settings, directory, budget = ctx["store"], ctx["settings"], ctx["directory"], ctx["budget"]
     for a in actions:
         msg = by_name.get(a.get("source_message") or "")
@@ -317,7 +350,9 @@ def _apply_actions(ctx, actions, where, by_name, raw_by_name, new_raw, stats):
         else:
             continue
 
-        blocked = _blocked_reason(a, raw_by_name[msg["name"]], settings, ctx["now"])
+        category = ("customer_messages" if external else "internal_chat") if kind == "chat_reply" else "calendar"
+        record["category"] = category
+        blocked = _blocked_reason(a, raw_by_name[msg["name"]], settings, ctx["now"], category)
         if not blocked and not budget.take():
             blocked = f"hourly limit of {MAX_ACTIONS_PER_RUN} automatic actions reached"
         if blocked:
@@ -329,9 +364,11 @@ def _apply_actions(ctx, actions, where, by_name, raw_by_name, new_raw, stats):
         stats["actions_done" if outcome["status"] == "done" else "actions_failed"] += 1
 
 
-def _blocked_reason(action, raw_message, settings, now):
+def _blocked_reason(action, raw_message, settings, now, category="internal_chat"):
     if not settings.get("auto_act", True):
         return "automatic actions are paused"
+    if (settings.get("autonomy") or {}).get(category, "ask") != "auto":
+        return f"{AUTONOMY_CATEGORIES.get(category, category).lower()} need your OK (autonomy setting)"
     if not action.get("directed_at_me"):
         return "not clearly directed at you"
     confidence = float(action.get("confidence") or 0)
@@ -409,11 +446,17 @@ def _resolve_owner(google, spaces, directory, owner):
 # -- the whole pass ---------------------------------------------------------------
 
 def run(store, google, llm, now=None, progress=None):
+    """One pass. A caller that passes `progress` finishes it; otherwise this run finishes its own."""
+    if progress is None:
+        own = Progress(store)
+        try:
+            return run(store, google, llm, now, own)
+        finally:
+            own.finish()
     now = now or datetime.now(timezone.utc)
-    progress = progress or Progress(store)
     summary = {"started_at": now.isoformat(), "spaces_total": 0, "spaces_processed": 0, "messages": 0,
                "tasks_created": 0, "tasks_updated": 0, "actions_done": 0, "actions_suggested": 0,
-               "actions_failed": 0, "errors": []}
+               "actions_failed": 0, "projects": 0, "facts": 0, "questions": 0, "errors": []}
     owner = store.get_owner()
     if not owner:
         raise ReconnectNeeded("no owner has signed in yet")
@@ -455,7 +498,7 @@ def run(store, google, llm, now=None, progress=None):
     ctx = {"google": google, "store": store, "llm": llm, "directory": directory, "owner": owner,
            "settings": store.get_settings(), "now": now, "now_local": now.astimezone(TZ).strftime("%A %Y-%m-%d %H:%M"),
            "budget": Budget(MAX_ACTIONS_PER_RUN), "tasks_by_space": tasks_by_space, "label_cache": {},
-           "progress": progress}
+           "progress": progress, "projects_brief": knowledge.brief(store, compact=True)}
 
     progress.reading(len(due))
     with ThreadPoolExecutor(max_workers=PARALLEL_SPACES) as pool:
@@ -473,8 +516,8 @@ def run(store, google, llm, now=None, progress=None):
             store.set_watermarks({space_key(space["name"]): watermark})
             summary["spaces_processed"] += 1
             for k in ("messages", "tasks_created", "tasks_updated", "actions_done", "actions_suggested",
-                      "actions_failed"):
-                summary[k] += stats[k]
+                      "actions_failed", "projects", "facts", "questions"):
+                summary[k] += stats.get(k, 0)
 
     summary["finished_at"] = utcnow_iso()
     progress.phase("Finishing")

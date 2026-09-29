@@ -34,6 +34,14 @@ done
 gcloud secrets add-iam-policy-binding chat-assistant-user-token --project $PROJECT \
   --member serviceAccount:$SA --role roles/secretmanager.secretVersionManager --quiet >/dev/null
 
+# AI partners: ChatGPT's key (and an Anthropic key, only if you use the Claude API instead of Vertex).
+for s in CHATGPT_API_KEY ANTHROPIC_API_KEY; do
+  if gcloud secrets describe $s --project $PROJECT >/dev/null 2>&1; then
+    gcloud secrets add-iam-policy-binding $s --project $PROJECT \
+      --member serviceAccount:$SA --role roles/secretmanager.secretAccessor --quiet >/dev/null
+  fi
+done
+
 TOKEN=$(gcloud secrets versions access latest --secret chat-assistant-run-token --project $PROJECT 2>/dev/null || true)
 if [ -z "$TOKEN" ]; then
   TOKEN=$(openssl rand -hex 32)

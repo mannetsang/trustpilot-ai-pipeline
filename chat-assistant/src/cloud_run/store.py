@@ -22,9 +22,31 @@ from datetime import datetime, timezone
 
 GCP_PROJECT = os.environ.get("GCP_PROJECT", "shp-ai-bot-2026")
 
-DEFAULT_SETTINGS = {
-    "auto_act": True,
+# What the assistant may do without asking, per category ("auto" or "ask").
+# "Tiered" autonomy: internal work runs on its own; anything that reaches
+# customers, money, staff or deletes data waits for the owner until loosened.
+AUTONOMY_CATEGORIES = {
+    "internal_chat": "Messages to colleagues in Google Chat",
+    "calendar": "Calendar events and invites",
+    "customer_messages": "Messages to customers or anyone outside the company",
+    "money": "Refunds, prices, discounts, ad budgets, payments",
+    "staff_hr": "Staff, schedules, hiring, HR",
+    "delete_data": "Deleting or overwriting data",
 }
+DEFAULT_AUTONOMY = {
+    "internal_chat": "auto", "calendar": "auto",
+    "customer_messages": "ask", "money": "ask", "staff_hr": "ask", "delete_data": "ask",
+}
+
+DEFAULT_SETTINGS = {
+    "auto_act": True,          # master switch: off = everything waits for approval
+    "read_bot_posts": False,
+    "autonomy": DEFAULT_AUTONOMY,
+    "partners_enabled": True,  # let Claude and ChatGPT see company context
+    "openai_model": "",        # empty = OPENAI_MODEL env default
+}
+
+KB_KINDS = ("projects", "facts", "questions", "systems", "spaces")
 
 
 def utcnow_iso():
@@ -67,7 +89,48 @@ class MemoryStore:
 
     # -- shared API (implemented once, on top of the primitives) -----------
     def get_settings(self):
-        return {**DEFAULT_SETTINGS, **(self._get("chat_assistant", "settings") or {})}
+        stored = self._get("chat_assistant", "settings") or {}
+        merged = {**DEFAULT_SETTINGS, **stored}
+        merged["autonomy"] = {**DEFAULT_AUTONOMY, **(stored.get("autonomy") or {})}
+        return merged
+
+    # -- knowledge base: projects, facts, questions, systems, spaces ----------
+    def list_items(self, kind):
+        assert kind in KB_KINDS, kind
+        return sorted(self._list(f"chat_assistant_{kind}"), key=lambda d: d.get("updated_at") or d.get("created_at", ""),
+                      reverse=True)
+
+    def get_item(self, kind, item_id):
+        assert kind in KB_KINDS, kind
+        doc = self._get(f"chat_assistant_{kind}", item_id)
+        return dict(doc, id=item_id) if doc else None
+
+    def save_item(self, kind, item_id, data):
+        assert kind in KB_KINDS, kind
+        self._set(f"chat_assistant_{kind}", item_id, {k: v for k, v in data.items() if k != "id"}, merge=True)
+        return self.get_item(kind, item_id)
+
+    def delete_item(self, kind, item_id):
+        assert kind in KB_KINDS, kind
+        self._delete(f"chat_assistant_{kind}", item_id)
+
+    # -- conversations with the assistant and its partners ---------------------
+    def get_talk(self, partner):
+        return (self._get("chat_assistant_talk", partner) or {}).get("turns", [])
+
+    def append_talk(self, partner, turns, keep=60):
+        history = (self.get_talk(partner) + list(turns))[-keep:]
+        self._set("chat_assistant_talk", partner, {"turns": history, "updated_at": utcnow_iso()})
+        return history
+
+    def clear_talk(self, partner):
+        self._delete("chat_assistant_talk", partner)
+
+    def get_flag(self, name):
+        return (self._get("chat_assistant", "flags") or {}).get(name)
+
+    def set_flag(self, name, value):
+        self._set("chat_assistant", "flags", {name: value}, merge=True)
 
     def update_settings(self, changes):
         self._set("chat_assistant", "settings", changes, merge=True)
