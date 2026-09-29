@@ -44,6 +44,26 @@ class ReconnectNeeded(RuntimeError):
     """The owner's Google token was revoked or expired; they must sign in again."""
 
 
+def error_text(exc, limit=300):
+    """The message plus where it happened, e.g. "... (at credentials.py:101, from google_apis.py:61)".
+
+    A failed run's one-line summary then says where to look, without the full traceback.
+    """
+    import traceback
+
+    frames = traceback.extract_tb(exc.__traceback__)
+    where = ""
+    if frames:
+        here = os.path.dirname(os.path.abspath(__file__))
+        spot = lambda f: f"{os.path.basename(f.filename)}:{f.lineno}"  # noqa: E731
+        ours = [f for f in frames if os.path.dirname(os.path.abspath(f.filename)) == here]
+        where = f" (at {spot(frames[-1])}"
+        if ours and ours[-1] is not frames[-1]:
+            where += f", from {spot(ours[-1])}"
+        where += ")"
+    return f"{str(exc)[:limit - len(where)]}{where}"
+
+
 def parse_ts(value):
     """RFC 3339 from Google (up to nanoseconds, trailing Z) -> aware datetime."""
     if not value:
@@ -514,7 +534,7 @@ def run(store, google, llm, now=None, progress=None):
                 watermark, stats = fut.result()
             except Exception as exc:  # noqa: BLE001 - one bad space must not stop the rest
                 label = space.get("displayName") or ctx["label_cache"].get(space["name"]) or space["name"]
-                summary["errors"].append({"space": label, "error": str(exc)[:300]})
+                summary["errors"].append({"space": label, "error": error_text(exc)})
                 progress.space_done(space["name"])
                 continue
             progress.space_done(space["name"], stats)

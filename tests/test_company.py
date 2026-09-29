@@ -590,6 +590,17 @@ class WebTests(unittest.TestCase):
         self.assertEqual(frames[-1]["type"], "error")
         self.assertIn("switched off", frames[-1]["message"])
 
+    def test_hidden_elements_stay_hidden(self):
+        # .voicebar sets display: flex, which beats the browser's own [hidden] rule without this.
+        self.assertIn("[hidden] { display: none !important; }", self.client.get("/").get_data(as_text=True))
+
+    def test_a_failed_run_says_where(self):
+        with mock.patch.object(self.main.assistant, "run", side_effect=lambda *a, **k: self.main.assistant.parse_ts(5)):
+            body, status = self.main.do_run("manual")
+        self.assertEqual(status, 500)
+        self.assertRegex(body["error"], r"\(at assistant\.py:\d+\)$")
+        self.assertIn("Traceback", body["trace"])
+
     def test_page_and_state_carry_the_same_version(self):
         # An open tab compares these to notice a new deploy and reload itself.
         page = self.client.get("/").get_data(as_text=True)
