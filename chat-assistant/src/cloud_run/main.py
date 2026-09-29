@@ -327,8 +327,9 @@ def scheduled_run():
     return jsonify(body), status
 
 
-@app.get("/healthz")
-def healthz():
+# Not /healthz: Cloud Run reserves paths ending in "z" and never forwards them.
+@app.get("/health")
+def health():
     return "ok"
 
 
