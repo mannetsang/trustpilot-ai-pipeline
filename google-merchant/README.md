@@ -29,7 +29,7 @@ nothing for Secret Manager to hold.
    | Runs where | Identity |
    |---|---|
    | Claude cloud sessions | `claude-sessions@shp-ai-bot-2026.iam.gserviceaccount.com` |
-   | GitHub Actions | the `client_email` inside the `GCP_SA_KEY` repository secret |
+   | GitHub Actions | the same `claude-sessions` account, via Workload Identity Federation (no key) |
 
    If those are the same account, add it once. Your own Google account is
    already an Admin, so running locally after

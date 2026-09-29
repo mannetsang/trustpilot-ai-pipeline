@@ -13,6 +13,13 @@ on:
         required: false
         default: false
 
+# Keyless Google Cloud auth (Workload Identity Federation): the job asks GitHub
+# for an OIDC token and Google swaps it for claude-sessions' credentials. No
+# JSON key is stored — GCP_SA_KEY is retired. See docs/credentials.md.
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   report:
     runs-on: ubuntu-latest
@@ -23,11 +30,12 @@ jobs:
         with:
           python-version: '3.11'
 
-      # Credentials come from Secret Manager, so GCP_SA_KEY is the only
-      # secret this repo needs — the BigCommerce token never touches GitHub.
+      # Credentials come from Secret Manager, reached through federation, so
+      # no secret is needed at all — the BigCommerce token never touches GitHub.
       - uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          workload_identity_provider: projects/304363458561/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: claude-sessions@shp-ai-bot-2026.iam.gserviceaccount.com
 
       - name: Install dependencies
         run: pip install --quiet google-cloud-secret-manager

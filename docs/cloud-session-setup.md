@@ -99,7 +99,8 @@ available on this organization. So a cloud session can only reach GCP if a
 credential is readable inside it. Two honest options:
 
 **Keep secrets out of sessions.** Reports and syncs run in GitHub Actions or
-Cloud Run, authenticating with `GCP_SA_KEY`. Nothing sensitive enters a
+Cloud Run, authenticating keylessly through Workload Identity Federation
+(see `credentials.md`). Nothing sensitive enters a
 transcript. Best for anything recurring.
 
 **A scoped key in the environment variables box.** If sessions need to
