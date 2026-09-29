@@ -30,6 +30,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 import assistant
 import integrations
 import knowledge
+import worker
 from google_apis import ASSISTANT_SCOPES, IDENTITY_SCOPES, GoogleClient, credentials_from_json
 from store import AUTONOMY_CATEGORIES, make_secrets, make_store, utcnow_iso
 from talk import PARTNERS, Talk
@@ -274,6 +275,21 @@ def api_create_task():
         **fields, "origin": "manual", "user_edited": True, "created_at": now, "updated_at": now,
     })
     return jsonify(task=task)
+
+
+@app.post("/api/tasks/<task_id>/work")
+def api_work_task(task_id):
+    """Give a task to the assistant and let it work it now (it reports on the task and in Talk)."""
+    if not store.get_task(task_id):
+        return jsonify(error="No such task."), 404
+    try:
+        outcome = worker.work_on(talk_service(), store, task_id)
+    except worker.Busy as exc:
+        return jsonify(error=str(exc)), 409
+    except Exception as exc:  # noqa: BLE001 - shown as a toast; the task keeps the error
+        print(f"work[{task_id}] failed: {exc!r}")
+        return jsonify(error=f"The assistant couldn't finish working on it: {str(exc)[:300]}"), 502
+    return jsonify(task=store.get_task(task_id), report=outcome["report"], done=outcome["done"])
 
 
 @app.patch("/api/tasks/<task_id>")
@@ -650,6 +666,11 @@ def do_run(trigger):
             raise assistant.ReconnectNeeded("Google isn't connected yet.")
         summary = assistant.run(store, google, app.config["MAKE_LLM"](), progress=progress)
         summary["trigger"] = trigger
+        progress.phase("Working on the assistant's own tasks")
+        try:
+            summary["tasks_worked"] = worker.work_due(talk_service(), store)
+        except Exception as exc:  # noqa: BLE001 - reading chats still counts as a good run
+            summary["errors"].append({"space": "(assistant's tasks)", "error": str(exc)[:300]})
         store.add_run(summary)
         store.set_status({"last_run": summary, "connection_error": ""})
         progress.finish()

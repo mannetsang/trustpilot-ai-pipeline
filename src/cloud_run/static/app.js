@@ -366,6 +366,8 @@ function taskCard(t) {
     meta.append(el("span", { class: `chip ${cls}` }, t.due === today ? "Due today" : `Due ${t.due}`));
   }
   if (t.origin === "assistant") meta.append(el("span", { class: "chip", title: "Added by the assistant" }, "AI"));
+  if (working(t)) meta.append(el("span", { class: "chip working" }, el("span", { class: "spinner" }), " working…"));
+  else if (t.result) meta.append(el("span", { class: "chip", title: "The assistant has reported on this task" }, "🤖 report"));
   const next = STATUS_ORDER[STATUS_ORDER.indexOf(t.status) + 1];
   const card = el("div", { class: "card", tabindex: "0", role: "button",
       onclick: () => openTask(t), onkeydown: (e) => { if (e.key === "Enter") openTask(t); } },
@@ -393,6 +395,38 @@ function renderBoard() {
   }
 }
 
+// The assistant is on it: marked when work starts, cleared when it reports (15 min cap, as on the server).
+const working = (t) => !!t.working_since && Date.now() - new Date(t.working_since).getTime() < 15 * 60 * 1000;
+
+function showTaskReport(t) {
+  const box = $("taskResult");
+  box.hidden = !(t && (t.result || t.work_error || working(t)));
+  if (box.hidden) return;
+  if (working(t)) { box.replaceChildren(el("b", {}, "The assistant is working on this…")); return; }
+  box.replaceChildren(el("b", {}, `The assistant's report (${ago(t.worked_at)})`),
+    t.work_error ? `It stopped with an error: ${t.work_error}` : t.result,
+    t.work_tools && t.work_tools.length ? el("div", { class: "tools" }, `Used: ${t.work_tools.join(", ")}`) : null);
+}
+
+$("workTask").onclick = async () => {
+  if (!editing) { toast("Save the task first, then give it to the assistant."); return; }
+  const t = editing;
+  $("taskDialog").close();
+  state.tasks = state.tasks.map((x) => (x.id === t.id ? { ...x, owner: "Assistant", owner_is_me: false, working_since: new Date().toISOString() } : x));
+  renderBoard();
+  toast(`The assistant is working on “${t.title}”. Its report will appear on the task and in Talk.`);
+  try {
+    const { task, done } = await api("POST", `/api/tasks/${encodeURIComponent(t.id)}/work`);
+    state.tasks = state.tasks.map((x) => (x.id === t.id ? task : x));
+    toast(done ? `Done: “${t.title}”` : `Report ready on “${t.title}”`);
+    if (partner === "assistant") loadTalk();
+  } catch (e) {
+    toast(e.message);
+    load().catch(() => {});
+  }
+  renderBoard();
+};
+
 function openTask(t) {
   editing = t || null;
   const f = $("taskForm");
@@ -405,6 +439,8 @@ function openTask(t) {
   f.priority.value = t ? t.priority || "medium" : "medium";
   f.owner_is_me.checked = t ? !!t.owner_is_me : true;
   $("deleteTask").hidden = !t;
+  $("workTask").hidden = !t || t.status === "done";
+  showTaskReport(t);
   const src = $("taskSource"); src.replaceChildren();
   if (t && t.space_label) {
     src.append(`From ${where(t)}${t.source_excerpt ? `: “${t.source_excerpt}” ` : " "}`);

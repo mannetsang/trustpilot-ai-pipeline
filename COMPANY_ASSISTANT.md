@@ -111,6 +111,22 @@ and staff names reach Claude spelled right, and Claude is told the words were sp
 so it reads misheard names charitably. On Gemini's line a turn ends after a 1.5 s pause
 (`RELAY_END_SILENCE_MS`; Gemini's default split a request at a 0.9 s pause).
 
+## Working on its own
+
+Every partner is told to use its access before answering: look things up in the
+connected systems (`list_integrations`, `call_api`), research the web (`web_search`,
+`read_webpage`, through the stored Firecrawl key), and chain up to 24 tool calls per
+answer. Research APIs: Firecrawl (search, read pages) and DataForSEO (SERPs, keyword
+volumes, rankings; each call costs a few cents).
+
+**Board → a task → 🤖 Give to assistant** makes the assistant the task's owner and has
+it work the task right away (`worker.py`); each hourly run works up to `WORK_PER_RUN`
+(3) of its open tasks again, any it hasn't touched for six hours. It works with every
+tool, but alone it can't change data or message anyone (it prepares the exact change
+or text and asks for your OK). When a task is finished it marks it done. Its report
+appears on the task (and a 🤖 report badge on the card) and in the Assistant's Talk
+conversation.
+
 ## Company systems (connected for real)
 
 Every partner (typed or on a call) has two tools for company systems:

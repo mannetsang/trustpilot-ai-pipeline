@@ -14,7 +14,7 @@ from tools import to_gemini_schema
 GCP_PROJECT = os.environ.get("GCP_PROJECT", "shp-ai-bot-2026")
 VERTEX_LOCATION = os.environ.get("VERTEX_LOCATION", "us-central1")
 TALK_MODEL = os.environ.get("TALK_MODEL", os.environ.get("GEMINI_MODEL", "gemini-2.5-pro"))
-MAX_STEPS = 10
+MAX_STEPS = 24  # research chains many lookups: search, read, query, compare
 
 LABEL = "Assistant (Gemini)"
 _creds = None

@@ -108,6 +108,10 @@
     .msg.live { opacity: .8; font-style: italic; }
     .msg .tools { font-size: 12px; color: var(--faint); margin-top: 6px; font-style: normal; }
     .msg .when { font-size: 11px; color: var(--faint); margin-top: 4px; }
+    .report { white-space: pre-wrap; background: var(--panel-2); border-radius: var(--radius); padding: 10px 12px;
+      font-size: 13px; line-height: 1.5; max-height: 260px; overflow: auto; margin-top: 8px; }
+    .report b { display: block; margin-bottom: 4px; }
+    .chip.working { background: var(--accent-weak); color: var(--accent); }
     .msg .spk { border: 0; background: none; color: var(--muted); cursor: pointer; font: inherit; font-size: 13px;
       padding: 2px 6px; margin-left: 6px; border-radius: 6px; vertical-align: middle; }
     .msg .spk:hover, .msg .spk.on { background: var(--accent-weak); color: var(--accent); }
@@ -282,9 +286,11 @@
     </div>
     <label class="check"><input type="checkbox" name="owner_is_me"> This is mine</label>
     <div id="taskSource" class="why"></div>
+    <div id="taskResult" class="report" hidden></div>
     <div class="dialog-foot">
       <button type="button" class="btn danger left" id="deleteTask">Delete</button>
       <button type="button" class="btn" id="cancelTask">Cancel</button>
+      <button type="button" class="btn" id="workTask" title="The assistant works on it now with its tools, and again every hour until it's done">🤖 Give to assistant</button>
       <button type="submit" class="btn primary">Save</button>
     </div>
   </form>
