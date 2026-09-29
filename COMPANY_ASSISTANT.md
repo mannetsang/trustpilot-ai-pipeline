@@ -81,7 +81,9 @@ Use Chrome or Edge. Only your signed-in session, from the app's own page, can op
 the voice socket.
 
 Each bot has one voice, on calls and when its replies are read aloud: the Assistant
-**Kore** (Gemini), Claude **cedar** and ChatGPT **marin** (both OpenAI).
+**Kore** (Gemini), Claude **cedar** and ChatGPT **marin** (both OpenAI). Hovering over a
+partner's button names the models behind it, and a call's bar names the model on the
+line ("Listening (gpt-realtime-2.1)").
 
 **ChatGPT** calls work the same way as the Assistant's, on OpenAI's own live model
 (`gpt-realtime-2.1` through the Realtime API, with the `CHATGPT_API_KEY` secret):
@@ -114,7 +116,9 @@ so it reads misheard names charitably. On Gemini's line a turn ends after a 1.5 
 **🔊** on any reply, or the **Read replies aloud** switch (remembered in this browser),
 speaks a typed reply out loud in that bot's call voice: the Assistant with Gemini
 text-to-speech on Vertex AI (`gemini-2.5-flash-tts`), Claude and ChatGPT with OpenAI's
-(`gpt-4o-mini-tts`). If one provider fails the other reads instead. Speech is
+(`gpt-4o-mini-tts`). If one provider fails the other reads instead, except for
+ChatGPT: clicking ChatGPT means OpenAI's models only, so its reading fails with a
+message rather than switch to Gemini. Speech is
 streamed, so it starts in about two seconds whatever the length; markdown and links
 are cleaned out first. A finished reading is cached, so replaying it is free.
 Starting a voice call or switching partners stops a reading.

@@ -152,7 +152,7 @@ const partnerInfo = (name) => kb.partners.find((p) => p.name === name) || { labe
 function renderPartners() {
   const box = $("partners");
   box.replaceChildren(...kb.partners.map((p) => el("button", {
-    class: `partner${p.name === partner ? " active" : ""}`, title: p.available ? "" : p.detail, "data-partner": p.name,
+    class: `partner${p.name === partner ? " active" : ""}`, title: p.available ? p.models || "" : p.detail, "data-partner": p.name,
     onclick: () => selectPartner(p.name),
   }, el("span", { class: `pdot${p.available ? "" : " off"}` }), p.label)),
   el("span", { class: "spacer", style: "flex:1" }),

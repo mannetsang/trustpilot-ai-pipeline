@@ -311,9 +311,27 @@ def api_knowledge():
         systems=store.list_items("systems"),
         facts=store.list_items("facts")[:200],
         autonomy_categories=[[k, v] for k, v in AUTONOMY_CATEGORIES.items()],  # lists keep their order in JSON
-        partners=[{"name": name, "label": module.LABEL, "available": ok, "detail": why}
+        partners=[{"name": name, "label": module.LABEL, "available": ok, "detail": why, "models": partner_models(name)}
                   for name, module in PARTNERS.items() for ok, why in [service.partner_status(name)]],
     )
+
+
+def partner_models(name):
+    """Which models are behind a partner, shown on its button, so it's plain who's answering."""
+    import partner_claude
+    import partner_gemini
+    import partner_openai
+    import voice
+    import voice_openai
+
+    if name == "assistant":
+        return f"Gemini: {partner_gemini.TALK_MODEL} when typing, {voice.LIVE_MODEL} on calls"
+    if name == "chatgpt":
+        typed = store.get_settings().get("openai_model") or partner_openai.OPENAI_MODEL
+        call = voice_openai.OPENAI_LIVE_MODEL if CHATGPT_VOICE == "realtime" else f"{typed} through Gemini's voice line"
+        return f"OpenAI: {typed} when typing, {call} on calls"
+    line = voice_openai.OPENAI_LIVE_MODEL if CLAUDE_VOICE == "realtime" else voice.LIVE_MODEL
+    return f"Anthropic: {partner_claude.CLAUDE_MODEL}, typing and on calls ({line} carries the voice)"
 
 
 @app.post("/api/questions/<question_id>/answer")
@@ -528,9 +546,11 @@ def voice_ws(ws):
                 bridge = voice_openai.RealtimeVoiceBridge(ws, store, toolset, instruction, openai_connect(),
                                                           save_as=None, hints=knowledge.name_hints(store),
                                                           voice=own_voice, reminder=False, label=label)
+                bridge.shown_model = f"{label}, voice by {voice_openai.OPENAI_LIVE_MODEL}"
             else:  # Gemini's line
                 bridge = voice.VoiceBridge(ws, store, toolset, instruction, connect=app.config.get("VOICE_CONNECT"),
                                            save_as=None, end_silence_ms=voice.RELAY_END_SILENCE_MS)
+                bridge.shown_model = f"{label}, voice by {voice.LIVE_MODEL}"
     except Exception as exc:  # noqa: BLE001 - without this the socket would stay open and silent
         import traceback
 
