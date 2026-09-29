@@ -27,8 +27,10 @@ from flask import Flask, jsonify, redirect, render_template, request, session
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 import assistant
+import knowledge
 from google_apis import ASSISTANT_SCOPES, IDENTITY_SCOPES, GoogleClient, credentials_from_json
-from store import make_secrets, make_store, utcnow_iso
+from store import AUTONOMY_CATEGORIES, make_secrets, make_store, utcnow_iso
+from talk import PARTNERS, Talk
 
 # Google may grant scopes in a different spelling/order than requested.
 os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
@@ -47,6 +49,7 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 store = make_store()
 secret_store = make_secrets()
 app.secret_key = store.session_key()
+knowledge.ensure_seeded(store)
 app.config.update(
     SESSION_COOKIE_SECURE=not LOCAL,
     SESSION_COOKIE_HTTPONLY=True,
@@ -278,8 +281,184 @@ def api_dismiss_action(action_id):
 @app.patch("/api/settings")
 def api_settings():
     body = request.get_json(force=True) or {}
-    changes = {k: bool(body[k]) for k in ("auto_act", "read_bot_posts") if k in body}
+    changes = {k: bool(body[k]) for k in ("auto_act", "read_bot_posts", "partners_enabled") if k in body}
+    if isinstance(body.get("autonomy"), dict):
+        current = store.get_settings()["autonomy"]
+        changes["autonomy"] = {**current, **{k: v for k, v in body["autonomy"].items()
+                                             if k in AUTONOMY_CATEGORIES and v in ("auto", "ask")}}
+    if "openai_model" in body:
+        changes["openai_model"] = str(body["openai_model"] or "").strip()[:60]
     return jsonify(settings=store.update_settings(changes))
+
+
+# -- knowledge base, interview, access ------------------------------------------------
+
+def talk_service():
+    return Talk(store, secret_store, app.config["MAKE_GOOGLE"], OWNER_EMAIL)
+
+
+@app.get("/api/knowledge")
+def api_knowledge():
+    service = talk_service()
+    return jsonify(
+        projects=store.list_items("projects"),
+        questions=store.list_items("questions"),
+        systems=store.list_items("systems"),
+        facts=store.list_items("facts")[:200],
+        autonomy_categories=[[k, v] for k, v in AUTONOMY_CATEGORIES.items()],  # lists keep their order in JSON
+        partners=[{"name": name, "label": module.LABEL, "available": ok, "detail": why}
+                  for name, module in PARTNERS.items() for ok, why in [service.partner_status(name)]],
+    )
+
+
+@app.post("/api/questions/<question_id>/answer")
+def api_answer_question(question_id):
+    q = store.get_item("questions", question_id)
+    if not q:
+        return jsonify(error="No such question."), 404
+    answer = str((request.get_json(force=True) or {}).get("answer", "")).strip()
+    if not answer:
+        return jsonify(error="Type an answer first."), 400
+    now = utcnow_iso()
+    store.save_item("questions", question_id, {"status": "answered", "answer": answer[:8000], "answered_at": now,
+                                               "updated_at": now})
+    knowledge.add_fact(store, f"Q: {q['question']} A: {answer}", "general", q.get("project_id", ""), "owner's answer")
+    try:
+        digest = talk_service().digest_answer(q, answer)
+        note = digest["text"]
+        tools = digest.get("tools", [])
+    except Exception as exc:  # noqa: BLE001 - the answer is saved either way
+        note, tools = f"Saved your answer, but couldn't process it further: {exc}", []
+    store.save_item("questions", question_id, {"digest": note[:1000]})
+    return jsonify(question=store.get_item("questions", question_id), note=note, tools=tools)
+
+
+@app.post("/api/questions/<question_id>/dismiss")
+def api_dismiss_question(question_id):
+    if not store.get_item("questions", question_id):
+        return jsonify(error="No such question."), 404
+    return jsonify(question=store.save_item("questions", question_id, {"status": "dismissed",
+                                                                       "updated_at": utcnow_iso()}))
+
+
+@app.post("/api/questions")
+def api_add_question():
+    body = request.get_json(force=True) or {}
+    q = knowledge.add_question(store, body.get("question", ""), body.get("why", ""), body.get("project_id", ""),
+                               body.get("priority", 2), source="you")
+    return (jsonify(question=q), 200) if q else (jsonify(error="Type a question."), 400)
+
+
+PROJECT_FIELDS = ("name", "company", "goal", "owner", "status", "deadline", "summary", "next_steps")
+
+
+@app.post("/api/projects")
+def api_create_project():
+    body = request.get_json(force=True) or {}
+    project = knowledge.save_project(store, {k: body.get(k) for k in PROJECT_FIELDS}, source="you")
+    return (jsonify(project=project), 200) if project else (jsonify(error="A project needs a name."), 400)
+
+
+@app.patch("/api/projects/<project_id>")
+def api_update_project(project_id):
+    if not store.get_item("projects", project_id):
+        return jsonify(error="No such project."), 404
+    body = request.get_json(force=True) or {}
+    changes = {k: str(body[k])[:2000] for k in PROJECT_FIELDS if k in body}
+    return jsonify(project=store.save_item("projects", project_id, {**changes, "updated_at": utcnow_iso()}))
+
+
+@app.delete("/api/projects/<project_id>")
+def api_delete_project(project_id):
+    store.delete_item("projects", project_id)
+    return jsonify(ok=True)
+
+
+@app.patch("/api/systems/<system_id>")
+def api_update_system(system_id):
+    if not store.get_item("systems", system_id):
+        return jsonify(error="No such system."), 404
+    body = request.get_json(force=True) or {}
+    changes = {}
+    if body.get("status") in ("connected", "available", "needed", "requested", "not_used"):
+        changes["status"] = body["status"]
+    if "notes" in body:
+        changes["notes"] = str(body["notes"])[:1000]
+    return jsonify(system=store.save_item("systems", system_id, {**changes, "updated_at": utcnow_iso()}))
+
+
+# -- talking to the assistant and its partners -----------------------------------------
+
+@app.get("/api/talk/<partner>")
+def api_talk_history(partner):
+    if partner not in PARTNERS:
+        return jsonify(error="No such partner."), 404
+    return jsonify(turns=store.get_talk(partner))
+
+
+@app.post("/api/talk/<partner>")
+def api_talk(partner):
+    if partner not in PARTNERS:
+        return jsonify(error="No such partner."), 404
+    message = str((request.get_json(force=True) or {}).get("message", "")).strip()
+    if not message:
+        return jsonify(error="Say something first."), 400
+    try:
+        reply = talk_service().ask(partner, message)
+    except Exception as exc:  # noqa: BLE001 - shown in the conversation
+        import traceback
+
+        print(f"talk[{partner}] failed: {exc!r}\n{traceback.format_exc()}")
+        return jsonify(error=str(exc)[:500]), 502
+    return jsonify(reply=reply)
+
+
+@app.delete("/api/talk/<partner>")
+def api_talk_clear(partner):
+    if partner not in PARTNERS:
+        return jsonify(error="No such partner."), 404
+    store.clear_talk(partner)
+    return jsonify(ok=True)
+
+
+@app.post("/api/partners/test")
+def api_test_partners():
+    return jsonify(results=talk_service().test_partners())
+
+
+# -- live voice ----------------------------------------------------------------------
+
+def _voice_origin_ok():
+    """Only the app's own page may open the voice socket (blocks cross-site WebSocket use of the cookie)."""
+    origin = request.headers.get("Origin", "")
+    return bool(origin) and origin.rstrip("/") == (PUBLIC_URL or request.host_url.rstrip("/"))
+
+
+def voice_ws(ws):
+    import json as _json
+
+    import voice
+    from talk import system_prompt
+
+    if not signed_in() or not _voice_origin_ok():
+        ws.send(_json.dumps({"type": "error", "message": "Sign in to the app first."}))
+        return
+    service = talk_service()
+    toolset = service.toolset("assistant", voice=True)
+    recent = [t for t in store.get_talk("assistant") if t.get("text")][-8:]
+    history = "\n".join(f"{'Manne' if t['role'] == 'user' else 'You'}: {t['text'][:500]}" for t in recent)
+    instruction = system_prompt(store, "assistant", voice=True, owner_email=OWNER_EMAIL)
+    if history:
+        instruction += "\n\nRECENT CONVERSATION (continue from here)\n" + history
+    voice.VoiceBridge(ws, store, toolset, instruction, connect=app.config.get("VOICE_CONNECT")).run()
+
+
+try:
+    from flask_sock import Sock
+
+    Sock(app).route("/ws/voice")(voice_ws)
+except ImportError:  # the voice route needs flask-sock; everything else works without it
+    pass
 
 
 # -- running the assistant ---------------------------------------------------------

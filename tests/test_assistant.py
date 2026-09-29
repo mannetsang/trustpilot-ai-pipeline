@@ -300,7 +300,8 @@ class WebTests(unittest.TestCase):
         self.sign_in()
         page = self.client.get("/")
         self.assertEqual(page.status_code, 200)
-        self.assertIn(b'id="board-view"', page.data)
+        self.assertIn(b'id="view-board"', page.data)
+        self.assertIn(b'id="view-talk"', page.data)
         self.assertIn(b"manne@superhairpieces.com", page.data)
         self.assertEqual(page.headers["X-Frame-Options"], "DENY")
 
