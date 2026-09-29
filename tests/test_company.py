@@ -260,7 +260,8 @@ class FakeWS:
 class FakeLiveSession:
     """Scripted Gemini Live session: one tool call, then spoken audio with transcripts."""
 
-    def __init__(self):
+    def __init__(self, call=("record_fact", {"text": "Voice says: Jill covers outreach"})):
+        self.call = call
         self.audio_in, self.tool_responses, self.texts = 0, [], []
         self._turns = asyncio.Queue()
         self._answered = False
@@ -282,7 +283,7 @@ class FakeLiveSession:
 
         await self._turns.get()
         yield types.LiveServerMessage(tool_call=types.LiveServerToolCall(function_calls=[
-            types.FunctionCall(id="c1", name="record_fact", args={"text": "Voice says: Jill covers outreach"})]))
+            types.FunctionCall(id="c1", name=self.call[0], args=self.call[1])]))
         yield types.LiveServerMessage(server_content=types.LiveServerContent(
             input_transcription=types.Transcription(text="Jill covers outreach")))
         yield types.LiveServerMessage(server_content=types.LiveServerContent(
@@ -391,6 +392,77 @@ class RobustnessTests(unittest.TestCase):
         self.assertIn("store unavailable", messages[-1]["message"])
 
 
+class ClaudeBackendTests(unittest.TestCase):
+    """Vertex AI first, the Claude API second; a backend that can't serve at all is skipped."""
+
+    @staticmethod
+    def error(cls, status, message):
+        import httpx
+
+        return cls(message, response=httpx.Response(status, request=httpx.Request("POST", "https://x")), body=None)
+
+    def clients(self, vertex, api):
+        import partner_claude
+        from types import SimpleNamespace
+
+        def client(outcome):
+            calls = []
+
+            def create(**kwargs):
+                calls.append(kwargs)
+                if isinstance(outcome, Exception):
+                    raise outcome
+                return SimpleNamespace(stop_reason="end_turn", content=[SimpleNamespace(type="text", text=outcome)])
+            return SimpleNamespace(beta=SimpleNamespace(messages=SimpleNamespace(create=create)), calls=calls)
+
+        fakes = {"vertex": client(vertex), "anthropic": client(api)}
+        for patch in (mock.patch.object(partner_claude, "_clients", fakes),
+                      mock.patch.object(partner_claude, "_working", None),
+                      mock.patch.object(partner_claude, "CLAUDE_BACKEND", "auto")):
+            patch.start()
+            self.addCleanup(patch.stop)
+        return partner_claude, fakes
+
+    def test_no_vertex_quota_falls_back_to_the_claude_api(self):
+        import anthropic
+
+        claude, fakes = self.clients(self.error(anthropic.RateLimitError, 429, "Quota exceeded for aiplatform"), "ready")
+        self.assertEqual(claude.ping(MemorySecrets()), "ready")
+        self.assertIn("fallbacks", fakes["anthropic"].calls[0])   # server-side fallback only on the Claude API
+        self.assertNotIn("fallbacks", fakes["vertex"].calls[0])
+        claude.ping(MemorySecrets())
+        self.assertEqual(len(fakes["vertex"].calls), 1)            # the working backend is tried first next time
+
+    def test_both_blocked_says_what_each_needs(self):
+        import anthropic
+
+        claude, _ = self.clients(self.error(anthropic.RateLimitError, 429, "Quota exceeded for aiplatform"),
+                                 self.error(anthropic.BadRequestError, 400, "Your credit balance is too low"))
+        with self.assertRaises(RuntimeError) as ctx:
+            claude.ping(MemorySecrets())
+        self.assertIn("quota", str(ctx.exception))
+        self.assertIn("out of credit", str(ctx.exception))
+
+    def test_an_ordinary_request_error_is_not_hidden(self):
+        import anthropic
+
+        claude, fakes = self.clients(self.error(anthropic.BadRequestError, 400, "messages: invalid"), "ready")
+        with self.assertRaises(anthropic.BadRequestError):
+            claude.ping(MemorySecrets())
+        self.assertEqual(fakes["anthropic"].calls, [])
+
+    def test_relay_tool_reports_a_partner_failure(self):
+        import voice
+
+        def ask(message):
+            raise RuntimeError("Claude can't be reached. Vertex AI: no quota.")
+
+        relay = voice.RelayTools("claude", "Claude", ask)
+        self.assertIn("no quota", relay.call("ask_claude", {"message": "hi"})["error"])
+        self.assertIn("error", relay.call("ask_claude", {"message": " "}))
+        self.assertIn("error", relay.call("record_fact", {"text": "x"}))
+
+
 class WebTests(unittest.TestCase):
     def setUp(self):
         import main
@@ -468,6 +540,50 @@ class WebTests(unittest.TestCase):
             self.main.voice_ws(ws)
         self.assertIn("its own address", ws.sent[0])
         self.assertEqual(len(ws.sent), 1)  # nothing else happens for a foreign page
+
+    def _voice_call(self, partner, session, inbound):
+        class Connect:
+            def __init__(self, config):
+                seen["config"] = config
+
+            async def __aenter__(self):
+                return session
+
+            async def __aexit__(self, *exc):
+                return False
+
+        seen = {}
+        ws = FakeWS(inbound)
+        with self.main.app.test_request_context(f"/ws/voice?partner={partner}", base_url="https://app.example",
+                                                headers={"Origin": "https://app.example"}), \
+                mock.patch.dict(self.main.app.config, {"VOICE_CONNECT": Connect}):
+            from flask import session as flask_session
+
+            flask_session["email"] = self.main.OWNER_EMAIL
+            self.main.voice_ws(ws)
+        return [json.loads(f) for f in ws.sent if isinstance(f, str)], seen.get("config")
+
+    def test_voice_with_claude_is_relayed_to_claude(self):
+        self.fake["claude"].LABEL = "Claude"
+        session = FakeLiveSession(call=("ask_claude", {"message": "What should we tackle first?"}))
+        frames, config = self._voice_call("claude", session, [b"\x00\x00" * 640, 0.3])
+        self.assertIn({"type": "status", "text": "Preparing Claude…"}, frames)
+        self.assertIn({"type": "tool", "name": "ask_claude"}, frames)
+        self.assertEqual([d.name for d in config.tools[0].function_declarations], ["ask_claude"])
+        self.assertEqual(session.tool_responses[0].response, {"answer": "claude here"})
+        # Claude answered with its own prompt (in voice style) and saved the turns; the bridge saved nothing.
+        self.assertIn("speaking out loud", self.fake["claude"].calls[-1]["system"])
+        turns = self.store.get_talk("claude")
+        self.assertEqual([(t["role"], t["text"], t["voice"]) for t in turns],
+                         [("user", "What should we tackle first?", True), ("assistant", "claude here", True)])
+        self.assertEqual(self.store.get_talk("assistant"), [])
+
+    def test_voice_with_an_unavailable_partner_says_why(self):
+        self.store.update_settings({"partners_enabled": False})
+        frames, config = self._voice_call("chatgpt", FakeLiveSession(), [])
+        self.assertIsNone(config)
+        self.assertEqual(frames[-1]["type"], "error")
+        self.assertIn("switched off", frames[-1]["message"])
 
     def test_page_and_state_carry_the_same_version(self):
         # An open tab compares these to notice a new deploy and reload itself.

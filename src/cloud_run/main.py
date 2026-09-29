@@ -457,16 +457,33 @@ def voice_ws(ws):
         print(f"voice: origin {request.headers.get('Origin')!r} != {PUBLIC_URL or request.host_url!r}")
         ws.send(_json.dumps({"type": "error", "message": "Open the app from its own address to use voice."}))
         return
+    partner = request.args.get("partner", "assistant")
+    if partner not in PARTNERS:
+        ws.send(_json.dumps({"type": "error", "message": "No such partner."}))
+        return
     try:
-        ws.send(_json.dumps({"type": "status", "text": "Preparing your assistant…"}))
+        label = PARTNERS[partner].LABEL if partner != "assistant" else "your assistant"
+        ws.send(_json.dumps({"type": "status", "text": f"Preparing {label}…"}))
         service = talk_service()
-        toolset = service.toolset("assistant", voice=True)
-        recent = [t for t in store.get_talk("assistant") if t.get("text")][-8:]
-        history = "\n".join(f"{'Manne' if t['role'] == 'user' else 'You'}: {t['text'][:500]}" for t in recent)
-        instruction = system_prompt(store, "assistant", voice=True, owner_email=OWNER_EMAIL)
-        if history:
-            instruction += "\n\nRECENT CONVERSATION (continue from here)\n" + history
-        bridge = voice.VoiceBridge(ws, store, toolset, instruction, connect=app.config.get("VOICE_CONNECT"))
+        if partner == "assistant":
+            toolset = service.toolset("assistant", voice=True)
+            recent = [t for t in store.get_talk("assistant") if t.get("text")][-8:]
+            history = "\n".join(f"{'Manne' if t['role'] == 'user' else 'You'}: {t['text'][:500]}" for t in recent)
+            instruction = system_prompt(store, "assistant", voice=True, owner_email=OWNER_EMAIL)
+            if history:
+                instruction += "\n\nRECENT CONVERSATION (continue from here)\n" + history
+            save_as = "assistant"
+        else:
+            # Gemini Live listens and speaks; the partner's own model answers (see voice.RelayTools).
+            ok, why = service.partner_status(partner)
+            if not ok:
+                ws.send(_json.dumps({"type": "error", "message": f"{label} isn't available: {why}"}))
+                return
+            toolset = voice.RelayTools(partner, label, lambda m: service.ask(partner, m, voice=True)["text"])
+            instruction = voice.relay_instruction(label, toolset.name)
+            save_as = None
+        bridge = voice.VoiceBridge(ws, store, toolset, instruction, connect=app.config.get("VOICE_CONNECT"),
+                                   save_as=save_as)
     except Exception as exc:  # noqa: BLE001 - without this the socket would stay open and silent
         import traceback
 

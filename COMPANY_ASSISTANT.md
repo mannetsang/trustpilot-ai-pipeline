@@ -13,7 +13,7 @@ Cloud Run* workflow.
 
 | Tab | What it's for |
 |---|---|
-| **Talk** | Chat with the **Assistant** (Gemini), **Claude** or **ChatGPT**. Each one has the same company background, knowledge base and tools, and its own conversation history. **🎙 Talk** starts a live voice call with the Assistant. |
+| **Talk** | Chat with the **Assistant** (Gemini), **Claude** or **ChatGPT**. Each one has the same company background, knowledge base and tools, and its own conversation history. **🎙 Talk** starts a live voice call with whichever of the three is selected. |
 | **Board** | Tasks from your chats and conversations (unchanged). |
 | **Projects** | Every project it knows, per company: goal, owner, status, deadline, next steps, linked chats and open tasks. |
 | **Questions** | The interview: what it needs to know, highest priority first. Answer in the box, in Talk, or by voice; each answer is processed into projects, facts, tasks and follow-up questions. |
@@ -56,7 +56,7 @@ or voice, it sends a Chat message only after you approve the exact text.
 | Partner | How it's called | Setup |
 |---|---|---|
 | Assistant | Gemini (`TALK_MODEL`, default `gemini-2.5-pro`) on Vertex AI | none |
-| Claude | Claude Opus 5.5 (`claude-opus-5-5`) on Vertex AI via the Anthropic SDK, with automatic refusal fallback to Claude Opus 4.8 | Enable **Claude Opus 5.5** and **Claude Opus 4.8** in Vertex AI Model Garden for `shp-ai-bot-2026` |
+| Claude | Claude Opus 5.5 (`claude-opus-5-5`) via the Anthropic SDK, with automatic refusal fallback to Claude Opus 4.8. Tries Vertex AI first, then the Claude API with the `ANTHROPIC_API_KEY` secret | Either: Claude quota on Vertex AI for `shp-ai-bot-2026` (IAM & Admin > Quotas, `global_online_prediction_requests_per_base_model`, base model `anthropic-claude-opus`), or credit on the Anthropic account behind `ANTHROPIC_API_KEY` plus Secret Accessor on it for the app's service account |
 | ChatGPT | OpenAI SDK, model from Settings (default `gpt-5`) | Re-run `setup.sh` so the app can read the `CHATGPT_API_KEY` secret |
 
 The Assistant can consult either partner (`consult_partner`), for example for a
@@ -65,12 +65,13 @@ send messages or change settings. Talking to Claude or ChatGPT sends company con
 to Anthropic or OpenAI; **Let Claude and ChatGPT work with company information** in
 Settings switches that off. **Test partners** in Settings checks all three.
 
-To use the Claude API with a key instead of Vertex AI, store it as the
-`ANTHROPIC_API_KEY` secret, re-run `setup.sh`, and set `CLAUDE_BACKEND=anthropic`.
+With `CLAUDE_BACKEND=auto` (the default) a route that can't serve at all (no quota,
+no credit, no readable key) is skipped, and when neither works the error says what
+each needs. `CLAUDE_BACKEND=vertex` or `=anthropic` pins one route.
 
 ## Live voice
 
-**🎙 Talk** (Assistant only) opens a WebSocket to `/ws/voice`. The browser sends
+**🎙 Talk** opens a WebSocket to `/ws/voice?partner=…`. The browser sends
 16 kHz 16-bit PCM from the microphone (with echo cancellation), the service relays
 it to **Gemini 3.8 Live** (`gemini-3.8-live` on Vertex AI), and streams the spoken
 answer back at 24 kHz. You can interrupt it; the transcript appears live and is
@@ -79,6 +80,13 @@ text: it can look things up, record what you tell it, and queue or answer questi
 Use Chrome or Edge. Only your signed-in session, from the app's own page, can open
 the voice socket.
 
+Claude and ChatGPT have no live voice here, so a call with either one uses Gemini
+Live only as ears and voice. Gemini gets a single tool (`ask_claude` or
+`ask_chatgpt`) that passes your words to the partner, which answers with its own
+model, tools and conversation history (in a spoken style), and Gemini reads the
+answer out word for word. The partner saves those turns into its own conversation.
+Expect a pause while the partner thinks; the call shows "Claude is thinking…".
+
 ## Configuration
 
 | Env var | Default |
@@ -86,7 +94,7 @@ the voice socket.
 | `TALK_MODEL` | `gemini-2.5-pro` (falls back to `GEMINI_MODEL`) |
 | `LIVE_MODEL` / `LIVE_VOICE` / `LIVE_LOCATION` | `gemini-3.8-live` / model default / `us-central1` |
 | `CLAUDE_MODEL` / `CLAUDE_FALLBACK_MODEL` | `claude-opus-5-5` / `claude-opus-4-8` |
-| `CLAUDE_BACKEND` / `CLAUDE_REGION` / `CLAUDE_EFFORT` | `vertex` / `global` / `medium` |
+| `CLAUDE_BACKEND` / `CLAUDE_REGION` / `CLAUDE_EFFORT` | `auto` / `global` / `medium` |
 | `OPENAI_MODEL` / `OPENAI_KEY_SECRET` | `gpt-5` / `CHATGPT_API_KEY` |
 
 ## Next: Phase 2, working on its own

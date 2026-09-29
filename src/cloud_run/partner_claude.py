@@ -1,10 +1,12 @@
 """Claude as a partner: the Anthropic SDK with a manual tool-use loop.
 
-Default backend is Claude on Google Vertex AI (AnthropicVertex), authenticated
-with the service account's Application Default Credentials: no Anthropic key,
-billed through Google Cloud. Claude must be enabled in Vertex AI Model Garden.
-Set CLAUDE_BACKEND=anthropic to use the Claude API with the ANTHROPIC_API_KEY
-secret instead.
+Two ways to reach Claude, tried in order (CLAUDE_BACKEND=auto, the default):
+Google Vertex AI (AnthropicVertex, the service account's credentials, billed
+through Google Cloud; needs Claude enabled in Model Garden and Claude quota on
+the project), then the Claude API with the ANTHROPIC_API_KEY secret. A way that
+can't serve at all (no quota, no credit, no key) is skipped and the other one
+used; if neither works, the error says what each one needs. Set
+CLAUDE_BACKEND=vertex or =anthropic to use only one.
 
 Refusal fallback is on: if the requested model declines, the request is re-run
 on CLAUDE_FALLBACK_MODEL (client-side middleware on Vertex, server-side
@@ -15,7 +17,7 @@ import json
 import os
 
 GCP_PROJECT = os.environ.get("GCP_PROJECT", "shp-ai-bot-2026")
-CLAUDE_BACKEND = os.environ.get("CLAUDE_BACKEND", "vertex")  # vertex | anthropic
+CLAUDE_BACKEND = os.environ.get("CLAUDE_BACKEND", "auto")  # auto | vertex | anthropic
 CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-5-5")
 CLAUDE_FALLBACK_MODEL = os.environ.get("CLAUDE_FALLBACK_MODEL", "claude-opus-4-8")
 CLAUDE_REGION = os.environ.get("CLAUDE_REGION", "global")
@@ -24,33 +26,90 @@ API_KEY_SECRET = "ANTHROPIC_API_KEY"
 MAX_STEPS = 10
 
 LABEL = "Claude"
-_client = None
+_clients = {}
+_working = None  # the backend that last answered; tried first next time
+
+
+class _Unusable(Exception):
+    """This backend can't serve any request right now (as opposed to a problem with one request)."""
 
 
 def available(secrets):
-    if CLAUDE_BACKEND == "anthropic" and not secrets.get(API_KEY_SECRET):
+    if CLAUDE_BACKEND == "anthropic" and not _key(secrets):
         return False, f"Secret {API_KEY_SECRET} is missing or not readable"
     return True, ""
 
 
-def client(secrets):
-    global _client
-    if _client is None:
+def _key(secrets):
+    try:
+        return secrets.get(API_KEY_SECRET) if secrets else None
+    except Exception:  # noqa: BLE001 - no access to the secret counts as no key
+        return None
+
+
+def _backends():
+    if CLAUDE_BACKEND in ("vertex", "anthropic"):
+        return [CLAUDE_BACKEND]
+    return sorted(["vertex", "anthropic"], key=lambda b: b != _working)
+
+
+def _client(backend, secrets):
+    if backend not in _clients:
         import anthropic
 
-        if CLAUDE_BACKEND == "anthropic":
-            _client = anthropic.Anthropic(api_key=secrets.get(API_KEY_SECRET))
+        if backend == "anthropic":
+            key = _key(secrets)
+            if not key:
+                raise _Unusable(f"Claude API: there's no readable {API_KEY_SECRET} secret.")
+            _clients[backend] = anthropic.Anthropic(api_key=key)
         else:
-            _client = anthropic.AnthropicVertex(
+            _clients[backend] = anthropic.AnthropicVertex(
                 project_id=GCP_PROJECT, region=CLAUDE_REGION,
                 middleware=[anthropic.BetaRefusalFallbackMiddleware([{"model": CLAUDE_FALLBACK_MODEL}])])
-    return _client
+    return _clients[backend]
 
 
-def _request_extras():
-    if CLAUDE_BACKEND == "anthropic":
-        return {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"}
-    return {}
+def _why_unusable(backend, exc):
+    """A plain reason when exc means the backend can't serve at all; None for an ordinary request error."""
+    import anthropic
+
+    text = str(exc)
+    if backend == "vertex":
+        if isinstance(exc, anthropic.RateLimitError) and "Quota exceeded" in text:
+            return ("Vertex AI: Google Cloud hasn't given this project Claude quota (request an increase for "
+                    "global_online_prediction_requests_per_base_model, base model anthropic-claude-opus, "
+                    "under IAM & Admin > Quotas).")
+        if isinstance(exc, anthropic.NotFoundError):
+            return f"Vertex AI: {CLAUDE_MODEL} isn't enabled in Model Garden for this project."
+        if isinstance(exc, anthropic.PermissionDeniedError):
+            return "Vertex AI: the app's service account isn't allowed to use it."
+        return None
+    if isinstance(exc, anthropic.BadRequestError) and "credit balance" in text:
+        return "Claude API: the Anthropic account behind ANTHROPIC_API_KEY is out of credit (Plans & Billing)."
+    if isinstance(exc, (anthropic.AuthenticationError, anthropic.PermissionDeniedError)):
+        return "Claude API: ANTHROPIC_API_KEY was rejected."
+    return None
+
+
+def _create(secrets, **kwargs):
+    global _working
+    problems = []
+    for backend in _backends():
+        extras = {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"} if backend == "anthropic" else {}
+        try:
+            response = _client(backend, secrets).beta.messages.create(**kwargs, **extras)
+        except _Unusable as exc:
+            problems.append(str(exc))
+            continue
+        except Exception as exc:
+            why = _why_unusable(backend, exc)
+            if why is None:
+                raise
+            problems.append(why)
+            continue
+        _working = backend
+        return response
+    raise RuntimeError("Claude can't be reached. " + " ".join(problems))
 
 
 def _echoable(content):
@@ -76,10 +135,10 @@ def respond(system, history, toolset, secrets=None, model=None):
     with state:
         for _ in range(MAX_STEPS):
             kwargs = {"model": model or CLAUDE_MODEL, "max_tokens": 16000, "system": system_blocks,
-                      "messages": messages, "output_config": {"effort": CLAUDE_EFFORT}, **_request_extras()}
+                      "messages": messages, "output_config": {"effort": CLAUDE_EFFORT}}
             if tools:
                 kwargs["tools"] = tools
-            response = client(secrets).beta.messages.create(**kwargs)
+            response = _create(secrets, **kwargs)
 
             if response.stop_reason == "refusal":
                 return {"text": "Claude declined that request.", "tools": toolset.log}
