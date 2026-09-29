@@ -111,6 +111,33 @@ and staff names reach Claude spelled right, and Claude is told the words were sp
 so it reads misheard names charitably. On Gemini's line a turn ends after a 1.5 s pause
 (`RELAY_END_SILENCE_MS`; Gemini's default split a request at a 0.9 s pause).
 
+## Company systems (keys from Secret Manager)
+
+Every partner (typed or on a call) has two tools for company systems whose keys are
+already in Secret Manager: `list_integrations` (which systems, whether each is ready,
+useful paths) and `call_api` (one request). Wired up so far: BigCommerce
+superhairpieces.ca (`gmosz3ja`), BigCommerce `qet21urb3p`, BigCommerce Gen'C Beauty,
+Airtable, Trustpilot, Stamped.io, Omnisend, Notion and Figma (`integrations.py`).
+
+The assistant reads chats written by many people, so the design assumes someone may
+try to talk it into misusing a key:
+
+- Key values never reach a model. The server adds them to each request and scrubs
+  them from anything a system sends back.
+- Each system has one pinned address; a path can't send a request (or its key)
+  anywhere else.
+- Reads run at once. Anything that changes data needs `confirmed=true`, which a model
+  may set only after you agreed to that exact change in the conversation; a
+  consulted partner can't confirm at all. Confirmed changes are listed under Activity.
+- Only systems with a plain API key or token are wired up. Logins (SkuVault, Walmart,
+  the MySQL database, the Gmail app password) and OAuth apps (Amazon) are not.
+
+The app runs as its own service account, `chat-assistant@`, which reads only the keys
+it uses, each granted on its own: run `bash chat-assistant/grant_integrations.sh` in
+Cloud Shell as an Owner. Then **Access → Check connections** tries each system with a
+cheap read and updates its status (and names the storefront behind each BigCommerce
+store hash).
+
 ## Read aloud
 
 **🔊** on any reply, or the **Read replies aloud** switch (remembered in this browser),

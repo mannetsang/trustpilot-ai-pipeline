@@ -6,6 +6,7 @@ const TYPE_LABEL = { chat_reply: "Chat reply", calendar_event: "Calendar event" 
 const STATUS_LABEL = { done: "Done", suggested: "Waiting", failed: "Failed", dismissed: "Dismissed" };
 const SYSTEM_GROUPS = [
   ["requested", "Requested by the assistant"], ["needed", "Needed"], ["available", "Credentials exist, not connected yet"],
+  ["no_access", "Key in Secret Manager, but the app can't read it"], ["error", "Key found, but the system refused it"],
   ["connected", "Connected"], ["not_used", "Not used"],
 ];
 const COMPANY_LABEL = { superhairpieces: "Superhairpieces", gencbeauty: "Gen'C Beauty", both: "Both" };
@@ -248,6 +249,19 @@ $("message").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
 });
 
+// Try each company system with its key from Secret Manager (the server does it; keys never reach the page).
+$("checkSystems").onclick = async () => {
+  const button = $("checkSystems");
+  button.disabled = true; button.textContent = "Checking…";
+  try {
+    const { results } = await api("POST", "/api/integrations/check");
+    const all = Object.values(results), ok = all.filter((r) => r.ok).length;
+    toast(`${ok} of ${all.length} systems connected`);
+    refreshKnowledge();
+  } catch (e) { toast(e.message); }
+  finally { button.disabled = false; button.textContent = "Check connections"; }
+};
+
 // -- Board -----------------------------------------------------------------------------
 function renderFilters() {
   const select = $("spaceFilter"); const current = select.value;
@@ -486,7 +500,7 @@ function renderSystems() {
         el("div", { class: "top" }, el("b", {}, s.name), s.category ? el("span", { class: "chip" }, s.category) : null,
           el("span", { class: "spacer", style: "flex:1" }), select),
         s.unlocks ? el("div", { class: "reply" }, s.unlocks) : null,
-        s.why ? el("div", { class: "why" }, `Why the assistant asked: ${s.why}`) : null,
+        s.why ? el("div", { class: "why" }, status === "no_access" || status === "error" ? s.why : `Why the assistant asked: ${s.why}`) : null,
         status !== "connected" && status !== "not_used" ? el("div", { class: "actions" },
           el("button", { class: "btn", onclick: () => {
             switchTab("talk");
