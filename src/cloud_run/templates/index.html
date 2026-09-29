@@ -27,6 +27,18 @@
     .banner.bad { background: var(--bad-weak); }
     .banner span { flex: 1; min-width: 200px; }
     .banner b { font-weight: 500; }
+    .progress { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 12px; box-shadow: var(--shadow); }
+    .progress .line1 { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .progress .phase { font-weight: 500; }
+    .progress .eta, .progress .now, .progress .sofar { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+    .progress .now { margin-bottom: 2px; }
+    .bar { height: 8px; border-radius: 4px; background: var(--panel-2); overflow: hidden; margin: 10px 0 8px; }
+    .bar > div { height: 100%; background: var(--accent); border-radius: 4px; transition: width .4s ease; }
+    .bar.indeterminate > div { width: 30%; animation: slide 1.2s ease-in-out infinite; }
+    @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+    .spinner { width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; flex: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .spinner, .bar.indeterminate > div { animation: none; } }
     .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
     .tab { padding: 10px 14px; border: 0; background: none; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; }
     .tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 500; }
@@ -106,6 +118,7 @@
 </header>
 
 <main>
+  <div id="progress" class="progress" hidden aria-live="polite"></div>
   <div id="banners"></div>
   <nav class="tabs">
     <button class="tab active" data-tab="board">Board <span class="count" id="boardCount">0</span></button>
@@ -492,13 +505,82 @@ $("readBots").addEventListener("change", async (e) => {
   catch (err) { e.target.checked = !e.target.checked; toast(err.message); }
 });
 
+// -- live progress of a run (manual or hourly) -------------------------------------
+const STALE_MS = 10 * 60 * 1000;  // a "running" record this old means the run died
+let pollTimer = null;
+let ownRun = false;               // true while this tab's Run now request is open
+let lastFound = "";               // tasks/actions found so far, to refresh the board as they arrive
+
+const isLive = (p) => !!(p && p.running && p.updated_at && Date.now() - new Date(p.updated_at).getTime() < STALE_MS);
+
+function eta(p) {
+  if (!p.reading_started_at || p.done < 2 || p.done >= p.total) return p.total ? "estimating time left" : "";
+  const perConversation = (Date.now() - new Date(p.reading_started_at).getTime()) / p.done;
+  const mins = Math.round((perConversation * (p.total - p.done)) / 60000);
+  return mins < 1 ? "less than a minute left" : `about ${mins} min left`;
+}
+
+function renderProgress(p) {
+  const box = $("progress");
+  if (!isLive(p)) { box.hidden = true; return; }
+  const reading = p.phase === "Reading conversations" && p.total > 0;
+  const pct = reading ? Math.round((p.done / p.total) * 100) : 0;
+  const head = el("div", { class: "line1" },
+    el("span", { class: "spinner", "aria-hidden": "true" }),
+    el("span", { class: "phase" }, reading ? `Reading conversations: ${p.done} of ${p.total}` : `${p.phase}…`),
+    el("span", { class: "eta" }, [p.trigger === "schedule" ? "hourly run" : "", eta(p)].filter(Boolean).join(" · ")));
+  const bar = el("div", { class: `bar${reading ? "" : " indeterminate"}`, role: "progressbar", "aria-label": "Run progress",
+      "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": reading ? String(pct) : null },
+    el("div", { style: reading ? `width:${pct}%` : null }));
+  const now = (p.current || []).length ? el("div", { class: "now" }, `Now reading: ${p.current.join(", ")}`) : null;
+  const sofar = reading ? el("div", { class: "sofar" }, "So far: " + [
+    plural(p.tasks_created, "new task"),
+    p.tasks_updated ? `${p.tasks_updated} updated` : "",
+    `${plural(p.actions_done, "action")} taken`,
+    p.actions_suggested ? `${p.actions_suggested} waiting for you` : "",
+    p.problems ? plural(p.problems, "problem") : "",
+  ].filter(Boolean).join(" · ")) : null;
+  box.replaceChildren(head, bar, now, sofar);
+  box.hidden = false;
+}
+
+function setRunning(on) {
+  const btn = $("runNow"); btn.disabled = on; btn.textContent = on ? "Running…" : "Run now";
+}
+
+async function pollProgress() {
+  let p;
+  try { p = await api("GET", "/api/progress"); } catch { return; }
+  renderProgress(p);
+  const live = isLive(p);
+  setRunning(live || ownRun);
+  if (live && !pollTimer) pollTimer = setInterval(pollProgress, 2000);
+  const found = `${p.tasks_created}/${p.tasks_updated}/${p.actions_done}/${p.actions_suggested}`;
+  if (live && found !== lastFound && !document.querySelector("dialog[open]")) load().catch(() => {});
+  lastFound = live ? found : "";
+  if (!live && pollTimer) {
+    clearInterval(pollTimer); pollTimer = null;
+    if (!ownRun) {  // an hourly run (or another tab's) just ended: show its results
+      await load().catch(() => {});
+      if (p.finished_at) toast(p.error ? `Run failed: ${p.error}`
+        : `Run finished: ${plural(p.tasks_created, "new task")}, ${plural(p.actions_done, "action")} taken`);
+    }
+  }
+}
+
 $("runNow").onclick = async () => {
-  const btn = $("runNow"); btn.disabled = true; btn.textContent = "Running…";
+  ownRun = true; setRunning(true);
+  if (!pollTimer) pollTimer = setInterval(pollProgress, 2000);
+  setTimeout(pollProgress, 700);
   try {
     const r = await api("POST", "/api/run");
-    toast(`Read ${plural(r.spaces_processed, "conversation")}: ${plural(r.tasks_created, "new task")}, ${plural(r.actions_done, "action")}`);
-  } catch (e) { toast(e.message); }
-  btn.disabled = false; btn.textContent = "Run now";
+    toast(`Read ${plural(r.spaces_processed, "conversation")}: ${plural(r.tasks_created, "new task")}, ${plural(r.actions_done, "action")} taken`);
+  } catch (e) {
+    toast(/already in progress/.test(e.message) ? "A run is already going. Showing its progress." : e.message);
+  }
+  await pollProgress();  // hides the panel once the run is over
+  ownRun = false;
+  setRunning(!!pollTimer);
   load().catch((e) => toast(e.message));
 };
 
@@ -513,9 +595,12 @@ for (const tab of document.querySelectorAll(".tab")) {
 }
 for (const id of ["q", "spaceFilter", "ownerFilter", "showDone"]) $(id).addEventListener("input", renderBoard);
 
-load().catch((e) => { $("lastrun").textContent = e.message; });
-// Refresh every minute so the hourly run's results show up, unless a dialog is open.
-setInterval(() => { if (!document.querySelector("dialog[open]")) load().catch(() => {}); }, 60000);
+load().then(pollProgress).catch((e) => { $("lastrun").textContent = e.message; });
+// Every minute: notice an hourly run starting, and refresh the board unless a dialog is open.
+setInterval(() => {
+  if (!pollTimer) pollProgress();
+  if (!document.querySelector("dialog[open]")) load().catch(() => {});
+}, 60000);
 </script>
 </body>
 </html>
