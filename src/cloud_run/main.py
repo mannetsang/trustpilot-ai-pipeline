@@ -449,6 +449,14 @@ def api_test_partners():
     return jsonify(results=talk_service().test_partners())
 
 
+@app.post("/api/integrations/check")
+def api_check_integrations():
+    """Try each company system with its stored key (a cheap read) and update the Access tab."""
+    import integrations
+
+    return jsonify(results=integrations.check_all(secret_store, store))
+
+
 _speaker = None
 
 

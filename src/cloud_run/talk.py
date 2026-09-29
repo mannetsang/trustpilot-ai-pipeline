@@ -107,7 +107,7 @@ class Talk:
             ok, why = self.partner_status(partner)
             if not ok:
                 return f"({PARTNERS[partner].LABEL} isn't available: {why})"
-            toolset = Toolset(self.store, self._google(), caller=partner,
+            toolset = Toolset(self.store, self._google(), caller=partner, secrets=self.secrets, may_change=False,
                               exclude=("send_chat_message", "set_autopilot", "consult_partner"))
             result = PARTNERS[partner].respond(
                 system_prompt(self.store, partner, consulted=True, owner_email=self.owner_email),
@@ -117,7 +117,7 @@ class Talk:
         return consult
 
     def toolset(self, partner, voice=False):
-        return Toolset(self.store, self._google(), caller=f"{partner}{' (voice)' if voice else ''}",
+        return Toolset(self.store, self._google(), caller=f"{partner}{' (voice)' if voice else ''}", secrets=self.secrets,
                        consult=self.consult_fn(partner))
 
     def ask(self, partner, message, voice=False):
@@ -141,8 +141,8 @@ class Talk:
 
     def digest_answer(self, question, answer):
         """Fold an answer from the Questions tab into the knowledge base using the assistant's tools."""
-        toolset = Toolset(self.store, self._google(), caller="interview",
-                          exclude=("send_chat_message", "set_autopilot", "consult_partner"))
+        toolset = Toolset(self.store, self._google(), caller="interview", may_change=False,
+                          exclude=("send_chat_message", "set_autopilot", "consult_partner", "call_api"))
         prompt = (f"Manne answered a question from your queue.\n\nQuestion [{question['id']}]: {question['question']}\n\n"
                   f"Answer: {answer}\n\nUpdate the knowledge base from this answer: save or update every project it "
                   "mentions (save_project), record each distinct fact (record_fact), add tasks it implies "

@@ -519,6 +519,115 @@ class SpeechTests(unittest.TestCase):
             self.assertEqual(len(speaker._cache), 0)
 
 
+class IntegrationTests(unittest.TestCase):
+    """Company systems through keys in Secret Manager: the key goes to its own host only and never to a model."""
+
+    KEYS = {"BIGCOMMERCE_gmosz3ja_ACCESS_TOKEN": "bc-secret-token-ca", "NOTION_API_KEY": "notion-secret-key",
+            "GENC_BIGCOMMERCE_PRODUCT_ACCESS_TOKEN": "genc-secret-token",
+            "GENC_BIGCOMMERCE_PRODUCT_API_PATH": "https://api.bigcommerce.com/stores/genc123/v3/"}
+
+    class Session:
+        def __init__(self, status=200, body='{"domain": "superhairpieces.ca", "currency": "CAD"}'):
+            self.calls, self.status, self.body = [], status, body
+
+        def request(self, method, url, headers=None, auth=None, json=None, timeout=None):
+            from types import SimpleNamespace as NS
+
+            self.calls.append({"method": method, "url": url, "headers": headers, "json": json})
+            return NS(status_code=self.status, ok=self.status < 400, text=self.body)
+
+    def setUp(self):
+        import integrations
+
+        self.integrations = integrations
+        self.secrets = MemorySecrets(dict(self.KEYS))
+
+    def test_read_goes_to_its_own_host_with_the_key_and_never_returns_it(self):
+        session = self.Session(body='{"id": 7, "echo": "bc-secret-token-ca"}')
+        result = self.integrations.call("bigcommerce_gmosz3ja", "GET", "/v2/orders", self.secrets,
+                                        query={"limit": 5}, session=session)
+        call = session.calls[0]
+        self.assertEqual(call["url"], "https://api.bigcommerce.com/stores/gmosz3ja/v2/orders?limit=5")
+        self.assertEqual(call["headers"]["X-Auth-Token"], "bc-secret-token-ca")
+        self.assertEqual(result["data"], {"id": 7, "echo": "[secret]"})  # scrubbed even if a system echoes it
+        self.assertNotIn("bc-secret-token-ca", json.dumps(result))
+
+    def test_paths_cannot_leave_the_system(self):
+        from urllib.parse import urlsplit
+
+        session = self.Session()
+        for path in ("https://evil.example/x", "/v2/../../x", "/v2/orders@evil.example", "/a b"):
+            result = self.integrations.call("bigcommerce_gmosz3ja", "GET", path, self.secrets, session=session)
+            self.assertIn("error", result, path)
+        self.assertEqual(session.calls, [])
+        # A protocol-relative path is just a path on the store's own host: the key still only goes there.
+        self.integrations.call("bigcommerce_gmosz3ja", "GET", "//evil.example/x", self.secrets, session=session)
+        self.assertEqual({urlsplit(c["url"]).netloc for c in session.calls}, {"api.bigcommerce.com"})
+
+    def test_changes_wait_for_confirmation_but_searches_do_not(self):
+        session = self.Session(body="{}")
+        held = self.integrations.call("bigcommerce_gmosz3ja", "PUT", "/v3/catalog/products/1", self.secrets,
+                                      body={"price": 1}, session=session)
+        self.assertTrue(held["not_sent"])
+        self.assertEqual(session.calls, [])
+        self.integrations.call("notion", "POST", "/v1/search", self.secrets, body={"query": "launch"}, session=session)
+        self.assertEqual(session.calls[-1]["method"], "POST")  # a search is a read
+        self.integrations.call("bigcommerce_gmosz3ja", "PUT", "/v3/catalog/products/1", self.secrets,
+                               body={"price": 1}, confirmed=True, session=session)
+        self.assertEqual(session.calls[-1]["json"], {"price": 1})
+
+    def test_a_key_the_app_cannot_read_is_named_not_guessed(self):
+        session = self.Session()
+        result = self.integrations.call("airtable", "GET", "/v0/meta/bases", self.secrets, session=session)
+        self.assertIn("can't read the AIRTABLE_COMPANY_TOKEN secret", result["error"])
+        self.assertEqual(session.calls, [])
+        described = {d["id"]: d for d in self.integrations.describe(self.secrets)}
+        self.assertEqual(described["bigcommerce_gmosz3ja"]["status"], "ready")
+        self.assertEqual(described["airtable"]["status"], "no_access")
+        self.assertNotIn("bc-secret-token-ca", json.dumps(described))
+
+    def test_genc_store_path_comes_from_its_secret(self):
+        session = self.Session()
+        self.integrations.call("bigcommerce_genc", "GET", "/v2/store", self.secrets, session=session)
+        self.assertEqual(session.calls[0]["url"], "https://api.bigcommerce.com/stores/genc123/v2/store")
+
+    def test_check_all_updates_the_access_tab(self):
+        store = MemoryStore()
+        knowledge.ensure_seeded(store)
+        results = self.integrations.check_all(self.secrets, store, session=self.Session())
+        self.assertTrue(results["bigcommerce_gmosz3ja"]["ok"])
+        self.assertEqual(results["bigcommerce_gmosz3ja"]["system"], "BigCommerce: superhairpieces.ca (CAD)")
+        self.assertEqual(store.get_item("systems", "bigcommerce_ca")["status"], "connected")
+        self.assertEqual(store.get_item("systems", "airtable")["status"], "no_access")
+        self.assertIn("AIRTABLE_COMPANY_TOKEN", store.get_item("systems", "airtable")["why"])
+
+    def test_tools_record_changes_and_consulted_partners_cannot_confirm(self):
+        store = MemoryStore()
+        session = self.Session(body="{}")
+        with mock.patch.object(self.integrations.requests, "request", session.request):
+            owner = Toolset(store, None, caller="chatgpt", secrets=self.secrets)
+            owner.call("call_api", {"system": "bigcommerce_gmosz3ja", "method": "PUT", "path": "/v3/catalog/products/1",
+                                    "body": {"price": 1}, "confirmed": True})
+            self.assertEqual(store.list_actions()[0]["type"], "system_change")
+            consulted = Toolset(store, None, caller="claude", secrets=self.secrets, may_change=False)
+            held = consulted.call("call_api", {"system": "bigcommerce_gmosz3ja", "method": "DELETE",
+                                               "path": "/v3/catalog/products/1", "confirmed": True})
+        self.assertTrue(held["not_sent"])
+        self.assertEqual(len(session.calls), 1)
+
+    def test_grant_script_matches_the_integrations(self):
+        import re
+
+        script = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "grant_integrations.sh")).read()
+        listed = re.search(r"SECRETS=\((.*?)\)", script, re.S)[1].split()
+        self.assertEqual(sorted(listed), self.integrations.secret_names())
+
+    def test_every_secret_it_reads_exists_in_the_registry_list(self):
+        names = self.integrations.secret_names()
+        self.assertIn("BIGCOMMERCE_gmosz3ja_ACCESS_TOKEN", names)
+        self.assertNotIn("SKUVAULT_PASSWORD", names)  # logins aren't wired up
+
+
 class RobustnessTests(unittest.TestCase):
     def test_event_times_with_and_without_offsets(self):
         from google_apis import Directory
