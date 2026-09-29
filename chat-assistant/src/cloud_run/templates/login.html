@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chat Assistant</title>
+  {% include "_theme.html" %}
+  <style>
+    main { max-width: 440px; margin: 12vh auto; padding: 0 16px; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 32px; box-shadow: var(--shadow); }
+    h1 { font-size: 22px; margin: 0 0 6px; font-weight: 500; }
+    p { color: var(--muted); margin: 0 0 20px; }
+    .error { background: var(--bad-weak); color: var(--bad); padding: 10px 12px; border-radius: 8px; margin-bottom: 16px; }
+    code { background: var(--panel-2); padding: 2px 6px; border-radius: 4px; word-break: break-all; }
+    ol { color: var(--muted); padding-left: 18px; }
+    li { margin-bottom: 6px; }
+  </style>
+</head>
+<body>
+<main>
+  <div class="card">
+    <h1>Chat Assistant</h1>
+    <p>Reads your Google Chat, keeps your project board current and acts for you.</p>
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+    {% if configured %}
+      <a class="btn primary" href="/login">Sign in with Google</a>
+      <p style="margin-top:16px;font-size:13px">Only {{ owner }} can sign in.</p>
+    {% else %}
+      <div class="error">The Google sign-in client isn't set up yet.</div>
+      <ol>
+        <li>Create an OAuth client of type <b>Web application</b> with this redirect URI:<br><code>{{ redirect_uri }}</code></li>
+        <li>Download its JSON and store it in Secret Manager as <code>chat-assistant-oauth-client</code>.</li>
+        <li>Re-run the <b>Chat assistant</b> GitHub Actions workflow, then reload this page.</li>
+      </ol>
+    {% endif %}
+  </div>
+</main>
+</body>
+</html>
