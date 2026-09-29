@@ -295,9 +295,10 @@ class FakeLiveSession:
 class FakeRealtime:
     """Scripted OpenAI Realtime connection: hears speech, calls one tool, then answers out loud."""
 
-    def __init__(self):
+    def __init__(self, call=("record_fact", {"text": "Voice says: Jill covers outreach"})):
         from types import SimpleNamespace as NS
 
+        self.call = call
         self.updates, self.items, self.audio_in, self.follow_ups = [], [], 0, 0
         self._events = asyncio.Queue()
         self.session = NS(update=self._update)
@@ -316,8 +317,8 @@ class FakeRealtime:
         if before < 1920 <= self.audio_in:  # after the first 40 ms of (24 kHz) speech
             for e in (NS(type="input_audio_buffer.speech_started"),
                       NS(type="conversation.item.input_audio_transcription.completed", transcript="Jill covers outreach"),
-                      NS(type="response.function_call_arguments.done", name="record_fact", call_id="c1",
-                         arguments=json.dumps({"text": "Voice says: Jill covers outreach"})),
+                      NS(type="response.function_call_arguments.done", name=self.call[0], call_id="c1",
+                         arguments=json.dumps(self.call[1])),
                       NS(type="response.done", response=NS(status="completed"))):
                 await self._events.put(e)
 
@@ -425,7 +426,7 @@ class RealtimeVoiceTests(unittest.TestCase):
         self.assertEqual([(t["role"], t["text"]) for t in turns], [("user", "Jill covers outreach"), ("assistant", "Noted.")])
         session = conn.updates[0]
         self.assertEqual(session["audio"]["input"]["turn_detection"], {
-            "type": "semantic_vad", "eagerness": "low", "create_response": True, "interrupt_response": True})
+            "type": "server_vad", "silence_duration_ms": 1200, "create_response": True, "interrupt_response": True})
         self.assertEqual(session["audio"]["input"]["format"], {"type": "audio/pcm", "rate": 24000})
         self.assertEqual(session["audio"]["input"]["transcription"]["prompt"], "SkuVault, Ruvy")
         self.assertIn("record_fact", [t["name"] for t in session["tools"]])
@@ -485,14 +486,14 @@ class SpeechTests(unittest.TestCase):
         long_reply = " ".join(["The Brampton launch is on track and Ruvy starts on Monday."] * 30)
         with mock.patch.dict(speech.PROVIDERS, {"gemini": fake("gemini"), "openai": fake("openai", fail=True)}):
             speaker = speech.Speaker(MemorySecrets())
-            audio = b"".join(speaker.stream("claude", long_reply))
+            audio = b"".join(speaker.stream("assistant", long_reply))
             parts = len(speech.split_for_speech(long_reply))
             self.assertEqual(len(audio), 400 * parts)                  # every part, back to back
-            self.assertEqual(calls, [("gemini", "Charon")] * parts)    # Claude: a Google voice of its own
-            self.assertEqual(b"".join(speaker.stream("claude", long_reply)), audio)
+            self.assertEqual(calls, [("gemini", "Kore")] * parts)      # the Assistant's own (call) voice
+            self.assertEqual(b"".join(speaker.stream("assistant", long_reply)), audio)
             self.assertEqual(len(calls), parts)                        # the second press is served from cache
-            b"".join(speaker.stream("chatgpt", "Hi from ChatGPT."))
-            self.assertEqual(calls[parts:], [("openai", "marin"), ("gemini", "Kore")])  # OpenAI down: Gemini reads
+            b"".join(speaker.stream("claude", "Hi from Claude."))
+            self.assertEqual(calls[parts:], [("openai", "cedar"), ("gemini", "Charon")])  # OpenAI down: Gemini reads
             with self.assertRaises(ValueError):
                 speaker.stream("assistant", " ")
         with mock.patch.dict(speech.PROVIDERS, {"gemini": fake("gemini", True), "openai": fake("openai", True)}):
@@ -747,7 +748,8 @@ class WebTests(unittest.TestCase):
     def test_voice_with_claude_is_relayed_to_claude(self):
         self.fake["claude"].LABEL = "Claude"
         session = FakeLiveSession(call=("ask_claude", {"message": "What should we tackle first?"}))
-        frames, config = self._voice_call("claude", session, [b"\x00\x00" * 640, 0.3])
+        with mock.patch.object(self.main, "CLAUDE_VOICE", "gemini"):  # Claude's call on Gemini's voice line
+            frames, config = self._voice_call("claude", session, [b"\x00\x00" * 640, 0.3])
         self.assertIn({"type": "status", "text": "Preparing Claude…"}, frames)
         self.assertIn({"type": "tool", "name": "ask_claude"}, frames)
         self.assertEqual([d.name for d in config.tools[0].function_declarations], ["ask_claude"])
@@ -776,9 +778,26 @@ class WebTests(unittest.TestCase):
         self.assertIsNone(gemini_config)                       # Gemini isn't on this call at all
         self.assertIn({"type": "status", "text": "Connecting to ChatGPT…"}, frames)
         self.assertIn("ChatGPT, made by OpenAI", conn.updates[0]["instructions"])
+        self.assertEqual(conn.updates[0]["audio"]["output"]["voice"], "marin")  # the voice replies are read in
         self.assertNotIn("speech recognition", conn.updates[0]["instructions"])  # it hears the audio itself
         self.assertIn("Ruvy", conn.updates[0]["audio"]["input"]["transcription"]["prompt"])
         self.assertEqual([t["text"] for t in self.store.get_talk("chatgpt")], ["Jill covers outreach", "Noted."])
+
+    def test_voice_with_claude_on_chatgpts_voice_line(self):
+        self.fake["claude"].LABEL = "Claude"
+        conn = FakeRealtime(call=("ask_claude", {"message": "What should we tackle first?"}))
+        with mock.patch.dict(self.main.app.config, {"OPENAI_VOICE_CONNECT": FakeRealtimeConnect(conn)}):
+            frames, gemini_config = self._voice_call("claude", FakeLiveSession(), [b"\x00\x00" * 640] * 2 + [0.3])
+        self.assertIsNone(gemini_config)
+        self.assertIn({"type": "status", "text": "Connecting to Claude…"}, frames)
+        session = conn.updates[0]
+        self.assertEqual([t["name"] for t in session["tools"]], ["ask_claude"])   # it can only pass words on
+        self.assertIn("voice line between Manne and Claude", session["instructions"])
+        self.assertNotIn("two or three short sentences", session["instructions"])  # reads Claude's answer in full
+        self.assertEqual(session["audio"]["output"]["voice"], "cedar")             # Claude's own voice
+        self.assertEqual(json.loads(conn.items[0]["output"]), {"answer": "claude here"})
+        self.assertEqual([(t["role"], t["text"]) for t in self.store.get_talk("claude")],
+                         [("user", "What should we tackle first?"), ("assistant", "claude here")])  # saved once
 
     def test_voice_with_an_unavailable_partner_says_why(self):
         self.store.update_settings({"partners_enabled": False})

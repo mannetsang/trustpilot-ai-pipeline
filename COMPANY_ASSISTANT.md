@@ -80,52 +80,58 @@ text: it can look things up, record what you tell it, and queue or answer questi
 Use Chrome or Edge. Only your signed-in session, from the app's own page, can open
 the voice socket.
 
+Each bot has one voice, on calls and when its replies are read aloud: the Assistant
+**Kore** (Gemini), Claude **cedar** and ChatGPT **marin** (both OpenAI).
+
 **ChatGPT** calls work the same way as the Assistant's, on OpenAI's own live model
 (`gpt-realtime-2.1` through the Realtime API, with the `CHATGPT_API_KEY` secret):
 ChatGPT hears your audio directly, answers in its own voice, and uses the same tools,
-company background and conversation history as typed ChatGPT. Its turn detection is
-semantic (it waits for the end of a thought, not a fixed pause), and the on-screen
+company background and conversation history as typed ChatGPT. The on-screen
 transcript is primed with staff, salon, project and system names. Turns are saved
 into the ChatGPT conversation. OpenAI bills live audio per minute, noticeably more
 than typed chat. `CHATGPT_VOICE=relay` switches ChatGPT to the relay below instead.
 
-**Claude** has no audio input in Anthropic's API, so a call with Claude uses Gemini
-Live only as ears and voice. Gemini gets a single tool (`ask_claude`) that passes
-your words to Claude, which answers with its own model, tools and conversation
-history (in a spoken style), and Gemini reads the answer out word for word. Claude
-saves those turns into its own conversation. Expect a pause while it thinks; the
-call shows "Claude is thinking…".
+A turn on OpenAI's line ends after 1.2 s of silence (`OPENAI_TURN_DETECTION`). Measured
+with real speech, it acts 2.2-3.1 s after you stop and never split a sentence: a
+longer pause mid-sentence starts an answer, which gives way as soon as you carry on.
+OpenAI's "semantic" detection took up to 9 s at its most patient setting and split
+sentences at its fastest.
 
-Because the partner only sees Gemini's transcript, a relayed call waits for a longer
-pause before it treats your turn as finished (`RELAY_END_SILENCE_MS`, 1.5 s; with
-Gemini's default a 0.9 s pause split one request into two messages). It also gives
-Gemini the company's names and terms, so "SkuVault", "Gen'C Beauty" and staff names
-come through right, and the partner is told the words were spoken, so it reads
-misheard names charitably.
+**Claude** has no audio input in Anthropic's API, so a call with Claude uses a live
+voice line only as ears and voice: by default ChatGPT's (`CLAUDE_VOICE=realtime`),
+which hears the audio itself, or Gemini's (`CLAUDE_VOICE=gemini`). The line gets a
+single tool (`ask_claude`) that passes your words to Claude, which answers with its
+own model, tools and conversation history (in a spoken style); the line says "One
+moment." and then reads Claude's answer out word for word (99% in tests). Claude saves
+those turns into its own conversation. The call shows "Claude is thinking…" while it
+works. The line is given the company's names and terms, so "SkuVault", "Gen'C Beauty"
+and staff names reach Claude spelled right, and Claude is told the words were spoken,
+so it reads misheard names charitably. On Gemini's line a turn ends after a 1.5 s pause
+(`RELAY_END_SILENCE_MS`; Gemini's default split a request at a 0.9 s pause).
 
 ## Read aloud
 
 **🔊** on any reply, or the **Read replies aloud** switch (remembered in this browser),
-speaks a typed reply out loud in that partner's own voice: the Assistant and Claude
-with Gemini text-to-speech on Vertex AI (`gemini-2.5-flash-tts`, voices Kore and
-Charon, so Claude's words stay in Google Cloud), ChatGPT with OpenAI's
-(`gpt-4o-mini-tts`, voice marin). If one provider fails the other reads instead.
-Speech is streamed, so it starts in about two seconds whatever the length; markdown
-and links are cleaned out first. A finished reading is cached, so replaying it is
-free. Starting a voice call or switching partners stops a reading.
+speaks a typed reply out loud in that bot's call voice: the Assistant with Gemini
+text-to-speech on Vertex AI (`gemini-2.5-flash-tts`), Claude and ChatGPT with OpenAI's
+(`gpt-4o-mini-tts`). If one provider fails the other reads instead. Speech is
+streamed, so it starts in about two seconds whatever the length; markdown and links
+are cleaned out first. A finished reading is cached, so replaying it is free.
+Starting a voice call or switching partners stops a reading.
 
 ## Configuration
 
 | Env var | Default |
 |---|---|
 | `TALK_MODEL` | `gemini-2.5-pro` (falls back to `GEMINI_MODEL`) |
-| `LIVE_MODEL` / `LIVE_VOICE` / `LIVE_LOCATION` | `gemini-3.8-live` / model default / `us-central1` |
+| `LIVE_MODEL` / `LIVE_LOCATION` | `gemini-3.8-live` / `us-central1` |
 | `RELAY_END_SILENCE_MS` | `1500` (pause that ends your turn in a relayed call) |
-| `CHATGPT_VOICE` | `realtime` (ChatGPT hears you) or `relay` (through Gemini) |
-| `OPENAI_LIVE_MODEL` / `OPENAI_LIVE_VOICE` / `OPENAI_LIVE_REASONING` | `gpt-realtime-2.1` / model default / `low` |
+| `CHATGPT_VOICE` / `CLAUDE_VOICE` | `realtime` / `realtime` (OpenAI's line; `relay` / `gemini` for Gemini's) |
+| `OPENAI_TURN_DETECTION` | `server:1200` (or `semantic:low`..`high`) |
+| `OPENAI_LIVE_MODEL` / `OPENAI_LIVE_REASONING` | `gpt-realtime-2.1` / `low` |
 | `OPENAI_TRANSCRIBE_MODEL` | `gpt-4o-transcribe` (on-screen transcript of ChatGPT calls) |
 | `GEMINI_TTS_MODEL` / `OPENAI_TTS_MODEL` | `gemini-2.5-flash-tts` / `gpt-4o-mini-tts` (read aloud) |
-| `SPEAK_VOICE_ASSISTANT` / `SPEAK_VOICE_CLAUDE` / `SPEAK_VOICE_CHATGPT` | `Kore` / `Charon` / `marin` |
+| `VOICE_ASSISTANT` / `VOICE_CLAUDE` / `VOICE_CHATGPT` | `Kore` / `cedar` / `marin` (calls and read aloud) |
 | `CLAUDE_MODEL` / `CLAUDE_FALLBACK_MODEL` | `claude-opus-5-5` / `claude-opus-4-8` |
 | `CLAUDE_BACKEND` / `CLAUDE_REGION` / `CLAUDE_EFFORT` | `auto` / `global` / `medium` |
 | `OPENAI_MODEL` / `OPENAI_KEY_SECRET` | `gpt-5` / `CHATGPT_API_KEY` |

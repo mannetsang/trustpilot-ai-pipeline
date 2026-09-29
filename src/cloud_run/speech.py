@@ -1,8 +1,8 @@
 """Read replies aloud: text -> speech for the 🔊 button and the "Read replies aloud" switch.
 
-Each partner has its own voice. The Assistant and Claude use Gemini text-to-speech
-on Vertex AI (so Claude's words stay in Google Cloud), ChatGPT uses OpenAI's; if one
-provider fails before speaking, the other one reads instead.
+Each bot reads in the same voice it has on a live call (VOICES): the Assistant with
+Gemini text-to-speech on Vertex AI, Claude and ChatGPT with OpenAI's. If a provider
+fails before speaking, the other one reads instead.
 
 Speech is streamed: the page starts playing as the first audio arrives (about 1.6 s
 with Gemini, 0.5 s with OpenAI) instead of waiting for a whole reply, which took
@@ -25,13 +25,14 @@ OPENAI_TTS_MODEL = os.environ.get("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
 OPENAI_KEY_SECRET = os.environ.get("OPENAI_KEY_SECRET", "CHATGPT_API_KEY")
 RATE = 24000  # both providers' PCM rate
 
-# partner -> (provider, voice); the other provider is the fallback.
+# Each bot has one voice, on calls and when a reply is read aloud (main.py passes these to the live bridges).
+# partner -> (provider, voice); if that provider fails, FALLBACK reads instead.
 VOICES = {
-    "assistant": ("gemini", os.environ.get("SPEAK_VOICE_ASSISTANT", "Kore")),
-    "claude": ("gemini", os.environ.get("SPEAK_VOICE_CLAUDE", "Charon")),
-    "chatgpt": ("openai", os.environ.get("SPEAK_VOICE_CHATGPT", "marin")),
+    "assistant": ("gemini", os.environ.get("VOICE_ASSISTANT", "Kore")),   # Gemini Live on calls
+    "claude": ("openai", os.environ.get("VOICE_CLAUDE", "cedar")),        # ChatGPT's voice line on calls
+    "chatgpt": ("openai", os.environ.get("VOICE_CHATGPT", "marin")),      # OpenAI Realtime on calls
 }
-FALLBACK_VOICE = {"gemini": "Kore", "openai": "cedar"}
+FALLBACK = {"assistant": ("openai", "sage"), "claude": ("gemini", "Charon"), "chatgpt": ("gemini", "Kore")}
 STYLE = "Read this aloud in a warm, natural, conversational voice, like a helpful colleague:"
 PART_CHARS = 800   # per provider request; parts are read back to back in one stream
 MAX_CHARS = 20000
@@ -134,7 +135,7 @@ class Speaker:
             if key in self._cache:
                 self._cache.move_to_end(key)
                 return iter([self._cache[key]])
-        attempts = [(provider, voice)] + [(p, FALLBACK_VOICE[p]) for p in PROVIDERS if p != provider]
+        attempts = [(provider, voice), FALLBACK.get(partner, FALLBACK["assistant"])]
         problems = []
         for name, name_voice in attempts:
             chunks = PROVIDERS[name](parts[0], name_voice, self.secrets)

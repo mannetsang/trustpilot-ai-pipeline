@@ -1,10 +1,13 @@
-"""Live voice with ChatGPT itself: browser <-> this service <-> the OpenAI Realtime API.
+"""Live voice over the OpenAI Realtime API: browser <-> this service <-> OpenAI.
+
+Used for ChatGPT itself, and as the voice line for Claude (which has no audio
+input): then the model gets only voice.RelayTools and reads Claude's answers out.
 
 The Gemini call (voice.VoiceBridge) and this one speak the same protocol to the
 browser, so the page doesn't care which model is on the line. What differs is
 upstream: OpenAI's Realtime models hear the audio directly (no transcript in
-between), take 24 kHz PCM, and decide when you've finished with semantic turn
-detection, which waits for the end of a thought rather than a fixed pause.
+between) and take 24 kHz PCM. A turn ends after 1.2 s of silence; a pause that long
+mid-sentence starts an answer, which gives way as soon as Manne carries on.
 
 Tool calls run server-side with the same Toolset the typed ChatGPT chat uses,
 and finished turns are saved into the ChatGPT conversation.
@@ -21,6 +24,19 @@ from voice import CONNECT_TIMEOUT, VoiceBridge
 OPENAI_LIVE_MODEL = os.environ.get("OPENAI_LIVE_MODEL", "gpt-realtime-2.1")
 OPENAI_LIVE_VOICE = os.environ.get("OPENAI_LIVE_VOICE", "")  # empty = the model's default voice
 OPENAI_TRANSCRIBE_MODEL = os.environ.get("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-transcribe")
+# When Manne's turn is over: "server:<ms>" (that much silence) or "semantic:<low|medium|high|auto>" (the model
+# judges the end of a thought). Measured with real speech, from the end of speech to the line acting:
+#   server:1200      2.2-3.1 s, never split a sentence (a 0.9 s or 1.6 s pause: it starts, hears more, and waits)
+#   semantic:low     1.6-9.1 s     semantic:medium 1.5-6.1 s     semantic:high 1.5-3.2 s, split at a 1.6 s pause
+TURN_DETECTION = os.environ.get("OPENAI_TURN_DETECTION", "server:1200")
+
+
+def turn_detection():
+    kind, _, value = TURN_DETECTION.partition(":")
+    common = {"create_response": True, "interrupt_response": True}
+    if kind == "server":
+        return {"type": "server_vad", "silence_duration_ms": int(value or 1200), **common}
+    return {"type": "semantic_vad", "eagerness": value or "auto", **common}
 OPENAI_LIVE_REASONING = os.environ.get("OPENAI_LIVE_REASONING", "low")  # minimal..xhigh; empty = model default
 API_KEY_SECRET = os.environ.get("OPENAI_KEY_SECRET", "CHATGPT_API_KEY")
 # Said last, where a long prompt's instructions carry most weight: unprompted, answers ran 26-37 s.
@@ -57,22 +73,21 @@ class Upsampler:
         return out.tobytes()
 
 
-def session_config(instructions, specs, hints=""):
+def session_config(instructions, specs, hints="", voice=None, reminder=True):
     audio_in = {
         "format": {"type": "audio/pcm", "rate": RATE},
         "noise_reduction": {"type": "near_field"},
-        # "low" eagerness waits for the end of a thought, so a pause mid-sentence doesn't cut Manne off.
-        "turn_detection": {"type": "semantic_vad", "eagerness": "low", "create_response": True,
-                           "interrupt_response": True},
+        "turn_detection": turn_detection(),
         # Only for the on-screen transcript; the model itself hears the audio.
         "transcription": {"model": OPENAI_TRANSCRIBE_MODEL, **({"prompt": hints} if hints else {})},
     }
     audio_out = {"format": {"type": "audio/pcm", "rate": RATE}}
-    if OPENAI_LIVE_VOICE:
-        audio_out["voice"] = OPENAI_LIVE_VOICE
+    if voice or OPENAI_LIVE_VOICE:
+        audio_out["voice"] = voice or OPENAI_LIVE_VOICE
     config = {
         "type": "realtime",
-        "instructions": f"{instructions}\n\n{SPOKEN_REMINDER}",
+        # A relay reads another model's answer word for word, so it mustn't be told to shorten it.
+        "instructions": f"{instructions}\n\n{SPOKEN_REMINDER}" if reminder else instructions,
         "output_modalities": ["audio"],
         "audio": {"input": audio_in, "output": audio_out},
         "tools": [{"type": "function", "name": s["name"], "description": s["description"],
@@ -87,27 +102,34 @@ def session_config(instructions, specs, hints=""):
 def default_connect(secrets):
     from openai import AsyncOpenAI
 
-    client = AsyncOpenAI(api_key=secrets.get(API_KEY_SECRET))
+    key = secrets.get(API_KEY_SECRET)
+    if not key:
+        raise RuntimeError(f"there's no readable {API_KEY_SECRET} secret for OpenAI's voice line")
+    client = AsyncOpenAI(api_key=key)
     return lambda: client.realtime.connect(model=OPENAI_LIVE_MODEL)
 
 
 class RealtimeVoiceBridge(VoiceBridge):
     """One voice call with ChatGPT. Same browser protocol as VoiceBridge (see voice.py)."""
 
-    def __init__(self, ws, store, toolset, instructions, connect, save_as="chatgpt", hints=""):
-        super().__init__(ws, store, toolset, instructions, connect=connect, save_as=save_as)
+    def __init__(self, ws, store, toolset, instructions, connect, save_as="chatgpt", hints="", voice=None,
+                 reminder=True, label="ChatGPT"):
+        super().__init__(ws, store, toolset, instructions, connect=connect, save_as=save_as, voice=voice)
         self.hints = hints
+        self.reminder = reminder
+        self.label = label  # who Manne is talking to: ChatGPT, or Claude through ChatGPT's voice line
         self.upsample = Upsampler()
 
     async def _run(self):
-        self.send_json(type="status", text="Connecting to ChatGPT…")
+        self.send_json(type="status", text=f"Connecting to {self.label}…")
         manager = self.connect()
         try:
             conn = await asyncio.wait_for(manager.__aenter__(), timeout=CONNECT_TIMEOUT)
         except asyncio.TimeoutError as exc:
-            raise RuntimeError(f"ChatGPT ({OPENAI_LIVE_MODEL}) didn't answer within {CONNECT_TIMEOUT} seconds") from exc
+            raise RuntimeError(f"OpenAI's voice line ({OPENAI_LIVE_MODEL}) didn't answer within {CONNECT_TIMEOUT} seconds") from exc
         try:
-            await conn.session.update(session=session_config(self.system_instruction, self.toolset.specs(), self.hints))
+            await conn.session.update(session=session_config(self.system_instruction, self.toolset.specs(), self.hints,
+                                                             self.voice, self.reminder))
             self.send_json(type="ready", model=OPENAI_LIVE_MODEL)
             upstream = asyncio.create_task(self._upstream(conn))
             downstream = asyncio.create_task(self._downstream(conn))
