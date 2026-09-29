@@ -530,16 +530,18 @@ class IntegrationTests(unittest.TestCase):
         def __init__(self, status=200, body='{"domain": "superhairpieces.ca", "currency": "CAD"}'):
             self.calls, self.status, self.body = [], status, body
 
-        def request(self, method, url, headers=None, auth=None, json=None, timeout=None):
+        def request(self, method, url, headers=None, auth=None, json=None, timeout=None, **kw):
             from types import SimpleNamespace as NS
 
-            self.calls.append({"method": method, "url": url, "headers": headers, "json": json})
-            return NS(status_code=self.status, ok=self.status < 400, text=self.body)
+            self.calls.append({"method": method, "url": url, "headers": headers, "json": json, **kw})
+            body = self.routes.get(url, self.body) if hasattr(self, "routes") else self.body
+            return NS(status_code=self.status, ok=self.status < 400, text=body)
 
     def setUp(self):
         import integrations
 
         self.integrations = integrations
+        integrations._exchanged.clear()
         self.secrets = MemorySecrets(dict(self.KEYS))
 
     def test_read_goes_to_its_own_host_with_the_key_and_never_returns_it(self):
@@ -615,17 +617,131 @@ class IntegrationTests(unittest.TestCase):
         self.assertTrue(held["not_sent"])
         self.assertEqual(len(session.calls), 1)
 
-    def test_grant_script_matches_the_integrations(self):
-        import re
+    def test_skuvault_login_becomes_tokens_on_the_server(self):
+        secrets = MemorySecrets({"SKUVAULT_EMAIL": "ops@superhairpieces.com", "SKUVAULT_PASSWORD": "pw-secret-123"})
+        session = self.Session()
+        session.routes = {"https://app.skuvault.com/api/gettokens": '{"TenantToken": "tenant-tok-1", "UserToken": "user-tok-1"}',
+                          "https://app.skuvault.com/api/inventory/getWarehouses": '{"Warehouses": [{"Code": "TOR"}], "t": "tenant-tok-1"}'}
+        result = self.integrations.call("skuvault", "POST", "/api/inventory/getWarehouses", secrets, body={}, session=session)
+        self.assertEqual(session.calls[0]["json"], {"Email": "ops@superhairpieces.com", "Password": "pw-secret-123"})
+        self.assertEqual(session.calls[1]["json"], {"TenantToken": "tenant-tok-1", "UserToken": "user-tok-1"})
+        self.assertEqual(result["data"]["Warehouses"], [{"Code": "TOR"}])
+        self.assertNotIn("tenant-tok-1", json.dumps(result))  # the exchanged tokens are scrubbed too
+        self.integrations.call("skuvault", "POST", "/api/inventory/getWarehouses", secrets, body={}, session=session)
+        self.assertEqual(len(session.calls), 3)                  # logged in once, tokens reused
+        held = self.integrations.call("skuvault", "POST", "/api/products/updateProducts", secrets, body={}, session=session)
+        self.assertTrue(held["not_sent"])                        # not a get*: a change
 
-        script = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "grant_integrations.sh")).read()
-        listed = re.search(r"SECRETS=\((.*?)\)", script, re.S)[1].split()
-        self.assertEqual(sorted(listed), self.integrations.secret_names())
+    def test_amazon_refresh_token_becomes_an_access_token(self):
+        secrets = MemorySecrets({"AMAZON_TOKEN": "Atzr|refresh", "AMAZON_CLIENT_IDENTIFIER": "amzn1.app", "AMAZON_CLIENT_SECRET": "sec"})
+        session = self.Session()
+        session.routes = {"https://api.amazon.com/auth/o2/token": '{"access_token": "Atza|access", "expires_in": 3600}',
+                          "https://sellingpartnerapi-na.amazon.com/sellers/v1/marketplaceParticipations": '{"payload": []}'}
+        result = self.integrations.call("amazon", "GET", "/sellers/v1/marketplaceParticipations", secrets, session=session)
+        self.assertEqual(session.calls[0]["data"]["grant_type"], "refresh_token")
+        self.assertEqual(session.calls[1]["headers"]["x-amz-access-token"], "Atza|access")
+        self.assertTrue(result["ok"])
 
-    def test_every_secret_it_reads_exists_in_the_registry_list(self):
-        names = self.integrations.secret_names()
-        self.assertIn("BIGCOMMERCE_gmosz3ja_ACCESS_TOKEN", names)
-        self.assertNotIn("SKUVAULT_PASSWORD", names)  # logins aren't wired up
+    def test_google_tools_use_the_owner_sign_in(self):
+        class Google:
+            def auth_header(self):
+                return {"Authorization": "Bearer ya29.owner"}
+
+        session = self.Session(body='{"emailAddress": "manne@superhairpieces.com"}')
+        result = self.integrations.call("gmail", "GET", "/gmail/v1/users/me/profile", None, session=session, google=Google())
+        self.assertEqual(session.calls[0]["headers"]["Authorization"], "Bearer ya29.owner")
+        self.assertTrue(result["ok"])
+        missing = self.integrations.call("gmail", "GET", "/gmail/v1/users/me/profile", None, session=session)
+        self.assertIn("Google isn't connected", missing["error"])
+
+    def test_a_system_with_several_parts_is_connected_only_when_all_work(self):
+        class Google:
+            def auth_header(self):
+                return {"Authorization": "Bearer ya29.owner"}
+
+        store = MemoryStore()
+        session = self.Session()
+        session.routes = {"https://analyticsadmin.googleapis.com/v1beta/accountSummaries": '{"accountSummaries": []}'}
+        real_request = session.request
+
+        def request(method, url, **kw):
+            response = real_request(method, url, **kw)
+            if "searchconsole" in url:
+                response.status_code, response.ok, response.text = 403, False, '{"error": "API not enabled"}'
+            return response
+
+        session.request = request
+        self.integrations.check_all(None, store, session=session, google=Google(), only={"ga4_admin", "search_console"})
+        self.assertEqual(store.get_item("systems", "analytics")["status"], "error")
+        self.assertIn("403", store.get_item("systems", "analytics")["why"])
+
+    def test_connect_info_for_the_access_tab(self):
+        hubspot = self.integrations.connect_info("hubspot")
+        self.assertEqual((hubspot["kind"], hubspot["fields"][0]["secret"]), ("paste", "HUBSPOT_ACCESS_TOKEN"))
+        self.assertIn("Private Apps", hubspot["help"])
+        self.assertEqual(self.integrations.connect_info("bigcommerce_ca")["kind"], "key")
+        self.assertEqual(self.integrations.connect_info("gmail")["kind"], "google")
+        self.assertIsNone(self.integrations.connect_info("meta"))
+
+
+class CloudSetupTests(unittest.TestCase):
+    """The one owner approval: grant per secret, create the ones to paste, switch on Google APIs."""
+
+    class Cloud:
+        def __init__(self, existing, granted=()):
+            self.existing, self.policies, self.calls = set(existing), {}, []
+            for name in granted:
+                self.policies[name] = {"bindings": [{"role": "roles/secretmanager.secretAccessor",
+                                                     "members": ["serviceAccount:chat-assistant@shp-ai-bot-2026.iam.gserviceaccount.com"]}]}
+
+        def request(self, method, url, headers=None, timeout=None, params=None, json=None):
+            from types import SimpleNamespace as NS
+            import json as _json
+
+            self.calls.append((method, url.split("/v1/", 1)[-1], params, json))
+            name = url.split("/secrets/", 1)[-1].split(":")[0] if "/secrets/" in url else None
+            if url.endswith(":getIamPolicy"):
+                body = self.policies.get(name, {"etag": "e"})
+            elif url.endswith(":setIamPolicy"):
+                self.policies[name] = json["policy"]
+                body = json["policy"]
+            elif url.endswith("/secrets") and method == "POST":
+                self.existing.add(params["secretId"])
+                body = {"name": params["secretId"]}
+            elif name is not None:
+                if name not in self.existing:
+                    return NS(status_code=404, text='{"error": {"message": "not found"}}')
+                body = {"name": name}
+            else:
+                body = {"name": "operations/1"}
+            return NS(status_code=200, text=_json.dumps(body))
+
+    def test_setup_grants_creates_and_enables(self):
+        import cloud_setup
+
+        existing = [n for n, pasted in cloud_setup.plan().items() if not pasted and n != "FIGMA_TOKEN"]
+        cloud = self.Cloud(existing, granted=["AIRTABLE_COMPANY_TOKEN"])
+        report = cloud_setup.run("ya29.owner-token", http=cloud)
+        self.assertIn("HUBSPOT_ACCESS_TOKEN", report["created"])
+        self.assertIn("FIGMA_TOKEN", report["missing"])          # should exist but doesn't: reported, not created
+        self.assertIn("AIRTABLE_COMPANY_TOKEN", report["already"])
+        self.assertIn("BIGCOMMERCE_gmosz3ja_ACCESS_TOKEN", report["granted"])
+        self.assertEqual(report["errors"], [])
+        roles = {b["role"] for b in cloud.policies["HUBSPOT_ACCESS_TOKEN"]["bindings"]}
+        self.assertEqual(roles, {"roles/secretmanager.secretAccessor", "roles/secretmanager.secretVersionManager"})
+        roles = {b["role"] for b in cloud.policies["BIGCOMMERCE_gmosz3ja_ACCESS_TOKEN"]["bindings"]}
+        self.assertEqual(roles, {"roles/secretmanager.secretAccessor"})  # a stored key is only read
+        self.assertIn("searchconsole.googleapis.com", report["enabled"])
+        self.assertFalse(any(":setIamPolicy" in c[1] and "AIRTABLE" in c[1] for c in cloud.calls))  # nothing to change
+        self.assertFalse(any("projects/shp-ai-bot-2026:setIamPolicy" in c[1] for c in cloud.calls))  # never project-wide
+
+
+    def test_logins_are_used_on_the_server_only(self):
+        import integrations
+
+        self.assertIn("SKUVAULT_PASSWORD", integrations.secret_names())
+        described = json.dumps(integrations.describe(MemorySecrets({"SKUVAULT_PASSWORD": "pw-secret-123"})))
+        self.assertNotIn("pw-secret-123", described)
 
 
 class RobustnessTests(unittest.TestCase):
@@ -944,6 +1060,79 @@ class WebTests(unittest.TestCase):
             self.assertEqual(self.call("POST", "/api/speak", {"partner": "claude", "text": " "}).status_code, 400)
         page = self.client.get("/").get_data(as_text=True)
         self.assertIn("/static/speaker.js", page)
+
+    def test_pasting_a_key_saves_it_and_tests_the_system(self):
+        import integrations
+
+        session = IntegrationTests.Session(body='{"results": []}')
+        with mock.patch.object(integrations.requests, "request", session.request):
+            r = self.call("POST", "/api/connect/hubspot", {"values": {"HUBSPOT_ACCESS_TOKEN": "pat-na1-secret"}})
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.get_json()["result"]["ok"])
+        self.assertNotIn("pat-na1-secret", r.get_data(as_text=True))  # never echoed
+        self.assertEqual(self.main.secret_store.get("HUBSPOT_ACCESS_TOKEN"), "pat-na1-secret")
+        self.assertEqual(session.calls[0]["headers"]["Authorization"], "Bearer pat-na1-secret")
+        self.assertEqual(self.store.get_item("systems", "hubspot")["status"], "connected")
+        self.assertEqual(self.call("POST", "/api/connect/hubspot", {"values": {}}).status_code, 400)
+        self.assertEqual(self.call("POST", "/api/connect/airtable", {"values": {"x": "y"}}).status_code, 404)
+
+    def test_pasting_before_setup_asks_for_the_owner_approval(self):
+        class PermissionDenied(Exception):
+            pass
+
+        with mock.patch.object(self.main.secret_store, "put", side_effect=PermissionDenied("no")):
+            r = self.call("POST", "/api/connect/hubspot", {"values": {"HUBSPOT_ACCESS_TOKEN": "pat-na1-secret"}})
+        self.assertEqual(r.status_code, 409)
+        self.assertEqual(r.get_json()["url"], "/connect/setup?then=hubspot")
+
+    def test_connect_everything_asks_google_for_owner_access(self):
+        client = {"web": {"client_id": "cid.apps.googleusercontent.com", "client_secret": "x",
+                          "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token"}}
+        self.main.secret_store.put(self.main.OAUTH_CLIENT_SECRET_ID, json.dumps(client))
+        r = self.client.get("/connect/setup?then=hubspot")
+        self.assertEqual(r.status_code, 302)
+        self.assertIn("accounts.google.com", r.location)
+        self.assertIn("cloud-platform", r.location)
+        self.assertNotIn("offline", r.location)  # no long-term owner token is ever asked for
+        with self.client.session_transaction() as s:
+            self.assertEqual((s["oauth"]["mode"], s["oauth"]["then"]), ("setup", "hubspot"))
+        self.assertEqual(self.client.get("/connect/setup?then=../evil").status_code, 302)
+        with self.client.session_transaction() as s:
+            self.assertEqual(s["oauth"]["then"], "")
+
+    def test_owner_approval_runs_setup_once_and_keeps_nothing(self):
+        import cloud_setup
+        from types import SimpleNamespace as NS
+
+        class Flow:
+            code_verifier = None
+            client_config = {"client_id": "cid"}
+            credentials = NS(token="ya29.owner-cloud-token", id_token="idt", refresh_token=None)
+
+            def fetch_token(self, code):
+                self.code = code
+
+        with self.client.session_transaction() as s:
+            s["oauth"] = {"state": "st8", "verifier": "v", "connect": False, "mode": "setup", "then": "hubspot"}
+        report = {"granted": ["AIRTABLE_COMPANY_TOKEN"], "created": ["HUBSPOT_ACCESS_TOKEN"], "errors": []}
+        with mock.patch.object(self.main, "make_flow", return_value=Flow()), \
+                mock.patch("google.oauth2.id_token.verify_oauth2_token",
+                           return_value={"email": self.main.OWNER_EMAIL, "email_verified": True, "sub": "1"}), \
+                mock.patch.object(cloud_setup, "run", return_value=report) as run:
+            r = self.client.get("/oauth/callback?state=st8&code=abc")
+        run.assert_called_once_with("ya29.owner-cloud-token")
+        self.assertEqual(r.location, "/?tab=access&setup=done&open=hubspot")
+        self.assertEqual(self.store.get_flag("connect_setup")["created"], ["HUBSPOT_ACCESS_TOKEN"])
+        with self.client.session_transaction() as s:
+            self.assertEqual(s.get("email"), self.main.OWNER_EMAIL)   # still signed in
+            self.assertNotIn("ya29.owner-cloud-token", json.dumps(dict(s)))  # the owner token is gone
+        self.assertNotIn("ya29.owner-cloud-token", json.dumps(self.store.get_flag("connect_setup")))
+
+    def test_access_tab_rows_carry_how_to_connect(self):
+        systems = {s["id"]: s for s in self.call("GET", "/api/knowledge").get_json()["systems"]}
+        self.assertEqual(systems["hubspot"]["connect"]["kind"], "paste")
+        self.assertEqual(systems["skuvault"]["connect"]["kind"], "key")
+        self.assertEqual(systems["gmail"]["connect"]["kind"], "google")
 
     def test_hidden_elements_stay_hidden(self):
         # .voicebar sets display: flex, which beats the browser's own [hidden] rule without this.

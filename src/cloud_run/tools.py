@@ -85,7 +85,7 @@ SPECS = [
      _obj({"conversation": _S, "text": _S, "confirmed": _B}, ["conversation", "text", "confirmed"])),
     ("list_calendar", "The owner's upcoming calendar events.", _obj({"days_ahead": _I})),
     ("list_integrations", "Company systems you can use right now with credentials already stored in Secret Manager "
-     "(BigCommerce stores, Airtable, Trustpilot, Stamped, Omnisend, Notion, Figma): their ids, whether each is "
+     "(BigCommerce stores, SkuVault, Amazon, HubSpot, Re:amaze, Airtable, Trustpilot, Stamped, Omnisend, Notion, Figma, TeamDesk, and Manne's Gmail, Drive, Sheets, Analytics and Search Console): their ids, whether each is "
      "ready, and useful paths. Check this before asking the owner for access to a system.", _obj({})),
     ("call_api", "Make one request to a company system from list_integrations. The server adds the key; you never "
      "see or send it. GET (and read-only searches) run at once. Anything that changes data needs confirmed=true, "
@@ -339,11 +339,12 @@ class Toolset:
 
     # -- company systems -----------------------------------------------------------
     def _t_list_integrations(self):
-        return {"integrations": integrations.describe(self.secrets)}
+        return {"integrations": integrations.describe(self.secrets, self.google)}
 
     def _t_call_api(self, system, path, method="GET", query=None, body=None, confirmed=False):
         confirmed = bool(confirmed) and self.may_change
-        result = integrations.call(system, method, path, self.secrets, query=query, body=body, confirmed=confirmed)
+        result = integrations.call(system, method, path, self.secrets, query=query, body=body, confirmed=confirmed,
+                                   google=self.google)
         if confirmed and result.get("ok") and not integrations.is_read(integrations.BY_ID[system], method, path):
             now = utcnow_iso()  # a change in a company system is recorded like a sent message
             self.store.save_action(knowledge.slug(f"{system}{now}", "a-"), {
