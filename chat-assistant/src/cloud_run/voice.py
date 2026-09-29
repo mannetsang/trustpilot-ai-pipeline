@@ -40,7 +40,7 @@ CONNECT_TIMEOUT = 20
 RELAY_END_SILENCE_MS = int(os.environ.get("RELAY_END_SILENCE_MS", "1500"))
 
 
-def live_config(system_instruction, specs, end_silence_ms=None):
+def live_config(system_instruction, specs, end_silence_ms=None, voice=None):
     from google.genai import types
 
     decls = []
@@ -63,9 +63,10 @@ def live_config(system_instruction, specs, end_silence_ms=None):
             automatic_activity_detection=types.AutomaticActivityDetection(
                 end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_LOW,
                 silence_duration_ms=end_silence_ms))
-    if LIVE_VOICE:
+    voice = voice or LIVE_VOICE
+    if voice:
         config["speech_config"] = types.SpeechConfig(
-            voice_config=types.VoiceConfig(prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=LIVE_VOICE)))
+            voice_config=types.VoiceConfig(prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice)))
     return types.LiveConnectConfig(**config)
 
 
@@ -75,9 +76,10 @@ You are the voice line between Manne and {label}. You don't answer anything your
 opinions of your own: {label} does all the thinking.
 
 Every time Manne says something, call {tool} exactly once with what he said, word for word, in the language
-he used (fix only obvious transcription slips). Say nothing while you wait. When the answer comes back, say
-it out loud exactly as written, in a natural speaking voice: don't summarize, add, soften or leave anything
-out, and don't read out markdown symbols. If {label} asks a question, ask it.
+he used (fix only obvious transcription slips). Before calling it you may say "One moment." and nothing else:
+no words of your own. When the answer comes back, say it out loud exactly as written, in a natural speaking
+voice: don't summarize, add, soften or leave anything out, and don't read out markdown symbols. If {label}
+asks a question, ask it.
 
 Pass on everything he said since the last answer as one message, even if he paused in the middle. If you
 didn't catch what Manne said, ask him to repeat it instead of calling the tool. If the tool returns an
@@ -127,7 +129,8 @@ def default_connect():
 class VoiceBridge:
     """One voice call. ws is a flask-sock/simple-websocket connection (blocking receive/send)."""
 
-    def __init__(self, ws, store, toolset, system_instruction, connect=None, save_as="assistant", end_silence_ms=None):
+    def __init__(self, ws, store, toolset, system_instruction, connect=None, save_as="assistant", end_silence_ms=None,
+                 voice=None):
         self.ws = ws
         self.store = store
         self.toolset = toolset
@@ -135,6 +138,7 @@ class VoiceBridge:
         self.connect = connect or default_connect()
         self.save_as = save_as  # conversation the finished turns go to; None when a relayed partner saves its own
         self.end_silence_ms = end_silence_ms  # how long a pause ends Manne's turn; None = Gemini's default
+        self.voice = voice  # the bot's own voice, the same one its replies are read aloud in
         self.stopped = False
         self.turn = {"you": [], "assistant": []}
 
@@ -162,7 +166,7 @@ class VoiceBridge:
             self._save_turn()
 
     async def _run(self):
-        config = live_config(self.system_instruction, self.toolset.specs(), self.end_silence_ms)
+        config = live_config(self.system_instruction, self.toolset.specs(), self.end_silence_ms, self.voice)
         self.send_json(type="status", text="Connecting to Gemini Live…")
         manager = self.connect(config)
         try:

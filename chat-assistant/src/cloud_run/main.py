@@ -40,6 +40,7 @@ OWNER_DOMAIN = OWNER_EMAIL.split("@")[-1]
 OAUTH_CLIENT_SECRET_ID = os.environ.get("OAUTH_CLIENT_SECRET_ID", "chat-assistant-oauth-client")
 USER_TOKEN_SECRET_ID = os.environ.get("USER_TOKEN_SECRET_ID", "chat-assistant-user-token")
 CHATGPT_VOICE = os.environ.get("CHATGPT_VOICE", "realtime")  # realtime (ChatGPT hears you) | relay (via Gemini)
+CLAUDE_VOICE = os.environ.get("CLAUDE_VOICE", "realtime")  # realtime (ChatGPT's voice line) | gemini (Gemini's)
 RUN_TOKEN_SECRET_ID = os.environ.get("RUN_TOKEN_SECRET_ID", "chat-assistant-run-token")
 PUBLIC_URL = os.environ.get("PUBLIC_URL", "").rstrip("/")
 CSRF_HEADER = "X-Chat-Assistant"
@@ -504,23 +505,32 @@ def voice_ws(ws):
             text = system_prompt(store, partner, voice=True, owner_email=OWNER_EMAIL)
             return text + ("\n\nRECENT CONVERSATION (continue from here)\n" + history if history else "")
 
+        import speech
+        import voice_openai
+
+        own_voice = speech.VOICES[partner][1]  # the voice its replies are read aloud in, too
+
+        def openai_connect():
+            return app.config.get("OPENAI_VOICE_CONNECT") or voice_openai.default_connect(secret_store)
+
         if partner == "assistant":  # Gemini Live hears and answers
             bridge = voice.VoiceBridge(ws, store, service.toolset("assistant", voice=True), live_instruction(),
-                                       connect=app.config.get("VOICE_CONNECT"))
+                                       connect=app.config.get("VOICE_CONNECT"), voice=own_voice)
         elif partner == "chatgpt" and CHATGPT_VOICE == "realtime":  # ChatGPT hears and answers, same as Gemini
-            import voice_openai
-
-            connect = app.config.get("OPENAI_VOICE_CONNECT") or voice_openai.default_connect(secret_store)
             bridge = voice_openai.RealtimeVoiceBridge(ws, store, service.toolset("chatgpt", voice=True),
-                                                      live_instruction(), connect, save_as="chatgpt",
-                                                      hints=knowledge.name_hints(store))
+                                                      live_instruction(), openai_connect(), save_as="chatgpt",
+                                                      hints=knowledge.name_hints(store), voice=own_voice)
         else:
-            # Claude has no audio input: Gemini Live listens and speaks, Claude answers (see voice.RelayTools).
+            # Claude has no audio input: a live voice line listens and speaks, Claude answers (voice.RelayTools).
             toolset = voice.RelayTools(partner, label, lambda m: service.ask(partner, m, voice=True)["text"])
-            bridge = voice.VoiceBridge(ws, store, toolset,
-                                       voice.relay_instruction(label, toolset.name, knowledge.vocabulary(store)),
-                                       connect=app.config.get("VOICE_CONNECT"), save_as=None,
-                                       end_silence_ms=voice.RELAY_END_SILENCE_MS)
+            instruction = voice.relay_instruction(label, toolset.name, knowledge.vocabulary(store))
+            if CLAUDE_VOICE == "realtime":  # ChatGPT's line: hears the audio itself, waits for the end of a thought
+                bridge = voice_openai.RealtimeVoiceBridge(ws, store, toolset, instruction, openai_connect(),
+                                                          save_as=None, hints=knowledge.name_hints(store),
+                                                          voice=own_voice, reminder=False, label=label)
+            else:  # Gemini's line
+                bridge = voice.VoiceBridge(ws, store, toolset, instruction, connect=app.config.get("VOICE_CONNECT"),
+                                           save_as=None, end_silence_ms=voice.RELAY_END_SILENCE_MS)
     except Exception as exc:  # noqa: BLE001 - without this the socket would stay open and silent
         import traceback
 
