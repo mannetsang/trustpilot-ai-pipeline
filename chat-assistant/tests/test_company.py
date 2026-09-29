@@ -469,6 +469,12 @@ class WebTests(unittest.TestCase):
         self.assertIn("its own address", ws.sent[0])
         self.assertEqual(len(ws.sent), 1)  # nothing else happens for a foreign page
 
+    def test_page_and_state_carry_the_same_version(self):
+        # An open tab compares these to notice a new deploy and reload itself.
+        page = self.client.get("/").get_data(as_text=True)
+        version = self.call("GET", "/api/state").get_json()["version"]
+        self.assertIn(f'data-version="{version}"', page)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -43,6 +43,8 @@ RUN_TOKEN_SECRET_ID = os.environ.get("RUN_TOKEN_SECRET_ID", "chat-assistant-run-
 PUBLIC_URL = os.environ.get("PUBLIC_URL", "").rstrip("/")
 CSRF_HEADER = "X-Chat-Assistant"
 LOCAL = os.environ.get("STORE_BACKEND") == "memory"
+# Cloud Run names every deploy (K_REVISION); open pages reload themselves when it changes.
+APP_VERSION = os.environ.get("K_REVISION") or "local"
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
@@ -126,7 +128,7 @@ def login_page(error="", status=200):
 def index():
     if not signed_in():
         return login_page()
-    return render_template("index.html", owner=OWNER_EMAIL)
+    return render_template("index.html", owner=OWNER_EMAIL, version=APP_VERSION)
 
 
 @app.get("/login")
@@ -213,6 +215,7 @@ def _clean_task(body):
 def api_state():
     status = store.get_status()
     return jsonify(
+        version=APP_VERSION,
         owner=OWNER_EMAIL,
         connected=bool(secret_store.get(USER_TOKEN_SECRET_ID)),
         status=status,
@@ -429,9 +432,16 @@ def api_test_partners():
 # -- live voice ----------------------------------------------------------------------
 
 def _voice_origin_ok():
-    """Only the app's own page may open the voice socket (blocks cross-site WebSocket use of the cookie)."""
-    origin = request.headers.get("Origin", "")
-    return bool(origin) and origin.rstrip("/") == (PUBLIC_URL or request.host_url.rstrip("/"))
+    """Only the app's own page may open the voice socket (blocks cross-site WebSocket use of the cookie).
+
+    Compares host names: behind Cloud Run's proxy a WebSocket upgrade can arrive without the
+    forwarded https scheme, which made the full-URL comparison fail for the app's own page.
+    """
+    from urllib.parse import urlsplit
+
+    origin_host = urlsplit(request.headers.get("Origin", "")).netloc.lower()
+    expected = urlsplit(PUBLIC_URL).netloc.lower() if PUBLIC_URL else request.host.lower()
+    return bool(origin_host) and origin_host == expected
 
 
 def voice_ws(ws):
