@@ -430,6 +430,33 @@ def api_test_partners():
     return jsonify(results=talk_service().test_partners())
 
 
+_speaker = None
+
+
+@app.post("/api/speak")
+def api_speak():
+    """A reply as speech, streamed as it's made: 16-bit mono PCM at X-Sample-Rate (24 kHz)."""
+    global _speaker
+    body = request.get_json(force=True) or {}
+    partner = body.get("partner", "assistant")
+    if partner not in PARTNERS:
+        return jsonify(error="No such partner."), 404
+    if _speaker is None:
+        import speech
+
+        _speaker = app.config.get("SPEAKER") or speech.Speaker(secret_store)
+    try:
+        chunks = _speaker.stream(partner, str(body.get("text", "")))
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    except Exception as exc:  # noqa: BLE001 - shown as a toast
+        print(f"speak[{partner}] failed: {exc!r}")
+        return jsonify(error=str(exc)[:400]), 502
+    return app.response_class(chunks, mimetype="audio/pcm",
+                              headers={"X-Sample-Rate": "24000", "Cache-Control": "no-store",
+                                       "X-Accel-Buffering": "no"})
+
+
 # -- live voice ----------------------------------------------------------------------
 
 def _voice_origin_ok():

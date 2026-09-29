@@ -21,6 +21,7 @@
     }
 
     async start() {
+      if (window.companySpeaker) window.companySpeaker.stop();  // a call and a read-out would talk over each other
       $("voicebar").hidden = false;
       $("startVoice").disabled = true;
       // Each step says what it's waiting for, so a stall is never just "Connecting…".

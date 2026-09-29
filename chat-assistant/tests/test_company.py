@@ -444,6 +444,77 @@ class RealtimeVoiceTests(unittest.TestCase):
         self.assertTrue(all(b >= a for a, b in zip(out, out[1:])))    # no jumps back at chunk edges
 
 
+class SpeechTests(unittest.TestCase):
+    REPLY = ("## Brampton launch\n\nHere's where it stands:\n\n- **Ruvy** starts Monday\n- Evana needs [her badge](https://x.io/b)\n"
+             "1. Check `SkuVault` at https://skuvault.com/app\n\n```\nprint('hi')\n```\nWant me to message Sydney?")
+
+    def test_clean_for_speech_keeps_words_not_symbols(self):
+        import speech
+
+        spoken = speech.clean_for_speech(self.REPLY)
+        for gone in ("#", "**", "- ", "`", "https://", "[", "print("):
+            self.assertNotIn(gone, spoken)
+        for kept in ("Brampton launch.", "Ruvy starts Monday.", "her badge", "SkuVault", "the link on screen",
+                     "Want me to message Sydney?"):
+            self.assertIn(kept, spoken)
+
+    def test_split_keeps_every_word_in_bounded_parts(self):
+        import speech
+
+        text = " ".join(f"Sentence number {i} is about the Brampton salon launch and who runs it." for i in range(60))
+        parts = speech.split_for_speech(text)
+        self.assertGreater(len(parts), 1)
+        self.assertTrue(all(len(p) <= speech.PART_CHARS for p in parts))
+        self.assertEqual(" ".join(parts).split(), speech.clean_for_speech(text).split())
+        self.assertEqual(speech.split_for_speech("  "), [])
+
+    def test_voices_fallback_streaming_and_cache(self):
+        import speech
+
+        calls = []
+
+        def fake(name, fail=False):
+            def make(text, voice, secrets):
+                calls.append((name, voice))
+                if fail:
+                    raise RuntimeError(f"{name} is down")
+                yield b"\x01\x00" * 100
+                yield b"\x02\x00" * 100
+            return make
+
+        long_reply = " ".join(["The Brampton launch is on track and Ruvy starts on Monday."] * 30)
+        with mock.patch.dict(speech.PROVIDERS, {"gemini": fake("gemini"), "openai": fake("openai", fail=True)}):
+            speaker = speech.Speaker(MemorySecrets())
+            audio = b"".join(speaker.stream("claude", long_reply))
+            parts = len(speech.split_for_speech(long_reply))
+            self.assertEqual(len(audio), 400 * parts)                  # every part, back to back
+            self.assertEqual(calls, [("gemini", "Charon")] * parts)    # Claude: a Google voice of its own
+            self.assertEqual(b"".join(speaker.stream("claude", long_reply)), audio)
+            self.assertEqual(len(calls), parts)                        # the second press is served from cache
+            b"".join(speaker.stream("chatgpt", "Hi from ChatGPT."))
+            self.assertEqual(calls[parts:], [("openai", "marin"), ("gemini", "Kore")])  # OpenAI down: Gemini reads
+            with self.assertRaises(ValueError):
+                speaker.stream("assistant", " ")
+        with mock.patch.dict(speech.PROVIDERS, {"gemini": fake("gemini", True), "openai": fake("openai", True)}):
+            with self.assertRaises(RuntimeError) as ctx:
+                speech.Speaker(MemorySecrets()).stream("assistant", "Hello there.")
+            self.assertIn("gemini is down", str(ctx.exception))
+            self.assertIn("openai is down", str(ctx.exception))
+
+    def test_a_stopped_reading_is_not_cached(self):
+        import speech
+
+        def slow(text, voice, secrets):
+            yield from (b"\x00\x00" * 50 for _ in range(10))
+
+        with mock.patch.dict(speech.PROVIDERS, {"gemini": slow}):
+            speaker = speech.Speaker(MemorySecrets())
+            chunks = speaker.stream("assistant", "Hello there.")
+            next(chunks)
+            chunks.close()  # the page hung up halfway
+            self.assertEqual(len(speaker._cache), 0)
+
+
 class RobustnessTests(unittest.TestCase):
     def test_event_times_with_and_without_offsets(self):
         from google_apis import Directory
@@ -715,6 +786,27 @@ class WebTests(unittest.TestCase):
         self.assertIsNone(config)
         self.assertEqual(frames[-1]["type"], "error")
         self.assertIn("switched off", frames[-1]["message"])
+
+    def test_speak_endpoint(self):
+        class FakeSpeaker:
+            def stream(self, partner, text):
+                if not text.strip():
+                    raise ValueError("There's nothing to read out.")
+                if partner == "chatgpt":
+                    raise RuntimeError("Couldn't make speech. openai: down gemini: down")
+                return iter([b"\x01\x00", b"\x02\x00"])
+
+        with mock.patch.object(self.main, "_speaker", FakeSpeaker()):
+            r = self.call("POST", "/api/speak", {"partner": "claude", "text": "Hello."})
+            self.assertEqual((r.status_code, r.mimetype, r.headers["X-Sample-Rate"]), (200, "audio/pcm", "24000"))
+            self.assertEqual(r.data, b"\x01\x00\x02\x00")
+            failed = self.call("POST", "/api/speak", {"partner": "chatgpt", "text": "Hello."})
+            self.assertEqual(failed.status_code, 502)
+            self.assertIn("openai: down", failed.get_json()["error"])
+            self.assertEqual(self.call("POST", "/api/speak", {"partner": "nobody", "text": "x"}).status_code, 404)
+            self.assertEqual(self.call("POST", "/api/speak", {"partner": "claude", "text": " "}).status_code, 400)
+        page = self.client.get("/").get_data(as_text=True)
+        self.assertIn("/static/speaker.js", page)
 
     def test_hidden_elements_stay_hidden(self):
         # .voicebar sets display: flex, which beats the browser's own [hidden] rule without this.

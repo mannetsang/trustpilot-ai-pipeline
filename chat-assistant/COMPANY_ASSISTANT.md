@@ -13,7 +13,7 @@ Cloud Run* workflow.
 
 | Tab | What it's for |
 |---|---|
-| **Talk** | Chat with the **Assistant** (Gemini), **Claude** or **ChatGPT**. Each one has the same company background, knowledge base and tools, and its own conversation history. **🎙 Talk** starts a live voice call with whichever of the three is selected. |
+| **Talk** | Chat with the **Assistant** (Gemini), **Claude** or **ChatGPT**. Each one has the same company background, knowledge base and tools, and its own conversation history. **🎙 Talk** starts a live voice call with whichever of the three is selected. **🔊** on a reply reads it aloud (press again to stop); **Read replies aloud** reads each new typed reply automatically. |
 | **Board** | Tasks from your chats and conversations (unchanged). |
 | **Projects** | Every project it knows, per company: goal, owner, status, deadline, next steps, linked chats and open tasks. |
 | **Questions** | The interview: what it needs to know, highest priority first. Answer in the box, in Talk, or by voice; each answer is processed into projects, facts, tasks and follow-up questions. |
@@ -103,6 +103,17 @@ Gemini the company's names and terms, so "SkuVault", "Gen'C Beauty" and staff na
 come through right, and the partner is told the words were spoken, so it reads
 misheard names charitably.
 
+## Read aloud
+
+**🔊** on any reply, or the **Read replies aloud** switch (remembered in this browser),
+speaks a typed reply out loud in that partner's own voice: the Assistant and Claude
+with Gemini text-to-speech on Vertex AI (`gemini-2.5-flash-tts`, voices Kore and
+Charon, so Claude's words stay in Google Cloud), ChatGPT with OpenAI's
+(`gpt-4o-mini-tts`, voice marin). If one provider fails the other reads instead.
+Speech is streamed, so it starts in about two seconds whatever the length; markdown
+and links are cleaned out first. A finished reading is cached, so replaying it is
+free. Starting a voice call or switching partners stops a reading.
+
 ## Configuration
 
 | Env var | Default |
@@ -113,6 +124,8 @@ misheard names charitably.
 | `CHATGPT_VOICE` | `realtime` (ChatGPT hears you) or `relay` (through Gemini) |
 | `OPENAI_LIVE_MODEL` / `OPENAI_LIVE_VOICE` / `OPENAI_LIVE_REASONING` | `gpt-realtime-2.1` / model default / `low` |
 | `OPENAI_TRANSCRIBE_MODEL` | `gpt-4o-transcribe` (on-screen transcript of ChatGPT calls) |
+| `GEMINI_TTS_MODEL` / `OPENAI_TTS_MODEL` | `gemini-2.5-flash-tts` / `gpt-4o-mini-tts` (read aloud) |
+| `SPEAK_VOICE_ASSISTANT` / `SPEAK_VOICE_CLAUDE` / `SPEAK_VOICE_CHATGPT` | `Kore` / `Charon` / `marin` |
 | `CLAUDE_MODEL` / `CLAUDE_FALLBACK_MODEL` | `claude-opus-5-5` / `claude-opus-4-8` |
 | `CLAUDE_BACKEND` / `CLAUDE_REGION` / `CLAUDE_EFFORT` | `auto` / `global` / `medium` |
 | `OPENAI_MODEL` / `OPENAI_KEY_SECRET` | `gpt-5` / `CHATGPT_API_KEY` |
