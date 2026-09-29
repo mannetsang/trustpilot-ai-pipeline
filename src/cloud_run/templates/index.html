@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chat Assistant</title>
+  {% include "_theme.html" %}
+  <style>
+    header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      padding: 10px 20px; background: var(--panel); border-bottom: 1px solid var(--line); }
+    .brand { font-size: 17px; font-weight: 500; display: flex; align-items: center; gap: 8px; }
+    .brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--faint); }
+    .brand .dot.on { background: var(--good); }
+    .lastrun { color: var(--muted); font-size: 13px; flex: 1; min-width: 180px; }
+    .toggle { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; font-size: 13px; }
+    .toggle input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+    .toggle .track { width: 34px; height: 20px; border-radius: 10px; background: var(--line); position: relative; transition: .15s; flex: none; }
+    .toggle .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+      background: var(--panel); box-shadow: var(--shadow); transition: .15s; }
+    .toggle input:checked + .track { background: var(--good); }
+    .toggle input:checked + .track::after { left: 16px; }
+    .toggle input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .who { color: var(--muted); font-size: 13px; }
+    main { padding: 16px 20px 40px; max-width: 1400px; margin: 0 auto; }
+    .banner { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 16px; border-radius: var(--radius);
+      margin-bottom: 12px; background: var(--warn-weak); color: var(--text); border: 1px solid var(--line); }
+    .banner.bad { background: var(--bad-weak); }
+    .banner span { flex: 1; min-width: 200px; }
+    .banner b { font-weight: 500; }
+    .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
+    .tab { padding: 10px 14px; border: 0; background: none; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+    .tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 500; }
+    .count { display: inline-block; min-width: 20px; padding: 0 6px; border-radius: 10px; background: var(--panel-2); color: var(--muted); font-size: 12px; text-align: center; margin-left: 4px; }
+    .count.hot { background: var(--accent); color: var(--accent-text); }
+    .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+    .toolbar input[type=search], .toolbar select { padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+    .toolbar input[type=search] { flex: 1; min-width: 160px; max-width: 340px; }
+    .toolbar .spacer { flex: 1; }
+    .check { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; }
+    .board { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: start; }
+    @media (max-width: 900px) { .board { grid-template-columns: 1fr; } }
+    .col { background: var(--panel-2); border-radius: var(--radius); padding: 10px; min-height: 120px; }
+    .col h2 { font-size: 13px; font-weight: 500; color: var(--muted); margin: 2px 4px 10px; text-transform: uppercase; letter-spacing: .04em; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;
+      box-shadow: var(--shadow); cursor: pointer; position: relative; }
+    .card:hover, .card:focus-visible { border-color: var(--accent); outline: none; }
+    .card .title { font-weight: 500; margin-right: 26px; overflow-wrap: anywhere; }
+    .card .meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; font-size: 12px; color: var(--muted); align-items: center; }
+    .chip { padding: 1px 8px; border-radius: 10px; background: var(--panel-2); }
+    .chip.me { background: var(--accent-weak); color: var(--accent); }
+    .chip.overdue { background: var(--bad-weak); color: var(--bad); }
+    .chip.today { background: var(--warn-weak); color: var(--warn); }
+    .pri { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    .pri.high { background: var(--bad); } .pri.medium { background: var(--warn); } .pri.low { background: var(--faint); }
+    .card .advance { position: absolute; top: 8px; right: 8px; border: 0; background: none; cursor: pointer; color: var(--faint); font-size: 16px; padding: 2px 6px; border-radius: 6px; }
+    .card .advance:hover { background: var(--panel-2); color: var(--accent); }
+    .card .src { color: var(--faint); font-size: 12px; margin-top: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .empty { color: var(--faint); text-align: center; padding: 18px 8px; font-size: 13px; }
+    section.act h3 { font-size: 15px; font-weight: 500; margin: 18px 0 10px; }
+    .item { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 8px; }
+    .item .top { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+    .status { font-size: 12px; padding: 1px 8px; border-radius: 10px; font-weight: 500; }
+    .status.done { background: var(--good-weak); color: var(--good); }
+    .status.suggested { background: var(--accent-weak); color: var(--accent); }
+    .status.failed { background: var(--bad-weak); color: var(--bad); }
+    .status.dismissed { background: var(--panel-2); color: var(--faint); }
+    .quote { border-left: 3px solid var(--line); padding: 2px 10px; color: var(--muted); margin: 8px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .reply { white-space: pre-wrap; overflow-wrap: anywhere; margin: 6px 0; }
+    .why { font-size: 12px; color: var(--faint); overflow-wrap: anywhere; }
+    .item .actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+    table.runs { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; font-size: 13px; }
+    table.runs th, table.runs td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+    table.runs th { color: var(--muted); font-weight: 500; background: var(--panel-2); white-space: nowrap; }
+    table.runs td.err { color: var(--bad); }
+    .tablewrap { overflow-x: auto; }
+    dialog { border: 1px solid var(--line); border-radius: 14px; padding: 0; background: var(--panel); color: var(--text); width: min(560px, calc(100vw - 32px)); box-shadow: 0 10px 40px rgba(0,0,0,.25); }
+    dialog::backdrop { background: rgba(0,0,0,.35); }
+    dialog form { padding: 20px; display: grid; gap: 12px; }
+    dialog h2 { margin: 0; font-size: 18px; font-weight: 500; }
+    dialog label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+    dialog label.check { display: inline-flex; }
+    dialog input, dialog select, dialog textarea { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); }
+    dialog textarea { min-height: 90px; resize: vertical; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .dialog-foot { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; flex-wrap: wrap; }
+    .dialog-foot .left { margin-right: auto; }
+    .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 8px; opacity: 0; transition: .2s; pointer-events: none; z-index: 20; max-width: calc(100vw - 32px); }
+    .toast.show { opacity: 1; }
+    @media (max-width: 600px) {
+      header, main { padding-left: 16px; padding-right: 16px; }
+      .row { grid-template-columns: 1fr; }
+      .who { display: none; }
+    }
+  </style>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="dot" id="dot"></span>Chat Assistant</div>
+  <div class="lastrun" id="lastrun">Loading…</div>
+  <label class="toggle" title="When off, everything the assistant would do waits for your approval">
+    <input type="checkbox" id="autoAct"><span class="track"></span><span>Act automatically</span>
+  </label>
+  <button class="btn primary" id="runNow">Run now</button>
+  <span class="who">{{ owner }}</span>
+  <button class="btn" id="logout">Sign out</button>
+</header>
+
+<main>
+  <div id="banners"></div>
+  <nav class="tabs">
+    <button class="tab active" data-tab="board">Board <span class="count" id="boardCount">0</span></button>
+    <button class="tab" data-tab="activity">Activity <span class="count" id="waitingCount">0</span></button>
+  </nav>
+
+  <section id="board-view">
+    <div class="toolbar">
+      <input type="search" id="q" placeholder="Search tasks" aria-label="Search tasks">
+      <select id="spaceFilter" aria-label="Conversation"><option value="">All conversations</option></select>
+      <select id="ownerFilter" aria-label="Owner">
+        <option value="">Everyone</option>
+        <option value="me">Mine</option>
+        <option value="others">Others'</option>
+      </select>
+      <label class="check"><input type="checkbox" id="showDone"> Show done</label>
+      <span class="spacer"></span>
+      <button class="btn primary" id="newTask">+ New task</button>
+    </div>
+    <div class="board">
+      <div class="col" data-status="todo"><h2>To do <span class="count"></span></h2><div class="cards"></div></div>
+      <div class="col" data-status="in_progress"><h2>In progress <span class="count"></span></h2><div class="cards"></div></div>
+      <div class="col" data-status="done"><h2>Done <span class="count"></span></h2><div class="cards"></div></div>
+    </div>
+  </section>
+
+  <section id="activity-view" class="act" hidden>
+    <h3>Waiting for you</h3>
+    <div id="waiting"></div>
+    <h3>Recent actions</h3>
+    <div id="recent"></div>
+    <h3>Runs</h3>
+    <div class="tablewrap"><table class="runs"><thead><tr>
+      <th>When</th><th>Trigger</th><th>Conversations</th><th>Messages</th><th>Tasks new / updated</th><th>Actions done / waiting</th><th>Problems</th>
+    </tr></thead><tbody id="runs"></tbody></table></div>
+    <p><label class="check"><input type="checkbox" id="readBots"> Also read posts from apps and bots (e.g. notification spaces)</label></p>
+  </section>
+</main>
+
+<dialog id="taskDialog">
+  <form method="dialog" id="taskForm">
+    <h2 id="taskDialogTitle">Task</h2>
+    <label>Title <input name="title" required maxlength="200"></label>
+    <label>Details <textarea name="detail" maxlength="2000"></textarea></label>
+    <div class="row">
+      <label>Owner <input name="owner" maxlength="100" placeholder="Name"></label>
+      <label>Due <input name="due" type="date"></label>
+    </div>
+    <div class="row">
+      <label>Status <select name="status"><option value="todo">To do</option><option value="in_progress">In progress</option><option value="done">Done</option></select></label>
+      <label>Priority <select name="priority"><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label>
+    </div>
+    <label class="check"><input type="checkbox" name="owner_is_me"> This is mine</label>
+    <div id="taskSource" class="why"></div>
+    <div class="dialog-foot">
+      <button type="button" class="btn danger left" id="deleteTask">Delete</button>
+      <button type="button" class="btn" id="cancelTask">Cancel</button>
+      <button type="submit" class="btn primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="sendDialog">
+  <form method="dialog" id="sendForm">
+    <h2>Send this reply?</h2>
+    <div class="why" id="sendContext"></div>
+    <label>Reply, sent as you <textarea name="reply_text" maxlength="4000"></textarea></label>
+    <div class="dialog-foot">
+      <button type="button" class="btn" id="cancelSend">Cancel</button>
+      <button type="submit" class="btn primary">Send</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+const STATUS_ORDER = ["todo", "in_progress", "done"];
+const TYPE_LABEL = { chat_reply: "Chat reply", calendar_event: "Calendar event" };
+const STATUS_LABEL = { done: "Done", suggested: "Waiting", failed: "Failed", dismissed: "Dismissed" };
+let state = null;
+let editing = null;
+let sending = null;
+
+const $ = (id) => document.getElementById(id);
+
+// Builds DOM nodes; text always goes in as text nodes, never as HTML.
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v === undefined || v === null || v === false) continue;
+    if (k === "class") node.className = v;
+    else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
+    else node.setAttribute(k, v === true ? "" : v);
+  }
+  for (const c of children.flat()) {
+    if (c === null || c === undefined || c === false) continue;
+    node.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  }
+  return node;
+}
+
+// Only follow links Google gave us, never javascript: or other schemes.
+const safeUrl = (u) => (typeof u === "string" && u.startsWith("https://") ? u : null);
+
+async function api(method, path, body) {
+  const resp = await fetch(path, {
+    method, credentials: "same-origin",
+    headers: { "Content-Type": "application/json", "X-Chat-Assistant": "1" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (resp.status === 401) { location.reload(); throw new Error("Signed out"); }
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.error || `Request failed (${resp.status})`);
+  return data;
+}
+
+function toast(msg) {
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => t.classList.remove("show"), 3500);
+}
+
+function ago(iso) {
+  if (!iso) return "";
+  const s = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+// "D Team · Sydney", or just "Kathy" in a DM where the conversation is the sender.
+const where = (t) => (t.source_from && t.source_from !== t.space_label ? `${t.space_label} · ${t.source_from}` : t.space_label);
+
+function todayStr() {
+  const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 10);
+}
+
+async function load() {
+  state = await api("GET", "/api/state");
+  render();
+}
+
+function render() {
+  renderHeader();
+  renderBanners();
+  renderFilters();
+  renderBoard();
+  renderActivity();
+}
+
+function renderHeader() {
+  const run = state.status.last_run;
+  $("dot").classList.toggle("on", state.connected && !state.status.connection_error);
+  $("autoAct").checked = !!state.settings.auto_act;
+  $("readBots").checked = !!state.settings.read_bot_posts;
+  if (!run) { $("lastrun").textContent = "No runs yet. It runs every hour, or press Run now."; return; }
+  if (run.error) { $("lastrun").textContent = `Last run ${ago(run.started_at)} failed: ${run.error}`; return; }
+  $("lastrun").textContent = `Last run ${ago(run.finished_at || run.started_at)} · ${plural(run.spaces_processed, "conversation")} · `
+    + `${plural(run.tasks_created, "new task")} · ${plural(run.actions_done, "action")} taken`;
+}
+
+function renderBanners() {
+  const box = $("banners"); box.replaceChildren();
+  if (!state.connected) {
+    box.append(el("div", { class: "banner" },
+      el("span", {}, el("b", {}, "Connect Google Chat. "), "The assistant needs permission to read your chats, reply as you and add calendar events."),
+      el("a", { class: "btn primary", href: "/login?connect=1" }, "Connect")));
+  } else if (state.status.connection_error) {
+    box.append(el("div", { class: "banner bad" },
+      el("span", {}, el("b", {}, "The assistant can't reach Google. "), state.status.connection_error),
+      el("a", { class: "btn primary", href: "/login?connect=1" }, "Reconnect")));
+  }
+  if ((state.status.missing_scopes || []).length) {
+    box.append(el("div", { class: "banner" },
+      el("span", {}, el("b", {}, "Some permissions weren't granted: "), state.status.missing_scopes.join(", "),
+        ". Parts of the assistant won't work until you reconnect and tick every box."),
+      el("a", { class: "btn", href: "/login?connect=1" }, "Reconnect")));
+  }
+}
+
+function renderFilters() {
+  const select = $("spaceFilter"); const current = select.value;
+  const labels = new Map();
+  for (const t of state.tasks) if (t.space) labels.set(t.space, t.space_label || t.space);
+  select.replaceChildren(el("option", { value: "" }, "All conversations"),
+    ...[...labels.entries()].sort((a, b) => a[1].localeCompare(b[1])).map(([k, v]) => el("option", { value: k }, v)));
+  select.value = labels.has(current) ? current : "";
+}
+
+function visibleTasks() {
+  const q = $("q").value.trim().toLowerCase();
+  const space = $("spaceFilter").value;
+  const owner = $("ownerFilter").value;
+  return state.tasks.filter((t) => {
+    if (space && t.space !== space) return false;
+    if (owner === "me" && !t.owner_is_me) return false;
+    if (owner === "others" && t.owner_is_me) return false;
+    if (q && !`${t.title} ${t.detail || ""} ${t.owner || ""} ${t.space_label || ""}`.toLowerCase().includes(q)) return false;
+    return true;
+  });
+}
+
+function taskCard(t) {
+  const meta = el("div", { class: "meta" }, el("span", { class: `pri ${t.priority || "medium"}`, title: `${t.priority || "medium"} priority` }));
+  meta.append(el("span", { class: `chip ${t.owner_is_me ? "me" : ""}` }, t.owner_is_me ? "You" : (t.owner || "Unassigned")));
+  if (t.due) {
+    const today = todayStr();
+    const open = t.status !== "done";
+    const cls = open && t.due < today ? "overdue" : open && t.due === today ? "today" : "";
+    meta.append(el("span", { class: `chip ${cls}` }, t.due === today ? "Due today" : `Due ${t.due}`));
+  }
+  if (t.origin === "assistant") meta.append(el("span", { class: "chip", title: "Added by the assistant" }, "AI"));
+  const next = STATUS_ORDER[STATUS_ORDER.indexOf(t.status) + 1];
+  const card = el("div", { class: "card", tabindex: "0", role: "button",
+      onclick: () => openTask(t), onkeydown: (e) => { if (e.key === "Enter") openTask(t); } },
+    el("div", { class: "title" }, t.title),
+    meta,
+    t.space_label ? el("div", { class: "src", title: t.source_excerpt || "" }, where(t)) : null);
+  if (next) card.append(el("button", { class: "advance", title: next === "done" ? "Mark done" : "Start", "aria-label": next === "done" ? "Mark done" : "Start",
+    onclick: (e) => { e.stopPropagation(); updateTask(t.id, { status: next }).catch((err) => toast(err.message)); } }, next === "done" ? "✓" : "→"));
+  return card;
+}
+
+function renderBoard() {
+  const tasks = visibleTasks();
+  const showDone = $("showDone").checked;
+  $("boardCount").textContent = state.tasks.filter((t) => t.status !== "done").length;
+  for (const col of document.querySelectorAll(".col")) {
+    const status = col.dataset.status;
+    let items = tasks.filter((t) => t.status === status);
+    col.querySelector(".count").textContent = items.length;
+    if (status === "done" && !showDone) items = [];
+    items.sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999") || (b.created_at || "").localeCompare(a.created_at || ""));
+    const box = col.querySelector(".cards");
+    box.replaceChildren(...items.map(taskCard));
+    if (!items.length) box.append(el("div", { class: "empty" },
+      status === "done" && !showDone ? "Tick “Show done” to see finished tasks" : "Nothing here"));
+  }
+}
+
+function actionItem(a) {
+  const link = safeUrl(a.space_uri);
+  const top = el("div", { class: "top" },
+    el("span", { class: `status ${a.status}` }, STATUS_LABEL[a.status] || a.status),
+    el("b", {}, TYPE_LABEL[a.type] || a.type),
+    el("span", {}, "in"),
+    link ? el("a", { href: link, target: "_blank", rel: "noopener" }, a.space_label || "chat") : el("span", {}, a.space_label || ""),
+    el("span", {}, `· ${ago(a.executed_at || a.created_at)}`));
+  const body = [top, el("div", { class: "quote" }, `${a.source_from || "Someone"}: ${a.source_excerpt || ""}`)];
+  if (a.type === "chat_reply") body.push(el("div", { class: "reply" }, a.reply_text || ""));
+  if (a.type === "calendar_event") body.push(el("div", { class: "reply" },
+    `${a.event_title} · ${(a.event_start || "").replace("T", " ").slice(0, 16)}–${(a.event_end || "").slice(11, 16)}`
+    + (a.event_attendees && a.event_attendees.length ? ` · with ${a.event_attendees.join(", ")}` : "")));
+  const why = [a.reason, a.blocked_reason ? `Held back: ${a.blocked_reason}` : "", a.error ? `Error: ${a.error}` : ""].filter(Boolean).join(" · ");
+  if (why) body.push(el("div", { class: "why" }, why));
+  const result = safeUrl(a.result);
+  if (a.status === "done" && result && a.type === "calendar_event") body.push(el("a", { href: result, target: "_blank", rel: "noopener" }, "Open event"));
+  if (a.status === "suggested" || a.status === "failed") {
+    body.push(el("div", { class: "actions" },
+      el("button", { class: "btn primary", onclick: () => sendAction(a) }, a.type === "chat_reply" ? "Review & send" : "Create event"),
+      el("button", { class: "btn", onclick: () => dismissAction(a) }, "Dismiss")));
+  }
+  return el("div", { class: "item" }, body);
+}
+
+function renderActivity() {
+  const waiting = state.actions.filter((a) => a.status === "suggested");
+  const recent = state.actions.filter((a) => a.status !== "suggested").slice(0, 60);
+  const wc = $("waitingCount"); wc.textContent = waiting.length; wc.classList.toggle("hot", waiting.length > 0);
+  $("waiting").replaceChildren(...(waiting.length ? waiting.map(actionItem) : [el("div", { class: "empty" }, "Nothing waiting for your approval")]));
+  $("recent").replaceChildren(...(recent.length ? recent.map(actionItem) : [el("div", { class: "empty" }, "No actions yet")]));
+  $("runs").replaceChildren(...(state.runs.length ? state.runs.map((r) => el("tr", {},
+    el("td", {}, new Date(r.started_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })),
+    el("td", {}, r.trigger === "schedule" ? "Hourly" : "Manual"),
+    el("td", {}, r.error ? "–" : r.spaces_processed),
+    el("td", {}, r.error ? "–" : r.messages),
+    el("td", {}, r.error ? "–" : `${r.tasks_created} / ${r.tasks_updated}`),
+    el("td", {}, r.error ? "–" : `${r.actions_done} / ${r.actions_suggested}`),
+    el("td", { class: (r.error || (r.errors || []).length) ? "err" : "" },
+      r.error || (r.errors || []).map((e) => `${e.space}: ${e.error}`).join("; ") || "–")))
+    : [el("tr", {}, el("td", { colspan: "7", class: "empty" }, "No runs yet"))]));
+}
+
+function openTask(t) {
+  editing = t || null;
+  const f = $("taskForm");
+  $("taskDialogTitle").textContent = t ? "Edit task" : "New task";
+  f.title.value = t ? t.title : "";
+  f.detail.value = t ? t.detail || "" : "";
+  f.owner.value = t ? t.owner || "" : "";
+  f.due.value = t ? t.due || "" : "";
+  f.status.value = t ? t.status : "todo";
+  f.priority.value = t ? t.priority || "medium" : "medium";
+  f.owner_is_me.checked = t ? !!t.owner_is_me : true;
+  $("deleteTask").hidden = !t;
+  const src = $("taskSource"); src.replaceChildren();
+  if (t && t.space_label) {
+    src.append(`From ${where(t)}${t.source_excerpt ? `: “${t.source_excerpt}” ` : " "}`);
+    const link = safeUrl(t.space_uri);
+    if (link) src.append(el("a", { href: link, target: "_blank", rel: "noopener" }, "Open chat"));
+  }
+  $("taskDialog").showModal();
+}
+
+async function updateTask(id, fields) {
+  const { task } = await api("PATCH", `/api/tasks/${encodeURIComponent(id)}`, fields);
+  state.tasks = state.tasks.map((t) => (t.id === id ? task : t));
+  renderBoard();
+}
+
+$("taskForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const fields = { title: f.title.value, detail: f.detail.value, owner: f.owner.value, due: f.due.value,
+    status: f.status.value, priority: f.priority.value, owner_is_me: f.owner_is_me.checked };
+  try {
+    if (editing) await updateTask(editing.id, fields);
+    else { const { task } = await api("POST", "/api/tasks", fields); state.tasks.unshift(task); renderFilters(); renderBoard(); }
+    $("taskDialog").close();
+  } catch (err) { toast(err.message); }
+});
+$("cancelTask").onclick = () => $("taskDialog").close();
+$("deleteTask").onclick = async () => {
+  if (!editing || !confirm("Delete this task?")) return;
+  try {
+    await api("DELETE", `/api/tasks/${encodeURIComponent(editing.id)}`);
+    state.tasks = state.tasks.filter((t) => t.id !== editing.id);
+    $("taskDialog").close(); renderFilters(); renderBoard();
+  } catch (err) { toast(err.message); }
+};
+$("newTask").onclick = () => openTask(null);
+
+async function sendAction(a) {
+  if (a.type === "chat_reply") {
+    sending = a;
+    $("sendContext").textContent = `${a.space_label || ""} · ${a.source_from || ""}: “${a.source_excerpt || ""}”`;
+    $("sendForm").reply_text.value = a.reply_text || "";
+    $("sendDialog").showModal();
+    return;
+  }
+  if (!confirm(`Create “${a.event_title}” and invite ${(a.event_attendees || []).join(", ") || "no one"}?`)) return;
+  await finishSend(a, {});
+}
+
+async function finishSend(a, body) {
+  try {
+    const { action } = await api("POST", `/api/actions/${encodeURIComponent(a.id)}/send`, body);
+    state.actions = state.actions.map((x) => (x.id === a.id ? { ...action, id: a.id } : x));
+    renderActivity();
+    toast(action.status === "done" ? "Done" : `Failed: ${action.error}`);
+  } catch (e) { toast(e.message); }
+}
+
+$("sendForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = e.target.reply_text.value.trim();
+  if (!text) return;
+  $("sendDialog").close();
+  await finishSend(sending, { reply_text: text });
+});
+$("cancelSend").onclick = () => $("sendDialog").close();
+
+async function dismissAction(a) {
+  try {
+    const { action } = await api("POST", `/api/actions/${encodeURIComponent(a.id)}/dismiss`);
+    state.actions = state.actions.map((x) => (x.id === a.id ? { ...action, id: a.id } : x));
+    renderActivity();
+  } catch (e) { toast(e.message); }
+}
+
+$("autoAct").addEventListener("change", async (e) => {
+  try {
+    const { settings } = await api("PATCH", "/api/settings", { auto_act: e.target.checked });
+    state.settings = settings;
+    toast(settings.auto_act ? "The assistant will act on its own" : "Paused: everything waits for your approval");
+  } catch (err) { e.target.checked = !e.target.checked; toast(err.message); }
+});
+$("readBots").addEventListener("change", async (e) => {
+  try { state.settings = (await api("PATCH", "/api/settings", { read_bot_posts: e.target.checked })).settings; }
+  catch (err) { e.target.checked = !e.target.checked; toast(err.message); }
+});
+
+$("runNow").onclick = async () => {
+  const btn = $("runNow"); btn.disabled = true; btn.textContent = "Running…";
+  try {
+    const r = await api("POST", "/api/run");
+    toast(`Read ${plural(r.spaces_processed, "conversation")}: ${plural(r.tasks_created, "new task")}, ${plural(r.actions_done, "action")}`);
+  } catch (e) { toast(e.message); }
+  btn.disabled = false; btn.textContent = "Run now";
+  load().catch((e) => toast(e.message));
+};
+
+$("logout").onclick = async () => { await api("POST", "/logout").catch(() => {}); location.reload(); };
+
+for (const tab of document.querySelectorAll(".tab")) {
+  tab.onclick = () => {
+    for (const t of document.querySelectorAll(".tab")) t.classList.toggle("active", t === tab);
+    $("board-view").hidden = tab.dataset.tab !== "board";
+    $("activity-view").hidden = tab.dataset.tab !== "activity";
+  };
+}
+for (const id of ["q", "spaceFilter", "ownerFilter", "showDone"]) $(id).addEventListener("input", renderBoard);
+
+load().catch((e) => { $("lastrun").textContent = e.message; });
+// Refresh every minute so the hourly run's results show up, unless a dialog is open.
+setInterval(() => { if (!document.querySelector("dialog[open]")) load().catch(() => {}); }, 60000);
+</script>
+</body>
+</html>

@@ -253,6 +253,14 @@ class WebTests(unittest.TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertIn(b"isn't set up yet", page.data)  # no OAuth client stored
 
+    def test_board_page_for_owner(self):
+        self.sign_in()
+        page = self.client.get("/")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b'id="board-view"', page.data)
+        self.assertIn(b"manne@superhairpieces.com", page.data)
+        self.assertEqual(page.headers["X-Frame-Options"], "DENY")
+
     def test_other_account_session_is_rejected(self):
         with self.client.session_transaction() as s:
             s["email"] = "someone@superhairpieces.com"
