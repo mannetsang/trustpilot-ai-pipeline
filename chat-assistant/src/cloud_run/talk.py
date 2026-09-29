@@ -112,7 +112,7 @@ class Talk:
         return Toolset(self.store, self._google(), caller=f"{partner}{' (voice)' if voice else ''}",
                        consult=self.consult_fn(partner))
 
-    def ask(self, partner, message):
+    def ask(self, partner, message, voice=False):
         if partner not in PARTNERS:
             raise ValueError(f"unknown partner {partner}")
         ok, why = self.partner_status(partner)
@@ -120,10 +120,12 @@ class Talk:
             raise RuntimeError(f"{PARTNERS[partner].LABEL} isn't available: {why}")
         history = [t for t in self.store.get_talk(partner) if t.get("role") in ("user", "assistant")][-24:]
         user_turn = {"role": "user", "text": message.strip()[:8000], "at": utcnow_iso()}
-        toolset = self.toolset(partner)
-        result = PARTNERS[partner].respond(system_prompt(self.store, partner, owner_email=self.owner_email),
+        toolset = self.toolset(partner, voice=voice)
+        result = PARTNERS[partner].respond(system_prompt(self.store, partner, voice=voice, owner_email=self.owner_email),
                                            history + [user_turn], toolset, self.secrets, self._model(partner))
         reply = {"role": "assistant", "text": result["text"], "at": utcnow_iso(), "tools": result.get("tools", [])}
+        if voice:
+            user_turn["voice"] = reply["voice"] = True
         self.store.append_talk(partner, [user_turn, reply])
         return reply
 

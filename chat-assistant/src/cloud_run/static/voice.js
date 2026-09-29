@@ -9,7 +9,9 @@
   let call = null;
 
   class VoiceCall {
-    constructor() {
+    constructor(partner) {
+      this.partner = partner;                   // assistant, or claude/chatgpt relayed through Gemini Live
+      this.label = A.partnerInfo(partner).label;
       this.muted = false;
       this.ready = false;
       this.playHead = 0;
@@ -37,7 +39,7 @@
 
       setState("Opening the voice line…");
       const scheme = location.protocol === "https:" ? "wss" : "ws";
-      this.ws = new WebSocket(`${scheme}://${location.host}/ws/voice`);
+      this.ws = new WebSocket(`${scheme}://${location.host}/ws/voice?partner=${encodeURIComponent(this.partner)}`);
       this.ws.binaryType = "arraybuffer";
       this.ws.onopen = () => {
         setState("Connecting to Gemini…");
@@ -73,7 +75,7 @@
         this.live[msg.who] += msg.text;
         if (msg.who === "assistant") setState("Speaking…");
         this.renderLive();
-      } else if (msg.type === "tool") setState(`Working: ${msg.name.replace(/_/g, " ")}…`);
+      } else if (msg.type === "tool") setState(msg.name === `ask_${this.partner}` ? `${this.label} is thinking…` : `Working: ${msg.name.replace(/_/g, " ")}…`);
       else if (msg.type === "interrupted") { this.stopPlayback(); setState("Listening…"); }
       else if (msg.type === "turn_complete") {
         for (const who of ["you", "assistant"]) {
@@ -146,9 +148,8 @@
 
   $("startVoice").onclick = async () => {
     if (call) return;
-    if (A.partner !== "assistant") { A.toast("Voice works with the Assistant"); return; }
     if (!navigator.mediaDevices || !window.AudioWorkletNode) { A.toast("This browser can't do live voice. Try Chrome or Edge."); return; }
-    call = new VoiceCall();
+    call = new VoiceCall(A.partner);
     try { await call.start(); }
     catch (e) {
       const why = {
@@ -161,6 +162,7 @@
     }
   };
   $("vend").onclick = () => call && call.end();
+  A.endVoice = () => call && call.end();  // switching partners hangs up: a call belongs to one partner
   $("vmute").onclick = () => call && call.toggleMute();
   window.addEventListener("beforeunload", () => call && call.end());
 })();

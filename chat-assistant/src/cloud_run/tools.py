@@ -320,7 +320,7 @@ class Toolset:
                            for e in page.get("items", [])]}
 
     def _t_consult_partner(self, partner, request):
-        if partner == self.caller:
+        if partner == self.caller.split(" ")[0]:  # "claude (voice)" is still Claude
             return {"error": "that's you; answer directly"}
         return {"partner": partner, "answer": self.consult(partner, request)}
 

@@ -157,11 +157,14 @@ function renderPartners() {
   }, el("span", { class: `pdot${p.available ? "" : " off"}` }), p.label)),
   el("span", { class: "spacer", style: "flex:1" }),
   el("button", { class: "btn", onclick: clearTalk, title: "Start a new conversation" }, "Clear"));
-  $("startVoice").hidden = partner !== "assistant";
+  const info = partnerInfo(partner);
+  $("startVoice").disabled = !$("voicebar").hidden || !info.available;  // one call at a time
+  $("startVoice").title = info.available ? `Talk live with ${info.label}` : info.detail || `${info.label} isn't available`;
   $("message").placeholder = `Message ${partnerInfo(partner).label}… (Enter to send, Shift+Enter for a new line)`;
 }
 
 async function selectPartner(name) {
+  if (name !== partner && window.companyAssistant.endVoice) window.companyAssistant.endVoice();
   partner = name;
   renderPartners();
   await loadTalk();
@@ -705,7 +708,7 @@ function switchTab(name) {
 for (const tab of document.querySelectorAll(".tab")) tab.onclick = () => switchTab(tab.dataset.tab);
 
 // Exposed for voice.js
-window.companyAssistant = { el, toast, api, renderThread, turnNode, loadTalk, refreshKnowledge, get partner() { return partner; } };
+window.companyAssistant = { el, toast, api, renderThread, turnNode, loadTalk, refreshKnowledge, partnerInfo, get partner() { return partner; } };
 
 (async function start() {
   let tab = "talk";
