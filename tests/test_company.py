@@ -320,7 +320,7 @@ class VoiceTests(unittest.TestCase):
 
         frames = [json.loads(f) for f in ws.sent if isinstance(f, str)]
         audio = [f for f in ws.sent if isinstance(f, bytes)]
-        self.assertEqual(frames[0]["type"], "ready")
+        self.assertEqual([f["type"] for f in frames[:2]], ["status", "ready"])
         self.assertIn({"type": "tool", "name": "record_fact"}, frames)
         self.assertIn({"type": "transcript", "who": "assistant", "text": "Got it, noted."}, frames)
         self.assertTrue(any(f["type"] == "turn_complete" for f in frames))
@@ -336,6 +336,59 @@ class VoiceTests(unittest.TestCase):
         names = [d.name for d in seen["config"].tools[0].function_declarations]
         self.assertIn("record_fact", names)
         self.assertEqual(seen["config"].response_modalities, ["AUDIO"])
+
+
+class RobustnessTests(unittest.TestCase):
+    def test_event_times_with_and_without_offsets(self):
+        from google_apis import Directory
+
+        d = Directory({"users/3": {"name": "Sydney", "email": "sydney@superhairpieces.com"}})
+        mixed = assistant._event_fields({"event_title": "Launch", "event_start": "2026-10-01T14:00:00-04:00",
+                                         "event_end": "2026-10-01T15:00:00", "event_attendees": []}, d)
+        self.assertEqual((mixed["event_start"], mixed["event_end"]), ("2026-10-01T14:00:00", "2026-10-01T15:00:00"))
+        utc = assistant._event_fields({"event_title": "Launch", "event_start": "2026-10-01T18:00:00Z",
+                                       "event_end": "", "event_attendees": []}, d)
+        self.assertEqual((utc["event_start"], utc["event_end"]), ("2026-10-01T14:00:00", "2026-10-01T14:30:00"))
+
+    def test_live_connect_timeout_is_reported(self):
+        import voice
+
+        class Hang:
+            async def __aenter__(self):
+                await asyncio.sleep(60)
+
+            async def __aexit__(self, *exc):
+                return False
+
+        ws = FakeWS([0.05] * 40)
+        with mock.patch.object(voice, "CONNECT_TIMEOUT", 0.3):
+            voice.VoiceBridge(ws, MemoryStore(), Toolset(MemoryStore(), None), "s", connect=lambda c: Hang()).run()
+        frames = [json.loads(f) for f in ws.sent]
+        self.assertEqual(frames[0], {"type": "status", "text": "Connecting to Gemini Live…"})
+        self.assertEqual(frames[-1]["type"], "error")
+        self.assertIn("didn't answer", frames[-1]["message"])
+
+    def test_voice_setup_failure_reaches_the_browser(self):
+        import main
+
+        class WS:
+            def __init__(self):
+                self.sent = []
+
+            def send(self, data):
+                self.sent.append(data)
+
+        ws = WS()
+        with main.app.test_request_context("/ws/voice", base_url="https://app.example",
+                                           headers={"Origin": "https://app.example"}):
+            from flask import session
+
+            session["email"] = main.OWNER_EMAIL
+            with mock.patch.object(main, "talk_service", side_effect=RuntimeError("store unavailable")):
+                main.voice_ws(ws)
+        messages = [json.loads(m) for m in ws.sent]
+        self.assertEqual(messages[-1]["type"], "error")
+        self.assertIn("store unavailable", messages[-1]["message"])
 
 
 class WebTests(unittest.TestCase):
@@ -413,7 +466,8 @@ class WebTests(unittest.TestCase):
 
             session["email"] = self.main.OWNER_EMAIL
             self.main.voice_ws(ws)
-        self.assertIn("Sign in", ws.sent[0])
+        self.assertIn("its own address", ws.sent[0])
+        self.assertEqual(len(ws.sent), 1)  # nothing else happens for a foreign page
 
 
 if __name__ == "__main__":

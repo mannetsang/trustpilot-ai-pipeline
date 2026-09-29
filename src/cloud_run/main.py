@@ -440,17 +440,30 @@ def voice_ws(ws):
     import voice
     from talk import system_prompt
 
-    if not signed_in() or not _voice_origin_ok():
+    if not signed_in():
         ws.send(_json.dumps({"type": "error", "message": "Sign in to the app first."}))
         return
-    service = talk_service()
-    toolset = service.toolset("assistant", voice=True)
-    recent = [t for t in store.get_talk("assistant") if t.get("text")][-8:]
-    history = "\n".join(f"{'Manne' if t['role'] == 'user' else 'You'}: {t['text'][:500]}" for t in recent)
-    instruction = system_prompt(store, "assistant", voice=True, owner_email=OWNER_EMAIL)
-    if history:
-        instruction += "\n\nRECENT CONVERSATION (continue from here)\n" + history
-    voice.VoiceBridge(ws, store, toolset, instruction, connect=app.config.get("VOICE_CONNECT")).run()
+    if not _voice_origin_ok():
+        print(f"voice: origin {request.headers.get('Origin')!r} != {PUBLIC_URL or request.host_url!r}")
+        ws.send(_json.dumps({"type": "error", "message": "Open the app from its own address to use voice."}))
+        return
+    try:
+        ws.send(_json.dumps({"type": "status", "text": "Preparing your assistant…"}))
+        service = talk_service()
+        toolset = service.toolset("assistant", voice=True)
+        recent = [t for t in store.get_talk("assistant") if t.get("text")][-8:]
+        history = "\n".join(f"{'Manne' if t['role'] == 'user' else 'You'}: {t['text'][:500]}" for t in recent)
+        instruction = system_prompt(store, "assistant", voice=True, owner_email=OWNER_EMAIL)
+        if history:
+            instruction += "\n\nRECENT CONVERSATION (continue from here)\n" + history
+        bridge = voice.VoiceBridge(ws, store, toolset, instruction, connect=app.config.get("VOICE_CONNECT"))
+    except Exception as exc:  # noqa: BLE001 - without this the socket would stay open and silent
+        import traceback
+
+        print(f"voice setup failed: {exc!r}\n{traceback.format_exc()}")
+        ws.send(_json.dumps({"type": "error", "message": f"Voice couldn't start: {str(exc)[:300]}"}))
+        return
+    bridge.run()
 
 
 try:
@@ -485,13 +498,15 @@ def do_run(trigger):
         progress.finish(str(exc))
         return failed, 503
     except Exception as exc:  # noqa: BLE001 - recorded, then surfaced to the caller
-        failed = {"started_at": started, "finished_at": utcnow_iso(), "trigger": trigger, "error": str(exc)[:500]}
+        import traceback
+
+        trace = traceback.format_exc()
+        print(f"run failed: {exc!r}\n{trace}")
+        failed = {"started_at": started, "finished_at": utcnow_iso(), "trigger": trigger, "error": str(exc)[:500],
+                  "trace": trace[-2000:]}  # shown under Activity -> Runs, so a failure explains itself
         store.add_run(failed)
         store.set_status({"last_run": failed})
         progress.finish(str(exc))
-        import traceback
-
-        print(f"run failed: {exc!r}\n{traceback.format_exc()}")
         return failed, 500
     finally:
         store.release_run_lock()
