@@ -21,6 +21,8 @@
     }
   }
   * { box-sizing: border-box; }
+  /* A class that sets display (e.g. .voicebar { display: flex }) would otherwise keep a hidden element on screen. */
+  [hidden] { display: none !important; }
   html, body { margin: 0; background: var(--bg); color: var(--text);
     font: 14px/1.45 "Google Sans", Roboto, system-ui, -apple-system, "Segoe UI", sans-serif; }
   a { color: var(--accent); }

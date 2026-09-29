@@ -137,6 +137,7 @@
       try { this.inCtx && this.inCtx.close(); } catch { /* closed */ }
       try { this.outCtx && this.outCtx.close(); } catch { /* closed */ }
       $("voicebar").hidden = true;
+      setState("Connecting…");  // what the next call starts from
       $("startVoice").disabled = false;
       $("vmute").textContent = "Mute";
       call = null;

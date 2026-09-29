@@ -529,11 +529,12 @@ def do_run(trigger):
 
         trace = traceback.format_exc()
         print(f"run failed: {exc!r}\n{trace}")
-        failed = {"started_at": started, "finished_at": utcnow_iso(), "trigger": trigger, "error": str(exc)[:500],
+        failed = {"started_at": started, "finished_at": utcnow_iso(), "trigger": trigger,
+                  "error": assistant.error_text(exc, 500),  # says where, even in the header's one line
                   "trace": trace[-2000:]}  # shown under Activity -> Runs, so a failure explains itself
         store.add_run(failed)
         store.set_status({"last_run": failed})
-        progress.finish(str(exc))
+        progress.finish(failed["error"])
         return failed, 500
     finally:
         store.release_run_lock()
