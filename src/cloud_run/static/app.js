@@ -156,6 +156,9 @@ function renderPartners() {
     onclick: () => selectPartner(p.name),
   }, el("span", { class: `pdot${p.available ? "" : " off"}` }), p.label)),
   el("span", { class: "spacer", style: "flex:1" }),
+  el("label", { class: "readaloud", title: "Speak each new reply out loud" },
+    el("input", { type: "checkbox", checked: !!(speaker() && speaker().auto),
+      onchange: (e) => { if (speaker()) speaker().auto = e.target.checked; } }), "🔊 Read replies aloud"),
   el("button", { class: "btn", onclick: clearTalk, title: "Start a new conversation" }, "Clear"));
   const info = partnerInfo(partner);
   $("startVoice").disabled = !$("voicebar").hidden || !info.available;  // one call at a time
@@ -165,6 +168,7 @@ function renderPartners() {
 
 async function selectPartner(name) {
   if (name !== partner && window.companyAssistant.endVoice) window.companyAssistant.endVoice();
+  if (name !== partner && speaker()) speaker().stop();
   partner = name;
   renderPartners();
   await loadTalk();
@@ -175,11 +179,18 @@ async function loadTalk() {
   renderThread();
 }
 
+const speaker = () => window.companySpeaker;  // static/speaker.js
+
 function turnNode(t, live = false) {
   const tools = (t.tools || []).map((x) => x.tool);
+  const who = partner;  // the thread on screen belongs to the selected partner
+  const readAloud = t.role === "assistant" && !live && t.text
+    ? el("button", { class: "spk", title: "Read aloud", "aria-label": "Read aloud",
+        onclick: (e) => speaker() && speaker().toggle(t.text, who, e.currentTarget) }, "🔊")
+    : null;
   return el("div", { class: `msg ${t.role}${live ? " live" : ""}` }, t.text,
     tools.length ? el("div", { class: "tools" }, `Used: ${[...new Set(tools)].join(", ")}`) : null,
-    t.at ? el("div", { class: "when" }, `${t.voice ? "🎙 " : ""}${ago(t.at)}`) : null);
+    t.at ? el("div", { class: "when" }, `${t.voice ? "🎙 " : ""}${ago(t.at)}`, readAloud) : readAloud);
 }
 
 function renderThread(extra = []) {
@@ -203,10 +214,15 @@ async function sendMessage() {
   talkTurns.push(pending);
   renderThread([el("div", { class: "msg assistant live" }, el("span", { class: "spinner" }), " thinking…")]);
   try {
-    const { reply } = await api("POST", `/api/talk/${partner}`, { message: text });
+    const asked = partner;
+    const { reply } = await api("POST", `/api/talk/${asked}`, { message: text });
     talkTurns.push(reply);
     renderThread();
     refreshKnowledge();
+    if (speaker() && speaker().auto && asked === partner) {
+      const buttons = $("thread").querySelectorAll(".msg.assistant .spk");
+      speaker().play(reply.text, asked, buttons[buttons.length - 1]);
+    }
   } catch (e) {
     talkTurns.pop(); renderThread();
     $("message").value = text;
