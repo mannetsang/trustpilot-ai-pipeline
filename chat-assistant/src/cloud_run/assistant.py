@@ -50,9 +50,12 @@ def parse_ts(value):
     value = value.replace("Z", "+00:00")
     if "." in value:
         head, rest = value.split(".", 1)
-        digits = "".join(ch for ch in rest if ch.isdigit())
-        value = f"{head}.{digits[:6].ljust(6, '0')}{rest[len(digits):]}"
-    return datetime.fromisoformat(value)
+        n = 0
+        while n < len(rest) and rest[n].isdigit():
+            n += 1  # the fraction ends where the offset (+00:00) begins
+        value = f"{head}.{rest[:n][:6].ljust(6, '0')}{rest[n:]}"
+    parsed = datetime.fromisoformat(value)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
 def local(dt):

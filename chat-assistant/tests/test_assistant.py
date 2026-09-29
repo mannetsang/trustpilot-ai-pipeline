@@ -22,7 +22,8 @@ OWNER = {"user": "users/1", "email": "manne@superhairpieces.com"}
 
 
 def ts(hours_ago):
-    return (NOW - timedelta(hours=hours_ago)).isoformat().replace("+00:00", "Z")
+    """Google-style timestamp: fractional seconds to the nanosecond, trailing Z."""
+    return (NOW - timedelta(hours=hours_ago)).strftime("%Y-%m-%dT%H:%M:%S.%f") + "123Z"
 
 
 def msg(space, n, sender, hours_ago, text, thread="t1", bot=False, mention=None):
@@ -121,6 +122,25 @@ def scenario():
     store = MemoryStore()
     store.set_owner(OWNER)
     return store, google, llm
+
+
+class ParseTsTests(unittest.TestCase):
+    def test_google_and_python_formats_are_all_aware_utc(self):
+        cases = {
+            "2026-09-29T05:12:34.123456789Z": datetime(2026, 9, 29, 5, 12, 34, 123456, tzinfo=timezone.utc),
+            "2026-09-29T05:12:34Z": datetime(2026, 9, 29, 5, 12, 34, tzinfo=timezone.utc),
+            "2026-09-28T06:10:00.123456+00:00": datetime(2026, 9, 28, 6, 10, 0, 123456, tzinfo=timezone.utc),
+            "2026-09-29T01:12:34.5-04:00": datetime(2026, 9, 29, 5, 12, 34, 500000, tzinfo=timezone.utc),
+        }
+        for raw, expected in cases.items():
+            parsed = assistant.parse_ts(raw)
+            self.assertIsNotNone(parsed.tzinfo, raw)
+            self.assertEqual(parsed, expected, raw)
+
+    def test_first_run_default_watermark_compares(self):
+        # The exact failure seen live: an isoformat() watermark with microseconds vs Google's lastActiveTime.
+        since = (NOW - timedelta(hours=24, microseconds=1)).isoformat()
+        self.assertLess(assistant.parse_ts(since), assistant.parse_ts("2026-09-29T15:00:00.000000123Z"))
 
 
 class RunTests(unittest.TestCase):

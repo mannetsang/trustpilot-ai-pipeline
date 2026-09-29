@@ -305,7 +305,9 @@ def do_run(trigger):
         failed = {"started_at": started, "finished_at": utcnow_iso(), "trigger": trigger, "error": str(exc)[:500]}
         store.add_run(failed)
         store.set_status({"last_run": failed})
-        print(f"run failed: {exc!r}")
+        import traceback
+
+        print(f"run failed: {exc!r}\n{traceback.format_exc()}")
         return failed, 500
     finally:
         store.release_run_lock()
