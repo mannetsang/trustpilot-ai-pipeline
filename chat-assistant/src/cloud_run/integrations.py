@@ -285,9 +285,14 @@ REGISTRY += [
         base="https://app.skuvault.com", headers=lambda v: {"Accept": "application/json"}, exchange=_skuvault_tokens,
         hint=("Every SkuVault call is a POST with a JSON body (the server adds the tokens). Reads: "
               "/api/inventory/getWarehouses, /api/products/getProducts {\"PageNumber\": 0, \"PageSize\": 100, "
-              "\"ProductSKUs\": [...]}, /api/inventory/getItemQuantities, /api/inventory/getInventoryByLocation, "
-              "/api/sales/getSales, /api/purchaseorders/getPOs. Anything not named get* changes data. "
-              "SkuVault rate-limits hard: ask for what you need in one call."),
+              "\"ProductSKUs\": [...]} or {..., \"ProductCodes\": [...]}, /api/inventory/getItemQuantities, "
+              "/api/inventory/getInventoryByLocation, /api/sales/getSales, /api/purchaseorders/getPOs. "
+              "A product has a SKU and a Code (its barcode: a 12-13 digit number is a UPC/EAN, so look it up as a "
+              "ProductCode). Is it in stock: /api/inventory/getItemQuantities {\"ProductCodes\": [...]} (codes only, "
+              "not SKUs; get the code from getProducts first) gives AvailableQuantity, TotalOnHand, HeldQuantity, "
+              "PendingQuantity and PickedQuantity; getInventoryByLocation {\"ProductSKUs\": [...]} (or {\"ProductCodes\": "
+              "[...], \"IsReturnByCodes\": true}) says which warehouse and location. "
+              "Anything not named get* changes data. SkuVault rate-limits hard: ask for what you need in one call."),
         probe=("POST", "/api/inventory/getWarehouses", {}), read_posts=(r"^/api/\w+/get\w+$",),
         system_id="skuvault", category="Inventory"),
     _amazon(1, "AMAZON_TOKEN"),
