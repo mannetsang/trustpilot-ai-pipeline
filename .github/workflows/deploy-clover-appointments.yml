@@ -7,6 +7,11 @@ on:
       - 'clover-appointments/src/cloud_run/**'
   workflow_dispatch:
 
+# Keyless Google Cloud auth (Workload Identity Federation). See docs/credentials.md.
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -15,7 +20,8 @@ jobs:
 
       - uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          workload_identity_provider: projects/304363458561/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: claude-sessions@shp-ai-bot-2026.iam.gserviceaccount.com
 
       - uses: google-github-actions/setup-gcloud@v2
 
