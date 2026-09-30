@@ -54,6 +54,10 @@ gcloud scheduler jobs create http clover-appointments-poll --location us-central
 Or grant claude-sessions `roles/cloudscheduler.admin` and run **Setup Clover
 appointments sync** from the Actions tab.
 
+Until then, `.github/workflows/clover-appointments-poll.yml` calls `/poll` every
+5 minutes from GitHub Actions (GitHub may delay it several minutes). Delete that
+file once the Scheduler job exists.
+
 Dry run (writes nothing), as any account with `run.invoker` on the service:
 
 ```

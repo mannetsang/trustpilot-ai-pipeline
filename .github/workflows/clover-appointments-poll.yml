@@ -1,0 +1,52 @@
+name: Clover appointments poll (interim timer)
+
+# Calls the private clover-appointments service every 5 minutes until the
+# Cloud Scheduler job exists (claude-sessions can't create Scheduler jobs; see
+# clover-appointments/README.md). Once that job is created, delete this file:
+# running both is harmless (the POS ID check skips existing bookings) but
+# redundant.
+#
+# GitHub delays scheduled runs under load, often by several minutes, so this
+# is "every 5-15 minutes" in practice.
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+# Keyless Google Cloud auth (Workload Identity Federation). See docs/credentials.md.
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: clover-appointments-poll
+  cancel-in-progress: false
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    steps:
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/304363458561/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: claude-sessions@shp-ai-bot-2026.iam.gserviceaccount.com
+          token_format: id_token
+          id_token_audience: https://clover-appointments-onvg62bzra-uc.a.run.app
+          id_token_include_email: true
+
+      - name: Poll
+        run: |
+          curl -fsS --max-time 170 \
+            -H "Authorization: Bearer ${{ steps.auth.outputs.id_token }}" \
+            https://clover-appointments-onvg62bzra-uc.a.run.app/poll \
+          | python3 -c "
+          import json, sys
+          d = json.load(sys.stdin)
+          for r in d['results']:
+              print(r['status'], r.get('pos_id') or r.get('receipt') or r.get('message'), r.get('error', ''))
+          errors = [r for r in d['results'] if r['status'] in ('error', 'unparsed')]
+          print(f\"{len(d['results'])} booking email(s), {len(errors)} problem(s)\")
+          sys.exit(1 if errors else 0)
+          "
