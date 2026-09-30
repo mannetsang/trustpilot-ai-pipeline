@@ -11,7 +11,9 @@ across currencies.
 | `gmosz3ja` | superhairpieces.ca | CAD |
 | `cavofu` | superhairpieces.com | USD |
 | `qet21urb3p` | superhairpieces.es | EUR |
-| _(unknown)_ | .nl / .fr / .de | EUR |
+| `1tqjsol232` | superhairpieces.fr | EUR |
+| `1f8t0plkkw` | superhairpieces.nl | EUR |
+| `34amlu9gm` | superhairpieces.de | EUR |
 | `kzkmuqjqk9` | Gen'C Beauty (token: `GENC_BIGCOMMERCE_PRODUCT_ACCESS_TOKEN`) | _(unconfirmed)_ |
 
 Secrets follow `BIGCOMMERCE_<store_hash>_<CREDENTIAL>`, e.g.

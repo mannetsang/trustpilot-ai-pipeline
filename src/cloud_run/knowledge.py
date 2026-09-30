@@ -35,8 +35,6 @@ SEED_SYSTEMS = [
     ("bigcommerce_ca", "BigCommerce: superhairpieces.ca", "Commerce", "available",
      "Orders, products, customers for the .ca store (hash gmosz3ja). Token exists for the reporting scripts."),
     ("bigcommerce_com", "BigCommerce: superhairpieces.com (USD)", "Commerce", "needed", "Orders, products, customers for the US store."),
-    ("bigcommerce_eu", "BigCommerce: .nl / .fr / .de", "Commerce", "needed",
-     "Orders, products, customers for the EU stores whose hashes aren't known yet."),
     ("merchant_center", "Google Merchant Center", "Marketing", "available",
      "Shopping feeds. .ca account 5298296396 is connected for the repo scripts; .com/EU 289630622 and Gen'C 670525760 are not."),
     ("trustpilot", "Trustpilot", "Reviews", "available", "Reviews and replies; used by the trustpilot pipeline."),

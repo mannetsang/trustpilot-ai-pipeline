@@ -116,9 +116,13 @@ def _bigcommerce(store_hash, token_secret, storefront, currency, system_id, past
 
 REGISTRY = [
     # Store hashes from Manne (2026-09-30); tokens follow BIGCOMMERCE_<hash>_ACCESS_TOKEN, except Gen'C's.
+    # .com, .fr, .nl and .de had no token stored: their rows take one pasted in the app.
     _bigcommerce("gmosz3ja", "BIGCOMMERCE_gmosz3ja_ACCESS_TOKEN", "superhairpieces.ca", "CAD", "bigcommerce_ca"),
     _bigcommerce("cavofu", "BIGCOMMERCE_cavofu_ACCESS_TOKEN", "superhairpieces.com", "USD", "bigcommerce_com", paste=True),
     _bigcommerce("qet21urb3p", "BIGCOMMERCE_qet21urb3p_ACCESS_TOKEN", "superhairpieces.es", "EUR", "bigcommerce_es"),
+    _bigcommerce("1tqjsol232", "BIGCOMMERCE_1tqjsol232_ACCESS_TOKEN", "superhairpieces.fr", "EUR", "bigcommerce_fr", paste=True),
+    _bigcommerce("1f8t0plkkw", "BIGCOMMERCE_1f8t0plkkw_ACCESS_TOKEN", "superhairpieces.nl", "EUR", "bigcommerce_nl", paste=True),
+    _bigcommerce("34amlu9gm", "BIGCOMMERCE_34amlu9gm_ACCESS_TOKEN", "superhairpieces.de", "EUR", "bigcommerce_de", paste=True),
     _bigcommerce("kzkmuqjqk9", "GENC_BIGCOMMERCE_PRODUCT_ACCESS_TOKEN", "Gen'C Beauty", "", "bigcommerce_genc"),
     Integration(
         id="airtable", label="Airtable", secrets=["AIRTABLE_COMPANY_TOKEN"], base="https://api.airtable.com",
@@ -449,10 +453,10 @@ def connect_info(system_id):
     return {"kind": found[0].kind, "integration": found[0].id}
 
 
-# Rows that no longer exist: HubSpot and Re:amaze (not needed for now), and the store-hash row for qet21urb3p
-# (now "BigCommerce: superhairpieces.es").
-RETIRED = {"hubspot", "reamaze", "bigcommerce_qet21urb3p"}
-RENAMED = {"bigcommerce_eu": "BigCommerce: .nl / .fr / .de"}  # .es is known now; these three still aren't
+# Rows that no longer exist: HubSpot and Re:amaze (not needed for now), the store-hash row for qet21urb3p (now
+# "BigCommerce: superhairpieces.es") and the EU placeholder (each EU store has its own row now).
+RETIRED = {"hubspot", "reamaze", "bigcommerce_qet21urb3p", "bigcommerce_eu"}
+RENAMED = {}
 
 
 def seed_systems(store):
