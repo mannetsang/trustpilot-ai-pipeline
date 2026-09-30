@@ -20,6 +20,7 @@ it into misusing a key. The rules that make that fail:
 """
 
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from urllib.parse import urlencode, urlsplit
@@ -27,6 +28,7 @@ from urllib.parse import urlencode, urlsplit
 import requests
 
 MAX_RESPONSE_CHARS = 10000
+TEAMDESK_DATABASE_ID = os.environ.get("TEAMDESK_DATABASE_ID", "56554")
 READ_METHODS = {"GET", "HEAD"}
 WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
@@ -61,6 +63,7 @@ class Integration:
                 value = secrets.get(name) if secrets else None
             except Exception:  # noqa: BLE001 - no permission counts as missing
                 value = None
+            value = value.strip() if isinstance(value, str) else value  # a pasted line break breaks a header
             if not value:
                 raise NotReady(f"the app can't read the {name} secret")
             out[name] = value
@@ -74,6 +77,11 @@ class Integration:
         return [f[0] for f in self.fields]
 
 
+# A BigCommerce API account only reaches the areas it was given (orders, products, store settings...), so the
+# check tries each: any one answering proves the token. /v2/store first, because it names the storefront.
+BIGCOMMERCE_PROBES = ["/v2/store", "/v3/catalog/summary", "/v2/orders?limit=1", "/v3/customers?limit=1"]
+
+
 def _bigcommerce(store_hash, token_secret, label, system_id):
     return Integration(
         id=f"bigcommerce_{store_hash}", label=label, secrets=[token_secret],
@@ -83,7 +91,7 @@ def _bigcommerce(store_hash, token_secret, label, system_id):
               "/v2/orders/{id}/products, /v3/catalog/products?keyword=...&limit=50, /v3/customers?email:in=... "
               "Revenue is never summed across currencies; orders with status_id 0 (Incomplete), 5 (Cancelled) "
               "and 6 (Declined) are excluded from revenue. payment_method is free text: normalize it first."),
-        probe="/v2/store", system_id=system_id, category="Commerce")
+        probe=BIGCOMMERCE_PROBES, system_id=system_id, category="Commerce")
 
 
 def _genc_base(values):
@@ -103,7 +111,7 @@ REGISTRY = [
         secrets=["GENC_BIGCOMMERCE_PRODUCT_ACCESS_TOKEN", "GENC_BIGCOMMERCE_PRODUCT_API_PATH"], base=_genc_base,
         headers=lambda v: {"X-Auth-Token": v["GENC_BIGCOMMERCE_PRODUCT_ACCESS_TOKEN"], "Accept": "application/json"},
         hint="Same BigCommerce REST paths as the other stores (/v2/store, /v2/orders, /v3/catalog/products).",
-        probe="/v2/store", system_id="bigcommerce_genc", category="Commerce"),
+        probe=BIGCOMMERCE_PROBES, system_id="bigcommerce_genc", category="Commerce"),
     Integration(
         id="airtable", label="Airtable", secrets=["AIRTABLE_COMPANY_TOKEN"], base="https://api.airtable.com",
         headers=lambda v: {"Authorization": f"Bearer {v['AIRTABLE_COMPANY_TOKEN']}"},
@@ -216,10 +224,9 @@ REGISTRY += [
         hint="/conversations?filter=open&page=1, /conversations/{slug}/messages, /contacts?q=email",
         probe="/conversations?page=1", system_id="reamaze", category="Support"),
     Integration(
-        id="teamdesk", label="TeamDesk", secrets=["TEAMDESK_TOKEN", "TEAMDESK_DATABASE_ID"],
-        base=lambda v: f"https://www.teamdesk.net/secure/api/v2/{v['TEAMDESK_DATABASE_ID'].strip()}/{v['TEAMDESK_TOKEN'].strip()}",
-        kind="paste", fields=[("TEAMDESK_DATABASE_ID", "Database id (the number in teamdesk.net/secure/db/…/)", "12345", False)],
-        help="Open your TeamDesk database: its address looks like teamdesk.net/secure/db/12345/. Paste that number.",
+        id="teamdesk", label="TeamDesk", secrets=["TEAMDESK_TOKEN"],
+        # Database 56554 is the one trustpilot-pipeline writes to; TEAMDESK_DATABASE_ID (env) overrides it.
+        base=lambda v: f"https://www.teamdesk.net/secure/api/v2/{TEAMDESK_DATABASE_ID}/{v['TEAMDESK_TOKEN']}",
         hint="/describe.json (tables), /{Table}/describe.json, /{Table}/select.json?column=...&filter=...&top=50",
         probe="/describe.json", system_id="teamdesk", category="Operations"),
 ]
@@ -380,8 +387,18 @@ def call(integration_id, method, path, secrets, query=None, body=None, confirmed
 
 
 def probe(integration, secrets, session=None, google=None):
-    method, path, body = ("GET", integration.probe, None) if isinstance(integration.probe, str) else integration.probe
-    return call(integration.id, method, path, secrets, body=body, session=session, google=google)
+    """The system's cheap read(s). With several, the first that answers wins; else the most telling failure."""
+    probes = integration.probe if isinstance(integration.probe, list) else [integration.probe]
+    first = None
+    for one in probes:
+        method, path, body = ("GET", one, None) if isinstance(one, str) else one
+        result = call(integration.id, method, path, secrets, body=body, session=session, google=google)
+        if result.get("ok") or result.get("error"):  # answered, or not reachable at all: no point trying more
+            return result
+        first = first or result
+        if result.get("status") == 401:  # the key itself was refused: other paths won't help
+            return result
+    return first
 
 
 def status(integration, secrets, google=None):

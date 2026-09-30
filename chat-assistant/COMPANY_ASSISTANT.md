@@ -135,8 +135,8 @@ Every partner (typed or on a call) has two tools for company systems:
 
 | How it connects | Systems |
 |---|---|
-| Key already in Secret Manager | BigCommerce superhairpieces.ca, BigCommerce `qet21urb3p`, BigCommerce Gen'C Beauty, Airtable, Trustpilot, Stamped.io, Omnisend, Notion, Figma; SkuVault and Amazon SP-API (their stored logins are exchanged for tokens on the server) |
-| Paste a key in the app | HubSpot (private app token), Re:amaze (brand, email, API token), TeamDesk (database id; the token is stored) |
+| Key already in Secret Manager | BigCommerce superhairpieces.ca, BigCommerce `qet21urb3p`, BigCommerce Gen'C Beauty, Airtable, Trustpilot, Stamped.io, Omnisend, Notion, Figma, TeamDesk (database 56554, as trustpilot-pipeline uses); SkuVault and Amazon SP-API (their stored logins are exchanged for tokens on the server) |
+| Paste a key in the app | HubSpot (private app token), Re:amaze (brand, email, API token) |
 | Your Google sign-in | Gmail (read, drafts), Drive and Sheets (read), Google Analytics and Search Console (read) |
 
 **Access → Connect everything** (or Connect on one row) asks Google once for your OK
