@@ -1,7 +1,7 @@
 # Clover appointments → TeamDesk
 
-**Webhook (primary):** a Gmail filter forwards Clover's "An appointment was
-confirmed" emails to Postmark (`84f6a6edb4d8f3dfb1d9e443031b7c15@inbound.postmarkapp.com`),
+**Webhook (primary):** a Gmail filter (from `app@clover.com`, subject
+`"An appointment was"`) forwards Clover's booking and cancellation copies to Postmark (`84f6a6edb4d8f3dfb1d9e443031b7c15@inbound.postmarkapp.com`),
 which POSTs each one to the public `clover-inbound` service's `/inbound`
 within seconds. Postmark authenticates with basic auth; the credential is the
 `POSTMARK_INBOUND_AUTH` secret (`user:password`), and the webhook URL set in
@@ -22,6 +22,18 @@ reads the salon, date and time (the salon's copy, "An appointment was
 confirmed", carries the same details as the customer's email), opens the receipt link for the service items,
 price, customer and order ID, and creates the record unless one with that
 **POS ID** (the Clover order ID) already exists.
+
+## Cancellations
+
+"An appointment was canceled" carries the same receipt link, so the record
+with that POS ID is set to `Client Cancelled` (override with `CANCEL_STATUS`)
+and `Cancelled on` gets the email's time in UTC, as the Square sync writes it.
+It's skipped if the record's appointment time no longer matches the email
+(possibly rescheduled; left for staff) or it's already cancelled.
+
+Clover only emails when the customer is notified: a booking made without a
+confirmation email never reaches TeamDesk, and its cancellation is reported as
+`cancel_not_found`.
 
 ## Field mapping
 

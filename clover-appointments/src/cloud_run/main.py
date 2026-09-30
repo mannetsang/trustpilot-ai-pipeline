@@ -18,6 +18,10 @@ receives the emails as a webhook: a Gmail filter forwards Clover's
 confirmations to Postmark, which POSTs each one to /inbound within seconds.
 The poll stays as a catch-up for anything the webhook misses.
 
+Cancellations ("An appointment was canceled", the salon's copy) carry the
+same receipt link, so the matching record (by POS ID, and only if its
+appointment time still matches) is set to CANCEL_STATUS with Cancelled on.
+
 The POS ID check is the only state: re-reading an email is harmless, so the
 poll can look back a couple of days and survive missed runs and restarts, and
 the webhook and the poll can both see the same booking.
@@ -29,6 +33,7 @@ Env vars (the secrets are mounted from Secret Manager by the setup workflow):
   TEAMDESK_DB          (optional) default 56554
   TEAMDESK_TABLE       (optional) default t_504863 (Appointment)
   LOOKBACK_DAYS        (optional) default 2
+  CANCEL_STATUS        (optional) default "Client Cancelled"
   INBOUND_AUTH         "user:password" Postmark must send (basic auth) to /inbound;
                        /inbound refuses everything when unset
   INBOUND_ONLY         "1" on the public webhook service: disables /poll
@@ -55,6 +60,7 @@ import os
 import re
 from datetime import date, datetime, timedelta, timezone
 from email.header import decode_header, make_header
+from email.utils import parsedate_to_datetime
 
 import requests
 from flask import Flask, jsonify, request
@@ -76,6 +82,13 @@ CLOVER_SENDER = "app@clover.com"
 # "Appointment confirmed". Both match; a self-booking yields both, and the POS
 # ID check keeps that to one record.
 CLOVER_SUBJECT = re.compile(r"\bappointment\b.*\bconfirmed\b", re.I)
+# "An appointment was canceled": the salon's copy of the customer's notice.
+# Clover spells it "canceled"; accept "cancelled" too.
+CANCEL_SUBJECT = re.compile(r"\bappointment\b.*\bcancell?ed\b", re.I)
+# The cancellation email doesn't say who cancelled; Square's cancellations
+# land as "Client Cancelled", so Clover's do too unless configured otherwise.
+CANCEL_STATUS = os.environ.get("CANCEL_STATUS", "Client Cancelled")
+CANCELLED_STATUSES = {"Client Cancelled", "Office Cancelled"}
 SOURCE = "CLOVER"
 
 # Clover writes the zone as an abbreviation ("04:45 PM EDT").
@@ -90,27 +103,42 @@ TZ_OFFSETS = {
 # ---------------------------------------------------------------------------
 
 def fetch_clover_emails(days):
-    """Yield (message_id, html_body) for recent Clover booking confirmations."""
+    """Yield (message_id, subject, sent_at, html_body) for recent Clover
+    booking confirmations and cancellations, oldest first."""
     since = (date.today() - timedelta(days=days)).strftime("%d-%b-%Y")
     mail = imaplib.IMAP4_SSL("imap.gmail.com")
     try:
         mail.login(EMAIL_USER, EMAIL_PASSWORD)
         mail.select('"[Gmail]/All Mail"', readonly=True)
         _, data = mail.search(
-            None, "FROM", CLOVER_SENDER, "SUBJECT", "confirmed", "SINCE", since
+            None, "FROM", CLOVER_SENDER, "SINCE", since,
+            "OR", "SUBJECT", "confirmed", "SUBJECT", "cancel",
         )
         for num in data[0].split():
             _, parts = mail.fetch(num, "(RFC822)")
             msg = email.message_from_bytes(parts[0][1])
             subject = str(make_header(decode_header(msg.get("Subject", ""))))
-            if not CLOVER_SUBJECT.search(subject):
+            if not (CLOVER_SUBJECT.search(subject) or CANCEL_SUBJECT.search(subject)):
                 continue
-            yield msg.get("Message-ID", num.decode()), _html_body(msg)
+            yield (msg.get("Message-ID", num.decode()), subject,
+                   _utc_iso(msg.get("Date")), _html_body(msg))
     finally:
         try:
             mail.logout()
         except Exception:  # noqa: BLE001 - already closing
             pass
+
+
+def _utc_iso(header_date):
+    """RFC 2822 Date header -> '2026-09-30T04:41:25Z' (TeamDesk's Cancelled on
+    format, as Square writes it); now when the header is missing or bad."""
+    try:
+        sent = parsedate_to_datetime(header_date)
+    except (TypeError, ValueError):
+        sent = None
+    if sent is None or sent.tzinfo is None:
+        sent = datetime.now(timezone.utc)
+    return sent.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _html_body(msg):
@@ -136,14 +164,40 @@ def parse_email(body):
     if not m or not receipt:
         return None
     salon, day, clock, zone = m.groups()
+    return {
+        "salon": salon.strip(),
+        "appointment_time": _appointment_time(day, clock, zone),
+        "receipt_url": receipt.group(1),
+    }
+
+
+def _appointment_time(day, clock, zone):
     local = datetime.strptime(f"{day} {clock}", "%m/%d/%Y %I:%M %p")
     offset = TZ_OFFSETS.get(zone)
     if offset is not None:
         local = local.replace(tzinfo=timezone(timedelta(hours=offset)))
+    return local.isoformat()
+
+
+def parse_cancellation(body):
+    """Salon, appointment time and Clover order ID from a cancellation copy.
+
+    The order ID is the receipt link's last segment, the same POS ID the
+    booking was recorded under, so the receipt page itself isn't needed.
+    """
+    text = _text(body)
+    m = re.search(
+        r"Your (.+?) appointment on (\d{2}/\d{2}/\d{4}) at (\d{1,2}:\d{2} [AP]M) ([A-Z]{3}) has been cancell?ed",
+        text,
+    )
+    receipt = re.search(r'href="https://www\.clover\.com/r/([A-Z0-9]+)"', body)
+    if not m or not receipt:
+        return None
+    salon, day, clock, zone = m.groups()
     return {
         "salon": salon.strip(),
-        "appointment_time": local.isoformat(),
-        "receipt_url": receipt.group(1),
+        "appointment_time": _appointment_time(day, clock, zone),
+        "pos_id": receipt.group(1),
     }
 
 
@@ -192,11 +246,16 @@ def _teamdesk(method, path, **kwargs):
     return r.json()
 
 
-def appointment_exists(pos_id):
+def find_appointment(pos_id):
     rows = _teamdesk("GET", "select.json", params={
-        "column": "Id", "filter": f"[POS ID]='{pos_id}'", "top": 1,
+        "column": ["Id", "Appointment Status", "Appointment Time"],
+        "filter": f"[POS ID]='{pos_id}'", "top": 1,
     })
-    return bool(rows)
+    return rows[0] if rows else None
+
+
+def appointment_exists(pos_id):
+    return find_appointment(pos_id) is not None
 
 
 def build_record(booking, receipt):
@@ -230,6 +289,18 @@ def create_appointment(record):
     return result[0] if isinstance(result, list) and result else result
 
 
+def update_appointment(row_id, fields):
+    result = _teamdesk("POST", "update.json", json=[{"@row.id": row_id, **fields}])
+    return result[0] if isinstance(result, list) and result else result
+
+
+def _same_time(a, b):
+    try:
+        return datetime.fromisoformat(a) == datetime.fromisoformat(b)
+    except (TypeError, ValueError):
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -250,6 +321,36 @@ def process_booking(body, dry_run=False):
     return {"pos_id": record["POS ID"], "status": "created", "teamdesk": created}
 
 
+def process_cancellation(body, sent_at, dry_run=False):
+    """One cancellation email -> mark the matching TeamDesk appointment."""
+    cancel = parse_cancellation(body)
+    if not cancel:
+        return {"status": "unparsed"}
+    row = find_appointment(cancel["pos_id"])
+    if not row:
+        return {"pos_id": cancel["pos_id"], "status": "cancel_not_found"}
+    if row.get("Appointment Status") in CANCELLED_STATUSES:
+        return {"pos_id": cancel["pos_id"], "status": "already_cancelled"}
+    # A POS ID whose time no longer matches may have been rescheduled into a
+    # different slot; leave it for staff rather than cancel the wrong one.
+    if not _same_time(row.get("Appointment Time"), cancel["appointment_time"]):
+        print(f"Cancellation for {cancel['pos_id']} at {cancel['appointment_time']} "
+              f"doesn't match TeamDesk {row.get('Id')} at {row.get('Appointment Time')}")
+        return {"pos_id": cancel["pos_id"], "status": "cancel_time_mismatch"}
+    fields = {"Appointment Status": CANCEL_STATUS, "Cancelled on": sent_at}
+    if dry_run:
+        return {"pos_id": cancel["pos_id"], "status": "would_cancel", "id": row.get("Id")}
+    update_appointment(row["@row.id"], fields)
+    print(f"Cancelled TeamDesk appointment {row.get('Id')} (Clover order {cancel['pos_id']})")
+    return {"pos_id": cancel["pos_id"], "status": "cancelled", "id": row.get("Id")}
+
+
+def process_email(subject, body, sent_at, dry_run=False):
+    if CANCEL_SUBJECT.search(subject):
+        return process_cancellation(body, sent_at, dry_run)
+    return process_booking(body, dry_run)
+
+
 @app.route("/poll", methods=["GET", "POST"])
 def poll():
     if INBOUND_ONLY:
@@ -258,9 +359,9 @@ def poll():
     days = int(request.args.get("days", LOOKBACK_DAYS))
 
     results = []
-    for message_id, body in fetch_clover_emails(days):
+    for message_id, subject, sent_at, body in fetch_clover_emails(days):
         try:
-            result = process_booking(body, dry_run)
+            result = process_email(subject, body, sent_at, dry_run)
         except Exception as exc:  # noqa: BLE001 - one bad email must not block the rest
             print(f"Failed on {message_id}: {exc}")
             result = {"status": "error", "error": str(exc)}
@@ -297,17 +398,20 @@ def inbound():
         print(f"Gmail forwarding confirmation received: {subject}")
         return jsonify(status="gmail_confirmation")
 
-    if CLOVER_SENDER not in sender or not CLOVER_SUBJECT.search(subject):
+    wanted = CLOVER_SUBJECT.search(subject) or CANCEL_SUBJECT.search(subject)
+    if CLOVER_SENDER not in sender or not wanted:
         print(f"Ignored inbound email from {sender!r}: {subject!r}")
         return jsonify(status="ignored")
 
     try:
-        result = process_booking(msg.get("HtmlBody") or "")
+        result = process_email(subject, msg.get("HtmlBody") or "", _utc_iso(msg.get("Date")))
     except Exception as exc:  # noqa: BLE001 - reported to Postmark for retry
         print(f"Inbound booking failed ({subject!r}): {exc}")
         return jsonify(status="error", error=str(exc)), 500
     if result["status"] == "unparsed":
         print(f"Inbound Clover email did not parse: {subject!r}")
+    elif result["status"] in ("cancel_not_found", "cancel_time_mismatch"):
+        print(f"Inbound cancellation not applied ({result['status']}): {result.get('pos_id')}")
     return jsonify(result)
 
 
