@@ -58,6 +58,8 @@ class Integration:
     exchange: object = None       # callable(values, http) -> {"headers"|"body": {...}, "ttl": s}: a login -> token
     services: list = field(default_factory=list)  # google: APIs to switch on in the project
     optional: list = field(default_factory=list)  # secrets used when readable (e.g. unlocking private endpoints)
+    sign: object = None           # callable(values, method, url) -> headers, for APIs that sign every request
+    labeler: object = None        # callable(probe data) -> a better row name (the storefront, the marketplaces)
 
     def values(self, secrets):
         out = {}
@@ -92,6 +94,12 @@ class Integration:
 BIGCOMMERCE_PROBES = ["/v2/store", "/v3/catalog/summary", "/v2/orders?limit=1", "/v3/customers?limit=1"]
 
 
+def _bigcommerce_label(data):
+    if isinstance(data, dict) and data.get("domain"):  # only /v2/store says; other probes keep the static name
+        return f"BigCommerce: {data['domain']} ({data.get('currency', '?')})"
+    return None
+
+
 def _bigcommerce(store_hash, token_secret, storefront, currency, system_id, paste=False):
     """One BigCommerce store (each storefront is its own store, with its own hash and token)."""
     return Integration(
@@ -105,7 +113,7 @@ def _bigcommerce(store_hash, token_secret, storefront, currency, system_id, past
               "/v3/catalog/products?keyword=...&limit=50, /v3/customers?email:in=... "
               "Revenue is never summed across currencies; orders with status_id 0 (Incomplete), 5 (Cancelled) "
               "and 6 (Declined) are excluded from revenue. payment_method is free text: normalize it first."),
-        probe=BIGCOMMERCE_PROBES, system_id=system_id, category="Commerce",
+        probe=BIGCOMMERCE_PROBES, system_id=system_id, category="Commerce", labeler=_bigcommerce_label,
         **({"kind": "paste", "fields": [(token_secret, "Access token of a store-level API account", "", True)],
             "help": (f"In the {storefront} BigCommerce admin: Settings > API > Store-level API accounts > Create API "
                      "account (token type: V2/V3 API token). Name it \"Company Assistant\" and set Orders, Products, "
@@ -196,19 +204,79 @@ def _skuvault_tokens(values, http):
     return {"body": {"TenantToken": data["TenantToken"], "UserToken": data["UserToken"]}, "ttl": 12 * 3600}
 
 
-def _amazon_token(values, http):
-    """Selling Partner API: the stored refresh token and app credentials buy a one-hour access token."""
-    resp = http.request("POST", "https://api.amazon.com/auth/o2/token", timeout=30, data={
-        "grant_type": "refresh_token", "refresh_token": values["AMAZON_TOKEN"],
-        "client_id": values["AMAZON_CLIENT_IDENTIFIER"], "client_secret": values["AMAZON_CLIENT_SECRET"]})
-    try:
-        data = json.loads(resp.text or "{}")
-    except ValueError:
-        data = {}
-    if not data.get("access_token"):
-        raise NotReady(f"Amazon didn't accept the stored app credentials (AMAZON_TOKEN / AMAZON_CLIENT_*, "
-                       f"HTTP {resp.status_code}: {data.get('error_description') or data.get('error') or ''})")
-    return {"headers": {"x-amz-access-token": data["access_token"]}, "ttl": int(data.get("expires_in", 3600)) - 120}
+AMAZON_REGIONS = {"na": "https://sellingpartnerapi-na.amazon.com", "eu": "https://sellingpartnerapi-eu.amazon.com",
+                  "fe": "https://sellingpartnerapi-fe.amazon.com"}
+AMAZON_APP = ["AMAZON_CLIENT_IDENTIFIER", "AMAZON_CLIENT_SECRET"]  # one SP-API app for every seller account
+
+
+def _amazon_exchange(refresh_secret):
+    """A seller account's refresh token -> a one-hour access token, and the region the account lives in."""
+    def exchange(values, http):
+        resp = http.request("POST", "https://api.amazon.com/auth/o2/token", timeout=30, data={
+            "grant_type": "refresh_token", "refresh_token": values[refresh_secret],
+            "client_id": values["AMAZON_CLIENT_IDENTIFIER"], "client_secret": values["AMAZON_CLIENT_SECRET"]})
+        try:
+            data = json.loads(resp.text or "{}")
+        except ValueError:
+            data = {}
+        if not data.get("access_token"):
+            raise NotReady(f"Amazon didn't accept {refresh_secret} with the app credentials (AMAZON_CLIENT_*, "
+                           f"HTTP {resp.status_code}: {data.get('error_description') or data.get('error') or ''})")
+        headers = {"x-amz-access-token": data["access_token"]}
+        for host in AMAZON_REGIONS.values():  # a token only works in its account's region: find it once
+            probe = http.request("GET", f"{host}/sellers/v1/marketplaceParticipations", headers=headers, timeout=30)
+            if probe.status_code == 200:
+                return {"headers": headers, "base": host, "ttl": int(data.get("expires_in", 3600)) - 120}
+        raise NotReady("Amazon accepted the token, but no Selling Partner region (NA, EU, FE) let it list its marketplaces")
+    return exchange
+
+
+def _amazon_label(data):
+    rows = (data or {}).get("payload") or []
+    names = sorted({(r.get("marketplace") or {}).get("domainName", "").replace("www.", "") for r in rows
+                    if (r.get("participation") or {}).get("isParticipating")} - {""})
+    return f"Amazon: {', '.join(names)}" if names else None
+
+
+def _amazon(number, refresh_secret, paste=False):
+    return Integration(
+        id="amazon" if number == 1 else f"amazon_{number}", label=f"Amazon seller account {number}",
+        secrets=[refresh_secret] + AMAZON_APP, base=AMAZON_REGIONS["na"], exchange=_amazon_exchange(refresh_secret),
+        headers=lambda v: {"Accept": "application/json"}, labeler=_amazon_label,
+        hint=("Selling Partner API (the region is found automatically). /sellers/v1/marketplaceParticipations (this "
+              "account's marketplaces and their ids: Canada A2EUQ1WTGCTBG2, US ATVPDKIKX0DER), "
+              "/orders/v0/orders?MarketplaceIds=...&CreatedAfter=YYYY-MM-DD, /orders/v0/orders/{id}/orderItems, "
+              "/fba/inventory/v1/summaries?granularityType=Marketplace&granularityId=...&marketplaceIds=..."),
+        probe="/sellers/v1/marketplaceParticipations", system_id="amazon" if number == 1 else f"amazon_{number}",
+        category="Commerce",
+        **({"kind": "paste", "fields": [(refresh_secret, "Refresh token (starts with Atzr|)", "Atzr|…", True)],
+            "help": ("Sign in to Seller Central as this seller account. Go to Apps and Services > Develop Apps, find "
+                     "the company's SP-API app, and choose Authorize (then Authorize app). Amazon shows a refresh "
+                     "token that starts with Atzr|: copy it and paste it here. The app's own id and secret are "
+                     "already stored. If the app isn't listed for this account, say so in Talk: the account then "
+                     "has to authorize it through a consent link instead.")} if paste else {}))
+
+
+def _walmart_ca_sign(values, method, url):
+    """Walmart Canada signs every call: SHA-256 with RSA over consumer id, URL, method and timestamp."""
+    import base64
+    import time
+    import uuid
+
+    from google.auth import crypt
+
+    key = values["WALMART_CA_PRIVATE_KEY"].strip()
+    if "BEGIN" not in key:  # stored as bare base-64 PKCS#8, the way Walmart hands it out
+        body = "".join(key.split())
+        key = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(body[i:i + 64] for i in range(0, len(body), 64)) + \
+              "\n-----END PRIVATE KEY-----\n"
+    timestamp = str(int(time.time() * 1000))
+    consumer = values["WALMART_CA_CONSUMERID"]
+    signed = crypt.RSASigner.from_string(key).sign(f"{consumer}\n{url}\n{method.upper()}\n{timestamp}\n".encode())
+    return {"WM_CONSUMER.ID": consumer, "WM_SEC.TIMESTAMP": timestamp,
+            "WM_SEC.AUTH_SIGNATURE": base64.b64encode(signed).decode(),
+            "WM_CONSUMER.CHANNEL.TYPE": values["WALMART_CA_CHANNEL_TYPE"], "WM_QOS.CORRELATION_ID": str(uuid.uuid4()),
+            "WM_SVC.NAME": "Walmart Marketplace", "WM_TENANT_ID": "WALMART.CA", "WM_LOCALE_ID": "en_CA"}
 
 
 REGISTRY += [
@@ -222,15 +290,24 @@ REGISTRY += [
               "SkuVault rate-limits hard: ask for what you need in one call."),
         probe=("POST", "/api/inventory/getWarehouses", {}), read_posts=(r"^/api/\w+/get\w+$",),
         system_id="skuvault", category="Inventory"),
+    _amazon(1, "AMAZON_TOKEN"),
+    _amazon(2, "AMAZON_2_REFRESH_TOKEN", paste=True),
+    _amazon(3, "AMAZON_3_REFRESH_TOKEN", paste=True),
     Integration(
-        id="amazon", label="Amazon Seller Central (SP-API, North America)",
-        secrets=["AMAZON_TOKEN", "AMAZON_CLIENT_IDENTIFIER", "AMAZON_CLIENT_SECRET"],
-        base="https://sellingpartnerapi-na.amazon.com", exchange=_amazon_token,
-        headers=lambda v: {"Accept": "application/json"},
-        hint=("/sellers/v1/marketplaceParticipations (marketplace ids: Canada A2EUQ1WTGCTBG2, US ATVPDKIKX0DER), "
-              "/orders/v0/orders?MarketplaceIds=...&CreatedAfter=YYYY-MM-DD, /orders/v0/orders/{id}/orderItems, "
-              "/fba/inventory/v1/summaries?granularityType=Marketplace&granularityId=...&marketplaceIds=..."),
-        probe="/sellers/v1/marketplaceParticipations", system_id="amazon", category="Commerce"),
+        # Walmart Canada (the .gitignore'd "Walmart Global API (Canada)" collection): signed requests only.
+        id="walmart_ca", label="Walmart Canada", system_id="walmart", category="Commerce",
+        secrets=["WALMART_CA_CONSUMERID", "WALMART_CA_PRIVATE_KEY", "WALMART_CA_CHANNEL_TYPE"],
+        base="https://marketplace.walmartapis.com", headers=lambda v: {"Accept": "application/json"},
+        sign=_walmart_ca_sign, kind="paste",
+        fields=[("WALMART_CA_CHANNEL_TYPE", "Consumer Channel Type ID", "", False)],
+        help=("The consumer ID and private key are already stored; Walmart also needs the Consumer Channel Type ID "
+              "on every call. In Walmart Seller Center: Settings > API Integrations (API Settings), copy the "
+              "Consumer Channel Type (a long id), and paste it here."),
+        hint=("Walmart Canada marketplace. Orders: /v3/ca/orders?createdStartDate=YYYY-MM-DD&limit=100 "
+              "(createdStartDate is required; also status=Created|Acknowledged|Shipped|Cancelled), "
+              "/v3/ca/orders/{purchaseOrderId}. Feed statuses: /v3/feeds?limit=20. Items: /v3/ca/items?limit=50. "
+              "Acknowledging, shipping or changing listings are changes: they need Manne's OK."),
+        probe=["/v3/feeds?limit=1", "/v3/ca/orders?createdStartDate=2026-01-01&limit=1"]),
     Integration(
         id="teamdesk", label="TeamDesk", secrets=["TEAMDESK_TOKEN"],
         # Database 56554 is the one trustpilot-pipeline writes to; TEAMDESK_DATABASE_ID (env) overrides it.
@@ -362,13 +439,13 @@ def call(integration_id, method, path, secrets, query=None, body=None, confirmed
     http = session or requests
     try:
         values = integration.values(secrets)
-        base = integration.base_url(values)
+        extra = _exchange(integration, values, http) if integration.exchange else {}
+        base = (extra.get("base") or integration.base_url(values)).rstrip("/")  # an exchange may pick the region
         headers = dict(integration.headers(values)) if integration.headers else {}
         if integration.kind == "google":
             if google is None:
                 raise NotReady("Google isn't connected (Connect Google on the Talk tab)")
             headers.update(google.auth_header())
-        extra = _exchange(integration, values, http) if integration.exchange else {}
     except NotReady as exc:
         return {"error": f"{integration.label} isn't available: {exc}"}
     except Exception as exc:  # noqa: BLE001 - a failed login or token refresh, reported to the model
@@ -383,6 +460,13 @@ def call(integration_id, method, path, secrets, query=None, body=None, confirmed
         url += ("&" if "?" in url else "?") + urlencode(query, doseq=True)
     if urlsplit(url).netloc != urlsplit(base).netloc:  # belt and braces: the key only ever goes to its own host
         return {"error": "that path leaves the system's own address"}
+    if integration.sign:
+        try:
+            signed = integration.sign(values, method, url)
+        except Exception as exc:  # noqa: BLE001 - e.g. a private key in the wrong format
+            return {"error": f"{integration.label} isn't available: couldn't sign the request ({str(exc)[:200]})"}
+        headers.update(signed)
+        scrub.update({f"s{i}": str(v) for i, v in enumerate(signed.values()) if len(str(v)) >= 20})
     auth = integration.auth(values) if integration.auth else None
     try:
         resp = http.request(method, url, headers=headers, auth=auth, json=body if body is not None else None, timeout=45)
@@ -485,8 +569,11 @@ def check_all(secrets, store=None, session=None, google=None, only=None):
         detail = result.get("error") or ("" if ok else f"HTTP {result.get('status')}: {str(result.get('data'))[:200]}")
         label = i.label
         data = result.get("data") if ok else None
-        if ok and i.id.startswith("bigcommerce") and isinstance(data, dict) and data.get("domain"):
-            label = f"BigCommerce: {data['domain']} ({data.get('currency', '?')})"  # names the unknown stores
+        if ok and i.labeler:
+            try:
+                label = i.labeler(data) or label  # names what's really behind it (storefront, marketplaces)
+            except Exception:  # noqa: BLE001 - a nicer name is optional
+                pass
         results[i.id] = {"ok": ok, "system": label, "detail": detail}
         if i.system_id:
             by_system.setdefault(i.system_id, []).append((i, ok, label, detail))
