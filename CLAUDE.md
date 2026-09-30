@@ -57,8 +57,10 @@ across currencies.
 | Store hash | Storefront | Currency |
 |---|---|---|
 | `gmosz3ja` | superhairpieces.ca | CAD |
-| _(unknown)_ | superhairpieces.com | USD |
-| _(unknown)_ | .nl / .fr / .es / .de | EUR |
+| `cavofu` | superhairpieces.com | USD |
+| `qet21urb3p` | superhairpieces.es | EUR |
+| _(unknown)_ | .nl / .fr / .de | EUR |
+| `kzkmuqjqk9` | Gen'C Beauty (token: `GENC_BIGCOMMERCE_PRODUCT_ACCESS_TOKEN`) | _(unconfirmed)_ |
 
 Secrets follow `BIGCOMMERCE_<store_hash>_<CREDENTIAL>`, e.g.
 `BIGCOMMERCE_gmosz3ja_ACCESS_TOKEN`. The store hash itself is not sensitive.

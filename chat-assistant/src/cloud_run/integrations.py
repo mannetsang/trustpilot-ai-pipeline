@@ -92,36 +92,34 @@ class Integration:
 BIGCOMMERCE_PROBES = ["/v2/store", "/v3/catalog/summary", "/v2/orders?limit=1", "/v3/customers?limit=1"]
 
 
-def _bigcommerce(store_hash, token_secret, label, system_id):
+def _bigcommerce(store_hash, token_secret, storefront, currency, system_id, paste=False):
+    """One BigCommerce store (each storefront is its own store, with its own hash and token)."""
     return Integration(
-        id=f"bigcommerce_{store_hash}", label=label, secrets=[token_secret],
+        id=f"bigcommerce_{store_hash}", label=f"BigCommerce: {storefront}" + (f" ({currency})" if currency else ""),
+        secrets=[token_secret],
         base=f"https://api.bigcommerce.com/stores/{store_hash}",
         headers=lambda v: {"X-Auth-Token": v[token_secret], "Accept": "application/json"},
-        hint=("BigCommerce REST: /v2/store (store info), /v2/orders?min_date_created=YYYY-MM-DD&limit=50, "
-              "/v2/orders/{id}/products, /v3/catalog/products?keyword=...&limit=50, /v3/customers?email:in=... "
+        hint=(f"Store {store_hash} is {storefront}; amounts are in "
+              f"{currency or 'the currency /v2/store reports'}. BigCommerce REST: /v2/store (store info), "
+              "/v2/orders?min_date_created=YYYY-MM-DD&limit=50, /v2/orders/{id}/products, "
+              "/v3/catalog/products?keyword=...&limit=50, /v3/customers?email:in=... "
               "Revenue is never summed across currencies; orders with status_id 0 (Incomplete), 5 (Cancelled) "
               "and 6 (Declined) are excluded from revenue. payment_method is free text: normalize it first."),
-        probe=BIGCOMMERCE_PROBES, system_id=system_id, category="Commerce")
-
-
-def _genc_base(values):
-    match = re.search(r"/stores/([a-z0-9]+)", values["GENC_BIGCOMMERCE_PRODUCT_API_PATH"])
-    if not match:
-        raise NotReady("GENC_BIGCOMMERCE_PRODUCT_API_PATH doesn't contain a BigCommerce store path")
-    return f"https://api.bigcommerce.com/stores/{match[1]}"
+        probe=BIGCOMMERCE_PROBES, system_id=system_id, category="Commerce",
+        **({"kind": "paste", "fields": [(token_secret, "Access token of a store-level API account", "", True)],
+            "help": (f"In the {storefront} BigCommerce admin: Settings > API > Store-level API accounts > Create API "
+                     "account (token type: V2/V3 API token). Name it \"Company Assistant\" and set Orders, Products, "
+                     "Customers and Information & settings to read-only (or modify, if the assistant may change "
+                     "them). Save, then copy the Access token (BigCommerce shows it once) and paste it here.")}
+           if paste else {}))
 
 
 REGISTRY = [
-    _bigcommerce("gmosz3ja", "BIGCOMMERCE_gmosz3ja_ACCESS_TOKEN", "BigCommerce: superhairpieces.ca (CAD)",
-                 "bigcommerce_ca"),
-    _bigcommerce("qet21urb3p", "BIGCOMMERCE_qet21urb3p_ACCESS_TOKEN",
-                 "BigCommerce store qet21urb3p (Check connections shows which storefront)", "bigcommerce_qet21urb3p"),
-    Integration(
-        id="bigcommerce_genc", label="BigCommerce: Gen'C Beauty",
-        secrets=["GENC_BIGCOMMERCE_PRODUCT_ACCESS_TOKEN", "GENC_BIGCOMMERCE_PRODUCT_API_PATH"], base=_genc_base,
-        headers=lambda v: {"X-Auth-Token": v["GENC_BIGCOMMERCE_PRODUCT_ACCESS_TOKEN"], "Accept": "application/json"},
-        hint="Same BigCommerce REST paths as the other stores (/v2/store, /v2/orders, /v3/catalog/products).",
-        probe=BIGCOMMERCE_PROBES, system_id="bigcommerce_genc", category="Commerce"),
+    # Store hashes from Manne (2026-09-30); tokens follow BIGCOMMERCE_<hash>_ACCESS_TOKEN, except Gen'C's.
+    _bigcommerce("gmosz3ja", "BIGCOMMERCE_gmosz3ja_ACCESS_TOKEN", "superhairpieces.ca", "CAD", "bigcommerce_ca"),
+    _bigcommerce("cavofu", "BIGCOMMERCE_cavofu_ACCESS_TOKEN", "superhairpieces.com", "USD", "bigcommerce_com", paste=True),
+    _bigcommerce("qet21urb3p", "BIGCOMMERCE_qet21urb3p_ACCESS_TOKEN", "superhairpieces.es", "EUR", "bigcommerce_es"),
+    _bigcommerce("kzkmuqjqk9", "GENC_BIGCOMMERCE_PRODUCT_ACCESS_TOKEN", "Gen'C Beauty", "", "bigcommerce_genc"),
     Integration(
         id="airtable", label="Airtable", secrets=["AIRTABLE_COMPANY_TOKEN"], base="https://api.airtable.com",
         headers=lambda v: {"Authorization": f"Bearer {v['AIRTABLE_COMPANY_TOKEN']}"},
@@ -451,7 +449,10 @@ def connect_info(system_id):
     return {"kind": found[0].kind, "integration": found[0].id}
 
 
-RETIRED = {"hubspot", "reamaze"}  # connectors Manne doesn't need for now: their Access tab rows are removed
+# Rows that no longer exist: HubSpot and Re:amaze (not needed for now), and the store-hash row for qet21urb3p
+# (now "BigCommerce: superhairpieces.es").
+RETIRED = {"hubspot", "reamaze", "bigcommerce_qet21urb3p"}
+RENAMED = {"bigcommerce_eu": "BigCommerce: .nl / .fr / .de"}  # .es is known now; these three still aren't
 
 
 def seed_systems(store):
@@ -459,6 +460,9 @@ def seed_systems(store):
     for system_id in RETIRED:
         if store.get_item("systems", system_id):
             store.delete_item("systems", system_id)
+    for system_id, name in RENAMED.items():
+        if store.get_item("systems", system_id):
+            store.save_item("systems", system_id, {"name": name})
     for i in REGISTRY:
         if i.system_id and not store.get_item("systems", i.system_id):
             store.save_item("systems", i.system_id, {
