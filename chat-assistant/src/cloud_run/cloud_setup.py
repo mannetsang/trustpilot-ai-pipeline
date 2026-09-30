@@ -6,7 +6,7 @@ the app:
 
 - gives its own service account read access to each secret a connector needs,
   one secret at a time, nothing project-wide;
-- creates an empty secret for each key Manne will paste (HubSpot, Re:amaze, ...)
+- creates an empty secret for each key Manne will paste (none right now)
   and lets the app add versions to it, so a pasted key goes straight into
   Secret Manager;
 - switches on the Google APIs the Google tools need (Analytics, Search Console).
@@ -46,7 +46,7 @@ def plan():
     """secret -> True when Manne pastes it (so the app must be able to write it), False when it only reads it."""
     wanted = {}
     for i in integrations.REGISTRY:
-        for name in i.secrets:
+        for name in i.secrets + i.optional:
             wanted[name] = wanted.get(name, False) or name in i.paste_names()
     return wanted
 

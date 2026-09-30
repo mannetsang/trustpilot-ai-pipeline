@@ -33,6 +33,7 @@ GOOGLE_TOOL_SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets.readonly",
     "https://www.googleapis.com/auth/analytics.readonly",
     "https://www.googleapis.com/auth/webmasters.readonly",
+    "https://www.googleapis.com/auth/content",               # Merchant Center (changes need Manne's OK)
 ]
 ASSISTANT_SCOPES = ASSISTANT_SCOPES + GOOGLE_TOOL_SCOPES
 

@@ -4,7 +4,8 @@ Three ways a system gets connected (the Access tab's Connect buttons):
 - "key": its key is already in Secret Manager. One Google approval by Manne lets the
   app give its own account read access to exactly those secrets (cloud_setup.py).
 - "paste": no key yet. The same approval creates an empty secret the app may fill;
-  Manne pastes the key in the app, and it goes straight into Secret Manager.
+  Manne pastes the key in the app, and it goes straight into Secret Manager. (No
+  connector uses this right now; HubSpot and Re:amaze did until they were retired.)
 - "google": a Google API, used with Manne's own sign-in (the scopes are part of it).
 
 The assistant reads chats written by many people, so any of them could try to talk
@@ -28,7 +29,8 @@ from urllib.parse import urlencode, urlsplit
 import requests
 
 MAX_RESPONSE_CHARS = 10000
-TEAMDESK_DATABASE_ID = os.environ.get("TEAMDESK_DATABASE_ID", "56554")
+TEAMDESK_DATABASE_ID = os.environ.get("TEAMDESK_DATABASE_ID", "56554")  # as trustpilot-pipeline uses
+TRUSTPILOT_BU = "5e44f707d7d8c700011eaa10"  # our Trustpilot business unit, from trustpilot-pipeline
 READ_METHODS = {"GET", "HEAD"}
 WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
@@ -55,6 +57,7 @@ class Integration:
     help: str = ""                # paste: where to find the key, step by step
     exchange: object = None       # callable(values, http) -> {"headers"|"body": {...}, "ttl": s}: a login -> token
     services: list = field(default_factory=list)  # google: APIs to switch on in the project
+    optional: list = field(default_factory=list)  # secrets used when readable (e.g. unlocking private endpoints)
 
     def values(self, secrets):
         out = {}
@@ -67,6 +70,13 @@ class Integration:
             if not value:
                 raise NotReady(f"the app can't read the {name} secret")
             out[name] = value
+        for name in self.optional:
+            try:
+                value = (secrets.get(name) or "").strip() if secrets else ""
+            except Exception:  # noqa: BLE001 - optional: simply not used
+                value = ""
+            if value:
+                out[name] = value
         return out
 
     def base_url(self, values):
@@ -118,11 +128,16 @@ REGISTRY = [
         hint="/v0/meta/bases (list bases), /v0/meta/bases/{baseId}/tables, /v0/{baseId}/{tableIdOrName}?maxRecords=50",
         probe="/v0/meta/bases", system_id="airtable", category="Operations"),
     Integration(
-        id="trustpilot", label="Trustpilot", secrets=["TRUSTPILOT_API_KEY"], base="https://api.trustpilot.com",
-        headers=lambda v: {"apikey": v["TRUSTPILOT_API_KEY"]},
-        hint=("/v1/business-units/find?name=superhairpieces.com (gives the business unit id), "
-              "/v1/business-units/{id}, /v1/business-units/{id}/reviews?perPage=20&orderBy=createdat.desc"),
-        probe="/v1/business-units/find?name=superhairpieces.com", system_id="trustpilot", category="Reviews"),
+        # Business unit and sign-in as trustpilot-pipeline uses them; the secret unlocks the private endpoints.
+        id="trustpilot", label="Trustpilot", secrets=["TRUSTPILOT_API_KEY"], optional=["TRUSTPILOT_API_SECRET"],
+        base="https://api.trustpilot.com", headers=lambda v: {"apikey": v["TRUSTPILOT_API_KEY"]},
+        exchange=lambda v, http: _trustpilot_token(v, http),
+        hint=(f"Our business unit is {TRUSTPILOT_BU}. Public: /v1/business-units/{TRUSTPILOT_BU}, "
+              f"/v1/business-units/{TRUSTPILOT_BU}/reviews?perPage=20&orderBy=createdat.desc. Private (reviewer email, "
+              f"reply status): /v1/private/business-units/{TRUSTPILOT_BU}/reviews?perPage=20, /v1/private/reviews/{{id}}. "
+              "Replying: POST /v1/private/reviews/{id}/reply {\"message\": \"...\"} (a change: needs Manne's OK)."),
+        probe=[f"/v1/private/business-units/{TRUSTPILOT_BU}/reviews?perPage=1", f"/v1/business-units/{TRUSTPILOT_BU}"],
+        system_id="trustpilot", category="Reviews"),
     Integration(
         id="stamped", label="Stamped.io", secrets=["STAMPED_STORE_HASH", "STAMPED_PUBLIC_KEY", "STAMPED_PRIVATE_KEY"],
         base=lambda v: f"https://stamped.io/api/v2/{v['STAMPED_STORE_HASH']}",
@@ -147,6 +162,22 @@ REGISTRY = [
         hint="/v1/files/{fileKey}?depth=1, /v1/files/{fileKey}/comments, /v1/images/{fileKey}?ids=...",
         probe="/v1/me", system_id="figma", category="Design"),
 ]
+
+
+def _trustpilot_token(values, http):
+    """With the API secret, a business-user token for the private endpoints (as trustpilot-pipeline does)."""
+    if not values.get("TRUSTPILOT_API_SECRET"):
+        return {"ttl": 300}  # public endpoints only, with the API key header
+    resp = http.request("POST", "https://api.trustpilot.com/v1/oauth/oauth-business-users-for-applications/accesstoken",
+                        auth=(values["TRUSTPILOT_API_KEY"], values["TRUSTPILOT_API_SECRET"]),
+                        data={"grant_type": "client_credentials"}, timeout=30)
+    try:
+        data = json.loads(resp.text or "{}")
+    except ValueError:
+        data = {}
+    if not data.get("access_token"):
+        raise NotReady(f"Trustpilot didn't accept TRUSTPILOT_API_KEY / TRUSTPILOT_API_SECRET (HTTP {resp.status_code})")
+    return {"headers": {"Authorization": f"Bearer {data['access_token']}"}, "ttl": int(data.get("expires_in", 3600)) - 60}
 
 
 def _skuvault_tokens(values, http):
@@ -198,31 +229,6 @@ REGISTRY += [
               "/orders/v0/orders?MarketplaceIds=...&CreatedAfter=YYYY-MM-DD, /orders/v0/orders/{id}/orderItems, "
               "/fba/inventory/v1/summaries?granularityType=Marketplace&granularityId=...&marketplaceIds=..."),
         probe="/sellers/v1/marketplaceParticipations", system_id="amazon", category="Commerce"),
-    Integration(
-        id="hubspot", label="HubSpot", secrets=["HUBSPOT_ACCESS_TOKEN"], base="https://api.hubapi.com",
-        headers=lambda v: {"Authorization": f"Bearer {v['HUBSPOT_ACCESS_TOKEN']}"}, kind="paste",
-        fields=[("HUBSPOT_ACCESS_TOKEN", "Private app access token", "pat-na1-…", True)],
-        help=("In HubSpot: the gear (Settings) > Integrations > Private Apps > Create a private app. Name it "
-              "\"Company Assistant\". Under Scopes tick crm.objects.contacts, crm.objects.companies and "
-              "crm.objects.deals (Read, and Write if the assistant may update them). Create the app, then copy "
-              "the access token and paste it here."),
-        hint=("/crm/v3/objects/contacts?limit=50&properties=email,firstname,lastname,hs_lead_status, "
-              "/crm/v3/objects/deals?limit=50, /crm/v3/pipelines/deals, POST /crm/v3/objects/{type}/search "
-              "(a read) with filterGroups"),
-        probe="/crm/v3/objects/contacts?limit=1", read_posts=(r"^/crm/v3/objects/\w+/search$",),
-        system_id="hubspot", category="CRM"),
-    Integration(
-        id="reamaze", label="Re:amaze", secrets=["REAMAZE_BRAND", "REAMAZE_EMAIL", "REAMAZE_API_TOKEN"],
-        base=lambda v: f"https://{v['REAMAZE_BRAND'].strip()}.reamaze.io/api/v1",
-        auth=lambda v: (v["REAMAZE_EMAIL"].strip(), v["REAMAZE_API_TOKEN"].strip()),
-        headers=lambda v: {"Accept": "application/json"}, kind="paste",
-        fields=[("REAMAZE_BRAND", "Brand (the part before .reamaze.io in your Re:amaze address)", "superhairpieces", False),
-                ("REAMAZE_EMAIL", "The email you sign in to Re:amaze with", "manne@superhairpieces.com", False),
-                ("REAMAZE_API_TOKEN", "API token", "", True)],
-        help=("In Re:amaze: Settings > Developer > API Token > Generate New Token (it's tied to your login). "
-              "Paste it here with your brand and sign-in email."),
-        hint="/conversations?filter=open&page=1, /conversations/{slug}/messages, /contacts?q=email",
-        probe="/conversations?page=1", system_id="reamaze", category="Support"),
     Integration(
         id="teamdesk", label="TeamDesk", secrets=["TEAMDESK_TOKEN"],
         # Database 56554 is the one trustpilot-pipeline writes to; TEAMDESK_DATABASE_ID (env) overrides it.
@@ -281,6 +287,17 @@ GOOGLE = [  # used with Manne's own Google sign-in; their scopes are in google_a
                 probe="/webmasters/v3/sites", system_id="analytics", category="Marketing",
                 services=["searchconsole.googleapis.com"]),
 ]
+GOOGLE.append(Integration(
+    id="merchant_center", label="Google Merchant Center", secrets=[], base="https://merchantapi.googleapis.com",
+    kind="google", read_posts=(r"^/reports/v1/accounts/\d+/reports:search$",),
+    hint=("Accounts: 5298296396 Superhairpieces.ca (registered for API use), 289630622 Superhairpieces .com/EU, "
+          "670525760 Gen'C Beauty (these two need the project registered first: google-merchant/register_developer.py). "
+          "/products/v1/accounts/{id}/products?pageSize=50 (with approval status per country), "
+          "/accounts/v1/accounts/{id}, POST /reports/v1/accounts/{id}/reports:search (a read) with "
+          "{\"query\": \"SELECT offer_id, title, clicks, impressions FROM product_performance_view WHERE date "
+          "BETWEEN '2026-09-01' AND '2026-09-29'\"}"),
+    probe="/accounts/v1/accounts/5298296396", system_id="merchant_center", category="Marketing",
+    services=["merchantapi.googleapis.com"]))
 REGISTRY += GOOGLE
 BY_ID = {i.id: i for i in REGISTRY}
 _exchanged = {}  # integration id -> (exchange result, expires at); logins aren't redone on every call
@@ -288,7 +305,7 @@ _exchanged = {}  # integration id -> (exchange result, expires at); logins aren'
 
 def secret_names():
     """Every secret the integrations read: the list the app's account needs access to."""
-    return sorted({name for i in REGISTRY for name in i.secrets})
+    return sorted({name for i in REGISTRY for name in i.secrets + i.optional})
 
 
 def _clean_path(path):
@@ -434,8 +451,14 @@ def connect_info(system_id):
     return {"kind": found[0].kind, "integration": found[0].id}
 
 
+RETIRED = {"hubspot", "reamaze"}  # connectors Manne doesn't need for now: their Access tab rows are removed
+
+
 def seed_systems(store):
-    """Give every connector a row in the Access tab (existing rows keep their status)."""
+    """Give every connector a row in the Access tab (existing rows keep their status); drop retired ones."""
+    for system_id in RETIRED:
+        if store.get_item("systems", system_id):
+            store.delete_item("systems", system_id)
     for i in REGISTRY:
         if i.system_id and not store.get_item("systems", i.system_id):
             store.save_item("systems", i.system_id, {

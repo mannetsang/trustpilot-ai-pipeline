@@ -136,15 +136,19 @@ Every partner (typed or on a call) has two tools for company systems:
 | How it connects | Systems |
 |---|---|
 | Key already in Secret Manager | BigCommerce superhairpieces.ca, BigCommerce `qet21urb3p`, BigCommerce Gen'C Beauty, Airtable, Trustpilot, Stamped.io, Omnisend, Notion, Figma, TeamDesk (database 56554, as trustpilot-pipeline uses); SkuVault and Amazon SP-API (their stored logins are exchanged for tokens on the server) |
-| Paste a key in the app | HubSpot (private app token), Re:amaze (brand, email, API token) |
-| Your Google sign-in | Gmail (read, drafts), Drive and Sheets (read), Google Analytics and Search Console (read) |
+| Your Google sign-in | Gmail (read, drafts), Drive and Sheets (read), Google Analytics and Search Console (read), Merchant Center (Merchant API v1, accounts as in CLAUDE.md) |
+
+Trustpilot uses business unit `5e44f707d7d8c700011eaa10` and, when `TRUSTPILOT_API_SECRET`
+is readable, the business-user sign-in trustpilot-pipeline uses (private endpoints:
+reviewer details, replies); without it, the public API.
 
 **Access → Connect everything** (or Connect on one row) asks Google once for your OK
 as the project's owner. With that one-hour token, which is used right away and never
 stored (`cloud_setup.py`), the app gives its own service account read access to each
 secret it needs, one secret at a time and never project-wide; creates an empty secret
-for each key you'll paste, which the app may fill; and switches on the Analytics and
-Search Console APIs. It then tests every system (Google can take a minute to apply new
+for any connector whose key you paste in the app (none right now: HubSpot and Re:amaze
+were removed until needed); and switches on the Analytics, Search Console and Merchant
+APIs. It then tests every system (Google can take a minute to apply new
 access, so it re-checks) and marks each Connected. A **paste** row opens a form with
 the steps for finding the key; what you paste goes straight into Secret Manager and is
 tested at once. A **Google** row reconnects your Google sign-in with those permissions.

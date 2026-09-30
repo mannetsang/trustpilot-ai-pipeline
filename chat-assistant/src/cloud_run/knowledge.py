@@ -42,8 +42,6 @@ SEED_SYSTEMS = [
     ("gmail", "Gmail", "Communication", "needed", "Read and send email as Manne (can be added to the same sign-in)."),
     ("google_drive", "Google Drive / Sheets / Docs", "Documents", "needed",
      "Find and update SOPs, sheets and docs (can be added to the same sign-in)."),
-    ("hubspot", "HubSpot", "CRM", "needed", "Deals and pipelines for Jill's outreach and the Bogota follow-up team."),
-    ("reamaze", "Re:amaze", "Support", "needed", "Customer support conversations."),
     ("skuvault", "SkuVault", "Inventory", "needed", "Stock levels, purchase orders, the Amazon-SkuVault bridge."),
     ("stamped", "Stamped.io", "Reviews", "needed", "Product reviews and the Review Rewards program."),
     ("amazon", "Amazon Seller Central", "Commerce", "needed", "Amazon orders, listings, FBM/FBA."),
@@ -63,7 +61,7 @@ SEED_QUESTIONS = [
      "Which Chat spaces are projects and which are day-to-day channels?", "Projects are how I organise the work.", 1),
     ("Where does the truth live for orders, inventory, customers/CRM, support tickets, salon appointments, "
      "finance, staff schedules, and SOPs/documents?", "Tells me which systems to connect first.", 2),
-    ("Which systems will you give me API access to: BigCommerce .com and EU, HubSpot, Re:amaze, SkuVault, "
+    ("Which systems will you give me API access to: BigCommerce .com and EU, SkuVault, "
      "Stamped.io, Amazon Seller Central, Meta/Instagram, Google Ads, GA4/Search Console, accounting, TeamDesk?",
      "Each connection lets me do work instead of asking about it.", 2),
     ("What are these Cloud Run services and who maintains them: course-webapp, gchat-gemini-bot, "
