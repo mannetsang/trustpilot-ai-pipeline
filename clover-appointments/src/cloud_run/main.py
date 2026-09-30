@@ -112,7 +112,8 @@ def fetch_clover_emails(days):
         mail.select('"[Gmail]/All Mail"', readonly=True)
         _, data = mail.search(
             None, "FROM", CLOVER_SENDER, "SINCE", since,
-            "OR", "SUBJECT", "confirmed", "SUBJECT", "cancel",
+            # Gmail's IMAP search matches whole words, not substrings.
+            "OR", "SUBJECT", "confirmed", "OR", "SUBJECT", "canceled", "SUBJECT", "cancelled",
         )
         for num in data[0].split():
             _, parts = mail.fetch(num, "(RFC822)")
