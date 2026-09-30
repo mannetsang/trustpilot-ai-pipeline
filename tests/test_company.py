@@ -519,6 +519,22 @@ class SpeechTests(unittest.TestCase):
             self.assertEqual(len(speaker._cache), 0)
 
 
+def demo_paste_connector(test):
+    """Register a stand-in "paste a key" connector for the test (no real one needs pasting right now)."""
+    import integrations
+
+    demo = integrations.Integration(
+        id="democrm", label="Demo CRM", secrets=["DEMO_CRM_TOKEN"], base="https://api.democrm.example",
+        headers=lambda v: {"Authorization": f"Bearer {v['DEMO_CRM_TOKEN']}"}, kind="paste",
+        fields=[("DEMO_CRM_TOKEN", "Access token", "", True)], help="Settings > API > Create token.",
+        probe="/v1/me", system_id="democrm", category="CRM")
+    for patch in (mock.patch.object(integrations, "REGISTRY", integrations.REGISTRY + [demo]),
+                  mock.patch.dict(integrations.BY_ID, {"democrm": demo})):
+        patch.start()
+        test.addCleanup(patch.stop)
+    return demo
+
+
 class IntegrationTests(unittest.TestCase):
     """Company systems through keys in Secret Manager: the key goes to its own host only and never to a model."""
 
@@ -533,7 +549,7 @@ class IntegrationTests(unittest.TestCase):
         def request(self, method, url, headers=None, auth=None, json=None, timeout=None, **kw):
             from types import SimpleNamespace as NS
 
-            self.calls.append({"method": method, "url": url, "headers": headers, "json": json, **kw})
+            self.calls.append({"method": method, "url": url, "headers": headers, "json": json, "auth": auth, **kw})
             body = self.routes.get(url, self.body) if hasattr(self, "routes") else self.body
             return NS(status_code=self.status, ok=self.status < 400, text=body)
 
@@ -709,6 +725,42 @@ class IntegrationTests(unittest.TestCase):
         result = self.integrations.probe(self.integrations.BY_ID["bigcommerce_gmosz3ja"], self.secrets, session=Session())
         self.assertEqual((result["status"], len(calls)), (401, 1))
 
+    def test_trustpilot_uses_the_business_account_like_the_pipeline(self):
+        bu = self.integrations.TRUSTPILOT_BU
+        session = self.Session()
+        session.routes = {"https://api.trustpilot.com/v1/oauth/oauth-business-users-for-applications/accesstoken":
+                          '{"access_token": "tp-bearer", "expires_in": 3600}'}
+        with_secret = MemorySecrets({"TRUSTPILOT_API_KEY": "tp-key", "TRUSTPILOT_API_SECRET": "tp-secret"})
+        result = self.integrations.probe(self.integrations.BY_ID["trustpilot"], with_secret, session=session)
+        token_call, probe_call = session.calls
+        self.assertEqual(token_call["auth"], ("tp-key", "tp-secret"))
+        self.assertTrue(probe_call["url"].endswith(f"/v1/private/business-units/{bu}/reviews?perPage=1"))
+        self.assertEqual(probe_call["headers"]["Authorization"], "Bearer tp-bearer")
+        self.assertEqual(probe_call["headers"]["apikey"], "tp-key")
+        self.assertTrue(result["ok"])
+        # Without the secret (not granted yet) it still connects on the public API instead of failing.
+        self.integrations._exchanged.clear()
+        public = self.Session()
+        self.integrations.call("trustpilot", "GET", f"/v1/business-units/{bu}", MemorySecrets({"TRUSTPILOT_API_KEY": "tp-key"}),
+                               session=public)
+        self.assertNotIn("Authorization", public.calls[0]["headers"])
+        import cloud_setup
+        self.assertIn("TRUSTPILOT_API_SECRET", cloud_setup.plan())  # Connect everything grants it
+
+    def test_merchant_center_connects_through_the_google_sign_in(self):
+        self.assertEqual(self.integrations.connect_info("merchant_center")["kind"], "google")
+        from google_apis import ASSISTANT_SCOPES
+        self.assertIn("https://www.googleapis.com/auth/content", ASSISTANT_SCOPES)
+
+    def test_retired_connectors_leave_the_access_tab(self):
+        store = MemoryStore()
+        store.save_item("systems", "hubspot", {"name": "HubSpot", "status": "no_access"})
+        store.save_item("systems", "reamaze", {"name": "Re:amaze", "status": "needed"})
+        self.integrations.seed_systems(store)
+        self.assertIsNone(store.get_item("systems", "hubspot"))
+        self.assertIsNone(store.get_item("systems", "reamaze"))
+        self.assertNotIn("HUBSPOT_ACCESS_TOKEN", self.integrations.secret_names())
+
     def test_teamdesk_needs_no_paste(self):
         info = self.integrations.connect_info("teamdesk")
         self.assertEqual(info["kind"], "key")
@@ -717,9 +769,12 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(session.calls[0]["url"], "https://www.teamdesk.net/secure/api/v2/56554/td-tok/describe.json")
 
     def test_connect_info_for_the_access_tab(self):
-        hubspot = self.integrations.connect_info("hubspot")
-        self.assertEqual((hubspot["kind"], hubspot["fields"][0]["secret"]), ("paste", "HUBSPOT_ACCESS_TOKEN"))
-        self.assertIn("Private Apps", hubspot["help"])
+        demo_paste_connector(self)
+        demo = self.integrations.connect_info("democrm")
+        self.assertEqual((demo["kind"], demo["fields"][0]["secret"]), ("paste", "DEMO_CRM_TOKEN"))
+        self.assertIn("Create token", demo["help"])
+        self.assertIsNone(self.integrations.connect_info("hubspot"))  # retired
+        self.assertIsNone(self.integrations.connect_info("reamaze"))
         self.assertEqual(self.integrations.connect_info("bigcommerce_ca")["kind"], "key")
         self.assertEqual(self.integrations.connect_info("gmail")["kind"], "google")
         self.assertIsNone(self.integrations.connect_info("meta"))
@@ -847,15 +902,16 @@ class CloudSetupTests(unittest.TestCase):
     def test_setup_grants_creates_and_enables(self):
         import cloud_setup
 
+        demo_paste_connector(self)
         existing = [n for n, pasted in cloud_setup.plan().items() if not pasted and n != "FIGMA_TOKEN"]
         cloud = self.Cloud(existing, granted=["AIRTABLE_COMPANY_TOKEN"])
         report = cloud_setup.run("ya29.owner-token", http=cloud)
-        self.assertIn("HUBSPOT_ACCESS_TOKEN", report["created"])
+        self.assertIn("DEMO_CRM_TOKEN", report["created"])
         self.assertIn("FIGMA_TOKEN", report["missing"])          # should exist but doesn't: reported, not created
         self.assertIn("AIRTABLE_COMPANY_TOKEN", report["already"])
         self.assertIn("BIGCOMMERCE_gmosz3ja_ACCESS_TOKEN", report["granted"])
         self.assertEqual(report["errors"], [])
-        roles = {b["role"] for b in cloud.policies["HUBSPOT_ACCESS_TOKEN"]["bindings"]}
+        roles = {b["role"] for b in cloud.policies["DEMO_CRM_TOKEN"]["bindings"]}
         self.assertEqual(roles, {"roles/secretmanager.secretAccessor", "roles/secretmanager.secretVersionManager"})
         roles = {b["role"] for b in cloud.policies["BIGCOMMERCE_gmosz3ja_ACCESS_TOKEN"]["bindings"]}
         self.assertEqual(roles, {"roles/secretmanager.secretAccessor"})  # a stored key is only read
@@ -1054,8 +1110,8 @@ class WebTests(unittest.TestCase):
         p = self.call("POST", "/api/projects", {"name": "Brampton launch", "company": "superhairpieces"}).get_json()["project"]
         self.call("PATCH", f"/api/projects/{p['id']}", {"status": "blocked"})
         self.assertEqual(self.store.get_item("projects", p["id"])["status"], "blocked")
-        self.call("PATCH", "/api/systems/hubspot", {"status": "connected"})
-        self.assertEqual(self.store.get_item("systems", "hubspot")["status"], "connected")
+        self.call("PATCH", "/api/systems/skuvault", {"status": "connected"})
+        self.assertEqual(self.store.get_item("systems", "skuvault")["status"], "connected")
         s = self.call("PATCH", "/api/settings", {"autonomy": {"money": "auto", "bogus": "auto", "calendar": "maybe"},
                                                  "openai_model": "gpt-x", "partners_enabled": False}).get_json()["settings"]
         self.assertEqual(s["autonomy"]["money"], "auto")
@@ -1192,38 +1248,40 @@ class WebTests(unittest.TestCase):
     def test_pasting_a_key_saves_it_and_tests_the_system(self):
         import integrations
 
+        demo_paste_connector(self)
         session = IntegrationTests.Session(body='{"results": []}')
         with mock.patch.object(integrations.requests, "request", session.request):
-            r = self.call("POST", "/api/connect/hubspot", {"values": {"HUBSPOT_ACCESS_TOKEN": "pat-na1-secret"}})
+            r = self.call("POST", "/api/connect/democrm", {"values": {"DEMO_CRM_TOKEN": "demo-secret"}})
         self.assertEqual(r.status_code, 200)
         self.assertTrue(r.get_json()["result"]["ok"])
-        self.assertNotIn("pat-na1-secret", r.get_data(as_text=True))  # never echoed
-        self.assertEqual(self.main.secret_store.get("HUBSPOT_ACCESS_TOKEN"), "pat-na1-secret")
-        self.assertEqual(session.calls[0]["headers"]["Authorization"], "Bearer pat-na1-secret")
-        self.assertEqual(self.store.get_item("systems", "hubspot")["status"], "connected")
-        self.assertEqual(self.call("POST", "/api/connect/hubspot", {"values": {}}).status_code, 400)
+        self.assertNotIn("demo-secret", r.get_data(as_text=True))  # never echoed
+        self.assertEqual(self.main.secret_store.get("DEMO_CRM_TOKEN"), "demo-secret")
+        self.assertEqual(session.calls[0]["headers"]["Authorization"], "Bearer demo-secret")
+        self.assertEqual(self.store.get_item("systems", "democrm")["status"], "connected")
+        self.assertEqual(self.call("POST", "/api/connect/democrm", {"values": {}}).status_code, 400)
         self.assertEqual(self.call("POST", "/api/connect/airtable", {"values": {"x": "y"}}).status_code, 404)
 
     def test_pasting_before_setup_asks_for_the_owner_approval(self):
+        demo_paste_connector(self)
         class PermissionDenied(Exception):
             pass
 
         with mock.patch.object(self.main.secret_store, "put", side_effect=PermissionDenied("no")):
-            r = self.call("POST", "/api/connect/hubspot", {"values": {"HUBSPOT_ACCESS_TOKEN": "pat-na1-secret"}})
+            r = self.call("POST", "/api/connect/democrm", {"values": {"DEMO_CRM_TOKEN": "demo-secret"}})
         self.assertEqual(r.status_code, 409)
-        self.assertEqual(r.get_json()["url"], "/connect/setup?then=hubspot")
+        self.assertEqual(r.get_json()["url"], "/connect/setup?then=democrm")
 
     def test_connect_everything_asks_google_for_owner_access(self):
         client = {"web": {"client_id": "cid.apps.googleusercontent.com", "client_secret": "x",
                           "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token"}}
         self.main.secret_store.put(self.main.OAUTH_CLIENT_SECRET_ID, json.dumps(client))
-        r = self.client.get("/connect/setup?then=hubspot")
+        r = self.client.get("/connect/setup?then=democrm")
         self.assertEqual(r.status_code, 302)
         self.assertIn("accounts.google.com", r.location)
         self.assertIn("cloud-platform", r.location)
         self.assertNotIn("offline", r.location)  # no long-term owner token is ever asked for
         with self.client.session_transaction() as s:
-            self.assertEqual((s["oauth"]["mode"], s["oauth"]["then"]), ("setup", "hubspot"))
+            self.assertEqual((s["oauth"]["mode"], s["oauth"]["then"]), ("setup", "democrm"))
         self.assertEqual(self.client.get("/connect/setup?then=../evil").status_code, 302)
         with self.client.session_transaction() as s:
             self.assertEqual(s["oauth"]["then"], "")
@@ -1241,16 +1299,16 @@ class WebTests(unittest.TestCase):
                 self.code = code
 
         with self.client.session_transaction() as s:
-            s["oauth"] = {"state": "st8", "verifier": "v", "connect": False, "mode": "setup", "then": "hubspot"}
-        report = {"granted": ["AIRTABLE_COMPANY_TOKEN"], "created": ["HUBSPOT_ACCESS_TOKEN"], "errors": []}
+            s["oauth"] = {"state": "st8", "verifier": "v", "connect": False, "mode": "setup", "then": "democrm"}
+        report = {"granted": ["AIRTABLE_COMPANY_TOKEN"], "created": ["DEMO_CRM_TOKEN"], "errors": []}
         with mock.patch.object(self.main, "make_flow", return_value=Flow()), \
                 mock.patch("google.oauth2.id_token.verify_oauth2_token",
                            return_value={"email": self.main.OWNER_EMAIL, "email_verified": True, "sub": "1"}), \
                 mock.patch.object(cloud_setup, "run", return_value=report) as run:
             r = self.client.get("/oauth/callback?state=st8&code=abc")
         run.assert_called_once_with("ya29.owner-cloud-token")
-        self.assertEqual(r.location, "/?tab=access&setup=done&open=hubspot")
-        self.assertEqual(self.store.get_flag("connect_setup")["created"], ["HUBSPOT_ACCESS_TOKEN"])
+        self.assertEqual(r.location, "/?tab=access&setup=done&open=democrm")
+        self.assertEqual(self.store.get_flag("connect_setup")["created"], ["DEMO_CRM_TOKEN"])
         with self.client.session_transaction() as s:
             self.assertEqual(s.get("email"), self.main.OWNER_EMAIL)   # still signed in
             self.assertNotIn("ya29.owner-cloud-token", json.dumps(dict(s)))  # the owner token is gone
@@ -1270,7 +1328,9 @@ class WebTests(unittest.TestCase):
 
     def test_access_tab_rows_carry_how_to_connect(self):
         systems = {s["id"]: s for s in self.call("GET", "/api/knowledge").get_json()["systems"]}
-        self.assertEqual(systems["hubspot"]["connect"]["kind"], "paste")
+        self.assertNotIn("hubspot", systems)  # retired: no row, no connector
+        self.assertNotIn("reamaze", systems)
+        self.assertEqual(systems["merchant_center"]["connect"]["kind"], "google")
         self.assertEqual(systems["skuvault"]["connect"]["kind"], "key")
         self.assertEqual(systems["gmail"]["connect"]["kind"], "google")
 
