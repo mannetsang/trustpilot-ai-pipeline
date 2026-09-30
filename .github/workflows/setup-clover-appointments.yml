@@ -1,0 +1,61 @@
+name: Setup Clover appointments sync
+
+# One-time (re-runnable) setup for the Clover email -> TeamDesk sync:
+#   1. Lets the Cloud Run runtime service account read the three secrets it
+#      mounts (per secret, not project-wide).
+#   2. Grants that account run.invoker on the (private) service and creates a
+#      Cloud Scheduler job that calls /poll with an OIDC identity token.
+#
+# Run it once before the first deploy (the deploy mounts the secrets, so the
+# runtime account needs access first), then again after the deploy to create
+# the scheduler job. Check a dry run before the job starts writing (README).
+
+on:
+  workflow_dispatch:
+    inputs:
+      schedule:
+        description: 'Cron schedule (America/Toronto)'
+        required: true
+        default: '*/5 * * * *'
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Grant the runtime service account the secrets it mounts
+        run: |
+          NUMBER=$(gcloud projects describe shp-ai-bot-2026 --format 'value(projectNumber)')
+          SA="$NUMBER-compute@developer.gserviceaccount.com"
+          echo "SA=$SA" >> "$GITHUB_ENV"
+          for S in EMAIL_USER GOOGLE_APP_PASSWORD TEAMDESK_TOKEN; do
+            gcloud secrets add-iam-policy-binding "$S" \
+              --member "serviceAccount:$SA" \
+              --role roles/secretmanager.secretAccessor \
+              --project shp-ai-bot-2026 --quiet >/dev/null
+            echo "granted $S"
+          done
+
+      - name: Create the scheduler job (OIDC-authenticated)
+        run: |
+          if ! gcloud run services describe clover-appointments \
+               --region us-central1 --project shp-ai-bot-2026 >/dev/null 2>&1; then
+            echo "Service not deployed yet: run 'Deploy Clover appointments sync', then re-run this."
+            exit 0
+          fi
+          gcloud run services add-iam-policy-binding clover-appointments \
+            --region us-central1 --project shp-ai-bot-2026 \
+            --member "serviceAccount:$SA" --role roles/run.invoker --quiet >/dev/null
+          URL=$(gcloud run services describe clover-appointments \
+            --region us-central1 --project shp-ai-bot-2026 --format 'value(status.url)')
+          ARGS=(--location us-central1 --project shp-ai-bot-2026
+                --schedule "${{ inputs.schedule }}" --time-zone "America/Toronto"
+                --uri "$URL/poll" --http-method GET --attempt-deadline 180s
+                --oidc-service-account-email "$SA" --oidc-token-audience "$URL" --quiet)
+          gcloud scheduler jobs update http clover-appointments-poll "${ARGS[@]}" \
+            || gcloud scheduler jobs create http clover-appointments-poll "${ARGS[@]}"
