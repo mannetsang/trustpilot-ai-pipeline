@@ -782,6 +782,34 @@ class IntegrationTests(unittest.TestCase):
         self.assertIsNone(store.get_item("systems", "reamaze"))
         self.assertNotIn("HUBSPOT_ACCESS_TOKEN", self.integrations.secret_names())
 
+    def test_a_key_pasted_elsewhere_is_seen_within_seconds(self):
+        from types import SimpleNamespace as NS
+
+        from google.api_core import exceptions
+        from store import SecretManagerSecrets
+
+        class Client:
+            value = None
+
+            def access_secret_version(self, request):
+                if self.value is None:
+                    raise exceptions.NotFound("no versions yet")
+                return NS(payload=NS(data=self.value.encode()))
+
+        secrets = SecretManagerSecrets.__new__(SecretManagerSecrets)  # no real client
+        secrets._client, secrets._cache = Client(), {}
+        clock = [1000.0]
+        with mock.patch("store.time.time", lambda: clock[0]):
+            self.assertIsNone(secrets.get("BIGCOMMERCE_34amlu9gm_ACCESS_TOKEN"))  # checked before the paste
+            secrets._client.value = "bc-de-token"                              # pasted, on another instance
+            clock[0] += 5
+            self.assertIsNone(secrets.get("BIGCOMMERCE_34amlu9gm_ACCESS_TOKEN"))  # still briefly remembered
+            clock[0] += 15
+            self.assertEqual(secrets.get("BIGCOMMERCE_34amlu9gm_ACCESS_TOKEN"), "bc-de-token")  # seen now
+            secrets._client.value = "rotated"
+            clock[0] += 60
+            self.assertEqual(secrets.get("BIGCOMMERCE_34amlu9gm_ACCESS_TOKEN"), "bc-de-token")  # found values stay cached
+
     def test_teamdesk_needs_no_paste(self):
         info = self.integrations.connect_info("teamdesk")
         self.assertEqual(info["kind"], "key")
