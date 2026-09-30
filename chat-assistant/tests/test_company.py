@@ -623,8 +623,12 @@ class IntegrationTests(unittest.TestCase):
         store.save_item("systems", "bigcommerce_eu", {"name": "BigCommerce: .nl / .fr / .es / .de", "status": "needed"})
         self.integrations.seed_systems(store)
         self.assertIsNone(store.get_item("systems", "bigcommerce_qet21urb3p"))
-        self.assertEqual(store.get_item("systems", "bigcommerce_eu")["name"], "BigCommerce: .nl / .fr / .de")
-        self.assertEqual(store.get_item("systems", "bigcommerce_es")["name"], "BigCommerce: superhairpieces.es (EUR)")
+        self.assertIsNone(store.get_item("systems", "bigcommerce_eu"))  # each EU store has its own row now
+        for row, name in (("bigcommerce_es", "superhairpieces.es"), ("bigcommerce_fr", "superhairpieces.fr"),
+                          ("bigcommerce_nl", "superhairpieces.nl"), ("bigcommerce_de", "superhairpieces.de")):
+            self.assertEqual(store.get_item("systems", row)["name"], f"BigCommerce: {name} (EUR)")
+        self.assertEqual(self.integrations.connect_info("bigcommerce_de")["fields"][0]["secret"],
+                         "BIGCOMMERCE_34amlu9gm_ACCESS_TOKEN")
 
     def test_check_all_updates_the_access_tab(self):
         store = MemoryStore()
