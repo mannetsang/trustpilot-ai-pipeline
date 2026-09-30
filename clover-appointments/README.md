@@ -41,12 +41,25 @@ the scheduler job sends via OIDC.
 
 ## Setup
 
-1. Actions → **Setup Clover appointments sync** (grants the secrets).
-2. Actions → **Deploy Clover appointments sync** (also runs on push to main).
-3. Before anything writes, check a dry run with your own Google login
-   (you need `run.invoker` on the service, which project owners have):
-   `gcloud run services proxy clover-appointments --region us-central1 --project shp-ai-bot-2026`
-   then open `http://localhost:8080/poll?dry_run=1&days=7`.
-4. Re-run **Setup** to create the scheduler job.
+Live since 30 Sep 2026: service `clover-appointments` (us-central1), private,
+deployed on every push to main that touches `src/cloud_run/`.
+
+The scheduler job needs Cloud Scheduler rights, which claude-sessions (the
+account behind the workflows) does not have. Create it once as a project owner:
+
+```
+gcloud scheduler jobs create http clover-appointments-poll --location us-central1 --project shp-ai-bot-2026 --schedule "*/5 * * * *" --time-zone "America/Toronto" --uri "https://clover-appointments-onvg62bzra-uc.a.run.app/poll" --http-method GET --attempt-deadline 180s --oidc-service-account-email "304363458561-compute@developer.gserviceaccount.com" --oidc-token-audience "https://clover-appointments-onvg62bzra-uc.a.run.app"
+```
+
+Or grant claude-sessions `roles/cloudscheduler.admin` and run **Setup Clover
+appointments sync** from the Actions tab.
+
+Dry run (writes nothing), as any account with `run.invoker` on the service:
+
+```
+gcloud run services proxy clover-appointments --region us-central1 --project shp-ai-bot-2026
+```
+
+then open `http://localhost:8080/poll?dry_run=1&days=7`.
 
 `&days=N` backfills further back; existing POS IDs are skipped.

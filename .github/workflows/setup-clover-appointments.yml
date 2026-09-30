@@ -1,14 +1,12 @@
 name: Setup Clover appointments sync
 
-# One-time (re-runnable) setup for the Clover email -> TeamDesk sync:
-#   1. Lets the Cloud Run runtime service account read the three secrets it
-#      mounts (per secret, not project-wide).
-#   2. Grants that account run.invoker on the (private) service and creates a
-#      Cloud Scheduler job that calls /poll with an OIDC identity token.
+# Re-runnable setup for the Clover email -> TeamDesk sync, after the deploy:
+# grants the runtime service account run.invoker on the (private) service and
+# creates/updates a Cloud Scheduler job that calls /poll with an OIDC token.
+# The runtime account already reads the secrets the deploy mounts.
 #
-# Run it once before the first deploy (the deploy mounts the secrets, so the
-# runtime account needs access first), then again after the deploy to create
-# the scheduler job. Check a dry run before the job starts writing (README).
+# Needs Cloud Scheduler admin on claude-sessions (cloudscheduler.jobs.*); without
+# it, create the job once by hand with the command in clover-appointments/README.md.
 
 on:
   workflow_dispatch:
@@ -18,28 +16,26 @@ on:
         required: true
         default: '*/5 * * * *'
 
+# Keyless Google Cloud auth (Workload Identity Federation). See docs/credentials.md.
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   setup:
     runs-on: ubuntu-latest
     steps:
       - uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          workload_identity_provider: projects/304363458561/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: claude-sessions@shp-ai-bot-2026.iam.gserviceaccount.com
 
       - uses: google-github-actions/setup-gcloud@v2
 
-      - name: Grant the runtime service account the secrets it mounts
+      - name: Resolve the runtime service account
         run: |
           NUMBER=$(gcloud projects describe shp-ai-bot-2026 --format 'value(projectNumber)')
-          SA="$NUMBER-compute@developer.gserviceaccount.com"
-          echo "SA=$SA" >> "$GITHUB_ENV"
-          for S in EMAIL_USER GOOGLE_APP_PASSWORD TEAMDESK_TOKEN; do
-            gcloud secrets add-iam-policy-binding "$S" \
-              --member "serviceAccount:$SA" \
-              --role roles/secretmanager.secretAccessor \
-              --project shp-ai-bot-2026 --quiet >/dev/null
-            echo "granted $S"
-          done
+          echo "SA=$NUMBER-compute@developer.gserviceaccount.com" >> "$GITHUB_ENV"
 
       - name: Create the scheduler job (OIDC-authenticated)
         run: |
