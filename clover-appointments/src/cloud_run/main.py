@@ -13,8 +13,14 @@ confirmation from app@clover.com it:
   3. creates a TeamDesk Appointment unless one with that POS ID (the Clover
      order ID) already exists.
 
+The same code also runs as a second, public service (INBOUND_ONLY=1) that
+receives the emails as a webhook: a Gmail filter forwards Clover's
+confirmations to Postmark, which POSTs each one to /inbound within seconds.
+The poll stays as a catch-up for anything the webhook misses.
+
 The POS ID check is the only state: re-reading an email is harmless, so the
-poll can look back a couple of days and survive missed runs and restarts.
+poll can look back a couple of days and survive missed runs and restarts, and
+the webhook and the poll can both see the same booking.
 
 Env vars (the secrets are mounted from Secret Manager by the setup workflow):
   EMAIL_USER           mailbox that receives the Clover emails
@@ -23,18 +29,26 @@ Env vars (the secrets are mounted from Secret Manager by the setup workflow):
   TEAMDESK_DB          (optional) default 56554
   TEAMDESK_TABLE       (optional) default t_504863 (Appointment)
   LOOKBACK_DAYS        (optional) default 2
+  INBOUND_AUTH         "user:password" Postmark must send (basic auth) to /inbound;
+                       /inbound refuses everything when unset
+  INBOUND_ONLY         "1" on the public webhook service: disables /poll
 
-The service is private (no unauthenticated access): Cloud Run only accepts
-requests carrying a Google identity token for an account with run.invoker,
-which the scheduler job sends via OIDC.
+The polling service is private (no unauthenticated access): Cloud Run only
+accepts requests carrying a Google identity token for an account with
+run.invoker. The webhook service is public because Postmark can't send a
+Google token; /inbound checks Postmark's basic-auth credentials, accepts only
+Clover senders, and only ever reads receipts from www.clover.com, so a forged
+email can't invent a booking.
 
 Endpoints:
+  POST /inbound             Postmark inbound webhook (webhook service only)
   GET /poll                 create records for new bookings
   GET /poll?dry_run=1       parse and report, write nothing
   GET /poll?days=30         look further back (e.g. a backfill)
 """
 
 import email
+import hmac
 import html
 import imaplib
 import os
@@ -53,6 +67,8 @@ TEAMDESK_TOKEN = os.environ.get("TEAMDESK_TOKEN", "")
 TEAMDESK_DB = os.environ.get("TEAMDESK_DB", "56554")
 TEAMDESK_TABLE = os.environ.get("TEAMDESK_TABLE", "t_504863")
 LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "2"))
+INBOUND_AUTH = os.environ.get("INBOUND_AUTH", "")
+INBOUND_ONLY = os.environ.get("INBOUND_ONLY") == "1"
 
 TEAMDESK_API = f"https://www.teamdesk.net/secure/api/v2/{TEAMDESK_DB}/{TEAMDESK_TABLE}"
 CLOVER_SENDER = "app@clover.com"
@@ -218,33 +234,81 @@ def create_appointment(record):
 # Routes
 # ---------------------------------------------------------------------------
 
+def process_booking(body, dry_run=False):
+    """One confirmation email body -> result dict. Raises on TeamDesk errors."""
+    booking = parse_email(body)
+    if not booking:
+        return {"status": "unparsed"}
+    receipt = parse_receipt(booking["receipt_url"])
+    record = build_record(booking, receipt)
+    if appointment_exists(record["POS ID"]):
+        return {"pos_id": record["POS ID"], "status": "exists"}
+    if dry_run:
+        return {"pos_id": record["POS ID"], "status": "would_create", "record": record}
+    created = create_appointment(record)
+    print(f"Created TeamDesk appointment for Clover order {record['POS ID']}: {created}")
+    return {"pos_id": record["POS ID"], "status": "created", "teamdesk": created}
+
+
 @app.route("/poll", methods=["GET", "POST"])
 def poll():
+    if INBOUND_ONLY:
+        return jsonify(error="not found"), 404
     dry_run = request.args.get("dry_run") in ("1", "true", "yes")
     days = int(request.args.get("days", LOOKBACK_DAYS))
 
     results = []
     for message_id, body in fetch_clover_emails(days):
-        booking = parse_email(body)
-        if not booking:
-            results.append({"message": message_id, "status": "unparsed"})
-            continue
         try:
-            receipt = parse_receipt(booking["receipt_url"])
-            record = build_record(booking, receipt)
-            if appointment_exists(record["POS ID"]):
-                results.append({"pos_id": record["POS ID"], "status": "exists"})
-            elif dry_run:
-                results.append({"pos_id": record["POS ID"], "status": "would_create", "record": record})
-            else:
-                created = create_appointment(record)
-                print(f"Created TeamDesk appointment for Clover order {record['POS ID']}: {created}")
-                results.append({"pos_id": record["POS ID"], "status": "created", "teamdesk": created})
+            result = process_booking(body, dry_run)
         except Exception as exc:  # noqa: BLE001 - one bad email must not block the rest
-            print(f"Failed on {booking['receipt_url']}: {exc}")
-            results.append({"receipt": booking["receipt_url"], "status": "error", "error": str(exc)})
+            print(f"Failed on {message_id}: {exc}")
+            result = {"status": "error", "error": str(exc)}
+        result.setdefault("message", message_id)
+        results.append(result)
 
     return jsonify(dry_run=dry_run, days=days, results=results)
+
+
+def _inbound_authorized():
+    auth = request.authorization
+    if not INBOUND_AUTH or not auth or auth.type != "basic":
+        return False
+    supplied = f"{auth.username}:{auth.password}"
+    return hmac.compare_digest(supplied.encode(), INBOUND_AUTH.encode())
+
+
+@app.route("/inbound", methods=["POST"])
+def inbound():
+    """Postmark inbound webhook: the Gmail filter forwards Clover's emails here.
+
+    Status codes drive Postmark's retries: 200 means done (including emails
+    that aren't bookings), 500 means try again later (e.g. TeamDesk down).
+    """
+    if not _inbound_authorized():
+        return jsonify(error="unauthorized"), 401
+    msg = request.get_json(silent=True) or {}
+    sender = (msg.get("From") or "").lower()
+    subject = msg.get("Subject") or ""
+
+    # Gmail's one-time forwarding confirmation: log its subject, which carries
+    # the confirmation code, so the mailbox owner can finish the setup.
+    if "forwarding-noreply@google.com" in sender:
+        print(f"Gmail forwarding confirmation received: {subject}")
+        return jsonify(status="gmail_confirmation")
+
+    if CLOVER_SENDER not in sender or not CLOVER_SUBJECT.search(subject):
+        print(f"Ignored inbound email from {sender!r}: {subject!r}")
+        return jsonify(status="ignored")
+
+    try:
+        result = process_booking(msg.get("HtmlBody") or "")
+    except Exception as exc:  # noqa: BLE001 - reported to Postmark for retry
+        print(f"Inbound booking failed ({subject!r}): {exc}")
+        return jsonify(status="error", error=str(exc)), 500
+    if result["status"] == "unparsed":
+        print(f"Inbound Clover email did not parse: {subject!r}")
+    return jsonify(result)
 
 
 @app.route("/", methods=["GET"])
