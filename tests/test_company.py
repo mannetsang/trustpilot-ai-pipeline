@@ -675,6 +675,47 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(store.get_item("systems", "analytics")["status"], "error")
         self.assertIn("403", store.get_item("systems", "analytics")["why"])
 
+    def test_bigcommerce_token_without_store_settings_still_connects(self):
+        from types import SimpleNamespace as NS
+
+        calls = []
+
+        class Session:
+            def request(self, method, url, headers=None, **kw):
+                calls.append((url, headers["X-Auth-Token"]))
+                if url.endswith("/v2/store"):
+                    return NS(status_code=403, ok=False, text='{"title": "You don\'t have a required scope"}')
+                return NS(status_code=200, ok=True, text='{"data": {"inventory_count": 812}}')
+
+        store = MemoryStore()
+        knowledge.ensure_seeded(store)
+        secrets = MemorySecrets({"BIGCOMMERCE_gmosz3ja_ACCESS_TOKEN": "  bc-token-with-newline\r\n"})
+        results = self.integrations.check_all(secrets, store, session=Session(), only={"bigcommerce_gmosz3ja"})
+        self.assertTrue(results["bigcommerce_gmosz3ja"]["ok"])
+        self.assertEqual([u.split("/gmosz3ja")[1] for u, _ in calls], ["/v2/store", "/v3/catalog/summary"])
+        self.assertEqual(calls[0][1], "bc-token-with-newline")  # trimmed before it goes in a header
+        self.assertEqual(store.get_item("systems", "bigcommerce_ca")["status"], "connected")
+
+    def test_a_refused_key_stops_at_the_first_check(self):
+        from types import SimpleNamespace as NS
+
+        calls = []
+
+        class Session:
+            def request(self, method, url, **kw):
+                calls.append(url)
+                return NS(status_code=401, ok=False, text='{"title": "Unauthorized"}')
+
+        result = self.integrations.probe(self.integrations.BY_ID["bigcommerce_gmosz3ja"], self.secrets, session=Session())
+        self.assertEqual((result["status"], len(calls)), (401, 1))
+
+    def test_teamdesk_needs_no_paste(self):
+        info = self.integrations.connect_info("teamdesk")
+        self.assertEqual(info["kind"], "key")
+        session = self.Session(body="{}")
+        self.integrations.call("teamdesk", "GET", "/describe.json", MemorySecrets({"TEAMDESK_TOKEN": "td-tok"}), session=session)
+        self.assertEqual(session.calls[0]["url"], "https://www.teamdesk.net/secure/api/v2/56554/td-tok/describe.json")
+
     def test_connect_info_for_the_access_tab(self):
         hubspot = self.integrations.connect_info("hubspot")
         self.assertEqual((hubspot["kind"], hubspot["fields"][0]["secret"]), ("paste", "HUBSPOT_ACCESS_TOKEN"))

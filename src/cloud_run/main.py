@@ -671,6 +671,11 @@ def do_run(trigger):
             summary["tasks_worked"] = worker.work_due(talk_service(), store)
         except Exception as exc:  # noqa: BLE001 - reading chats still counts as a good run
             summary["errors"].append({"space": "(assistant's tasks)", "error": str(exc)[:300]})
+        try:  # keep the Access tab true: a status stuck on an old failure fixes itself within the hour
+            checked = integrations.check_all(secret_store, store, google=google)
+            summary["systems_connected"] = sum(1 for r in checked.values() if r["ok"])
+        except Exception as exc:  # noqa: BLE001
+            summary["errors"].append({"space": "(connections)", "error": str(exc)[:300]})
         store.add_run(summary)
         store.set_status({"last_run": summary, "connection_error": ""})
         progress.finish()

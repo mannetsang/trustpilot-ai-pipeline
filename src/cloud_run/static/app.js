@@ -303,11 +303,16 @@ async function checkConnections(retries = 0) {
     const all = Object.values(results), ok = all.filter((r) => r.ok).length;
     const waiting = all.filter((r) => !r.ok && /can't read/.test(r.detail || "")).length;
     refreshKnowledge();
+    // Every system that isn't connected, with what it said, so the reason is on screen (and in a screenshot).
+    const why = (r) => /can't read the (HUBSPOT|REAMAZE)/.test(r.detail || "") ? "waiting for its key: press Connect and paste it"
+      : /Google isn't connected|insufficient|scope/i.test(r.detail || "") ? "press Connect to add it to your Google sign-in"
+      : (r.detail || "no answer").slice(0, 160);
+    const failing = all.filter((r) => !r.ok).map((r) => `• ${r.system}: ${why(r)}`);
     if (waiting && retries > 0) {
       showSetupBanner(`${ok} of ${all.length} systems connected. Google is still applying access for ${waiting}; checking again shortly…`);
-      setTimeout(() => checkConnections(retries - 1), 15000);
+      setTimeout(() => checkConnections(retries - 1), 30000);  // Google can take minutes to apply new access
     } else {
-      showSetupBanner(retries || waiting ? `${ok} of ${all.length} systems connected.` : "");
+      showSetupBanner(failing.length ? `${ok} of ${all.length} systems connected. Not yet:\n${failing.join("\n")}` : `All ${all.length} systems connected.`);
       toast(`${ok} of ${all.length} systems connected`);
     }
   } catch (e) { toast(e.message); }
@@ -325,7 +330,7 @@ function afterConnectRedirect() {
     const report = kb.setup || {};
     const errors = (report.errors || []).length;
     showSetupBanner(errors ? `Access set up with ${errors} problem(s): ${report.errors.join("; ")}` : "Access set up. Testing every system…");
-    checkConnections(4);
+    checkConnections(12);  // up to six minutes
   }
   const open = params.get("open");
   const system = open && kb.systems.find((s) => s.id === open && s.connect && s.connect.kind === "paste");
