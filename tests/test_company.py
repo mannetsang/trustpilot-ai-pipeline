@@ -604,10 +604,27 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(described["airtable"]["status"], "no_access")
         self.assertNotIn("bc-secret-token-ca", json.dumps(described))
 
-    def test_genc_store_path_comes_from_its_secret(self):
+    def test_each_store_hash_maps_to_its_storefront(self):
         session = self.Session()
-        self.integrations.call("bigcommerce_genc", "GET", "/v2/store", self.secrets, session=session)
-        self.assertEqual(session.calls[0]["url"], "https://api.bigcommerce.com/stores/genc123/v2/store")
+        self.integrations.call("bigcommerce_kzkmuqjqk9", "GET", "/v2/store", self.secrets, session=session)
+        self.assertEqual(session.calls[0]["url"], "https://api.bigcommerce.com/stores/kzkmuqjqk9/v2/store")
+        self.assertEqual(session.calls[0]["headers"]["X-Auth-Token"], "genc-secret-token")  # Gen'C's own token name
+        labels = {i.id: (i.label, i.system_id, i.kind) for i in self.integrations.REGISTRY if i.id.startswith("bigcommerce")}
+        self.assertEqual(labels["bigcommerce_gmosz3ja"], ("BigCommerce: superhairpieces.ca (CAD)", "bigcommerce_ca", "key"))
+        self.assertEqual(labels["bigcommerce_qet21urb3p"], ("BigCommerce: superhairpieces.es (EUR)", "bigcommerce_es", "key"))
+        self.assertEqual(labels["bigcommerce_cavofu"], ("BigCommerce: superhairpieces.com (USD)", "bigcommerce_com", "paste"))
+        com = self.integrations.connect_info("bigcommerce_com")
+        self.assertEqual(com["fields"][0]["secret"], "BIGCOMMERCE_cavofu_ACCESS_TOKEN")  # the repo's naming
+        self.assertIn("Store-level API accounts", com["help"])
+
+    def test_old_store_rows_are_tidied(self):
+        store = MemoryStore()
+        store.save_item("systems", "bigcommerce_qet21urb3p", {"name": "BigCommerce store qet21urb3p", "status": "connected"})
+        store.save_item("systems", "bigcommerce_eu", {"name": "BigCommerce: .nl / .fr / .es / .de", "status": "needed"})
+        self.integrations.seed_systems(store)
+        self.assertIsNone(store.get_item("systems", "bigcommerce_qet21urb3p"))
+        self.assertEqual(store.get_item("systems", "bigcommerce_eu")["name"], "BigCommerce: .nl / .fr / .de")
+        self.assertEqual(store.get_item("systems", "bigcommerce_es")["name"], "BigCommerce: superhairpieces.es (EUR)")
 
     def test_check_all_updates_the_access_tab(self):
         store = MemoryStore()
