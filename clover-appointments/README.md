@@ -1,5 +1,17 @@
 # Clover appointments → TeamDesk
 
+**Webhook (primary):** a Gmail filter forwards Clover's "An appointment was
+confirmed" emails to Postmark (`84f6a6edb4d8f3dfb1d9e443031b7c15@inbound.postmarkapp.com`),
+which POSTs each one to the public `clover-inbound` service's `/inbound`
+within seconds. Postmark authenticates with basic auth; the credential is the
+`POSTMARK_INBOUND_AUTH` secret (`user:password`), and the webhook URL set in
+Postmark is `https://<user>:<password>@<clover-inbound URL>/inbound`.
+Postmark retries while `/inbound` returns an error.
+
+**Poll (catch-up):** the private `clover-appointments` service described below
+re-reads the last two days of mail on a timer. The POS ID check means a
+booking both paths see is created once.
+
 Every Clover booking confirmation becomes an Appointment record in
 TeamDesk (database 56554, table `t_504863`).
 

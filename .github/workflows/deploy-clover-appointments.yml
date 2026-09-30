@@ -37,3 +37,18 @@ jobs:
             --no-allow-unauthenticated \
             --set-secrets "EMAIL_USER=EMAIL_USER:latest,GOOGLE_APP_PASSWORD=GOOGLE_APP_PASSWORD:latest,TEAMDESK_TOKEN=TEAMDESK_TOKEN:latest" \
             --quiet
+
+      # The webhook: same code, second service. Public because Postmark can't
+      # send a Google identity token; /inbound requires Postmark's basic-auth
+      # credentials (POSTMARK_INBOUND_AUTH) and INBOUND_ONLY disables /poll.
+      # It gets no mailbox credentials.
+      - name: Deploy the Postmark webhook service
+        run: |
+          gcloud run deploy clover-inbound \
+            --source ./clover-appointments/src/cloud_run \
+            --region us-central1 \
+            --project shp-ai-bot-2026 \
+            --allow-unauthenticated \
+            --set-env-vars "INBOUND_ONLY=1" \
+            --set-secrets "TEAMDESK_TOKEN=TEAMDESK_TOKEN:latest,INBOUND_AUTH=POSTMARK_INBOUND_AUTH:latest" \
+            --quiet
