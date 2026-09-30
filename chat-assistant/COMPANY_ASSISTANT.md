@@ -135,8 +135,8 @@ Every partner (typed or on a call) has two tools for company systems:
 
 | How it connects | Systems |
 |---|---|
-| Key already in Secret Manager | BigCommerce superhairpieces.ca (`gmosz3ja`), superhairpieces.es (`qet21urb3p`) and Gen'C Beauty (`kzkmuqjqk9`), Airtable, Trustpilot, Stamped.io, Omnisend, Notion, Figma, TeamDesk (database 56554, as trustpilot-pipeline uses); SkuVault and Amazon SP-API (their stored logins are exchanged for tokens on the server) |
-| Paste a key in the app | BigCommerce superhairpieces.com (`cavofu`), .fr (`1tqjsol232`), .nl (`1f8t0plkkw`) and .de (`34amlu9gm`): no token was stored; Connect asks for it once, then it's in Secret Manager |
+| Key already in Secret Manager | BigCommerce superhairpieces.ca (`gmosz3ja`), superhairpieces.es (`qet21urb3p`) and Gen'C Beauty (`kzkmuqjqk9`), Airtable, Trustpilot, Stamped.io, Omnisend, Notion, Figma, TeamDesk (database 56554, as trustpilot-pipeline uses); SkuVault, and Amazon seller account 1 (stored logins and tokens are exchanged for access tokens on the server; Amazon's region is found from the token) |
+| Paste a key in the app | BigCommerce superhairpieces.com (`cavofu`), .fr (`1tqjsol232`), .nl (`1f8t0plkkw`) and .de (`34amlu9gm`): no token was stored; Connect asks for it once, then it's in Secret Manager ; Amazon seller accounts 2 and 3 (a refresh token each, same app); Walmart Canada (the Consumer Channel Type ID; its consumer id and private key are stored, and every request is signed) |
 | Your Google sign-in | Gmail (read, drafts), Drive and Sheets (read), Google Analytics and Search Console (read), Merchant Center (Merchant API v1, accounts as in CLAUDE.md) |
 
 Trustpilot uses business unit `5e44f707d7d8c700011eaa10` and, when `TRUSTPILOT_API_SECRET`

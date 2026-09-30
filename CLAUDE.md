@@ -67,6 +67,15 @@ across currencies.
 Secrets follow `BIGCOMMERCE_<store_hash>_<CREDENTIAL>`, e.g.
 `BIGCOMMERCE_gmosz3ja_ACCESS_TOKEN`. The store hash itself is not sensitive.
 
+### Marketplaces
+
+- **Amazon:** three seller accounts on one Selling Partner API app (`AMAZON_CLIENT_IDENTIFIER`,
+  `AMAZON_CLIENT_SECRET`). Each account has its own refresh token: `AMAZON_TOKEN` (account 1),
+  `AMAZON_2_REFRESH_TOKEN`, `AMAZON_3_REFRESH_TOKEN`. The region (NA/EU/FE) is found from the token.
+- **Walmart:** one seller account, **Walmart Canada**. Requests are signed (SHA-256 with RSA) with
+  `WALMART_CA_CONSUMERID` + `WALMART_CA_PRIVATE_KEY`, and carry `WALMART_CA_CHANNEL_TYPE`.
+  `WALMART_CLIENT_ID`/`WALMART_CLIENT_SECRET` are US-style OAuth keys, unused for Canada.
+
 ### Google Merchant Center
 
 Driven through the **Merchant API** (`merchantapi.googleapis.com`, enabled on

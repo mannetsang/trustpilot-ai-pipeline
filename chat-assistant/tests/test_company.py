@@ -810,6 +810,61 @@ class IntegrationTests(unittest.TestCase):
             clock[0] += 60
             self.assertEqual(secrets.get("BIGCOMMERCE_34amlu9gm_ACCESS_TOKEN"), "bc-de-token")  # found values stay cached
 
+    def test_walmart_canada_signs_each_request_as_documented(self):
+        import base64
+
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import padding, rsa
+
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        der = key.private_bytes(serialization.Encoding.DER, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+        secrets = MemorySecrets({"WALMART_CA_CONSUMERID": "consumer-123", "WALMART_CA_CHANNEL_TYPE": "channel-456",
+                                 "WALMART_CA_PRIVATE_KEY": base64.b64encode(der).decode()})  # bare PKCS#8, as Walmart gives it
+        session = self.Session(body='{"list": {"elements": {"order": []}}}')
+        result = self.integrations.call("walmart_ca", "GET", "/v3/ca/orders", secrets,
+                                        query={"createdStartDate": "2026-09-01", "limit": 10}, session=session)
+        self.assertTrue(result["ok"])
+        call = session.calls[0]
+        url, h = call["url"], call["headers"]
+        self.assertEqual(url, "https://marketplace.walmartapis.com/v3/ca/orders?createdStartDate=2026-09-01&limit=10")
+        self.assertEqual((h["WM_CONSUMER.ID"], h["WM_CONSUMER.CHANNEL.TYPE"], h["WM_TENANT_ID"]),
+                         ("consumer-123", "channel-456", "WALMART.CA"))
+        signed = f"consumer-123\n{url}\nGET\n{h['WM_SEC.TIMESTAMP']}\n".encode()  # consumer, URL, method, time
+        key.public_key().verify(base64.b64decode(h["WM_SEC.AUTH_SIGNATURE"]), signed, padding.PKCS1v15(), hashes.SHA256())
+        info = self.integrations.connect_info("walmart")
+        self.assertEqual([f["secret"] for f in info["fields"]], ["WALMART_CA_CHANNEL_TYPE"])  # the rest is stored
+
+    def test_amazon_accounts_find_their_region_and_marketplaces(self):
+        secrets = MemorySecrets({"AMAZON_2_REFRESH_TOKEN": "Atzr|two", "AMAZON_CLIENT_IDENTIFIER": "amzn1.app",
+                                 "AMAZON_CLIENT_SECRET": "sec"})
+        payload = json.dumps({"payload": [
+            {"marketplace": {"domainName": "www.amazon.de"}, "participation": {"isParticipating": True}},
+            {"marketplace": {"domainName": "www.amazon.fr"}, "participation": {"isParticipating": True}},
+            {"marketplace": {"domainName": "www.amazon.it"}, "participation": {"isParticipating": False}}]})
+        from types import SimpleNamespace as NS
+        calls = []
+
+        class Session:
+            def request(self, method, url, headers=None, **kw):
+                calls.append(url)
+                if url.endswith("/auth/o2/token"):
+                    return NS(status_code=200, ok=True, text='{"access_token": "Atza|two", "expires_in": 3600}')
+                if "sellingpartnerapi-eu" in url:
+                    return NS(status_code=200, ok=True, text=payload)
+                return NS(status_code=403, ok=False, text='{"errors": [{"code": "Unauthorized"}]}')
+
+        store = MemoryStore()
+        results = self.integrations.check_all(secrets, store, session=Session(), only={"amazon_2"})
+        self.assertTrue(results["amazon_2"]["ok"])
+        self.assertEqual(results["amazon_2"]["system"], "Amazon: amazon.de, amazon.fr")
+        self.assertIn("https://sellingpartnerapi-eu.amazon.com/sellers/v1/marketplaceParticipations", calls[-1])
+        self.assertEqual(self.integrations.connect_info("amazon_2")["fields"][0]["secret"], "AMAZON_2_REFRESH_TOKEN")
+        self.assertEqual(self.integrations.connect_info("amazon")["kind"], "key")  # account 1: the stored token
+        import cloud_setup
+        plan = cloud_setup.plan()
+        self.assertEqual((plan["AMAZON_3_REFRESH_TOKEN"], plan["WALMART_CA_CHANNEL_TYPE"], plan["WALMART_CA_PRIVATE_KEY"]),
+                         (True, True, False))
+
     def test_teamdesk_needs_no_paste(self):
         info = self.integrations.connect_info("teamdesk")
         self.assertEqual(info["kind"], "key")
