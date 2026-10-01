@@ -49,8 +49,8 @@ one the Sheet doesn't have yet:
 1. asks Gemini 2.5 Pro (Vertex AI, this project) for a public **reply
    suggestion**, an internal **business suggestion** and, for 1-3 stars, a
    **type** from the same five categories the Trustpilot service uses;
-2. posts a card to the reviews Google Chat space (same space as Trustpilot
-   reviews) with *Reply on Google* and *View on Maps* buttons;
+2. posts a card to the Google reviews Chat space (its own space, not the
+   Trustpilot one) with *Reply on Google* and *View on Maps* buttons;
 3. appends a row to the **Google Business Profile Reviews** Sheet
    (`1I6RJ9SoESONvCRnRZWMCwLq6wU3utYukWqC3w7iUav4`).
 
@@ -93,7 +93,7 @@ project's default compute service account, which the Sheet is shared with.
 | Secret Manager id | Container env var |
 |---|---|
 | `google-business-profile-client-id` / `-client-secret` / `-refresh-token` | `GOOGLE_BUSINESS_PROFILE_*` |
-| `gbp-reviews-gchat-webhook-url` | `GCHAT_WEBHOOK_URL` (copied from the Trustpilot service, 2026-10-01) |
+| `gbp-reviews-gchat-webhook-url` | `GCHAT_WEBHOOK_URL` (incoming webhook of the Google reviews Chat space; v1 was the Trustpilot space, v2 since 2026-10-01 is the dedicated space) |
 | `gbp-reviews-api-token` | `API_TOKEN` |
 
 Local runs read the root `.env` and never touch Chat or the Sheet:
