@@ -70,8 +70,9 @@ request step.
 | G Reply Suggestion / H Business Suggestion | Gemini |
 | I Remark | manual |
 | J Review ID | dedup key |
-| K Reply Posted At | set when a reply is seen on Google or posted via `/api/reply` |
+| K Reply Posted At | date of the owner reply on Google, synced every monitor pass |
 | L Review Name | full resource name, needed by `/api/reply` |
+| M Reply Text | the owner reply currently on Google, synced every monitor pass |
 
 Endpoints: `GET /monitor?days=N`, `POST /backfill?days=all&ai=1&limit=100`
 (seeds older reviews without Chat posts; repeat until `remaining` is 0),

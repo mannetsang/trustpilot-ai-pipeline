@@ -1504,7 +1504,7 @@ async function loadGoogleReviews() {
       type: type || "Uncategorized", issueType: type,
       comment: row.comment || "",
       reply: row.reply_suggestion || "", biz: row.business_suggestion || "", remark: row.remark || "",
-      hasReply: !!row.replied_at, replyText: "", replyAt: row.replied_at ? parseDay(row.replied_at) : null,
+      hasReply: !!row.replied_at, replyText: row.reply_text || "", replyAt: row.replied_at ? parseDay(row.replied_at) : null,
       replyUrl: "", mapsUrl: "",
       source: "google",
     });
@@ -1548,6 +1548,13 @@ function googleLocationOptions() {
   const labels = (GBP_LIVE && GBP_LIVE.locations) ? GBP_LIVE.locations.map(l => l.label) : [];
   GBP_REVIEWS.forEach(r => { if (r.location && !labels.includes(r.location)) labels.push(r.location); });
   return labels;
+}
+
+// Google rows: the owner reply under the review, so a "Replied" pill can be checked at a glance.
+function googleReplySnippet(r) {
+  if (r.source !== "google" || !r.hasReply) return "";
+  const body = r.replyText ? escape(r.replyText) : `<i>Reply text syncs within 30 minutes.</i>`;
+  return `<div class="text-xs mt-2 pl-2.5 line-clamp-2" style="border-left: 2px solid var(--brand); color: var(--text-mid);"><span class="font-semibold" style="color: var(--brand-ink);">Your reply${r.replyAt ? ` · ${fmtDate(r.replyAt)}` : ''}:</span> ${body}</div>`;
 }
 
 // Where a public reply for this row ends up — used in pill tooltips and button labels.
@@ -1801,6 +1808,7 @@ function feedRowHTML(r) {
              </div>
              <div class="text-[14px] font-medium mt-1.5 leading-snug truncate">${escape(headline(r.comment) || '(No note)')}</div>
              <div class="text-xs mt-1 line-clamp-2" style="color: var(--text-mid);">${escape(r.comment)}</div>`}
+      ${googleReplySnippet(r)}
       ${caption}
     </div>
     <button class="btn btn-secondary flex-shrink-0" data-id="${r.id}" data-action="openModal">Open</button>
@@ -3819,6 +3827,7 @@ function reviewsTableRowHTML(r) {
              <div class="text-[11px] mt-1 whitespace-pre-wrap" style="color: var(--text-mid);">${escape(r.comment)}</div>`
           : `<div class="text-[13px] font-medium mt-1.5">${escape(headline(r.title || r.comment) || '(No note)')}</div>
              <div class="text-[11px] mt-1 whitespace-pre-wrap" style="color: var(--text-mid);">${escape(r.comment)}</div>`}
+      ${googleReplySnippet(r)}
     </div>
     <span style="color: ${sel ? 'var(--brand)' : 'var(--text-mute)'}; font-weight: ${sel ? '700' : '400'};">›</span>
   </div>`;
@@ -4043,6 +4052,12 @@ function openModal(reviewId, useAi = false) {
     <div class="flex items-center gap-2 mb-2">${starsHTML(r.stars, 11)}</div>
     <div class="text-sm font-semibold mb-1">${escape(headline(r.comment))}</div>
     <div class="text-[13px]" style="color: var(--text-mid);">${escape(r.comment)}</div>
+    ${(r.source === "google" && r.hasReply)
+      ? `<div class="mt-3 rounded-lg p-3" style="background: var(--brand-soft);">
+           <div class="text-[10px] font-semibold tracking-[1.5px]" style="color: var(--brand-ink);">✓ YOUR REPLY ON GOOGLE${r.replyAt ? ` · ${fmtDate(r.replyAt)}` : ''}</div>
+           <div class="text-[13px] mt-1.5 leading-relaxed whitespace-pre-wrap" style="color: var(--text);">${r.replyText ? escape(r.replyText) : '<i>Reply text syncs within 30 minutes.</i>'}</div>
+         </div>`
+      : ''}
   `;
   // Chips
   const chips = useAi && r.reply ? [r.reply] : suggestChips(r);
@@ -4050,11 +4065,18 @@ function openModal(reviewId, useAi = false) {
     `<button class="pill pill-ai" style="cursor: pointer;" data-chip="${escape(c).slice(0,500)}">${escape(c.length > 60 ? c.slice(0,60) + '…' : c)}</button>`
   ).join("");
   // Prefill (clean Gemini preambles first so the user doesn't have to delete them)
-  const prefill = cleanAiSuggestion(r.reply || "");
+  // Google review that already has a reply: start from the live reply (edit, then "Update"), not
+  // the AI suggestion, which stays available as a chip.
+  const editingExisting = r.source === "google" && r.hasReply && !!r.replyText;
+  const prefill = editingExisting ? r.replyText : cleanAiSuggestion(r.reply || "");
   const ta = document.getElementById("modalTextarea");
   ta.value = prefill;
   ta.dataset.originalValue = prefill;  // baseline for "did the user edit?" check
   updateChars();
+  const aiHint = document.getElementById("modalAiHint");
+  if (aiHint) aiHint.textContent = editingExisting
+    ? "This is the reply currently on Google. Edit it, then press Update to replace it."
+    : "Looks great. Reviewed by AI: warm, specific, offers a clear next step.";
   // Tailor the primary action button to the source's reply mode (direct post vs handoff).
   // Stamped's handoff button also adopts Stamped's brand-yellow chip so the dark-mode action reads
   // as a Stamped-branded affordance instead of a generic near-white pill.

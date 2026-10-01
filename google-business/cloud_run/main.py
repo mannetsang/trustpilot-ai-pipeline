@@ -104,12 +104,13 @@ NICKNAMES = {
 SHEET_HEADERS = [
     "Date", "Customer Name", "Location", "Star Rating", "Type", "Comment",
     "Reply Suggestion", "Business Suggestion", "Remark", "Review ID",
-    "Reply Posted At", "Review Name",
+    "Reply Posted At", "Review Name", "Reply Text",
 ]
-SHEET_RANGE = "A:L"
+SHEET_RANGE = "A:M"
 COL_REVIEW_ID = 9      # J, zero-based index in a row
 COL_REPLY_AT = 10      # K
 COL_REVIEW_NAME = 11   # L
+COL_REPLY_TEXT = 12    # M  owner reply currently on Google, kept in sync by /monitor
 
 # ---------------------------------------------------------------------------
 # Business Profile auth + HTTP
@@ -248,20 +249,22 @@ def get_sheets_service():
 
 
 def read_sheet():
-    """Returns (rows, {review_id: 1-based row number}, {review_id: replied_at})."""
+    """Returns (rows, {review_id: 1-based row number}, {review_id: (reply posted at, reply text)}).
+    Writes the header row when the sheet is empty or predates a newly added column."""
     service = get_sheets_service()
     rows = service.spreadsheets().values().get(spreadsheetId=GOOGLE_SHEET_ID, range=SHEET_RANGE).execute().get("values", [])
-    if not rows:
+    if not rows or len(rows[0]) < len(SHEET_HEADERS):
         service.spreadsheets().values().update(
             spreadsheetId=GOOGLE_SHEET_ID, range="A1", valueInputOption="RAW",
             body={"values": [SHEET_HEADERS]}).execute()
-        rows = [SHEET_HEADERS]
+        rows = [SHEET_HEADERS] + rows[1:]
+    cell = lambda row, col: row[col].strip() if len(row) > col else ""  # noqa: E731
     index, replied = {}, {}
     for i, row in enumerate(rows[1:], start=2):
-        rid = row[COL_REVIEW_ID].strip() if len(row) > COL_REVIEW_ID else ""
+        rid = cell(row, COL_REVIEW_ID)
         if rid:
             index[rid] = i
-            replied[rid] = row[COL_REPLY_AT].strip() if len(row) > COL_REPLY_AT else ""
+            replied[rid] = (cell(row, COL_REPLY_AT), cell(row, COL_REPLY_TEXT))
     return rows, index, replied
 
 
@@ -273,10 +276,20 @@ def append_rows(rows):
         insertDataOption="INSERT_ROWS", body={"values": rows}).execute()
 
 
-def stamp_reply(row_number, replied_at):
-    get_sheets_service().spreadsheets().values().update(
-        spreadsheetId=GOOGLE_SHEET_ID, range=f"K{row_number}", valueInputOption="USER_ENTERED",
-        body={"values": [[replied_at]]}).execute()
+def write_reply_cells(updates):
+    """updates: [(row_number, replied_at, reply_text)] -> columns K and M, 200 rows per call.
+    RAW so reply text that starts with = or + is stored as text, not a formula."""
+    for start in range(0, len(updates), 200):
+        data = []
+        for row_number, replied_at, text in updates[start:start + 200]:
+            data.append({"range": f"K{row_number}", "values": [[replied_at]]})
+            data.append({"range": f"M{row_number}", "values": [[text]]})
+        get_sheets_service().spreadsheets().values().batchUpdate(
+            spreadsheetId=GOOGLE_SHEET_ID, body={"valueInputOption": "RAW", "data": data}).execute()
+
+
+def stamp_reply(row_number, replied_at, text=""):
+    write_reply_cells([(row_number, replied_at, text)])
 
 
 def sheet_row(f, location, review_type, reply, suggestion):
@@ -293,6 +306,7 @@ def sheet_row(f, location, review_type, reply, suggestion):
         f["id"],                            # J Review ID (dedup key)
         format_review_date(f["replied_at"]) if f["replied_at"] else "",  # K Reply Posted At
         f["name"],                          # L Review resource name (for /api/reply)
+        f["reply"],                         # M Reply Text (owner reply on Google)
     ]
 
 
@@ -437,32 +451,47 @@ _last_monitor = {"started": None, "finished": None, "result": None}
 
 
 def run_monitor(window_days, notify=True):
-    """Process reviews updated within the window that the Sheet doesn't know yet."""
+    """One pass over every review on every listing (~22 API calls for ~1,000 reviews):
+    - not in the Sheet and updated within the window: AI suggestions, Chat card, new row;
+    - not in the Sheet and older (missed earlier): appended quietly, no AI, no Chat;
+    - already in the Sheet: columns K and M follow the owner reply on Google (posted,
+      edited or deleted). Google does not bump a review's updateTime when the owner
+      replies, so reply state has to be compared across all reviews, not the window."""
     cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=window_days)
     _, index, replied = read_sheet()
-    checked = processed = stamped = 0
-    new_rows = []
+    checked = processed = quiet = 0
+    new_rows, reply_updates = [], []
     for location, review in iter_reviews(newest_first=True):
         f = review_fields(review)
-        updated = parse_time(f["updated"])
-        if updated and updated < cutoff:
-            break   # ordered by updateTime desc, everything after is older
         checked += 1
         if f["id"] in index:
-            # Known review: record a reply posted since we logged it.
-            if f["replied_at"] and not replied.get(f["id"]):
-                stamp_reply(index[f["id"]], format_review_date(f["replied_at"]))
-                stamped += 1
+            row_number = index[f["id"]]
+            if row_number is True:      # appended earlier in this same pass
+                continue
+            want_at = format_review_date(f["replied_at"]) if f["replied_at"] else ""
+            want_text = (f["reply"] or "").strip()
+            have_at, have_text = replied.get(f["id"], ("", ""))
+            if parse_sheet_date(have_at) != parse_sheet_date(want_at) or have_text != want_text:
+                reply_updates.append((row_number, want_at, want_text))
             continue
-        reply, suggestion, review_type = enrich(f, location)
-        if notify:
-            send_to_gchat(f, location, reply, suggestion)
+        updated = parse_time(f["updated"])
+        if not updated or updated >= cutoff:
+            reply, suggestion, review_type = enrich(f, location)
+            if notify:
+                send_to_gchat(f, location, reply, suggestion)
+            processed += 1
+            print(f"Monitor: new {f['rating']}-star review by {f['reviewer']} at {location['label']} ({f['id'][:12]})")
+        else:
+            reply = suggestion = review_type = ""
+            quiet += 1
         new_rows.append(sheet_row(f, location, review_type, reply, suggestion))
         index[f["id"]] = True
-        processed += 1
-        print(f"Monitor: new {f['rating']}-star review by {f['reviewer']} at {location['label']} ({f['id'][:12]})")
     append_rows(new_rows)
-    return {"checked": checked, "new": processed, "replies_stamped": stamped, "window_days": window_days}
+    write_reply_cells(reply_updates)
+    if reply_updates:
+        print(f"Monitor: synced reply state on {len(reply_updates)} rows")
+    return {"checked": checked, "new": processed, "appended_quietly": quiet,
+            "replies_synced": len(reply_updates), "window_days": window_days}
 
 
 def run_backfill(days, with_ai, limit=100):
@@ -617,7 +646,7 @@ def api_sheet():
         out = []
         for i, row in enumerate(rows[1:], start=2):
             row = (row + [""] * len(SHEET_HEADERS))[:len(SHEET_HEADERS)]
-            date, name, location, stars, rtype, comment, reply, biz, remark, rid, replied_at, rname = row
+            date, name, location, stars, rtype, comment, reply, biz, remark, rid, replied_at, rname, reply_text = row
             if not rid:
                 continue
             out.append({
@@ -625,7 +654,7 @@ def api_sheet():
                 "location": location, "stars": int(stars) if str(stars).strip().isdigit() else 0,
                 "type": rtype, "comment": comment, "reply_suggestion": reply, "business_suggestion": biz,
                 "remark": remark, "replied_at": parse_sheet_date(replied_at) if replied_at else "",
-                "review_name": rname,
+                "review_name": rname, "reply_text": reply_text,
             })
         _sheet_cache, _sheet_cache_expiry = {"rows": out, "sheet_id": GOOGLE_SHEET_ID}, time.time() + 120
         return jsonify(_sheet_cache)
@@ -696,7 +725,7 @@ def api_reply():
             _, index, _ = read_sheet()
             rid = review_name.split("/")[-1]
             if rid in index:
-                stamp_reply(index[rid], format_review_date(posted) if posted else "posted")
+                stamp_reply(index[rid], format_review_date(posted) if posted else "posted", message)
         except Exception as e:  # noqa: BLE001
             print(f"reply stamped on Google but not in sheet: {e}")
         return jsonify({"ok": True, "reply": result})
