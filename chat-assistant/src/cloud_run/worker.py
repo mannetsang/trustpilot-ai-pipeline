@@ -9,7 +9,7 @@ and the knowledge base.
 No one is in the conversation while it works, so it can't change data in a system
 or message anyone (the toolset's may_change is off): it prepares the exact change
 or text and asks for Manne's OK in its report. The report goes on the task and into
-the Assistant's Talk conversation.
+the Assistant's chat conversation.
 """
 
 import os

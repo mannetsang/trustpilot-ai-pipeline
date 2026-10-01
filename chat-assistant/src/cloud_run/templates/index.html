@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Company Assistant</title>
+  <title>Man AI</title>
   {% include "_theme.html" %}
   <style>
     header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
@@ -93,16 +93,34 @@
     table.runs th { color: var(--muted); font-weight: 500; background: var(--panel-2); white-space: nowrap; }
     table.runs td.err { color: var(--bad); }
     .tablewrap { overflow-x: auto; }
-    /* Talk */
-    .talk { display: grid; grid-template-rows: auto 1fr auto; gap: 10px; height: calc(100vh - 220px); min-height: 420px; }
+    /* Man AI chat: a window at the bottom right, over every tab, that minimizes to a button */
+    main { padding-bottom: 96px; }  /* room for the minimized button */
+    .chatwin { position: fixed; right: 20px; bottom: 20px; z-index: 15; width: min(420px, calc(100vw - 40px));
+      height: min(680px, calc(100vh - 40px)); display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; gap: 8px;
+      padding: 8px 12px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+      box-shadow: 0 12px 40px rgba(16, 24, 40, .22); }
+    .chathead { display: flex; align-items: center; gap: 2px; }
+    .chathead h2 { font-size: 15px; font-weight: 500; margin: 0 auto 0 4px; }
+    .hbtn { border: 0; background: none; height: 32px; min-width: 32px; padding: 0 8px; border-radius: 8px; cursor: pointer;
+      color: var(--muted); font-size: 14px; }
+    .hbtn:hover { background: var(--panel-2); color: var(--text); }
+    .hbtn[aria-pressed="true"] { background: var(--accent-weak); color: var(--accent); }
+    .hbtn.min { font-size: 18px; line-height: 1; }
+    .launcher { position: fixed; right: 20px; bottom: 20px; z-index: 15; display: inline-flex; align-items: center; gap: 8px;
+      padding: 12px 18px; border-radius: 999px; border: 0; cursor: pointer; font-weight: 500;
+      background: var(--accent); color: var(--accent-text); box-shadow: 0 6px 20px rgba(16, 24, 40, .25); }
+    .launcher:hover { filter: brightness(1.06); }
+    .launcher:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+    .launcher .badge { width: 9px; height: 9px; border-radius: 50%; background: var(--bad); box-shadow: 0 0 0 2px var(--accent); }
     .partners { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-    .partner { border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 6px 14px; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+    .partner { border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 5px 12px; cursor: pointer;
+      display: inline-flex; gap: 6px; align-items: center; font-size: 13px; }
     .partner.active { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 500; }
     .partner .pdot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); }
     .partner .pdot.off { background: var(--faint); }
     .partner:disabled { opacity: .55; cursor: default; }
-    .thread { overflow-y: auto; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; display: flex; flex-direction: column; gap: 10px; }
-    .msg { max-width: min(760px, 92%); padding: 10px 14px; border-radius: 14px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+    .thread { overflow-y: auto; background: var(--bg); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+    .msg { max-width: 92%; padding: 10px 14px; border-radius: 14px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
     .msg.user { align-self: flex-end; background: var(--accent-weak); border-bottom-right-radius: 4px; }
     .msg.assistant { align-self: flex-start; background: var(--panel-2); border-bottom-left-radius: 4px; }
     .msg.live { opacity: .8; font-style: italic; }
@@ -115,15 +133,14 @@
     .msg .spk { border: 0; background: none; color: var(--muted); cursor: pointer; font: inherit; font-size: 13px;
       padding: 2px 6px; margin-left: 6px; border-radius: 6px; vertical-align: middle; }
     .msg .spk:hover, .msg .spk.on { background: var(--accent-weak); color: var(--accent); }
-    .readaloud { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); cursor: pointer;
-      margin-right: 10px; user-select: none; }
     .composer { display: flex; gap: 8px; align-items: flex-end; }
-    .composer textarea { flex: 1; min-height: 46px; max-height: 180px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); resize: none; }
+    .composer textarea { flex: 1; min-width: 0; min-height: 46px; max-height: 180px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); resize: none; }
     .suggestions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin: auto 0; }
     .suggestions button { border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 8px 14px; cursor: pointer; color: var(--muted); }
     .suggestions button:hover { color: var(--text); border-color: var(--accent); }
-    .voicebar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 14px; border-radius: var(--radius); background: var(--accent-weak); border: 1px solid var(--line); }
-    .voicebar .vstate { font-weight: 500; }
+    .voicebar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border-radius: var(--radius); background: var(--accent-weak); border: 1px solid var(--line); }
+    .voicebar { margin-bottom: 8px; }
+    .voicebar .vstate { font-weight: 500; flex: 1; min-width: 120px; }
     .meter { width: 90px; height: 8px; border-radius: 4px; background: var(--panel); overflow: hidden; }
     .meter > div { height: 100%; width: 0; background: var(--accent); transition: width .08s linear; }
     .pulse { width: 12px; height: 12px; border-radius: 50%; background: var(--bad); animation: pulse 1.4s ease-in-out infinite; }
@@ -152,13 +169,15 @@
       header, main { padding-left: 16px; padding-right: 16px; }
       .row { grid-template-columns: 1fr; }
       .who { display: none; }
-      .talk { height: calc(100vh - 260px); }
+      /* On a phone the open chat fills the screen; minimize gets back to the page. */
+      .chatwin { inset: 0; width: auto; height: auto; border: 0; border-radius: 0; box-shadow: none; padding: 8px 12px 12px; }
+      .launcher { right: 16px; bottom: 16px; }
     }
   </style>
 </head>
 <body data-version="{{ version }}">
 <header>
-  <div class="brand"><span class="dot" id="dot"></span>Company Assistant</div>
+  <div class="brand"><span class="dot" id="dot"></span>Man AI</div>
   <div class="lastrun" id="lastrun">Loading…</div>
   <label class="toggle" title="When off, everything the assistant would do waits for your approval">
     <input type="checkbox" id="autoAct"><span class="track"></span><span>Act automatically</span>
@@ -173,37 +192,14 @@
   <div id="progress" class="progress" hidden aria-live="polite"></div>
   <div id="banners"></div>
   <nav class="tabs" role="tablist">
-    <button class="tab active" data-tab="talk">Talk</button>
-    <button class="tab" data-tab="board">Board <span class="count" id="boardCount">0</span></button>
+    <button class="tab active" data-tab="board">Board <span class="count" id="boardCount">0</span></button>
     <button class="tab" data-tab="projects">Projects <span class="count" id="projectCount">0</span></button>
     <button class="tab" data-tab="questions">Questions <span class="count" id="questionCount">0</span></button>
     <button class="tab" data-tab="access">Access <span class="count" id="accessCount">0</span></button>
     <button class="tab" data-tab="activity">Activity <span class="count" id="waitingCount">0</span></button>
   </nav>
 
-  <section id="view-talk">
-    <div class="talk">
-      <div class="partners" id="partners"></div>
-      <div class="thread" id="thread" aria-live="polite"></div>
-      <div>
-        <div class="voicebar" id="voicebar" hidden>
-          <span class="pulse" aria-hidden="true"></span>
-          <span class="vstate" id="vstate">Connecting…</span>
-          <span class="meter" title="Your microphone level"><div id="vmeter"></div></span>
-          <span class="spacer" style="flex:1"></span>
-          <button class="btn" id="vmute">Mute</button>
-          <button class="btn danger" id="vend">End call</button>
-        </div>
-        <div class="composer" id="composer">
-          <textarea id="message" placeholder="Message the assistant… (Enter to send, Shift+Enter for a new line)" aria-label="Message"></textarea>
-          <button class="btn mic" id="startVoice" title="Talk live">🎙 Talk</button>
-          <button class="btn primary" id="send">Send</button>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section id="view-board" hidden>
+  <section id="view-board">
     <div class="toolbar">
       <input type="search" id="q" placeholder="Search tasks" aria-label="Search tasks">
       <select id="spaceFilter" aria-label="Conversation"><option value="">All conversations</option></select>
@@ -243,14 +239,14 @@
   </section>
 
   <section id="view-questions" hidden>
-    <p class="hint">What the assistant needs to know to run things on its own. Answer here, in Talk, or out loud with 🎙 Talk.</p>
+    <p class="hint">What Man AI needs to know to run things on its own. Answer here, or in the chat at the bottom right, typed or out loud with 🎙 Talk.</p>
     <div id="openQuestions"></div>
     <h3>Answered</h3>
     <div id="answeredQuestions"></div>
   </section>
 
   <section id="view-access" hidden>
-    <p class="hint">Systems the assistant can use, and the ones it still needs. Ask it in Talk how to connect any of them; it will walk you through it.</p>
+    <p class="hint">Systems Man AI can use, and the ones it still needs. Ask it in the chat how to connect any of them; it will walk you through it.</p>
     <div class="banner" id="setupBanner" style="white-space: pre-line" hidden></div>
     <p class="actions"><a class="btn primary" href="/connect/setup" id="connectAll">Connect everything</a>
       <button class="btn" id="checkSystems">Check connections</button>
@@ -271,6 +267,32 @@
   </section>
 </main>
 
+<aside class="chatwin" id="chat" aria-label="Man AI chat">
+  <div class="chathead">
+    <h2>Man AI</h2>
+    <button class="hbtn" id="readAloud" aria-pressed="false" title="Read new replies aloud">🔊 Read aloud</button>
+    <button class="hbtn" id="clearTalk" title="Start a new conversation">Clear</button>
+    <button class="hbtn min" id="minimizeChat" title="Minimize" aria-label="Minimize chat">–</button>
+  </div>
+  <div class="partners" id="partners" role="group" aria-label="Who you're talking to"></div>
+  <div class="thread" id="thread" aria-live="polite"></div>
+  <div>
+    <div class="voicebar" id="voicebar" hidden>
+      <span class="pulse" aria-hidden="true"></span>
+      <span class="vstate" id="vstate">Connecting…</span>
+      <span class="meter" title="Your microphone level"><div id="vmeter"></div></span>
+      <button class="btn" id="vmute">Mute</button>
+      <button class="btn danger" id="vend">End call</button>
+    </div>
+    <div class="composer" id="composer">
+      <textarea id="message" placeholder="Message Man AI…" aria-label="Message" title="Enter to send, Shift+Enter for a new line"></textarea>
+      <button class="btn mic" id="startVoice" title="Talk live">🎙 Talk</button>
+      <button class="btn primary" id="send">Send</button>
+    </div>
+  </div>
+</aside>
+<button class="launcher" id="chatLauncher" aria-controls="chat" aria-expanded="true" hidden>💬 Man AI</button>
+
 <dialog id="taskDialog">
   <form method="dialog" id="taskForm">
     <h2 id="taskDialogTitle">Task</h2>
@@ -290,7 +312,7 @@
     <div class="dialog-foot">
       <button type="button" class="btn danger left" id="deleteTask">Delete</button>
       <button type="button" class="btn" id="cancelTask">Cancel</button>
-      <button type="button" class="btn" id="workTask" title="The assistant works on it now with its tools, and again every hour until it's done">🤖 Give to assistant</button>
+      <button type="button" class="btn" id="workTask" title="Man AI works on it now with its tools, and again every hour until it's done">🤖 Give to Man AI</button>
       <button type="submit" class="btn primary">Save</button>
     </div>
   </form>

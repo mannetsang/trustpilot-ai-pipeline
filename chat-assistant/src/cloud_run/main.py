@@ -279,7 +279,7 @@ def api_create_task():
 
 @app.post("/api/tasks/<task_id>/work")
 def api_work_task(task_id):
-    """Give a task to the assistant and let it work it now (it reports on the task and in Talk)."""
+    """Give a task to the assistant and let it work it now (it reports on the task and in the chat)."""
     if not store.get_task(task_id):
         return jsonify(error="No such task."), 404
     try:

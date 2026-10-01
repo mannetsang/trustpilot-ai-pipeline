@@ -301,7 +301,10 @@ class WebTests(unittest.TestCase):
         page = self.client.get("/")
         self.assertEqual(page.status_code, 200)
         self.assertIn(b'id="view-board"', page.data)
-        self.assertIn(b'id="view-talk"', page.data)
+        self.assertIn(b'id="chat"', page.data)          # the chat window, over every tab
+        self.assertIn(b'id="chatLauncher"', page.data)  # what it minimizes to
+        self.assertNotIn(b'data-tab="talk"', page.data)
+        self.assertIn(b"<title>Man AI</title>", page.data)
         self.assertIn(b"manne@superhairpieces.com", page.data)
         self.assertEqual(page.headers["X-Frame-Options"], "DENY")
 

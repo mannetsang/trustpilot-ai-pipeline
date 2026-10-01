@@ -19,11 +19,11 @@ PARTNERS = {"assistant": partner_gemini, "claude": partner_claude, "chatgpt": pa
 TZ = ZoneInfo("America/Toronto")
 
 ROLE = {
-    "assistant": "You are the company's AI head of digital transformation for Superhairpieces and Gen'C Beauty.",
+    "assistant": "You are Man AI, the company's AI head of digital transformation for Superhairpieces and Gen'C Beauty.",
     "claude": ("You are Claude, made by Anthropic, one of Manne's AI partners at Superhairpieces and Gen'C Beauty, "
-               "working alongside the company's AI assistant (Gemini) and ChatGPT."),
+               "working alongside Man AI (the company's own assistant, on Gemini) and ChatGPT."),
     "chatgpt": ("You are ChatGPT, made by OpenAI, one of Manne's AI partners at Superhairpieces and Gen'C Beauty, "
-                "working alongside the company's AI assistant (Gemini) and Claude."),
+                "working alongside Man AI (the company's own assistant, on Gemini) and Claude."),
 }
 
 MISSION = """\
