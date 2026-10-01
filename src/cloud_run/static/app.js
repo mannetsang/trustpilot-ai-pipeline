@@ -1,4 +1,4 @@
-// Company Assistant: board, knowledge base, interview, access, talk. Voice lives in voice.js.
+// Man AI: board, knowledge base, interview, access, and the chat window. Voice lives in voice.js.
 "use strict";
 
 const STATUS_ORDER = ["todo", "in_progress", "done"];
@@ -151,21 +151,28 @@ function renderBanners() {
 const partnerInfo = (name) => kb.partners.find((p) => p.name === name) || { label: name, available: false };
 
 function renderPartners() {
-  const box = $("partners");
-  box.replaceChildren(...kb.partners.map((p) => el("button", {
+  $("partners").replaceChildren(...kb.partners.map((p) => el("button", {
     class: `partner${p.name === partner ? " active" : ""}`, title: p.available ? p.models || "" : p.detail, "data-partner": p.name,
-    onclick: () => selectPartner(p.name),
-  }, el("span", { class: `pdot${p.available ? "" : " off"}` }), p.label)),
-  el("span", { class: "spacer", style: "flex:1" }),
-  el("label", { class: "readaloud", title: "Speak each new reply out loud" },
-    el("input", { type: "checkbox", checked: !!(speaker() && speaker().auto),
-      onchange: (e) => { if (speaker()) speaker().auto = e.target.checked; } }), "🔊 Read replies aloud"),
-  el("button", { class: "btn", onclick: clearTalk, title: "Start a new conversation" }, "Clear"));
+    "aria-pressed": String(p.name === partner), onclick: () => selectPartner(p.name),
+  }, el("span", { class: `pdot${p.available ? "" : " off"}` }), p.label)));
+  renderReadAloud();
   const info = partnerInfo(partner);
   $("startVoice").disabled = !$("voicebar").hidden || !info.available;  // one call at a time
   $("startVoice").title = info.available ? `Talk live with ${info.label}` : info.detail || `${info.label} isn't available`;
-  $("message").placeholder = `Message ${partnerInfo(partner).label}… (Enter to send, Shift+Enter for a new line)`;
+  $("message").placeholder = `Message ${info.label}…`;
 }
+
+function renderReadAloud() {
+  const on = !!(speaker() && speaker().auto);
+  $("readAloud").setAttribute("aria-pressed", String(on));
+  $("readAloud").title = on ? "Reading new replies aloud. Click to stop" : "Read new replies aloud";
+}
+$("readAloud").onclick = () => {
+  if (!speaker()) return;
+  speaker().auto = !speaker().auto;
+  renderReadAloud();
+  toast(speaker().auto ? "New replies will be read aloud" : "Replies won't be read aloud");
+};
 
 async function selectPartner(name) {
   if (name !== partner && window.companyAssistant.endVoice) window.companyAssistant.endVoice();
@@ -220,6 +227,7 @@ async function sendMessage() {
     talkTurns.push(reply);
     renderThread();
     refreshKnowledge();
+    if (!chatOpen) { unread = true; renderLauncher(); }
     if (speaker() && speaker().auto && asked === partner) {
       const buttons = $("thread").querySelectorAll(".msg.assistant .spk");
       speaker().play(reply.text, asked, buttons[buttons.length - 1]);
@@ -237,6 +245,59 @@ async function clearTalk() {
   if (!confirm(`Clear your conversation with ${partnerInfo(partner).label}? What it learned stays in the knowledge base.`)) return;
   await api("DELETE", `/api/talk/${partner}`).catch((e) => toast(e.message));
   talkTurns = []; renderThread();
+}
+$("clearTalk").onclick = clearTalk;
+
+// -- the chat window ----------------------------------------------------------------------
+// The chat floats at the bottom right over every tab and minimizes to a button. A call keeps going while
+// it's minimized; the button says so, and shows a dot when a reply arrives unseen.
+let chatOpen = true;
+let unread = false;
+
+function setChat(open, focus = true) {
+  chatOpen = open;
+  $("chat").hidden = !open;
+  $("chatLauncher").hidden = open;
+  $("chatLauncher").setAttribute("aria-expanded", String(open));
+  try { localStorage.setItem("chatOpen", open ? "1" : "0"); } catch { /* storage unavailable */ }
+  if (open) {
+    unread = false;
+    $("thread").scrollTop = $("thread").scrollHeight;
+    if (focus) $("message").focus();
+  } else if (focus) $("chatLauncher").focus();
+  renderLauncher();
+}
+
+function renderLauncher() {
+  const onCall = !$("voicebar").hidden;
+  const label = onCall ? "On a call · Man AI" : "Man AI";
+  $("chatLauncher").replaceChildren(...[onCall ? el("span", { class: "pulse", "aria-hidden": "true" }) : el("span", { "aria-hidden": "true" }, "💬"),
+    label, unread && !onCall ? el("span", { class: "badge", title: "New reply" }) : null].filter(Boolean));
+  $("chatLauncher").setAttribute("aria-label", `${label}${unread ? " (new reply)" : ""}. Open the chat`);
+}
+
+// Opens the chat with Man AI and a message ready to send (from Questions and Access).
+function askInChat(text) {
+  setChat(true);
+  if (partner !== "assistant") selectPartner("assistant");
+  $("message").value = text;
+  $("message").focus();
+}
+
+$("minimizeChat").onclick = () => setChat(false);
+$("chatLauncher").onclick = () => setChat(true);
+// Escape minimizes, from inside the chat or from nowhere in particular (sending a message leaves focus on the page).
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || !chatOpen || document.querySelector("dialog[open]")) return;
+  if (!$("chat").contains(document.activeElement) && document.activeElement !== document.body) return;
+  e.preventDefault(); setChat(false);
+});
+new MutationObserver(renderLauncher).observe($("voicebar"), { attributes: true, attributeFilter: ["hidden"] });
+{
+  // Remembered per browser; the first time it starts open on a computer, minimized on a phone.
+  let saved = null;
+  try { saved = localStorage.getItem("chatOpen"); } catch { /* storage unavailable */ }
+  setChat(saved === null ? matchMedia("(min-width: 601px)").matches : saved === "1", false);
 }
 
 async function refreshKnowledge() {
@@ -414,17 +475,17 @@ function showTaskReport(t) {
 }
 
 $("workTask").onclick = async () => {
-  if (!editing) { toast("Save the task first, then give it to the assistant."); return; }
+  if (!editing) { toast("Save the task first, then give it to Man AI."); return; }
   const t = editing;
   $("taskDialog").close();
   state.tasks = state.tasks.map((x) => (x.id === t.id ? { ...x, owner: "Assistant", owner_is_me: false, working_since: new Date().toISOString() } : x));
   renderBoard();
-  toast(`The assistant is working on “${t.title}”. Its report will appear on the task and in Talk.`);
+  toast(`Man AI is working on “${t.title}”. Its report will appear on the task and in the chat.`);
   try {
     const { task, done } = await api("POST", `/api/tasks/${encodeURIComponent(t.id)}/work`);
     state.tasks = state.tasks.map((x) => (x.id === t.id ? task : x));
     toast(done ? `Done: “${t.title}”` : `Report ready on “${t.title}”`);
-    if (partner === "assistant") loadTalk();
+    if (partner === "assistant") { await loadTalk(); if (!chatOpen) { unread = true; renderLauncher(); } }
   } catch (e) {
     toast(e.message);
     load().catch(() => {});
@@ -578,18 +639,11 @@ function questionItem(q) {
     q.why ? el("div", { class: "why" }, `Why: ${q.why}`) : null,
     box,
     el("div", { class: "actions" }, answerBtn,
-      el("button", { class: "btn", onclick: () => askInTalk(q) }, "Discuss in Talk"),
+      el("button", { class: "btn", onclick: () => askInChat(`Let's talk about this question [${q.id}]: ${q.question}`) }, "Discuss in chat"),
       el("button", { class: "btn", onclick: async () => {
         await api("POST", `/api/questions/${encodeURIComponent(q.id)}/dismiss`).catch((e) => toast(e.message));
         refreshKnowledge();
       } }, "Skip")));
-}
-
-function askInTalk(q) {
-  switchTab("talk");
-  if (partner !== "assistant") selectPartner("assistant");
-  $("message").value = `Let's talk about this question [${q.id}]: ${q.question}`;
-  $("message").focus();
 }
 
 // -- Access -----------------------------------------------------------------------------
@@ -614,12 +668,9 @@ function renderSystems() {
         s.unlocks ? el("div", { class: "reply" }, s.unlocks) : null,
         s.why ? el("div", { class: "why" }, status === "no_access" || status === "error" ? s.why : `Why the assistant asked: ${s.why}`) : null,
         status !== "connected" && status !== "not_used" ? el("div", { class: "actions" },
-          s.connect ? connectButton(s) : el("button", { class: "btn", onclick: () => {
-            switchTab("talk");
-            if (partner !== "assistant") selectPartner("assistant");
-            $("message").value = `How do I give you access to ${s.name}? Walk me through it step by step.`;
-            $("message").focus();
-          } }, "How do I connect this?")) : null);
+          s.connect ? connectButton(s) : el("button", { class: "btn",
+            onclick: () => askInChat(`How do I give you access to ${s.name}? Walk me through it step by step.`) },
+          "How do I connect this?")) : null);
     }));
   }).filter(Boolean));
 }
@@ -842,9 +893,11 @@ $("runNow").onclick = async () => {
 $("logout").onclick = async () => { await api("POST", "/logout").catch(() => {}); location.reload(); };
 
 // -- tabs ---------------------------------------------------------------------------------
+const TABS = ["board", "projects", "questions", "access", "activity"];  // the chat isn't a tab: it floats over all of them
 function switchTab(name) {
+  if (!TABS.includes(name)) name = "board";  // e.g. "talk", remembered from before the chat window
   for (const t of document.querySelectorAll(".tab")) t.classList.toggle("active", t.dataset.tab === name);
-  for (const v of ["talk", "board", "projects", "questions", "access", "activity"]) $(`view-${v}`).hidden = v !== name;
+  for (const v of TABS) $(`view-${v}`).hidden = v !== name;
   try { localStorage.setItem("tab", name); } catch { /* storage unavailable */ }
 }
 for (const tab of document.querySelectorAll(".tab")) tab.onclick = () => switchTab(tab.dataset.tab);
@@ -853,8 +906,8 @@ for (const tab of document.querySelectorAll(".tab")) tab.onclick = () => switchT
 window.companyAssistant = { el, toast, api, renderThread, turnNode, loadTalk, refreshKnowledge, partnerInfo, get partner() { return partner; } };
 
 (async function start() {
-  let tab = "talk";
-  try { tab = localStorage.getItem("tab") || "talk"; } catch { /* storage unavailable */ }
+  let tab = "board";
+  try { tab = localStorage.getItem("tab") || "board"; } catch { /* storage unavailable */ }
   switchTab(tab);
   try { await load(); afterConnectRedirect(); await loadTalk(); await pollProgress(); } catch (e) { $("lastrun").textContent = e.message; }
 })();

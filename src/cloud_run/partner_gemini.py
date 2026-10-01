@@ -16,7 +16,7 @@ VERTEX_LOCATION = os.environ.get("VERTEX_LOCATION", "us-central1")
 TALK_MODEL = os.environ.get("TALK_MODEL", os.environ.get("GEMINI_MODEL", "gemini-2.5-pro"))
 MAX_STEPS = 24  # research chains many lookups: search, read, query, compare
 
-LABEL = "Assistant (Gemini)"
+LABEL = "Man AI (Gemini)"
 _creds = None
 
 

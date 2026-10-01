@@ -116,7 +116,7 @@ def _bigcommerce(store_hash, token_secret, storefront, currency, system_id, past
         probe=BIGCOMMERCE_PROBES, system_id=system_id, category="Commerce", labeler=_bigcommerce_label,
         **({"kind": "paste", "fields": [(token_secret, "Access token of a store-level API account", "", True)],
             "help": (f"In the {storefront} BigCommerce admin: Settings > API > Store-level API accounts > Create API "
-                     "account (token type: V2/V3 API token). Name it \"Company Assistant\" and set Orders, Products, "
+                     "account (token type: V2/V3 API token). Name it \"Man AI\" and set Orders, Products, "
                      "Customers and Information & settings to read-only (or modify, if the assistant may change "
                      "them). Save, then copy the Access token (BigCommerce shows it once) and paste it here.")}
            if paste else {}))
@@ -253,7 +253,7 @@ def _amazon(number, refresh_secret, paste=False):
             "help": ("Sign in to Seller Central as this seller account. Go to Apps and Services > Develop Apps, find "
                      "the company's SP-API app, and choose Authorize (then Authorize app). Amazon shows a refresh "
                      "token that starts with Atzr|: copy it and paste it here. The app's own id and secret are "
-                     "already stored. If the app isn't listed for this account, say so in Talk: the account then "
+                     "already stored. If the app isn't listed for this account, say so in the chat: the account then "
                      "has to authorize it through a consent link instead.")} if paste else {}))
 
 
@@ -449,7 +449,7 @@ def call(integration_id, method, path, secrets, query=None, body=None, confirmed
         headers = dict(integration.headers(values)) if integration.headers else {}
         if integration.kind == "google":
             if google is None:
-                raise NotReady("Google isn't connected (Connect Google on the Talk tab)")
+                raise NotReady("Google isn't connected (press Connect in the banner at the top of the page)")
             headers.update(google.auth_header())
     except NotReady as exc:
         return {"error": f"{integration.label} isn't available: {exc}"}

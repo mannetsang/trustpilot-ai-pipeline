@@ -1,9 +1,15 @@
-# Company Assistant
+# Man AI
 
-The chat-assistant service is growing from "read Chat, keep a board" into an AI
+Man AI (formerly Company Assistant; the Cloud Run service is still `chat-assistant`) is growing from "read Chat, keep a board" into an AI
 operator for Superhairpieces and Gen'C Beauty: it learns every project, gets
 access to the company's systems, does the work, and reports back. You talk to it
 in text or live voice, alongside two AI partners, Claude and ChatGPT.
+
+**The chat** isn't a tab: it's a window at the bottom right, over every tab, so you can talk while you look at
+the board or the Access list. **–** (or Esc) minimizes it to a **💬 Man AI** button. The button gets a red dot
+when a reply arrives while it's minimized, and reads **On a call** while a voice call is running (a call keeps
+going while it's minimized). Open or minimized is remembered per browser; the first time, it starts open on a
+computer and minimized on a phone, where the open chat fills the screen.
 
 This file covers what Phase 1 added. For deployment, run `setup.sh` once as a
 project Owner (see its header) and deploy with the *Deploy chat assistant to
@@ -11,12 +17,12 @@ Cloud Run* workflow.
 
 ## Phase 1: learn the company, talk to it
 
-| Tab | What it's for |
+| Where | What it's for |
 |---|---|
-| **Talk** | Chat with the **Assistant** (Gemini), **Claude** or **ChatGPT**. Each one has the same company background, knowledge base and tools, and its own conversation history. **🎙 Talk** starts a live voice call with whichever of the three is selected. **🔊** on a reply reads it aloud (press again to stop); **Read replies aloud** reads each new typed reply automatically. |
+| **Chat** (bottom right) | Chat with **Man AI** (Gemini), **Claude** or **ChatGPT**. Each one has the same company background, knowledge base and tools, and its own conversation history. **🎙 Talk** starts a live voice call with whichever of the three is selected. **🔊** on a reply reads it aloud (press again to stop); **🔊 Read aloud** in the chat's header reads each new typed reply automatically. |
 | **Board** | Tasks from your chats and conversations (unchanged). |
 | **Projects** | Every project it knows, per company: goal, owner, status, deadline, next steps, linked chats and open tasks. |
-| **Questions** | The interview: what it needs to know, highest priority first. Answer in the box, in Talk, or by voice; each answer is processed into projects, facts, tasks and follow-up questions. |
+| **Questions** | The interview: what it needs to know, highest priority first. Answer in the box, in the chat (**Discuss in chat**), or by voice; each answer is processed into projects, facts, tasks and follow-up questions. |
 | **Access** | Systems it can use now, those with credentials that aren't connected yet, and those it still needs. **How do I connect this?** asks it to walk you through one. |
 | **Activity** | Actions taken and waiting for approval, and the run history (now including what each run learned). |
 
@@ -48,7 +54,7 @@ Activity and wait). Defaults:
 A reply in a conversation with anyone outside the company directory counts as a
 customer message. The earlier guardrails still apply on top: only recent messages
 aimed at you, not already answered, at confidence ≥ 0.85, at most 10 automatic
-actions per run, and **Act automatically** in the header pauses everything. In Talk
+actions per run, and **Act automatically** in the header pauses everything. In the chat
 or voice, it sends a Chat message only after you approve the exact text.
 
 ## AI partners
@@ -75,7 +81,7 @@ each needs. `CLAUDE_BACKEND=anthropic` or `=vertex` pins one route.
 16 kHz 16-bit PCM from the microphone (with echo cancellation), the service relays
 it to **Gemini 3.8 Live** (`gemini-3.8-live` on Vertex AI), and streams the spoken
 answer back at 24 kHz. You can interrupt it; the transcript appears live and is
-saved into the Assistant's Talk conversation. During a call it uses the same tools as
+saved into Man AI's chat conversation. During a call it uses the same tools as
 text: it can look things up, record what you tell it, and queue or answer questions.
 Use Chrome or Edge. Only your signed-in session, from the app's own page, can open
 the voice socket.
@@ -119,12 +125,12 @@ connected systems (`list_integrations`, `call_api`), research the web (`web_sear
 answer. Research APIs: Firecrawl (search, read pages) and DataForSEO (SERPs, keyword
 volumes, rankings; each call costs a few cents).
 
-**Board → a task → 🤖 Give to assistant** makes the assistant the task's owner and has
+**Board → a task → 🤖 Give to Man AI** makes the assistant the task's owner and has
 it work the task right away (`worker.py`); each hourly run works up to `WORK_PER_RUN`
 (3) of its open tasks again, any it hasn't touched for six hours. It works with every
 tool, but alone it can't change data or message anyone (it prepares the exact change
 or text and asks for your OK). When a task is finished it marks it done. Its report
-appears on the task (and a 🤖 report badge on the card) and in the Assistant's Talk
+appears on the task (and a 🤖 report badge on the card) and in Man AI's chat
 conversation.
 
 ## Company systems (connected for real)
