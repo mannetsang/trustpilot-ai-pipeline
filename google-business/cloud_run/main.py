@@ -21,7 +21,8 @@ Endpoints
   GET  /api/sheet           every Sheet row as JSON, for the Reviews Dashboard (2 min cache)
   GET  /api/summary         all-time review count + average per listing, from Google (1 h cache)
   POST /api/reply           {"review": "<review resource name>", "message": ...}
-                            posts the public reply on Google (X-Api-Token)
+                            posts the public reply on Google; no key, but only
+                            accepted from the dashboard's origin (ALLOWED_ORIGINS)
 
 Env (Cloud Run): GOOGLE_BUSINESS_PROFILE_CLIENT_ID / _CLIENT_SECRET /
 _REFRESH_TOKEN, GCHAT_WEBHOOK_URL and API_TOKEN come from Secret Manager;
@@ -59,6 +60,14 @@ GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "")
 API_TOKEN = os.environ.get("API_TOKEN", "")
 GBP_ACCOUNT = os.environ.get("GBP_ACCOUNT", "accounts/111445610944292236883")
 MONITOR_WINDOW_DAYS = int(os.environ.get("MONITOR_WINDOW_DAYS", "3"))
+# /api/reply carries no key (the dashboard asked for none), so it only answers browser calls made
+# from these origins. A speed bump against other websites and casual scripts, not authentication:
+# the Origin header can be forged by anything that isn't a browser.
+ALLOWED_ORIGINS = {o.strip().rstrip("/") for o in os.environ.get(
+    "ALLOWED_ORIGINS",
+    "https://reviews-dashboard-304363458561.us-central1.run.app,"
+    "https://reviews-dashboard-onvg62bzra-uc.a.run.app,"
+    "http://localhost:8765,http://127.0.0.1:8765").split(",") if o.strip()}
 
 GCP_PROJECT = "shp-ai-bot-2026"
 VERTEX_LOCATION = "us-central1"
@@ -662,11 +671,13 @@ def api_summary():
 @app.route("/api/reply", methods=["POST", "OPTIONS"])
 def api_reply():
     """Post (or replace) the public company reply on a Google review."""
-    global _reviews_cache
+    global _reviews_cache, _sheet_cache
     if request.method == "OPTIONS":
         return ("", 204)
-    if not authorized():
-        return jsonify({"error": "unauthorized"}), 401
+    origin = (request.headers.get("Origin") or "").rstrip("/")
+    if origin not in ALLOWED_ORIGINS:
+        print(f"reply refused: origin {origin or '(none)'!r} not allowed")
+        return jsonify({"error": "replies are only accepted from the Reviews Dashboard"}), 403
     body = request.get_json(silent=True) or {}
     review_name = (body.get("review") or "").strip()
     message = (body.get("message") or "").strip()
@@ -679,6 +690,7 @@ def api_reply():
     try:
         result = gbp("PUT", f"{V4}/{review_name}/reply", payload={"comment": message})
         _reviews_cache = None
+        _sheet_cache = None
         posted = result.get("updateTime", "")
         try:
             _, index, _ = read_sheet()

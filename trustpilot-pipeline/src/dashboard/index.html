@@ -1139,7 +1139,6 @@ const STAMPED_GVIZ_URL = `https://docs.google.com/spreadsheets/d/${STAMPED_SHEET
 // through /api/reviews (real reply state) and all-time totals through /api/summary.
 const GBP_API = "https://gbp-reviews-304363458561.us-central1.run.app";
 const GBP_SHEET_ID = "1I6RJ9SoESONvCRnRZWMCwLq6wU3utYukWqC3w7iUav4";
-const GBP_REPLY_KEY_STORAGE = "shp-dashboard-gbp-reply-key-v1";
 const GOOGLE_G_SVG = `<svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>`;
 
 let TP_LIVE = null;       // populated by loadTrustpilotLive()
@@ -1565,18 +1564,8 @@ function findReviewById(id) {
       || DATA.find(x => x.id === id);
 }
 
-// The Google reply endpoint is token-protected (it posts as the business, publicly). The key is
-// asked for once per device and kept in localStorage; a 401 clears it so the next attempt re-asks.
-function getGbpReplyKey() {
-  let key = "";
-  try { key = localStorage.getItem(GBP_REPLY_KEY_STORAGE) || ""; } catch (e) {}
-  if (!key) {
-    key = (window.prompt("Posting a reply on Google needs the dashboard's Google reply key (ask Manne). It is saved on this device after you enter it once.") || "").trim();
-    if (key) { try { localStorage.setItem(GBP_REPLY_KEY_STORAGE, key); } catch (e) {} }
-  }
-  return key;
-}
-function clearGbpReplyKey() { try { localStorage.removeItem(GBP_REPLY_KEY_STORAGE); } catch (e) {} }
+// An earlier build asked for a Google reply key and kept it here; the endpoint no longer uses one.
+try { localStorage.removeItem("shp-dashboard-gbp-reply-key-v1"); } catch (e) {}
 
 function inferPageCategory(path) {
   if (!path) return "Other";
@@ -4085,7 +4074,7 @@ function openModal(reviewId, useAi = false) {
     } else if (r.source === "google") {
       sendBtn.textContent = r.hasReply ? "Update reply on Google" : "Post reply on Google";
       sendBtn.title = r.reviewName
-        ? "Posts the public owner reply on this Google listing through the gbp-reviews service (needs the Google reply key once per device)."
+        ? "Posts the public owner reply on this Google listing through the gbp-reviews service."
         : "This review has no reply handle yet — it will after the next 30-minute sync.";
       sendBtn.disabled = !r.reviewName;
     } else if (isWebsiteEmail) {
@@ -4242,7 +4231,7 @@ const REPLY_ENDPOINTS = {
   }),
   google: r => ({
     // Direct post through the gbp-reviews service (PUT …/reviews/{id}/reply on the Business Profile
-    // API). Token-protected: the dashboard sends X-Api-Token from getGbpReplyKey().
+    // API). No key: the service only accepts reply calls whose Origin is this dashboard.
     mode: "post",
     url: `${GBP_API}/api/reply`,
     label: "Google",
@@ -4278,13 +4267,6 @@ async function sendReplyFromModal() {
 
   const text = (ta.value || "").trim();
   if (!text) { showToast("Reply can't be empty"); return; }
-  // Google replies are posted as the business, so the endpoint wants the reply key. Ask before the
-  // optimistic update so a cancelled prompt leaves the row untouched.
-  let gbpKey = null;
-  if (r.source === "google") {
-    gbpKey = getGbpReplyKey();
-    if (!gbpKey) { showToast("Reply not sent — no Google reply key entered"); return; }
-  }
 
   // ——— Handoff mode (Stamped.io): copy reply to clipboard, open merchant dashboard ———
   // Stamped's REST API doesn't expose a merchant-reply endpoint, so we hand off to their dashboard.
@@ -4331,18 +4313,12 @@ async function sendReplyFromModal() {
       : r.source === "google"
         ? { review: dispatched.review, message: text }
         : { message: text };
-    const headers = { "Content-Type": "application/json" };
-    if (gbpKey) headers["X-Api-Token"] = gbpKey;
     const res = await fetch(replyURL, {
       method: "POST",
-      headers,
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
     const data = await res.json().catch(() => ({}));
-    if (res.status === 401 && r.source === "google") {
-      clearGbpReplyKey();
-      throw new Error("the Google reply key was rejected — you'll be asked for it again");
-    }
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     showToast(r.source === "website"
       ? `✓ Email sent to ${dispatched.to}`

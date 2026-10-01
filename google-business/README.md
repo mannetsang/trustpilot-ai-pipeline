@@ -76,8 +76,11 @@ request step.
 Endpoints: `GET /monitor?days=N`, `POST /backfill?days=all&ai=1&limit=100`
 (seeds older reviews without Chat posts; repeat until `remaining` is 0),
 `GET /api/locations`, `GET /api/reviews`, `POST /api/reply` with
-`{"review": "<column L>", "message": "..."}`. `/backfill` and `/api/reply`
-require the `X-Api-Token` header (Secret Manager `gbp-reviews-api-token`).
+`{"review": "<column L>", "message": "..."}`. `/backfill` requires the
+`X-Api-Token` header (Secret Manager `gbp-reviews-api-token`). `/api/reply` takes
+no key since 2026-10-01; it only answers requests whose `Origin` is the Reviews
+Dashboard (`ALLOWED_ORIGINS` env var). That stops other websites, not a
+determined script, so treat the reply endpoint as effectively public.
 
 Deployment: [`.github/workflows/deploy-gbp-reviews.yml`](../.github/workflows/deploy-gbp-reviews.yml)
 runs on every push touching `cloud_run/`, deploys with `--source` and mounts
@@ -114,11 +117,7 @@ The Google Business tab of the Reviews Dashboard
 | Review rows, AI suggestions, history | `GET /api/sheet` (2 min cache) |
 | Real reply state of the newest 50 reviews | `GET /api/reviews` (5 min cache) |
 | All-time rating + count per listing, KPI tiles, comparison card | `GET /api/summary` (1 h cache) |
-| "Post reply on Google" in the reply modal | `POST /api/reply` with `X-Api-Token` |
-
-The reply key is asked for once per browser and kept in localStorage; it is the
-`gbp-reviews-api-token` secret. A rejected key is forgotten so the next attempt
-asks again.
+| "Post reply on Google" in the reply modal | `POST /api/reply` (no key; origin-checked) |
 
 ## Listing scripts
 
