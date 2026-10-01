@@ -103,6 +103,23 @@ python google-business/cloud_run/main.py reviews --days 7
 python google-business/cloud_run/main.py monitor --days 3 --dry-run --ai
 ```
 
+## Reviews Dashboard
+
+The Google Business tab of the Reviews Dashboard
+(`https://reviews-dashboard-304363458561.us-central1.run.app`, source in
+`trustpilot-pipeline/src/dashboard/`) reads this service, not the sheet directly:
+
+| Dashboard element | Endpoint |
+|---|---|
+| Review rows, AI suggestions, history | `GET /api/sheet` (2 min cache) |
+| Real reply state of the newest 50 reviews | `GET /api/reviews` (5 min cache) |
+| All-time rating + count per listing, KPI tiles, comparison card | `GET /api/summary` (1 h cache) |
+| "Post reply on Google" in the reply modal | `POST /api/reply` with `X-Api-Token` |
+
+The reply key is asked for once per browser and kept in localStorage; it is the
+`gbp-reviews-api-token` secret. A rejected key is forgotten so the next attempt
+asks again.
+
 ## Listing scripts
 
 ```bash

@@ -18,6 +18,15 @@ It features a dual-architecture design to support both real-time webhook ingesti
    - **Authentication:** Enterprise Service Account (`gcp_credentials.json`)
    - **Purpose:** Designed for massive CSV exports. Iterates through thousands of historical Trustpilot reviews, generates insights using the Vertex AI SDK, and appends the data robustly to a processed dataset.
 
+## Reviews Dashboard
+
+`src/dashboard/` is the static Reviews Dashboard (Trustpilot, Stamped.io, Website
+feedback and Google Business Profile tabs) served by nginx on the Cloud Run service
+`reviews-dashboard`. It deploys from `main` through
+`.github/workflows/deploy-reviews-dashboard.yml` on every push touching that folder
+(`deploy.bat` remains for a manual deploy with a logged-in gcloud). Google Business
+data comes from the `gbp-reviews` service; see `google-business/README.md`.
+
 ## Weekly EU Website-Feedback Digest
 
 The Cloud Run service (`src/cloud_run/main.py`) exposes `/weekly-eu-feedback`: it reads

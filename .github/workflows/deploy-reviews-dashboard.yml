@@ -1,0 +1,45 @@
+name: Deploy Reviews Dashboard
+
+# Deploys trustpilot-pipeline/src/dashboard (static index.html behind nginx) to the Cloud Run
+# service `reviews-dashboard`. Until 2026-10-01 the dashboard was deployed by hand with
+# src/dashboard/deploy.bat from a feature branch; it now lives on main and ships on push.
+# The page holds no secrets: it reads public sheets and the review services' /api/* routes.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'trustpilot-pipeline/src/dashboard/**'
+      - '.github/workflows/deploy-reviews-dashboard.yml'
+  workflow_dispatch:
+
+# Keyless Google Cloud auth (Workload Identity Federation): the job asks GitHub
+# for an OIDC token and Google swaps it for claude-sessions' credentials. No
+# JSON key is stored. See docs/credentials.md.
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/304363458561/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: claude-sessions@shp-ai-bot-2026.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy reviews-dashboard \
+            --source ./trustpilot-pipeline/src/dashboard \
+            --region us-central1 \
+            --project shp-ai-bot-2026 \
+            --allow-unauthenticated \
+            --port 8080 --cpu 1 --memory 256Mi \
+            --min-instances 0 --max-instances 2 \
+            --quiet
