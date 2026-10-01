@@ -55,14 +55,11 @@ jobs:
             --quiet
 
       - name: Upsert the 30-minute monitor job
+        # claude-sessions has no Cloud Scheduler role, so this step only warns
+        # when it can't; the job was created once by an owner on 2026-10-01
+        # (see google-business/README.md) and does not need to change on
+        # redeploys because the service URL is stable.
+        continue-on-error: true
         run: |
-          SERVICE_URL=$(gcloud run services describe "$SERVICE" \
-            --region "$REGION" --project "$PROJECT" --format 'value(status.url)')
-          gcloud scheduler jobs update http gbp-reviews-monitor \
-            --location "$REGION" --project "$PROJECT" \
-            --schedule "*/30 * * * *" --time-zone "Etc/UTC" \
-            --uri "$SERVICE_URL/monitor" --http-method GET --attempt-deadline 900s --quiet \
-          || gcloud scheduler jobs create http gbp-reviews-monitor \
-            --location "$REGION" --project "$PROJECT" \
-            --schedule "*/30 * * * *" --time-zone "Etc/UTC" \
-            --uri "$SERVICE_URL/monitor" --http-method GET --attempt-deadline 900s --quiet
+          SERVICE_URL=$(gcloud run services describe "$SERVICE"             --region "$REGION" --project "$PROJECT" --format 'value(status.url)')
+          gcloud scheduler jobs update http gbp-reviews-monitor             --location "$REGION" --project "$PROJECT"             --schedule "*/30 * * * *" --time-zone "Etc/UTC"             --uri "$SERVICE_URL/monitor" --http-method GET --attempt-deadline 900s --quiet           || gcloud scheduler jobs create http gbp-reviews-monitor             --location "$REGION" --project "$PROJECT"             --schedule "*/30 * * * *" --time-zone "Etc/UTC"             --uri "$SERVICE_URL/monitor" --http-method GET --attempt-deadline 900s --quiet           || echo "::warning::Could not upsert the scheduler job (claude-sessions lacks roles/cloudscheduler.admin); create it once as an owner, see google-business/README.md"

@@ -80,8 +80,14 @@ Endpoints: `GET /monitor?days=N`, `POST /backfill?days=all&ai=1&limit=100`
 require the `X-Api-Token` header (Secret Manager `gbp-reviews-api-token`).
 
 Deployment: [`.github/workflows/deploy-gbp-reviews.yml`](../.github/workflows/deploy-gbp-reviews.yml)
-runs on every push touching `cloud_run/`, deploys with `--source`, mounts the
-secrets below and upserts the scheduler job. The runtime identity is the
+runs on every push touching `cloud_run/`, deploys with `--source` and mounts
+the secrets below. The scheduler job `gbp-reviews-monitor` was created once
+by an owner (the CI identity has no Cloud Scheduler role); the workflow's
+upsert step only warns when it can't update it. To recreate it:
+
+```bash
+gcloud scheduler jobs create http gbp-reviews-monitor --location us-central1 --project shp-ai-bot-2026 --schedule "*/30 * * * *" --time-zone Etc/UTC --uri https://gbp-reviews-304363458561.us-central1.run.app/monitor --http-method GET --attempt-deadline 900s
+``` The runtime identity is the
 project's default compute service account, which the Sheet is shared with.
 
 | Secret Manager id | Container env var |
