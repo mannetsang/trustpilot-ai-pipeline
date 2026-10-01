@@ -18,6 +18,15 @@ from tools import Toolset
 PARTNERS = {"assistant": partner_gemini, "claude": partner_claude, "chatgpt": partner_openai}
 TZ = ZoneInfo("America/Toronto")
 
+# Each partner's row on the Access tab: (system id, name, what it's for). Its status comes from test_partners,
+# a real call to each model, so it says what's true rather than what was true when the row was first written.
+PARTNER_SYSTEMS = {
+    "assistant": ("gemini", "Gemini (Vertex AI)", "Man AI's own brain and voice."),
+    "claude": ("claude", "Claude (Anthropic)", "Second opinions and drafts from Claude: the Claude API first, "
+               "Vertex AI if that fails. On calls it's heard through ChatGPT's voice line."),
+    "chatgpt": ("chatgpt", "ChatGPT (OpenAI)", "Second opinions, drafts and live voice calls from ChatGPT."),
+}
+
 ROLE = {
     "assistant": "You are Man AI, the company's AI head of digital transformation for Superhairpieces and Gen'C Beauty.",
     "claude": ("You are Claude, made by Anthropic, one of Manne's AI partners at Superhairpieces and Gen'C Beauty, "
@@ -162,11 +171,12 @@ class Talk:
                                              [{"role": "user", "text": prompt}], toolset, self.secrets)
 
     def test_partners(self):
+        """One tiny call to each partner. Also brings the partners' rows on the Access tab up to date."""
         out = {}
         for name, module in PARTNERS.items():
             ok, why = self.partner_status(name)
             if not ok:
-                out[name] = {"ok": False, "detail": why}
+                out[name] = {"ok": False, "detail": why, "off": "switched off" in why}
                 continue
             try:
                 kwargs = {"model": self._model(name)} if name == "chatgpt" else {}
@@ -174,4 +184,16 @@ class Talk:
                 out[name] = {"ok": True, "detail": reply[:80]}
             except Exception as exc:  # noqa: BLE001 - shown in Settings
                 out[name] = {"ok": False, "detail": str(exc)[:300]}
+        for name, result in out.items():
+            if name in PARTNER_SYSTEMS:
+                system_id, label, unlocks = PARTNER_SYSTEMS[name]
+                self.store.save_item("systems", system_id, {
+                    "name": label, "category": "AI" if name == "assistant" else "AI partner", "unlocks": unlocks,
+                    "status": "connected" if result["ok"] else "not_used" if result.get("off") else "error",
+                    "why": "" if result["ok"] else result["detail"][:300], "via": "partner"})
         return out
+
+    def check_partners(self):
+        """test_partners in the shape of integrations.check_all, for Check connections and the hourly run."""
+        return {f"partner_{name}": {"ok": r["ok"], "system": PARTNER_SYSTEMS[name][1], "detail": "" if r["ok"] else r["detail"]}
+                for name, r in self.test_partners().items() if name in PARTNER_SYSTEMS and not r.get("off")}

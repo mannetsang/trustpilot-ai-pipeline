@@ -53,7 +53,22 @@ def credentials_from_json(token_json):
     from google.oauth2.credentials import Credentials
 
     info = json.loads(token_json)
+    if info.get("expiry"):
+        # Sign-in (google-auth-oauthlib) gives a time-zone-aware expiry, which to_json() writes as "...+00:00Z";
+        # google-auth reads only the naive "...Z" form and compares it with a naive clock.
+        info["expiry"] = info["expiry"].replace("+00:00", "")
     return Credentials.from_authorized_user_info(info, scopes=info.get("scopes"))
+
+
+def naive_utc_expiry(creds):
+    """google-auth compares expiry with a naive UTC clock; sign-in sets an aware one ("can't compare
+    offset-naive and offset-aware datetimes"). Call before using or saving fresh sign-in credentials."""
+    from datetime import timezone
+
+    expiry = getattr(creds, "expiry", None)
+    if expiry is not None and expiry.tzinfo is not None:
+        creds.expiry = expiry.astimezone(timezone.utc).replace(tzinfo=None)
+    return creds
 
 
 class GoogleClient:

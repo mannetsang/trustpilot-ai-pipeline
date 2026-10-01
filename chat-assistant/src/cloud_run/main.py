@@ -31,7 +31,7 @@ import assistant
 import integrations
 import knowledge
 import worker
-from google_apis import ASSISTANT_SCOPES, IDENTITY_SCOPES, GoogleClient, credentials_from_json
+from google_apis import ASSISTANT_SCOPES, IDENTITY_SCOPES, GoogleClient, credentials_from_json, naive_utc_expiry
 from store import AUTONOMY_CATEGORIES, make_secrets, make_store, utcnow_iso
 from talk import PARTNERS, Talk
 
@@ -187,7 +187,7 @@ def oauth_callback():
     flow.code_verifier = pending["verifier"]
     try:
         flow.fetch_token(code=request.args.get("code", ""))
-        creds = flow.credentials
+        creds = naive_utc_expiry(flow.credentials)
         claims = id_token.verify_oauth2_token(creds.id_token, Request(), flow.client_config["client_id"])
     except Exception as exc:  # noqa: BLE001 - shown to the user, who can retry
         return login_page(f"Sign-in failed: {exc}", 400)
@@ -501,8 +501,10 @@ def api_test_partners():
 
 @app.post("/api/integrations/check")
 def api_check_integrations():
-    """Try each company system with its stored key (a cheap read) and update the Access tab."""
-    return jsonify(results=integrations.check_all(secret_store, store, google=_google_or_none()))
+    """Try each company system with its stored key (a cheap read), and each AI partner, and update the Access tab."""
+    results = integrations.check_all(secret_store, store, google=_google_or_none())
+    results.update(talk_service().check_partners())
+    return jsonify(results=results)
 
 
 def _google_or_none():
@@ -673,6 +675,7 @@ def do_run(trigger):
             summary["errors"].append({"space": "(assistant's tasks)", "error": str(exc)[:300]})
         try:  # keep the Access tab true: a status stuck on an old failure fixes itself within the hour
             checked = integrations.check_all(secret_store, store, google=google)
+            checked.update(talk_service().check_partners())
             summary["systems_connected"] = sum(1 for r in checked.values() if r["ok"])
         except Exception as exc:  # noqa: BLE001
             summary["errors"].append({"space": "(connections)", "error": str(exc)[:300]})
