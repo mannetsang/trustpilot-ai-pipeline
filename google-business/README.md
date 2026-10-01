@@ -39,7 +39,65 @@ To mint a new refresh token: in the OAuth 2.0 Playground, gear icon, tick
 the `business.manage` scope as the listings' manager, and exchange the code. Save the
 `refresh_token` to Secret Manager and the local `.env`.
 
-## Usage
+## Review pipeline (Cloud Run `gbp-reviews`)
+
+The Trustpilot pipeline's twin, in [`cloud_run/`](cloud_run/). Cloud Scheduler
+(`gbp-reviews-monitor`, every 30 minutes) calls `/monitor`; the service pulls
+the reviews updated in the last 3 days across all 17 listings and, for each
+one the Sheet doesn't have yet:
+
+1. asks Gemini 2.5 Pro (Vertex AI, this project) for a public **reply
+   suggestion**, an internal **business suggestion** and, for 1-3 stars, a
+   **type** from the same five categories the Trustpilot service uses;
+2. posts a card to the reviews Google Chat space (same space as Trustpilot
+   reviews) with *Reply on Google* and *View on Maps* buttons;
+3. appends a row to the **Google Business Profile Reviews** Sheet
+   (`1I6RJ9SoESONvCRnRZWMCwLq6wU3utYukWqC3w7iUav4`).
+
+Business Profile has no review webhook we can register from this project, so
+polling is the only ingestion path; the Trustpilot service's `/monitor` is the
+same idea. Reviews carry no customer email, so there is no TeamDesk service
+request step.
+
+| Sheet column | Value |
+|---|---|
+| A Date | date the customer wrote the review |
+| B Customer Name | reviewer's display name (or Anonymous) |
+| C Location | salon nickname - listing title (Trustpilot keeps the email here) |
+| D Star Rating | 1-5 |
+| E Type | AI, 1-3 stars only |
+| F Comment | review text, Google's translation block included when present |
+| G Reply Suggestion / H Business Suggestion | Gemini |
+| I Remark | manual |
+| J Review ID | dedup key |
+| K Reply Posted At | set when a reply is seen on Google or posted via `/api/reply` |
+| L Review Name | full resource name, needed by `/api/reply` |
+
+Endpoints: `GET /monitor?days=N`, `POST /backfill?days=all&ai=1&limit=100`
+(seeds older reviews without Chat posts; repeat until `remaining` is 0),
+`GET /api/locations`, `GET /api/reviews`, `POST /api/reply` with
+`{"review": "<column L>", "message": "..."}`. `/backfill` and `/api/reply`
+require the `X-Api-Token` header (Secret Manager `gbp-reviews-api-token`).
+
+Deployment: [`.github/workflows/deploy-gbp-reviews.yml`](../.github/workflows/deploy-gbp-reviews.yml)
+runs on every push touching `cloud_run/`, deploys with `--source`, mounts the
+secrets below and upserts the scheduler job. The runtime identity is the
+project's default compute service account, which the Sheet is shared with.
+
+| Secret Manager id | Container env var |
+|---|---|
+| `google-business-profile-client-id` / `-client-secret` / `-refresh-token` | `GOOGLE_BUSINESS_PROFILE_*` |
+| `gbp-reviews-gchat-webhook-url` | `GCHAT_WEBHOOK_URL` (copied from the Trustpilot service, 2026-10-01) |
+| `gbp-reviews-api-token` | `API_TOKEN` |
+
+Local runs read the root `.env` and never touch Chat or the Sheet:
+
+```bash
+python google-business/cloud_run/main.py reviews --days 7
+python google-business/cloud_run/main.py monitor --days 3 --dry-run --ai
+```
+
+## Listing scripts
 
 ```bash
 python google-business/locations.py          # every location, with ids

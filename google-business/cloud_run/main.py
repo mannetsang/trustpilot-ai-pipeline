@@ -1,0 +1,650 @@
+"""Google Business Profile review pipeline - the Trustpilot pipeline's twin.
+
+Cloud Scheduler calls /monitor every 30 minutes. It pulls the reviews updated
+in the last few days across every salon listing, and for each one not yet in
+the Google Sheet it asks Gemini (Vertex AI) for a public reply suggestion, an
+internal business suggestion and, for 1-3 stars, a review type; then it posts
+a card to the reviews Google Chat space and appends a row to the Sheet.
+
+Business Profile offers no webhook we can register from this project, so
+polling is the ingestion path (the Trustpilot service's /monitor does the
+same job as a backstop for its webhook).
+
+Endpoints
+  GET  /                    health
+  GET  /monitor             poll + process new reviews (synchronous, ?days=N)
+  POST /backfill            seed the Sheet with older reviews, no Chat posts
+                            (X-Api-Token; ?days=N|all &ai=1 &limit=100; repeat
+                            until the response says remaining=0)
+  GET  /api/locations       listings with nickname, address, Maps link
+  GET  /api/reviews         newest reviews across all listings (5 min cache)
+  POST /api/reply           {"review": "<review resource name>", "message": ...}
+                            posts the public reply on Google (X-Api-Token)
+
+Env (Cloud Run): GOOGLE_BUSINESS_PROFILE_CLIENT_ID / _CLIENT_SECRET /
+_REFRESH_TOKEN, GCHAT_WEBHOOK_URL and API_TOKEN come from Secret Manager;
+GOOGLE_SHEET_ID and GBP_ACCOUNT are plain env vars. Vertex AI and Sheets use
+the runtime service account (Application Default Credentials), so the Sheet
+must be shared with it.
+"""
+
+import datetime as dt
+import json
+import os
+import sys
+import threading
+import time
+
+import requests
+from flask import Flask, jsonify, request
+
+# Local runs: pull the repo's gitignored .env so no secrets are exported by hand.
+# The container has no lib/ folder, so this silently does nothing there.
+try:
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+    from lib.secrets import load_dotenv  # noqa: E402
+    load_dotenv(os.path.dirname(os.path.abspath(__file__)))
+except Exception:  # noqa: BLE001
+    pass
+
+app = Flask(__name__)
+
+CLIENT_ID = os.environ["GOOGLE_BUSINESS_PROFILE_CLIENT_ID"]
+CLIENT_SECRET = os.environ["GOOGLE_BUSINESS_PROFILE_CLIENT_SECRET"]
+REFRESH_TOKEN = os.environ["GOOGLE_BUSINESS_PROFILE_REFRESH_TOKEN"]
+GCHAT_WEBHOOK_URL = os.environ.get("GCHAT_WEBHOOK_URL", "")
+GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "")
+API_TOKEN = os.environ.get("API_TOKEN", "")
+GBP_ACCOUNT = os.environ.get("GBP_ACCOUNT", "accounts/111445610944292236883")
+MONITOR_WINDOW_DAYS = int(os.environ.get("MONITOR_WINDOW_DAYS", "3"))
+
+GCP_PROJECT = "shp-ai-bot-2026"
+VERTEX_LOCATION = "us-central1"
+VERTEX_MODEL = "gemini-2.5-pro"
+
+TOKEN_URL = "https://oauth2.googleapis.com/token"
+V4 = "https://mybusiness.googleapis.com/v4"
+BUSINESS_INFO_API = "https://mybusinessbusinessinformation.googleapis.com/v1"
+LOCATION_READ_MASK = "name,title,storefrontAddress,metadata"
+
+STARS = {"ONE": 1, "TWO": 2, "THREE": 3, "FOUR": 4, "FIVE": 5}
+
+# Salon nicknames from CLAUDE.md, keyed by location id. Ids are not secrets.
+NICKNAMES = {
+    "11580068753340767001": "Dufferin",
+    "7223301939465497732": "Rapistan",
+    "10905129003754891303": "STC",
+    "685188567892497037": "Eglinton",
+    "13689417356433350520": "Ridgeway",
+    "9719921915312996452": "Consumer",
+    "9984412715850155494": "Brampton",
+    "16676111479862273432": "Pembroke Pines",
+    "11640499775623985658": "New York",
+    "8200285945777290212": "New York (Gen'C Hair Center)",
+    "5108674717103047486": "Deerfield Beach",
+    "8588506284493313246": "Sunrise FL",
+    "10496215448163535265": "Madrid",
+    "9083563788300132682": "Diemen NL",
+    "2286575413498793421": "Eglinton (Gen'C Beauty)",
+    "16570189707651721536": "Rapistan (Gen'C Beauty)",
+    "6692803018046926984": "Dufferin (Gen'C Beauty)",
+}
+
+SHEET_HEADERS = [
+    "Date", "Customer Name", "Location", "Star Rating", "Type", "Comment",
+    "Reply Suggestion", "Business Suggestion", "Remark", "Review ID",
+    "Reply Posted At", "Review Name",
+]
+SHEET_RANGE = "A:L"
+COL_REVIEW_ID = 9      # J, zero-based index in a row
+COL_REPLY_AT = 10      # K
+COL_REVIEW_NAME = 11   # L
+
+# ---------------------------------------------------------------------------
+# Business Profile auth + HTTP
+# ---------------------------------------------------------------------------
+_gbp_token = None
+_gbp_token_expiry = 0.0
+_gbp_lock = threading.Lock()
+
+
+def get_gbp_token():
+    """Mint an access token from the refresh token; cached until a minute before expiry."""
+    global _gbp_token, _gbp_token_expiry
+    with _gbp_lock:
+        if _gbp_token and time.time() < _gbp_token_expiry:
+            return _gbp_token
+        r = requests.post(TOKEN_URL, data={
+            "grant_type": "refresh_token", "refresh_token": REFRESH_TOKEN,
+            "client_id": CLIENT_ID, "client_secret": CLIENT_SECRET,
+        }, timeout=20)
+        if r.status_code != 200:
+            raise RuntimeError(f"token refresh failed: {r.status_code} {r.text[:200]}")
+        data = r.json()
+        _gbp_token = data["access_token"]
+        _gbp_token_expiry = time.time() + int(data.get("expires_in", 3600)) - 60
+        return _gbp_token
+
+
+def gbp(method, url, params=None, payload=None, timeout=60):
+    headers = {"Authorization": f"Bearer {get_gbp_token()}"}
+    r = requests.request(method, url, params=params, json=payload, headers=headers, timeout=timeout)
+    if r.status_code == 401:  # token revoked mid-run: mint again and retry once
+        global _gbp_token
+        _gbp_token = None
+        headers["Authorization"] = f"Bearer {get_gbp_token()}"
+        r = requests.request(method, url, params=params, json=payload, headers=headers, timeout=timeout)
+    if r.status_code >= 400:
+        raise RuntimeError(f"GBP {method} {url.split('/v')[-1][:80]} -> {r.status_code} {r.text[:300]}")
+    return r.json() if r.text else {}
+
+
+# ---------------------------------------------------------------------------
+# Locations (cached for an hour) and reviews
+# ---------------------------------------------------------------------------
+_locations = None
+_locations_expiry = 0.0
+
+
+def get_locations():
+    """{location_id: {id, name, title, label, locality, maps_url}}"""
+    global _locations, _locations_expiry
+    if _locations and time.time() < _locations_expiry:
+        return _locations
+    out, params = {}, {"readMask": LOCATION_READ_MASK, "pageSize": 100}
+    while True:
+        body = gbp("GET", f"{BUSINESS_INFO_API}/{GBP_ACCOUNT}/locations", params=params)
+        for loc in body.get("locations", []):
+            loc_id = loc["name"].split("/")[-1]
+            address = loc.get("storefrontAddress") or {}
+            locality = address.get("locality", "")
+            nickname = NICKNAMES.get(loc_id) or locality or loc_id
+            out[loc_id] = {
+                "id": loc_id,
+                "name": f"{GBP_ACCOUNT}/locations/{loc_id}",   # v4 resource name
+                "title": loc.get("title", ""),
+                "locality": locality,
+                "label": f"{nickname} - {loc.get('title', '')}",
+                "maps_url": (loc.get("metadata") or {}).get("mapsUri", ""),
+            }
+        if not body.get("nextPageToken"):
+            break
+        params["pageToken"] = body["nextPageToken"]
+    _locations, _locations_expiry = out, time.time() + 3600
+    return out
+
+
+def iter_reviews(newest_first=True):
+    """Yield (location_info, review) across every listing, newest-updated first.
+    batchGetReviews takes at most 50 locations per call; we have 17."""
+    locations = get_locations()
+    names = [loc["name"] for loc in locations.values()]
+    for start in range(0, len(names), 50):
+        payload = {"locationNames": names[start:start + 50], "pageSize": 50,
+                   "orderBy": "updateTime desc" if newest_first else "rating"}
+        while True:
+            body = gbp("POST", f"{V4}/{GBP_ACCOUNT}/locations:batchGetReviews", payload=payload)
+            for item in body.get("locationReviews", []):
+                loc_id = item["name"].split("/")[-1]
+                yield locations.get(loc_id, {"id": loc_id, "name": item["name"], "title": "", "label": loc_id, "maps_url": ""}), item["review"]
+            token = body.get("nextPageToken")
+            if not token:
+                break
+            payload["pageToken"] = token
+
+
+def parse_time(value):
+    try:
+        return dt.datetime.strptime(value[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=dt.timezone.utc)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def format_review_date(value):
+    """2026-09-30T19:30:51Z -> 'Sep 30, 2026' (portable, no %-d)."""
+    t = parse_time(value)
+    return f"{t.strftime('%b')} {t.day}, {t.year}" if t else (value or "")[:10]
+
+
+def review_fields(review):
+    reviewer = review.get("reviewer") or {}
+    name = "Anonymous" if reviewer.get("isAnonymous") else (reviewer.get("displayName") or "A customer")
+    rating = STARS.get(review.get("starRating"), 0)
+    comment = (review.get("comment") or "").strip()
+    reply = review.get("reviewReply") or {}
+    return {
+        "name": review["name"],
+        "id": review.get("reviewId") or review["name"].split("/")[-1],
+        "reviewer": name,
+        "rating": rating,
+        "comment": comment,
+        "created": review.get("createTime", ""),
+        "updated": review.get("updateTime", ""),
+        "reply_url": review.get("reviewReplyUrl", ""),
+        "replied_at": reply.get("updateTime", ""),
+        "reply": reply.get("comment", ""),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Google Sheet (same shape as the Trustpilot sheet, Location in place of Email)
+# ---------------------------------------------------------------------------
+def get_sheets_service():
+    import google.auth
+    from googleapiclient.discovery import build
+    creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/spreadsheets"])
+    return build("sheets", "v4", credentials=creds, cache_discovery=False)
+
+
+def read_sheet():
+    """Returns (rows, {review_id: 1-based row number}, {review_id: replied_at})."""
+    service = get_sheets_service()
+    rows = service.spreadsheets().values().get(spreadsheetId=GOOGLE_SHEET_ID, range=SHEET_RANGE).execute().get("values", [])
+    if not rows:
+        service.spreadsheets().values().update(
+            spreadsheetId=GOOGLE_SHEET_ID, range="A1", valueInputOption="RAW",
+            body={"values": [SHEET_HEADERS]}).execute()
+        rows = [SHEET_HEADERS]
+    index, replied = {}, {}
+    for i, row in enumerate(rows[1:], start=2):
+        rid = row[COL_REVIEW_ID].strip() if len(row) > COL_REVIEW_ID else ""
+        if rid:
+            index[rid] = i
+            replied[rid] = row[COL_REPLY_AT].strip() if len(row) > COL_REPLY_AT else ""
+    return rows, index, replied
+
+
+def append_rows(rows):
+    if not rows:
+        return
+    get_sheets_service().spreadsheets().values().append(
+        spreadsheetId=GOOGLE_SHEET_ID, range=SHEET_RANGE, valueInputOption="USER_ENTERED",
+        insertDataOption="INSERT_ROWS", body={"values": rows}).execute()
+
+
+def stamp_reply(row_number, replied_at):
+    get_sheets_service().spreadsheets().values().update(
+        spreadsheetId=GOOGLE_SHEET_ID, range=f"K{row_number}", valueInputOption="USER_ENTERED",
+        body={"values": [[replied_at]]}).execute()
+
+
+def sheet_row(f, location, review_type, reply, suggestion):
+    return [
+        format_review_date(f["created"]),   # A Date the customer wrote the review
+        f["reviewer"],                      # B Customer Name
+        location["label"],                  # C Location (Trustpilot keeps Email here)
+        f["rating"],                        # D Star Rating
+        review_type,                        # E Type (AI, 1-3 stars only)
+        f["comment"],                       # F Comment
+        reply,                              # G Reply Suggestion
+        suggestion,                         # H Business Suggestion
+        "",                                 # I Remark (manual)
+        f["id"],                            # J Review ID (dedup key)
+        format_review_date(f["replied_at"]) if f["replied_at"] else "",  # K Reply Posted At
+        f["name"],                          # L Review resource name (for /api/reply)
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Gemini on Vertex AI - same prompts as the Trustpilot service, Google wording
+# ---------------------------------------------------------------------------
+def get_vertex_token():
+    import google.auth
+    import google.auth.transport.requests
+    creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+    creds.refresh(google.auth.transport.requests.Request())
+    return creds.token
+
+
+def vertex_call(prompt):
+    url = (f"https://{VERTEX_LOCATION}-aiplatform.googleapis.com/v1/projects/{GCP_PROJECT}"
+           f"/locations/{VERTEX_LOCATION}/publishers/google/models/{VERTEX_MODEL}:generateContent")
+    r = requests.post(url, headers={"Authorization": f"Bearer {get_vertex_token()}"},
+                      json={"contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                            "generationConfig": {"temperature": 0.4}}, timeout=90)
+    parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
+    for part in parts:
+        if part.get("text"):
+            return part["text"].strip()
+    return ""
+
+
+REVIEW_TYPES = [
+    "customer support",
+    "shipping",
+    "product defective - stock",
+    "product defective - custom",
+    "product defective - salon finished",
+]
+
+
+def get_review_type(comment):
+    prompt = (
+        "You are classifying a negative customer review of Superhairpieces, a hairpiece company "
+        "with hair-replacement salons.\n\n"
+        "Based on the review comment below, pick the single most relevant category from this list:\n"
+        + "\n".join(f"- {t}" for t in REVIEW_TYPES) +
+        "\n\nDefinitions:\n"
+        "- customer support: complaint about staff, communication, response time, or service attitude\n"
+        "- shipping: complaint about delivery, courier, packaging damage in transit, or delays\n"
+        "- product defective - stock: complaint about a ready-made/off-the-shelf hairpiece (quality, colour, size)\n"
+        "- product defective - custom: complaint about a custom-ordered hairpiece that didn't meet specifications\n"
+        "- product defective - salon finished: complaint about salon services such as haircut, base cut, "
+        "trim, installation, or maintenance applied to the product\n\n"
+        f"Review:\n\"{comment}\"\n\n"
+        "Reply with only the category name, exactly as written above. No explanation."
+    )
+    try:
+        result = vertex_call(prompt).lower().strip().strip("\"'`*. ")
+        if result in REVIEW_TYPES:
+            return result
+    except Exception as e:  # noqa: BLE001
+        print(f"Vertex AI type error: {e}")
+    return ""
+
+
+def get_reply_suggestion(comment, rating, name, location):
+    prompt = (
+        f"A customer named {name} left a {rating}-star Google review of the Superhairpieces "
+        f"salon at {location['label']} with the following comment:\n\"{comment}\"\n\n"
+        "Write a warm, professional public reply from Superhairpieces to post on Google. "
+        "Keep it to 2-3 sentences. Thank them, address their specific feedback, and invite "
+        "them to reach out if needed. If a staff member is named, acknowledge them. "
+        "Do not use generic filler phrases."
+    )
+    try:
+        return vertex_call(prompt)
+    except Exception as e:  # noqa: BLE001
+        print(f"Vertex AI reply error: {e}")
+    return ""
+
+
+def get_business_suggestion(comment, rating, location):
+    prompt = (
+        f"A customer left a {rating}-star Google review of our hairpiece salon "
+        f"({location['label']}, Superhairpieces) with the following comment:\n\"{comment}\"\n\n"
+        "Provide a brief 1-2 sentence actionable improvement suggestion for our internal team. "
+        "If the review is fully positive, suggest a quick way to capitalise on it. "
+        "Be concise and professional."
+    )
+    try:
+        return vertex_call(prompt)
+    except Exception as e:  # noqa: BLE001
+        print(f"Vertex AI suggestion error: {e}")
+    return "AI suggestion unavailable."
+
+
+# ---------------------------------------------------------------------------
+# Google Chat card - same layout as the Trustpilot card
+# ---------------------------------------------------------------------------
+def send_to_gchat(f, location, reply, suggestion):
+    if not GCHAT_WEBHOOK_URL:
+        print("Chat: no webhook configured, skipping")
+        return
+    stars = "⭐" * min(f["rating"], 5)
+    buttons = []
+    if f["reply_url"]:
+        buttons.append({"text": "Reply on Google", "onClick": {"openLink": {"url": f["reply_url"]}},
+                        "color": {"red": 0.0, "green": 0.478, "blue": 1.0, "alpha": 1.0}})
+    if location.get("maps_url"):
+        buttons.append({"text": "View on Maps", "onClick": {"openLink": {"url": location["maps_url"]}}})
+    card = {"cardsV2": [{"cardId": f["id"], "card": {"sections": [
+        {"widgets": [{"textParagraph": {"text": (
+            f"{stars} <b>New Google Review</b> {stars}<br><br>"
+            f"<b>Customer:</b> {f['reviewer']}<br>"
+            f"<b>Location:</b> {location['label']}<br>"
+            f"<b>Rating:</b> {f['rating']}-star<br>"
+            f"<b>Date:</b> {format_review_date(f['created'])}")}}]},
+        {"header": "Comment", "widgets": [{"textParagraph": {"text": f["comment"] or "—"}}]},
+        {"header": "\U0001f4ac Reply Suggestion", "widgets": [{"textParagraph": {"text": reply or "—"}}]},
+        {"header": "\U0001f4a1 Business Suggestion", "widgets": [
+            {"textParagraph": {"text": suggestion or "—"}},
+            *([{"buttonList": {"buttons": buttons}}] if buttons else []),
+        ]},
+    ]}}]}
+    try:
+        r = requests.post(GCHAT_WEBHOOK_URL, json=card, timeout=10)
+        if r.status_code != 200:
+            print(f"Chat webhook returned {r.status_code} {r.text[:200]}")
+    except Exception as e:  # noqa: BLE001
+        print(f"Google Chat error: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Processing
+# ---------------------------------------------------------------------------
+def enrich(f, location, with_ai=True):
+    has_comment = len(f["comment"]) > 5 and with_ai
+    reply = get_reply_suggestion(f["comment"], f["rating"], f["reviewer"], location) if has_comment else ""
+    suggestion = get_business_suggestion(f["comment"], f["rating"], location) if has_comment else ""
+    review_type = get_review_type(f["comment"]) if has_comment and 0 < f["rating"] <= 3 else ""
+    return reply, suggestion, review_type
+
+
+_monitor_lock = threading.Lock()
+_last_monitor = {"started": None, "finished": None, "result": None}
+
+
+def run_monitor(window_days, notify=True):
+    """Process reviews updated within the window that the Sheet doesn't know yet."""
+    cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=window_days)
+    _, index, replied = read_sheet()
+    checked = processed = stamped = 0
+    new_rows = []
+    for location, review in iter_reviews(newest_first=True):
+        f = review_fields(review)
+        updated = parse_time(f["updated"])
+        if updated and updated < cutoff:
+            break   # ordered by updateTime desc, everything after is older
+        checked += 1
+        if f["id"] in index:
+            # Known review: record a reply posted since we logged it.
+            if f["replied_at"] and not replied.get(f["id"]):
+                stamp_reply(index[f["id"]], format_review_date(f["replied_at"]))
+                stamped += 1
+            continue
+        reply, suggestion, review_type = enrich(f, location)
+        if notify:
+            send_to_gchat(f, location, reply, suggestion)
+        new_rows.append(sheet_row(f, location, review_type, reply, suggestion))
+        index[f["id"]] = True
+        processed += 1
+        print(f"Monitor: new {f['rating']}-star review by {f['reviewer']} at {location['label']} ({f['id'][:12]})")
+    append_rows(new_rows)
+    return {"checked": checked, "new": processed, "replies_stamped": stamped, "window_days": window_days}
+
+
+def run_backfill(days, with_ai, limit=100):
+    """Seed the Sheet with reviews it doesn't have (oldest first), never posting to
+    Chat. Processes at most `limit` reviews per call so each request stays well
+    inside the Cloud Run timeout; the response says how many remain."""
+    cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days) if days else None
+    _, index, _ = read_sheet()
+    pending = []
+    for location, review in iter_reviews(newest_first=True):
+        f = review_fields(review)
+        created = parse_time(f["created"])
+        if cutoff and created and created < cutoff:
+            continue
+        if f["id"] in index:
+            continue
+        pending.append((location, f))
+    pending.sort(key=lambda p: p[1]["created"])
+    batch, remaining = pending[:limit], max(len(pending) - limit, 0)
+    rows = []
+    for location, f in batch:
+        reply, suggestion, review_type = enrich(f, location, with_ai=with_ai)
+        rows.append(sheet_row(f, location, review_type, reply, suggestion))
+        if len(rows) >= 25:
+            append_rows(rows)
+            rows = []
+    append_rows(rows)
+    return {"added": len(batch), "remaining": remaining, "ai": with_ai, "days": days or "all"}
+
+
+def run_locked(fn, *args):
+    """Run a job inside the request (Cloud Run only guarantees CPU while a request
+    is open), one at a time. Returns (http_status, payload)."""
+    if not _monitor_lock.acquire(blocking=False):
+        return 409, {"status": "busy", "last_run": _last_monitor}
+    _last_monitor["started"] = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+    try:
+        result = fn(*args)
+        _last_monitor["result"] = result
+        return 200, {"status": "ok", **result}
+    except Exception as e:  # noqa: BLE001
+        _last_monitor["result"] = {"error": str(e)}
+        print(f"{fn.__name__} error: {e}")
+        return 500, {"status": "error", "message": str(e)}
+    finally:
+        _last_monitor["finished"] = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+        _monitor_lock.release()
+
+
+def authorized():
+    return bool(API_TOKEN) and request.headers.get("X-Api-Token", "") == API_TOKEN
+
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
+@app.after_request
+def add_cors(response):
+    if request.path.startswith("/api/"):
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Api-Token"
+    return response
+
+
+@app.route("/")
+def health():
+    return jsonify({"service": "gbp-reviews", "account": GBP_ACCOUNT, "last_run": _last_monitor})
+
+
+@app.route("/monitor", methods=["GET", "POST"])
+def monitor():
+    days = int(request.args.get("days", MONITOR_WINDOW_DAYS))
+    status, payload = run_locked(run_monitor, days)
+    return jsonify(payload), status
+
+
+@app.route("/backfill", methods=["POST"])
+def backfill():
+    """Seed older reviews into the Sheet in batches; call until `remaining` is 0."""
+    if not authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    days_arg = request.args.get("days", "all")
+    days = 0 if days_arg == "all" else int(days_arg)
+    with_ai = request.args.get("ai") == "1"
+    limit = int(request.args.get("limit", 100))
+    status, payload = run_locked(run_backfill, days, with_ai, limit)
+    return jsonify(payload), status
+
+
+@app.route("/api/locations", methods=["GET", "OPTIONS"])
+def api_locations():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    return jsonify(list(get_locations().values()))
+
+
+_reviews_cache = None
+_reviews_cache_expiry = 0.0
+
+
+@app.route("/api/reviews", methods=["GET", "OPTIONS"])
+def api_reviews():
+    """Newest 50 reviews across all listings, with the location label. Cached 5 minutes."""
+    global _reviews_cache, _reviews_cache_expiry
+    if request.method == "OPTIONS":
+        return ("", 204)
+    try:
+        if _reviews_cache and time.time() < _reviews_cache_expiry:
+            return jsonify(_reviews_cache)
+        out = []
+        for location, review in iter_reviews(newest_first=True):
+            f = review_fields(review)
+            f["location"] = location["label"]
+            f["maps_url"] = location.get("maps_url", "")
+            out.append(f)
+            if len(out) >= 50:
+                break
+        _reviews_cache, _reviews_cache_expiry = {"reviews": out}, time.time() + 300
+        return jsonify(_reviews_cache)
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/reply", methods=["POST", "OPTIONS"])
+def api_reply():
+    """Post (or replace) the public company reply on a Google review."""
+    global _reviews_cache
+    if request.method == "OPTIONS":
+        return ("", 204)
+    if not authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    body = request.get_json(silent=True) or {}
+    review_name = (body.get("review") or "").strip()
+    message = (body.get("message") or "").strip()
+    if not review_name.startswith(f"{GBP_ACCOUNT}/locations/") or "/reviews/" not in review_name:
+        return jsonify({"error": "review must be the full resource name (column L of the sheet)"}), 400
+    if not message:
+        return jsonify({"error": "Reply can't be empty"}), 400
+    if len(message) > 4096:
+        return jsonify({"error": "Reply too long (4096 char max)"}), 400
+    try:
+        result = gbp("PUT", f"{V4}/{review_name}/reply", payload={"comment": message})
+        _reviews_cache = None
+        posted = result.get("updateTime", "")
+        try:
+            _, index, _ = read_sheet()
+            rid = review_name.split("/")[-1]
+            if rid in index:
+                stamp_reply(index[rid], format_review_date(posted) if posted else "posted")
+        except Exception as e:  # noqa: BLE001
+            print(f"reply stamped on Google but not in sheet: {e}")
+        return jsonify({"ok": True, "reply": result})
+    except Exception as e:  # noqa: BLE001
+        print(f"reply error: {e}")
+        return jsonify({"error": str(e)}), 502
+
+
+# ---------------------------------------------------------------------------
+# Local CLI: python main.py monitor [--days N] [--dry-run]   (no Chat, no Sheet)
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("command", choices=["monitor", "locations", "reviews"])
+    ap.add_argument("--days", type=int, default=MONITOR_WINDOW_DAYS)
+    ap.add_argument("--dry-run", action="store_true", help="skip Chat and Sheet; print what would be processed")
+    ap.add_argument("--ai", action="store_true", help="with --dry-run, still call Gemini for the first review")
+    args = ap.parse_args()
+    if args.command == "locations":
+        for loc in get_locations().values():
+            print(f"{loc['id']:<22} {loc['label']}")
+    elif args.command == "reviews":
+        cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=args.days)
+        for location, review in iter_reviews():
+            f = review_fields(review)
+            if parse_time(f["updated"]) < cutoff:
+                break
+            print(f"{format_review_date(f['created']):<13} {f['rating']}* {location['label']:<40} {f['reviewer']:<25} replied={'y' if f['replied_at'] else 'n'}  {f['comment'][:60]!r}")
+    elif args.dry_run:
+        cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=args.days)
+        shown = 0
+        for location, review in iter_reviews():
+            f = review_fields(review)
+            if parse_time(f["updated"]) < cutoff:
+                break
+            print(f"would process: {f['rating']}* {f['reviewer']} at {location['label']}: {f['comment'][:80]!r}")
+            if args.ai and shown == 0 and f["comment"]:
+                reply, suggestion, review_type = enrich(f, location)
+                print("  reply      :", reply)
+                print("  suggestion :", suggestion)
+                print("  type       :", review_type or "(n/a)")
+                print("  sheet row  :", sheet_row(f, location, review_type, reply, suggestion)[:5])
+            shown += 1
+    else:
+        print(json.dumps(run_monitor(args.days), indent=2))

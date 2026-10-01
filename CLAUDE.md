@@ -88,6 +88,9 @@ vars `GOOGLE_BUSINESS_PROFILE_*`; see `google-business/README.md`. One
 account, `accounts/111445610944292236883`, with 17 locations; the README maps
 salon nicknames to location ids. Dufferin, Rapistan and Eglinton each have a
 Superhairpieces listing and a separate Gen'C Beauty listing.
+The review pipeline (Cloud Run `gbp-reviews`, scheduler every 30 min, Gemini
+suggestions, Chat card, Sheet `1I6RJ9SoESONvCRnRZWMCwLq6wU3utYukWqC3w7iUav4`)
+mirrors the Trustpilot one; see the README's pipeline section.
 
 ### Known data-quality caveats
 
