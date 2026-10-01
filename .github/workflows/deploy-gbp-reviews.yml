@@ -49,7 +49,7 @@ jobs:
             --source ./google-business/cloud_run \
             --region "$REGION" --project "$PROJECT" \
             --allow-unauthenticated \
-            --min-instances 0 --max-instances 3 --timeout 900 \
+            --min-instances 0 --max-instances 1 --timeout 900 \
             --set-env-vars "GOOGLE_SHEET_ID=$GOOGLE_SHEET_ID,GBP_ACCOUNT=$GBP_ACCOUNT" \
             --set-secrets "GOOGLE_BUSINESS_PROFILE_CLIENT_ID=google-business-profile-client-id:latest,GOOGLE_BUSINESS_PROFILE_CLIENT_SECRET=google-business-profile-client-secret:latest,GOOGLE_BUSINESS_PROFILE_REFRESH_TOKEN=google-business-profile-refresh-token:latest,GCHAT_WEBHOOK_URL=gbp-reviews-gchat-webhook-url:latest,API_TOKEN=gbp-reviews-api-token:latest" \
             --quiet

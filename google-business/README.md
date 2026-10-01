@@ -83,6 +83,12 @@ no key since 2026-10-01; it only answers requests whose `Origin` is the Reviews
 Dashboard (`ALLOWED_ORIGINS` env var). That stops other websites, not a
 determined script, so treat the reply endpoint as effectively public.
 
+The service runs as a single instance (`--max-instances 1`). Monitor, backfill
+and dedupe serialize on an in-process lock, which only holds within one
+instance; with two instances an interrupted backfill and its restart ran at the
+same time and wrote 10 duplicate rows on 2026-10-01. They were removed with
+`POST /maintenance/dedupe?apply=1` (token-protected; a dry run without `apply`).
+
 Deployment: [`.github/workflows/deploy-gbp-reviews.yml`](../.github/workflows/deploy-gbp-reviews.yml)
 runs on every push touching `cloud_run/`, deploys with `--source` and mounts
 the secrets below. The scheduler job `gbp-reviews-monitor` was created once

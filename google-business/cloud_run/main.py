@@ -522,6 +522,37 @@ def run_backfill(days, with_ai, limit=100):
     return {"added": len(batch), "remaining": remaining, "ai": with_ai, "days": days or "all"}
 
 
+def run_dedupe(apply=False):
+    """Remove duplicate rows for the same review, keeping the LAST copy (the one /monitor keeps in
+    sync). A copy is only removed when its manual columns (E Type, I Remark) add nothing the kept
+    row lacks; otherwise it is reported and left alone. Dry run unless apply=True."""
+    service = get_sheets_service()
+    meta = service.spreadsheets().get(spreadsheetId=GOOGLE_SHEET_ID,
+                                      fields="sheets(properties(sheetId,index))").execute()
+    sheet_id = sorted(meta["sheets"], key=lambda x: x["properties"]["index"])[0]["properties"]["sheetId"]
+    rows, _, _ = read_sheet()
+    cell = lambda row, col: row[col].strip() if len(row) > col else ""  # noqa: E731
+    last = {}
+    for i, row in enumerate(rows[1:], start=2):
+        if cell(row, COL_REVIEW_ID):
+            last[cell(row, COL_REVIEW_ID)] = i
+    drop, kept_for_edits = [], []
+    for i, row in enumerate(rows[1:], start=2):
+        rid = cell(row, COL_REVIEW_ID)
+        if not rid or last[rid] == i:
+            continue
+        keep = rows[last[rid] - 1]
+        manual = [c for c in (4, 8) if cell(row, c) and cell(row, c) != cell(keep, c)]
+        (kept_for_edits if manual else drop).append(i)
+    if apply and drop:
+        requests = [{"deleteDimension": {"range": {"sheetId": sheet_id, "dimension": "ROWS",
+                                                   "startIndex": r - 1, "endIndex": r}}}
+                    for r in sorted(drop, reverse=True)]
+        service.spreadsheets().batchUpdate(spreadsheetId=GOOGLE_SHEET_ID, body={"requests": requests}).execute()
+    return {"duplicates": len(drop), "rows": drop, "left_because_of_manual_edits": kept_for_edits,
+            "applied": bool(apply)}
+
+
 def run_locked(fn, *args):
     """Run a job inside the request (Cloud Run only guarantees CPU while a request
     is open), one at a time. Returns (http_status, payload)."""
@@ -579,6 +610,17 @@ def backfill():
     with_ai = request.args.get("ai") == "1"
     limit = int(request.args.get("limit", 100))
     status, payload = run_locked(run_backfill, days, with_ai, limit)
+    return jsonify(payload), status
+
+
+@app.route("/maintenance/dedupe", methods=["POST"])
+def maintenance_dedupe():
+    """Duplicate-row cleanup (X-Api-Token). Dry run by default; ?apply=1 deletes."""
+    global _sheet_cache
+    if not authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    status, payload = run_locked(run_dedupe, request.args.get("apply") == "1")
+    _sheet_cache = None
     return jsonify(payload), status
 
 
