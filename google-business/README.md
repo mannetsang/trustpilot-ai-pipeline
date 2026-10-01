@@ -123,7 +123,8 @@ The Google Business tab of the Reviews Dashboard
 |---|---|
 | Review rows, AI suggestions, history | `GET /api/sheet` (2 min cache) |
 | Real reply state of the newest 50 reviews | `GET /api/reviews` (5 min cache) |
-| All-time rating + count per listing, KPI tiles, comparison card | `GET /api/summary` (1 h cache) |
+| Listing order, Google card on the All sources tab | `GET /api/summary` (1 h cache) |
+| Stores table (per-store rating, volume, star breakdown, replies) | built in the page from `/api/sheet` rows |
 | "Post reply on Google" in the reply modal | `POST /api/reply` (no key; origin-checked) |
 
 ## Listing scripts

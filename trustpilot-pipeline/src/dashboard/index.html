@@ -218,14 +218,21 @@
     .source-tab[data-source="google"].active .count { background: #4285f4; color: #fff; }
     .source-logo.gg svg { width: 62%; height: 62%; display: block; }
     html[data-theme="dark"] .source-logo.gg { background: #fff; border-color: transparent; }
-    /* Google "Reviews by location" rows — click to filter the feed + Reviews tab to one listing. */
-    .gg-loc-row { display: flex; align-items: center; gap: 12px; padding: 9px 6px; margin: 0 -6px; border-bottom: 1px solid var(--border-subtle); cursor: pointer; border-radius: 8px; transition: background var(--motion-fast) var(--spring-soft); }
-    .gg-loc-row:last-child { border-bottom: 0; }
-    .gg-loc-row:hover { background: var(--hover-wash); }
-    .gg-loc-row.active { background: #e8f0fe; }
-    html[data-theme="dark"] .gg-loc-row.active { background: #1e2a44; }
-    .gg-loc-row.active .gg-loc-name { color: #1a56db; }
-    html[data-theme="dark"] .gg-loc-row.active .gg-loc-name { color: #8ab4f8; }
+    /* Google "Stores" table — one row per listing; click a row to filter reviews to that store. */
+    .gg-store-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .gg-store-table th { text-align: right; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-mute); padding: 9px 12px; border-bottom: 1px solid var(--border-subtle); white-space: nowrap; cursor: pointer; user-select: none; }
+    .gg-store-table th:hover, .gg-store-table th.sorted { color: var(--text); }
+    .gg-store-table td { text-align: right; padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .gg-store-table th:first-child, .gg-store-table td:first-child { text-align: left; padding-left: 20px; }
+    .gg-store-table th:last-child, .gg-store-table td:last-child { padding-right: 20px; }
+    .gg-store-table tbody tr { cursor: pointer; transition: background var(--motion-fast) var(--spring-soft); }
+    .gg-store-table tbody tr:hover { background: var(--hover-wash); }
+    .gg-store-table tbody tr:last-child td { border-bottom: 0; }
+    .gg-store-table tbody tr.active { background: #e8f0fe; }
+    html[data-theme="dark"] .gg-store-table tbody tr.active { background: #1e2a44; }
+    .gg-store-table tbody tr.active .gg-store-name { color: #1a56db; }
+    html[data-theme="dark"] .gg-store-table tbody tr.active .gg-store-name { color: #8ab4f8; }
+    .gg-store-table .pill { border: 0; cursor: pointer; }
     /* On the All-sources tab the body has no source class, so individual review rows opt-in to
        their own source theme via [data-source] on the row container. The selectors target stars
        (not Trustpilot — keep its default brand green) so each row reads as its own product. */
@@ -732,6 +739,18 @@
           <!-- injected -->
         </div>
 
+        <!-- GOOGLE — Stores. One row per listing, in place of the KPI tiles + rating distribution
+             (no cross-store totals on this tab). Figures come from the reviews sheet, which holds
+             the full history, and follow the date range + search. Clicking a row filters Recent
+             reviews and the Reviews list to that store; the Needs-reply pill opens its queue. -->
+        <div class="card hidden" id="googleStoresCard">
+          <div class="px-5 pt-4 pb-3">
+            <h3 class="text-sm font-semibold">Stores</h3>
+            <p class="text-xs mt-1" style="color: var(--text-mid);" id="googleStoresSubtitle">Each Google listing</p>
+          </div>
+          <div class="overflow-x-auto" id="googleStoresTable"></div>
+        </div>
+
         <!-- MIDDLE: Distribution + Recent reviews (hidden on All sources) -->
         <div class="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-4" id="middleRow">
           <!-- Default rating-distribution card (Trustpilot / Website / Google) -->
@@ -831,20 +850,6 @@
           <div id="tpMomentumChart" class="mt-2">
             <!-- injected SVG line chart -->
           </div>
-        </div>
-
-        <!-- GOOGLE — Reviews by location. One row per listing: all-time rating + volume straight
-             from Google (the sheet only holds what we've ingested), bar scaled by volume, "+N" =
-             reviews in the current date range. Clicking a row filters the feed + Reviews tab. -->
-        <div class="card p-5 flex-col gap-3 hidden" id="googleLocationsCard">
-          <div class="flex items-baseline justify-between flex-wrap gap-2 mb-1">
-            <div>
-              <h3 class="text-sm font-semibold">Reviews by location</h3>
-              <p class="text-xs mt-1" style="color: var(--text-mid);">All-time rating and volume per listing · click a row to filter to that salon</p>
-            </div>
-            <span class="pill pill-brand"><span class="w-1.5 h-1.5 rounded-full" style="background: var(--brand);"></span> Live from Google</span>
-          </div>
-          <div id="googleLocationsList"></div>
         </div>
 
         <!-- STAMPED — Issues by type donut + Top products by type panel.
@@ -1139,6 +1144,8 @@ let UI = { source: "all", feedTab: "all", listTab: "all", search: "", dateRange:
   stampedFeedType: "", stampedFeedProduct: "",
   // Google-only: active listing filter (location label). "" = all locations.
   googleLocation: "",
+  // Google "Stores" table sort: column key + direction.
+  googleStoreSort: { key: "n", dir: "desc" },
   // Stamped "Top products by type" — active tab (defaults to first type with data).
   stampedTypesTab: "Men",
   // Business-suggestions card star filter: "all" | "1" | "2" | "3"
@@ -3211,42 +3218,97 @@ function renderGoogleFeedFilters() {
   sel.value = UI.googleLocation || "";
 }
 
-// Google "Reviews by location" card. Rows come from /api/summary (all-time, live from Google);
-// "+N" counts the rows in the current date range / search slice.
-function renderGoogleLocations(sourceRows) {
-  const card = document.getElementById("googleLocationsCard");
+// Google "Stores" table: one row per listing, built from the reviews sheet (full history) so it
+// follows the date range + search. "Last 7 days" ignores the date range on purpose.
+const GG_STORE_COLS = [
+  { key: "label",   label: "Store",       title: "Google Business Profile listing" },
+  { key: "avg",     label: "Rating",      title: "Average stars in the selected period" },
+  { key: "n",       label: "Reviews",     title: "Reviews in the selected period" },
+  { key: "s5",      label: "5★",          title: "5-star reviews" },
+  { key: "s4",      label: "4★",          title: "4-star reviews" },
+  { key: "s3",      label: "3★",          title: "3-star reviews" },
+  { key: "s2",      label: "2★",          title: "2-star reviews" },
+  { key: "s1",      label: "1★",          title: "1-star reviews" },
+  { key: "needs",   label: "Needs reply", title: "Reviews in the period without an owner reply" },
+  { key: "replied", label: "Replied",     title: "Share of the period's reviews with an owner reply" },
+  { key: "last7",   label: "Last 7 days", title: "New reviews in the last 7 days, whatever the date range" },
+  { key: "latest",  label: "Latest",      title: "Most recent review in the period" },
+];
+
+function googleStoreStats(sourceRows) {
+  const DAY = 24 * 60 * 60 * 1000;
+  const recent = applySearchAPI(GBP_REVIEWS).filter(r => r.ts && Date.now() - r.ts.getTime() <= 7 * DAY);
+  const everTotals = {};
+  ((GBP_LIVE && GBP_LIVE.locations) || []).forEach(l => { everTotals[l.label] = l.total || 0; });
+  return googleLocationOptions().map(label => {
+    const rows = sourceRows.filter(r => r.location === label);
+    const dist = [0, 0, 0, 0, 0, 0];
+    rows.forEach(r => { if (r.stars >= 1 && r.stars <= 5) dist[r.stars]++; });
+    const replied = rows.filter(r => r.hasReply).length;
+    const latest = rows.reduce((m, r) => (r.ts && (!m || r.ts > m)) ? r.ts : m, null);
+    return {
+      label, n: rows.length,
+      avg: rows.length ? rows.reduce((t, r) => t + r.stars, 0) / rows.length : null,
+      s5: dist[5], s4: dist[4], s3: dist[3], s2: dist[2], s1: dist[1],
+      needs: rows.length - replied,
+      replied: rows.length ? replied / rows.length : null,
+      last7: recent.filter(r => r.location === label).length,
+      latest,
+      everReviewed: (everTotals[label] || 0) > 0 || GBP_REVIEWS.some(r => r.location === label),
+    };
+  }).filter(st => st.everReviewed);
+}
+
+function renderGoogleStores(sourceRows) {
+  const card = document.getElementById("googleStoresCard");
   if (!card) return;
   const show = UI.source === "google";
   card.classList.toggle("hidden", !show);
-  card.classList.toggle("flex", show);
   if (!show) return;
-  const periodCounts = {};
-  sourceRows.forEach(r => { periodCounts[r.location] = (periodCounts[r.location] || 0) + 1; });
-  let rows;
-  if (GBP_LIVE && GBP_LIVE.locations && GBP_LIVE.locations.length) {
-    rows = GBP_LIVE.locations.map(l => ({ label: l.label, total: l.total, avg: l.average, period: periodCounts[l.label] || 0 }));
-  } else {
-    const agg = {};
-    GBP_REVIEWS.forEach(r => { const a = agg[r.location] || (agg[r.location] = { label: r.location, total: 0, sum: 0 }); a.total++; a.sum += r.stars; });
-    rows = Object.values(agg).map(a => ({ label: a.label, total: a.total, avg: a.total ? a.sum / a.total : null, period: periodCounts[a.label] || 0 }));
-  }
-  rows = rows.filter(r => r.total > 0 || r.period > 0).sort((a, b) => b.total - a.total);
-  const max = Math.max(1, ...rows.map(r => r.total));
+  const stores = googleStoreStats(sourceRows);
+  const sort = UI.googleStoreSort || { key: "n", dir: "desc" };
+  const val = (st) => sort.key === "label" ? st.label.toLowerCase()
+                    : sort.key === "latest" ? (st.latest ? st.latest.getTime() : -1)
+                    : (st[sort.key] == null ? -1 : st[sort.key]);
+  stores.sort((a, b) => {
+    const x = val(a), y = val(b);
+    const c = x < y ? -1 : x > y ? 1 : 0;
+    return (sort.dir === "asc" ? c : -c) || a.label.localeCompare(b.label);
+  });
   const preset = DATE_PRESETS.find(p => p.key === UI.dateRange);
-  const periodLabel = preset && preset.key !== "all" ? preset.label.toLowerCase() : "in sheet";
-  document.getElementById("googleLocationsList").innerHTML = rows.length ? rows.map(r => {
-    const active = UI.googleLocation === r.label;
-    const avgTxt = r.avg != null ? Number(r.avg).toFixed(1) : "—";
-    const color = r.avg == null ? "var(--border)" : r.avg >= 4.5 ? "#fbbc04" : r.avg >= 4 ? "#f59e0b" : "var(--down)";
-    return `<div class="gg-loc-row ${active ? 'active' : ''}" data-action="setGoogleLocation" data-location="${escape(r.label)}" title="${active ? 'Clear the location filter' : 'Filter reviews to this listing'}">
-      <div class="w-[46%] sm:w-[34%] min-w-0">
-        <div class="gg-loc-name text-[13px] font-medium truncate">${escape(r.label)}</div>
-        <div class="text-[11px] tabular-nums" style="color: var(--text-mute);">${fmtN(r.total)} ${r.total === 1 ? 'review' : 'reviews'} · <span style="color: var(--text-mid);">+${fmtN(r.period)} ${escape(periodLabel)}</span></div>
-      </div>
-      <div class="track flex-1"><div style="width: ${Math.max(2, (r.total / max) * 100)}%; background: ${color};"></div></div>
-      <div class="w-14 text-right text-[13px] font-semibold tabular-nums flex items-center justify-end gap-1"><span class="star" style="font-size: 12px;">★</span>${avgTxt}</div>
-    </div>`;
-  }).join("") : `<div class="py-6 text-center text-xs" style="color: var(--text-mute);">No Google listings loaded yet.</div>`;
+  document.getElementById("googleStoresSubtitle").textContent =
+    `${stores.length} listings · ${preset ? preset.label : "All time"} · click a store to filter the reviews below`;
+  const muted = (txt) => `<span style="color: var(--text-mute);">${txt}</span>`;
+  const count = (v) => v ? fmtN(v) : muted("0");
+  const low = (v) => v ? `<span style="color: var(--down); font-weight: 600;">${fmtN(v)}</span>` : muted("0");
+  const head = GG_STORE_COLS.map(c => {
+    const on = sort.key === c.key;
+    return `<th data-gg-sort="${c.key}" class="${on ? 'sorted' : ''}" title="${escape(c.title)} · click to sort">${c.label}${on ? (sort.dir === "asc" ? " ↑" : " ↓") : ""}</th>`;
+  }).join("");
+  const body = stores.map(st => {
+    const parts = st.label.split(" - ");
+    const nick = parts.shift();
+    const listing = parts.join(" - ");
+    const active = UI.googleLocation === st.label;
+    const rating = st.avg == null ? muted("—")
+      : `<span class="star" style="font-size: 12px;">★</span> <span style="font-weight: 600; color: ${st.avg < 4 ? 'var(--down)' : 'var(--text)'};">${st.avg.toFixed(1)}</span>`;
+    const needs = st.needs
+      ? `<button type="button" class="pill pill-down" data-action="googleStoreNeedsReply" data-location="${escape(st.label)}" title="Open this store's unanswered reviews">${fmtN(st.needs)}</button>`
+      : muted("0");
+    return `<tr class="${active ? 'active' : ''}" data-action="setGoogleLocation" data-location="${escape(st.label)}" title="${active ? 'Clear the store filter' : 'Filter reviews to this store'}">
+      <td><div class="gg-store-name font-semibold" style="color: var(--text);">${escape(nick)}</div><div class="text-[11px] truncate" style="color: var(--text-mute); max-width: 260px;">${escape(listing)}</div></td>
+      <td>${rating}</td>
+      <td style="font-weight: 600;">${count(st.n)}</td>
+      <td>${count(st.s5)}</td><td>${count(st.s4)}</td><td>${low(st.s3)}</td><td>${low(st.s2)}</td><td>${low(st.s1)}</td>
+      <td>${needs}</td>
+      <td>${st.replied == null ? muted("—") : fmtPct(st.replied)}</td>
+      <td>${count(st.last7)}</td>
+      <td style="color: var(--text-mid);">${st.latest ? fmtDate(st.latest) : muted("—")}</td>
+    </tr>`;
+  }).join("");
+  document.getElementById("googleStoresTable").innerHTML = stores.length
+    ? `<table class="gg-store-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`
+    : `<div class="py-6 text-center text-xs" style="color: var(--text-mute);">No Google listings loaded yet.</div>`;
 }
 
 function renderSourceCompare() {
@@ -3320,7 +3382,8 @@ function render() {
   const last7 = sourceRows.filter(r => r.ts && (Date.now() - r.ts.getTime()) <= 7 * 24 * 60 * 60 * 1000).length;
   const liveDot = `<span class="w-1.5 h-1.5 rounded-full" style="background: var(--brand);"></span>`;
 
-  if (UI.source === "all" || UI.source === "stamped") {
+  // Google shows per-store figures in the Stores table instead of aggregate tiles.
+  if (UI.source === "all" || UI.source === "stamped" || UI.source === "google") {
     kpiRow.classList.add("hidden");
     kpiRow.innerHTML = "";
   } else {
@@ -3332,12 +3395,6 @@ function render() {
       totalValue = fmtN(TP_LIVE.numberOfReviews.total);
       totalSub   = "on Trustpilot";
       totalFoot  = `<span class="inline-flex items-center gap-1">${liveDot} Live from Trustpilot · all-time</span>`;
-    } else if (UI.source === "google" && GBP_LIVE && GBP_LIVE.total) {
-      avgValue   = GBP_LIVE.average != null ? fmtAvg(GBP_LIVE.average) : "—";
-      avgFoot    = `<span class="inline-flex items-center gap-1">${liveDot} Live from Google · all-time, ${fmtN((GBP_LIVE.locations || []).filter(l => l.total).length)} listings</span>`;
-      totalValue = fmtN(GBP_LIVE.total);
-      totalSub   = "on Google";
-      totalFoot  = `${fmtN(s.n)} in the sheet · ${fmtN(last7)} new in the last 7 days`;
     } else {
       avgValue   = s.n ? fmtAvg(s.avg) : "—";
       avgFoot    = `Across ${fmtN(s.n)} reviews this period`;
@@ -3367,6 +3424,11 @@ function render() {
       // (whichever is taller drives the row height; the shorter one fills any extra space).
       middleRow.className = "grid grid-cols-1 lg:grid-cols-2 gap-4";
       renderStampedTypeCharts(sourceRows);
+    } else if (UI.source === "google") {
+      // Google: Recent reviews takes the full width; the Stores table above carries the numbers.
+      distCard.classList.add("hidden");
+      stampedCard.classList.add("hidden");
+      middleRow.className = "grid grid-cols-1 gap-4";
     } else {
       distCard.classList.remove("hidden");
       stampedCard.classList.add("hidden");
@@ -3375,9 +3437,7 @@ function render() {
       // All-sources card. Other sources keep the simple mean over their sheet rows.
       const distAvgVal = (UI.source === "trustpilot" && TP_LIVE && TP_LIVE.score && typeof TP_LIVE.score.trustScore === "number")
         ? TP_LIVE.score.trustScore
-        : (UI.source === "google" && GBP_LIVE && GBP_LIVE.average != null && UI.dateRange === "all" && !UI.search)
-          ? GBP_LIVE.average
-          : s.avg;
+        : s.avg;
       document.getElementById("distAvg").textContent = (UI.source === "trustpilot" || s.n) ? fmtAvg(distAvgVal) : "—";
       document.getElementById("distStars").innerHTML = starsHTML(Math.round(distAvgVal || 0), 18);
       document.getElementById("distTotal").textContent = `${fmtN(s.n)} reviews`;
@@ -3462,8 +3522,8 @@ function render() {
   renderStampedLowProducts(sourceRows);
   // Trustpilot-only: review momentum line chart.
   renderTrustpilotMomentum();
-  // Google-only: per-listing rating + volume card.
-  renderGoogleLocations(sourceRows);
+  // Google-only: one row per store.
+  renderGoogleStores(sourceRows);
   // Stamped-only: issue-type donut (multi-label) — positive experiences excluded.
   renderStampedIssuesDonut(sourceRows);
 
@@ -4406,7 +4466,29 @@ document.addEventListener("click", (e) => {
     render();
     return;
   }
-  // Google "Reviews by location" row — toggles the listing filter shared with the feed + Reviews tab
+  // Google Stores table: Needs-reply pill opens that store's unanswered reviews in the Reviews list
+  const ggNeeds = e.target.closest("[data-action='googleStoreNeedsReply']");
+  if (ggNeeds) {
+    UI.googleLocation = ggNeeds.dataset.location || "";
+    UI.listTab = "needsReply";
+    document.querySelectorAll(".list-tab").forEach(t => t.classList.toggle("active", t.dataset.list === "needsReply"));
+    UI.page = 1;
+    setView("reviews");
+    render();
+    return;
+  }
+  // Google Stores table: header click sorts (second click on the same column flips direction)
+  const ggSort = e.target.closest("[data-gg-sort]");
+  if (ggSort) {
+    const key = ggSort.dataset.ggSort;
+    const cur = UI.googleStoreSort || {};
+    UI.googleStoreSort = cur.key === key
+      ? { key, dir: cur.dir === "asc" ? "desc" : "asc" }
+      : { key, dir: key === "label" ? "asc" : "desc" };
+    render();
+    return;
+  }
+  // Google Stores row — toggles the store filter shared with the feed + Reviews tab
   const ggLoc = e.target.closest("[data-action='setGoogleLocation']");
   if (ggLoc) {
     const l = ggLoc.dataset.location || "";
