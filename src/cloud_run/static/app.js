@@ -800,6 +800,7 @@ $("testPartners").onclick = async () => {
     const { results } = await api("POST", "/api/partners/test");
     out.textContent = kb.partners.map((p) => [p, results[p.name]]).filter(([, r]) => r)
       .map(([p, r]) => `${p.label}: ${r.ok ? "working" : r.detail}`).join(" · ");
+    refreshKnowledge();  // the test also updates the partners' rows on the Access tab
   } catch (e) { out.textContent = e.message; }
 };
 

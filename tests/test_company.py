@@ -225,6 +225,29 @@ class TalkTests(unittest.TestCase):
         self.assertIn("isn't available", self.service.consult_fn("assistant")("claude", "x"))
         self.service.ask("assistant", "still works")
 
+    def test_partner_test_keeps_their_access_rows_true(self):
+        # The seeded rows once said Claude was "needed" and ChatGPT "not connected yet", and nothing changed them.
+        self.store.save_item("systems", "claude", {"name": "Claude (Anthropic on Vertex AI)", "status": "needed",
+                                                   "unlocks": "Enable Claude in Vertex AI Model Garden"})
+
+        def broken(secrets=None, **kw):
+            raise RuntimeError("401 invalid x-api-key")
+        self.fake["chatgpt"].ping = broken
+        results = self.service.check_partners()
+        claude = self.store.get_item("systems", "claude")
+        self.assertEqual((claude["status"], claude["name"], claude["why"]), ("connected", "Claude (Anthropic)", ""))
+        self.assertNotIn("Model Garden", claude["unlocks"])
+        chatgpt = self.store.get_item("systems", "chatgpt")
+        self.assertEqual(chatgpt["status"], "error")
+        self.assertIn("invalid x-api-key", chatgpt["why"])
+        self.assertEqual(self.store.get_item("systems", "gemini")["status"], "connected")
+        self.assertEqual(results["partner_claude"], {"ok": True, "system": "Claude (Anthropic)", "detail": ""})
+        self.assertFalse(results["partner_chatgpt"]["ok"])
+        # Switched off in Settings: not a failure, and not counted by Check connections.
+        self.store.update_settings({"partners_enabled": False})
+        self.assertEqual(set(self.service.check_partners()), {"partner_assistant"})
+        self.assertEqual(self.store.get_item("systems", "claude")["status"], "not_used")
+
     def test_digest_answer_uses_the_assistant_with_tools(self):
         self.fake["assistant"].tool = ("save_project", {"name": "Evolve Academy", "company": "superhairpieces"})
         q = self.store.list_items("questions")[0]
@@ -1033,6 +1056,37 @@ class CloudSetupTests(unittest.TestCase):
 
 
 class RobustnessTests(unittest.TestCase):
+    def test_sign_in_token_with_an_aware_expiry_still_works(self):
+        # google-auth-oauthlib gives an aware expiry; google-auth compares it with a naive clock.
+        from datetime import datetime, timezone
+
+        from google.oauth2.credentials import Credentials
+
+        from google_apis import credentials_from_json, naive_utc_expiry
+
+        for stamp in (1790000000.5, 1790000000):  # with and without a fraction of a second
+            creds = Credentials("tok", refresh_token="r", token_uri="https://oauth2.googleapis.com/token",
+                                client_id="c", client_secret="s")
+            creds.expiry = datetime.fromtimestamp(stamp, timezone.utc)
+            stored = creds.to_json()  # what a token saved before this fix looks like: "...+00:00Z"
+            self.assertFalse(credentials_from_json(stored).valid)  # parses, and it's in the past: no error
+            naive_utc_expiry(creds)
+            self.assertIsNone(creds.expiry.tzinfo)
+            self.assertFalse(creds.valid)
+            self.assertNotIn("+00:00", json.loads(creds.to_json())["expiry"])
+
+    def test_status_keys_are_replaced_whole(self):
+        # Firestore merges nested maps field by field, so a failed run's "error" outlived every later good run.
+        store = MemoryStore()
+        calls = []
+        store._set = lambda coll, doc, data, merge=False: calls.append(merge)
+        store.set_status({"last_run": {"started_at": "x"}, "connection_error": ""})
+        self.assertEqual(sorted(calls[0]), ["connection_error", "last_run"])
+        real = MemoryStore()
+        real.set_status({"last_run": {"error": "can't compare", "started_at": "1"}, "missing_scopes": []})
+        real.set_status({"last_run": {"started_at": "2"}})
+        self.assertEqual(real.get_status(), {"last_run": {"started_at": "2"}, "missing_scopes": []})
+
     def test_event_times_with_and_without_offsets(self):
         from google_apis import Directory
 

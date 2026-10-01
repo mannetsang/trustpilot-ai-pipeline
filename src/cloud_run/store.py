@@ -158,8 +158,12 @@ class MemoryStore:
         self._set("chat_assistant", "owner", owner)
 
     def set_status(self, changes):
-        """Connection and last-run status shown in the UI header."""
-        self._set("chat_assistant", "status", changes, merge=True)
+        """Connection and last-run status shown in the UI header.
+
+        Each key given replaces its old value whole. A plain merge would merge last_run field by field in
+        Firestore, so a failed run's "error" stayed on every successful run after it.
+        """
+        self._set("chat_assistant", "status", changes, merge=list(changes))
 
     def get_status(self):
         return self._get("chat_assistant", "status") or {}
