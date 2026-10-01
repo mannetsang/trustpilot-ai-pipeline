@@ -77,6 +77,18 @@ Merchant Center account and the project must be registered once with
 | Superhairpieces (.com and EU storefronts) | `289630622` | no |
 | Gen'C Beauty | `670525760` | no |
 
+### Google Business Profile
+
+Driven by the scripts in `google-business/` through the Business Profile APIs.
+Auth is a **user OAuth refresh token** for the Google user who manages the
+listings, not ADC: the OAuth client lives in a developer-owned Cloud project
+with Business Profile API quota, so the client id, client secret and refresh
+token must stay together. Secret Manager ids `google-business-profile-*`, env
+vars `GOOGLE_BUSINESS_PROFILE_*`; see `google-business/README.md`. One
+account, `accounts/111445610944292236883`, with 17 locations; the README maps
+salon nicknames to location ids. Dufferin, Rapistan and Eglinton each have a
+Superhairpieces listing and a separate Gen'C Beauty listing.
+
 ### Known data-quality caveats
 
 - `payment_method` on orders contains free text in places (service-request

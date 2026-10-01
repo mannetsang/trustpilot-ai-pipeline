@@ -73,6 +73,9 @@ from the environment need no third-party packages.
 | Secret | Used by |
 |---|---|
 | `BIGCOMMERCE_gmosz3ja_ACCESS_TOKEN` | `bigcommerce-reports/revenue_by_payment_method.py` |
+| `google-business-profile-client-id` | `google-business/gbp_api.py` (env `GOOGLE_BUSINESS_PROFILE_CLIENT_ID`) |
+| `google-business-profile-client-secret` | `google-business/gbp_api.py` (env `GOOGLE_BUSINESS_PROFILE_CLIENT_SECRET`) |
+| `google-business-profile-refresh-token` | `google-business/gbp_api.py` (env `GOOGLE_BUSINESS_PROFILE_REFRESH_TOKEN`) — user OAuth token for the listings' manager, issued by a developer-owned OAuth client; the three must stay together |
 
 Only genuine secrets belong here. The BigCommerce store hash identifies the
 store in a URL path and is not sensitive, so it is set inline in the workflow
