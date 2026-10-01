@@ -18,6 +18,8 @@ Endpoints
                             until the response says remaining=0)
   GET  /api/locations       listings with nickname, address, Maps link
   GET  /api/reviews         newest reviews across all listings (5 min cache)
+  GET  /api/sheet           every Sheet row as JSON, for the Reviews Dashboard (2 min cache)
+  GET  /api/summary         all-time review count + average per listing, from Google (1 h cache)
   POST /api/reply           {"review": "<review resource name>", "message": ...}
                             posts the public reply on Google (X-Api-Token)
 
@@ -566,6 +568,7 @@ def api_reviews():
         for location, review in iter_reviews(newest_first=True):
             f = review_fields(review)
             f["location"] = location["label"]
+            f["location_id"] = location["id"]
             f["maps_url"] = location.get("maps_url", "")
             out.append(f)
             if len(out) >= 50:
@@ -573,6 +576,86 @@ def api_reviews():
         _reviews_cache, _reviews_cache_expiry = {"reviews": out}, time.time() + 300
         return jsonify(_reviews_cache)
     except Exception as e:  # noqa: BLE001
+        return jsonify({"error": str(e)}), 500
+
+
+_sheet_cache = None
+_sheet_cache_expiry = 0.0
+
+
+def parse_sheet_date(value):
+    """'Sep 30, 2026' (what sheet_row writes) -> '2026-09-30'; anything else passes through."""
+    for fmt in ("%b %d, %Y", "%Y-%m-%d"):
+        try:
+            return dt.datetime.strptime(value.strip(), fmt).strftime("%Y-%m-%d")
+        except Exception:  # noqa: BLE001
+            continue
+    return value
+
+
+@app.route("/api/sheet", methods=["GET", "OPTIONS"])
+def api_sheet():
+    """The Google Business Profile Reviews sheet as JSON. The dashboard reads the sheet through
+    this (the runtime identity is a writer on it) instead of the public gviz endpoint, so the
+    sheet never has to be shared with anyone-with-the-link."""
+    global _sheet_cache, _sheet_cache_expiry
+    if request.method == "OPTIONS":
+        return ("", 204)
+    try:
+        if _sheet_cache and time.time() < _sheet_cache_expiry:
+            return jsonify(_sheet_cache)
+        rows, _, _ = read_sheet()
+        out = []
+        for i, row in enumerate(rows[1:], start=2):
+            row = (row + [""] * len(SHEET_HEADERS))[:len(SHEET_HEADERS)]
+            date, name, location, stars, rtype, comment, reply, biz, remark, rid, replied_at, rname = row
+            if not rid:
+                continue
+            out.append({
+                "id": rid, "sheet_row": i, "created": parse_sheet_date(date), "name": name,
+                "location": location, "stars": int(stars) if str(stars).strip().isdigit() else 0,
+                "type": rtype, "comment": comment, "reply_suggestion": reply, "business_suggestion": biz,
+                "remark": remark, "replied_at": parse_sheet_date(replied_at) if replied_at else "",
+                "review_name": rname,
+            })
+        _sheet_cache, _sheet_cache_expiry = {"rows": out, "sheet_id": GOOGLE_SHEET_ID}, time.time() + 120
+        return jsonify(_sheet_cache)
+    except Exception as e:  # noqa: BLE001
+        print(f"api/sheet error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+_summary_cache = None
+_summary_cache_expiry = 0.0
+
+
+@app.route("/api/summary", methods=["GET", "OPTIONS"])
+def api_summary():
+    """All-time review count and average rating per listing, straight from Google (the sheet
+    only holds what we've ingested). One reviews.list call per listing; cached an hour."""
+    global _summary_cache, _summary_cache_expiry
+    if request.method == "OPTIONS":
+        return ("", 204)
+    try:
+        if _summary_cache and time.time() < _summary_cache_expiry:
+            return jsonify(_summary_cache)
+        locations, total, weighted = [], 0, 0.0
+        for loc in get_locations().values():
+            body = gbp("GET", f"{V4}/{loc['name']}/reviews", params={"pageSize": 1})
+            count = int(body.get("totalReviewCount") or 0)
+            avg = float(body.get("averageRating") or 0)
+            total += count
+            weighted += avg * count
+            locations.append({"id": loc["id"], "label": loc["label"], "title": loc["title"],
+                              "locality": loc.get("locality", ""), "maps_url": loc.get("maps_url", ""),
+                              "total": count, "average": round(avg, 2) if count else None})
+        locations.sort(key=lambda l: -l["total"])
+        _summary_cache = {"total": total, "average": round(weighted / total, 2) if total else None,
+                          "locations": locations, "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+        _summary_cache_expiry = time.time() + 3600
+        return jsonify(_summary_cache)
+    except Exception as e:  # noqa: BLE001
+        print(f"api/summary error: {e}")
         return jsonify({"error": str(e)}), 500
 
 
