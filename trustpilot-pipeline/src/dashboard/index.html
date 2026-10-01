@@ -565,30 +565,6 @@
     <nav class="space-y-0.5">
       <a class="nav-row"><span class="icon"></span>Settings</a>
     </nav>
-
-    <div class="mt-auto pt-5 px-1 relative" id="workspaceWrap">
-      <button class="w-full flex items-center gap-3 p-3 rounded-xl hover:brightness-110 active:brightness-95 transition" style="background: var(--sidebar-active); border: 1px solid rgba(255,255,255,0.04);" data-action="toggleAccountMenu" aria-label="Account menu">
-        <div class="w-10 h-10 rounded-full flex items-center justify-center text-white font-semibold text-sm flex-shrink-0" style="background: linear-gradient(135deg, #ff8c4a 0%, #ff6a3d 100%);">MT</div>
-        <div class="flex-1 min-w-0 text-left">
-          <div class="text-sm font-semibold text-white truncate">Manne Tsang</div>
-          <div class="text-xs mt-0.5" style="color: var(--sidebar-text);">Head of Total Experience</div>
-        </div>
-        <span class="p-1.5 rounded-md text-white/60">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
-        </span>
-      </button>
-      <!-- Account popover menu (opens above the workspace card) -->
-      <div id="accountMenu" class="hidden absolute left-1 right-1 bottom-full mb-2 py-1.5 rounded-xl shadow-lg z-50" style="background: var(--sidebar-active); border: 1px solid rgba(255,255,255,0.06); box-shadow: 0 12px 32px rgba(0,0,0,0.35);">
-        <button class="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-white/90 hover:bg-white/5 rounded-lg mx-0.5" data-action="signOut">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-            <polyline points="16 17 21 12 16 7"/>
-            <line x1="21" y1="12" x2="9" y2="12"/>
-          </svg>
-          Sign out
-        </button>
-      </div>
-    </div>
   </aside>
 
   <!-- MAIN — min-w-0 lets flex-1 actually shrink (default min-width: auto would let content push it wider) -->
@@ -4525,20 +4501,6 @@ document.addEventListener("click", (e) => {
   if (e.target.closest("[data-action='closeDetailSheet']")) {
     closeMobileDetailSheet();
     return;
-  }
-  // Account menu: toggle / sign out
-  if (e.target.closest("[data-action='toggleAccountMenu']")) {
-    document.getElementById("accountMenu")?.classList.toggle("hidden");
-    return;
-  }
-  if (e.target.closest("[data-action='signOut']")) {
-    try { localStorage.removeItem(LOGIN_TOKEN_KEY); } catch (err) {}
-    location.reload();
-    return;
-  }
-  // Close account menu on outside click
-  if (!e.target.closest("#workspaceWrap")) {
-    document.getElementById("accountMenu")?.classList.add("hidden");
   }
 
   // Date range toggle
