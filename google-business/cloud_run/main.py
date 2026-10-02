@@ -659,7 +659,9 @@ def run_classify(limit=200, reclassify=False):
         if not stars.isdigit() or not 1 <= int(stars) <= 5:
             continue
         current = cell(row, 4)
-        replaceable = (not current or current.lower() in LEGACY_AI_TYPES
+        # Exact match: the old labels were lowercase, and their lowercased forms collide with
+        # current ISSUE_TYPES values ("customer support" vs "Customer Support").
+        replaceable = (not current or current in LEGACY_AI_TYPES
                        or (reclassify and (current in ISSUE_TYPES or current == RATING_ONLY)))
         if replaceable:
             todo.append((i, int(stars), cell(row, 5), current))
