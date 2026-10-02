@@ -1035,7 +1035,12 @@
                 <button class="px-3 py-1.5 text-xs rounded-md list-tab" data-list="five">5★</button>
                 <button class="px-3 py-1.5 text-xs rounded-md list-tab" data-list="lowstar">≤3★</button>
               </div>
-              <button class="btn btn-secondary">Newest <span style="color: var(--text-mid);">▾</span></button>
+              <div class="relative" id="listSortWrap">
+                <button class="btn btn-secondary" id="listSortBtn" aria-haspopup="menu" aria-label="Sort reviews"><span id="listSortLabel">Newest</span> <span style="color: var(--text-mid);">▾</span></button>
+                <div id="listSortMenu" class="hidden absolute right-0 top-11 z-30 w-[200px] py-1.5 rounded-xl bg-white shadow-lg" role="menu" style="border: 1px solid var(--border); box-shadow: 0 8px 24px rgba(0,0,0,0.08);">
+                  <!-- injected sort options -->
+                </div>
+              </div>
             </div>
             <!-- Stamped-only product type pill row, sits between the list-tabs and the table.
                  Shares state with the Insights-tab pill so selecting Men in one place narrows both. -->
@@ -1159,7 +1164,7 @@ const COL = { ts: 0, name: 1, email: 2, stars: 3, type: 4, comment: 5, reply: 6,
 
 let DATA = [];        // normalized review objects
 let FILTERED = [];    // after source + tab + filters
-let UI = { source: "all", feedTab: "all", listTab: "all", search: "", dateRange: "all", filters: { rating: new Set(), status: new Set(), type: new Set() }, selectedId: null, suggTab: "all", statusMenuOpenFor: null, page: 1, pageSize: 25,
+let UI = { source: "all", feedTab: "all", listTab: "all", listSort: "newest", search: "", dateRange: "all", filters: { rating: new Set(), status: new Set(), type: new Set() }, selectedId: null, suggTab: "all", statusMenuOpenFor: null, page: 1, pageSize: 25,
   // Stamped-only Recent reviews feed filters. "" = no filter.
   stampedFeedType: "", stampedFeedProduct: "",
   // Google-only: active listing filter (location label). "" = all locations.
@@ -3683,6 +3688,44 @@ function applyFeedTabAPI(rows, tab) {
   return rows;
 }
 
+// Reviews list sort options. Rows without a date always go last.
+const LIST_SORTS = [
+  { key: "newest",  label: "Newest" },
+  { key: "oldest",  label: "Oldest" },
+  { key: "highest", label: "Highest rating" },
+  { key: "lowest",  label: "Lowest rating" },
+];
+
+function sortListRows(rows) {
+  const t = (r) => (r.ts ? r.ts.getTime() : null);
+  const byDate = (a, b, dir) => {
+    const x = t(a), y = t(b);
+    if (x == null || y == null) return (x == null) - (y == null);
+    return dir * (x - y);
+  };
+  const sorted = rows.slice();   // never reorder the shared source arrays in place
+  switch (UI.listSort) {
+    case "oldest":  sorted.sort((a, b) => byDate(a, b, 1)); break;
+    case "highest": sorted.sort((a, b) => (b.stars - a.stars) || byDate(a, b, -1)); break;
+    case "lowest":  sorted.sort((a, b) => (a.stars - b.stars) || byDate(a, b, -1)); break;
+    default:        sorted.sort((a, b) => byDate(a, b, -1));
+  }
+  return sorted;
+}
+
+function renderListSortMenu() {
+  const cur = LIST_SORTS.find(o => o.key === UI.listSort) || LIST_SORTS[0];
+  const label = document.getElementById("listSortLabel");
+  if (label) label.textContent = cur.label;
+  const menu = document.getElementById("listSortMenu");
+  if (!menu) return;
+  menu.innerHTML = LIST_SORTS.map(o => `
+    <div class="flex items-center gap-2 px-3 py-2 text-[13px] cursor-pointer hover:bg-[color:var(--bg)]" role="menuitemradio" aria-checked="${o.key === cur.key}" data-action="setListSort" data-key="${o.key}">
+      <span class="flex-1 ${o.key === cur.key ? 'font-medium' : ''}">${o.label}</span>
+      ${o.key === cur.key ? `<span class="text-[12px]" style="color: var(--brand);">✓</span>` : ''}
+    </div>`).join("");
+}
+
 function renderReviewsList() {
   // Pick the underlying dataset based on the active source tab
   const isWebsite = UI.source === "website";
@@ -3792,10 +3835,11 @@ function renderReviewsList() {
   }
 
   // Apply filters + list tab (custom for website)
-  const filtered = isWebsite
+  const filtered = sortListRows(isWebsite
     ? applyFeedTabAPI(applyFiltersWebsite(rows), UI.listTab)
-    : applyFeedTabAPI(applyFiltersAPI(rows), UI.listTab);
+    : applyFeedTabAPI(applyFiltersAPI(rows), UI.listTab));
   FILTERED = filtered;
+  renderListSortMenu();
 
   // Pagination
   const total = filtered.length;
@@ -4689,6 +4733,24 @@ document.addEventListener("click", (e) => {
   // Close date menu when clicking outside it
   if (!e.target.closest("#dateRangeWrap")) {
     document.getElementById("dateRangeMenu").classList.add("hidden");
+  }
+
+  // Reviews list sort menu
+  if (e.target.closest("#listSortBtn")) {
+    document.getElementById("listSortMenu").classList.toggle("hidden");
+    return;
+  }
+  const sortEl = e.target.closest("[data-action='setListSort']");
+  if (sortEl) {
+    UI.listSort = sortEl.dataset.key;
+    UI.page = 1;
+    document.getElementById("listSortMenu").classList.add("hidden");
+    render();
+    document.getElementById("reviewsTable")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+  if (!e.target.closest("#listSortWrap")) {
+    document.getElementById("listSortMenu")?.classList.add("hidden");
   }
 
   // Export button toggle
