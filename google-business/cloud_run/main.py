@@ -335,7 +335,7 @@ def vertex_call(prompt, temperature=0.4):
 
 
 # Same categories, spelled exactly the same, as the Trustpilot service's ISSUE_TYPE_TAXONOMY, so
-# Trustpilot and Google pain points can be compared. Only 1-3 star reviews are classified.
+# Trustpilot and Google reviews can be compared. Every review gets one, whatever its rating.
 ISSUE_TYPES = [
     "Positive Experience",
     "Product Defective - Stock",
@@ -352,7 +352,7 @@ ISSUE_TYPES = [
     "Returns & Refunds",
     "Other",
 ]
-RATING_ONLY = "Rating only"   # 1-3 stars with no text: nothing to classify, shown as its own slice
+RATING_ONLY = "Rating only"   # stars with no text: nothing to classify, shown as its own slice
 # Labels the first version of this service wrote; /maintenance/classify may replace them. Any other
 # value in column E is treated as a manual edit and never overwritten.
 LEGACY_AI_TYPES = {"customer support", "shipping", "product defective - stock",
@@ -375,7 +375,11 @@ ISSUE_GUIDANCE = (
     "- Customer Expectation: the experience fell short of what was promised, without a clear defect\n"
     "- Value for Money: prices, price increases, not worth the cost\n"
     "- Returns & Refunds: return, exchange or refund problems\n"
-    "- Positive Experience: the text is positive despite the low star rating\n"
+    "- Positive Experience: the review is positive and names no problem, whatever it praises "
+    "(staff, stylist, support, product, price); this fits most 4-5 star reviews\n"
+    "Every category except Positive Experience describes a PROBLEM. Never use Customer Support, "
+    "Product Quality, Value for Money or any other problem category for praise; use one only when "
+    "the review complains about that area, at any star rating.\n"
     "- Other: none of the above\n"
 )
 
@@ -401,15 +405,15 @@ def review_text_for_ai(comment):
     return c.strip()
 
 
-def classify_reviews(items):
-    """items: [(rating, comment)] -> [category] in the same order, one Gemini call per 15 reviews.
+def classify_reviews(items, batch=25):
+    """items: [(rating, comment)] -> [category] in the same order, one Gemini call per `batch` reviews.
     Anything the model returns off-list is retried on its own, then falls back to Other."""
     out = []
-    for start in range(0, len(items), 15):
-        chunk = items[start:start + 15]
+    for start in range(0, len(items), batch):
+        chunk = items[start:start + batch]
         numbered = "\n".join(f"{i + 1}. [{rating}★] {review_text_for_ai(c)[:900]}" for i, (rating, c) in enumerate(chunk))
         prompt = (
-            "You are classifying low-rated (1-3 star) Google reviews of Superhairpieces, a hairpiece "
+            "You are classifying Google reviews (1-5 stars) of Superhairpieces, a hairpiece "
             "company with its own hair-replacement salons.\n\n"
             "For each numbered review pick the ONE most fitting category, exactly as written:\n"
             + "\n".join(f"- {t}" for t in ISSUE_TYPES) + "\n\n" + ISSUE_GUIDANCE +
@@ -530,7 +534,7 @@ def enrich(f, location, with_ai=True):
     reply = get_reply_suggestion(f["comment"], f["rating"], f["reviewer"], location) if has_comment else ""
     suggestion = get_business_suggestion(f["comment"], f["rating"], location) if has_comment else ""
     review_type = ""
-    if 0 < f["rating"] <= 3 and with_ai:
+    if f["rating"] and with_ai:
         review_type = get_review_type(f["comment"], f["rating"]) if len(f["comment"]) > 5 else RATING_ONLY
     return reply, suggestion, review_type
 
@@ -643,7 +647,7 @@ def run_dedupe(apply=False):
 
 
 def run_classify(limit=200, reclassify=False):
-    """Fill column E (Type) for 1-3 star rows: written reviews get an ISSUE_TYPES category from
+    """Fill column E (Type) for every rated row: written reviews get an ISSUE_TYPES category from
     Gemini, star-only ones get RATING_ONLY. Only empty cells and labels this service wrote earlier
     (LEGACY_AI_TYPES, or any ISSUE_TYPES value when reclassify=True) are written; anything else in
     E is a manual edit and is left alone."""
@@ -652,7 +656,7 @@ def run_classify(limit=200, reclassify=False):
     todo = []
     for i, row in enumerate(rows[1:], start=2):
         stars = cell(row, 3)
-        if not stars.isdigit() or not 1 <= int(stars) <= 3:
+        if not stars.isdigit() or not 1 <= int(stars) <= 5:
             continue
         current = cell(row, 4)
         replaceable = (not current or current.lower() in LEGACY_AI_TYPES
@@ -738,7 +742,7 @@ def backfill():
 
 @app.route("/maintenance/classify", methods=["POST"])
 def maintenance_classify():
-    """Classify 1-3 star rows into column E (X-Api-Token). ?limit=200, ?reclassify=1 to redo AI labels."""
+    """Classify rows into column E (X-Api-Token). ?limit=200, ?reclassify=1 to redo AI labels."""
     global _sheet_cache
     if not authorized():
         return jsonify({"error": "unauthorized"}), 401
