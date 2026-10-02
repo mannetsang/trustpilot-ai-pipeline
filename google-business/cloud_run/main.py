@@ -321,12 +321,12 @@ def get_vertex_token():
     return creds.token
 
 
-def vertex_call(prompt):
+def vertex_call(prompt, temperature=0.4):
     url = (f"https://{VERTEX_LOCATION}-aiplatform.googleapis.com/v1/projects/{GCP_PROJECT}"
            f"/locations/{VERTEX_LOCATION}/publishers/google/models/{VERTEX_MODEL}:generateContent")
     r = requests.post(url, headers={"Authorization": f"Bearer {get_vertex_token()}"},
                       json={"contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                            "generationConfig": {"temperature": 0.4}}, timeout=90)
+                            "generationConfig": {"temperature": temperature}}, timeout=120)
     parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
     for part in parts:
         if part.get("text"):
@@ -334,35 +334,122 @@ def vertex_call(prompt):
     return ""
 
 
-REVIEW_TYPES = [
-    "customer support",
-    "shipping",
-    "product defective - stock",
-    "product defective - custom",
-    "product defective - salon finished",
+# Same categories, spelled exactly the same, as the Trustpilot service's ISSUE_TYPE_TAXONOMY, so
+# Trustpilot and Google pain points can be compared. Only 1-3 star reviews are classified.
+ISSUE_TYPES = [
+    "Positive Experience",
+    "Product Defective - Stock",
+    "Product Defective - Custom Made",
+    "Product Defective - Salon Finished",
+    "Product Quality",
+    "Color & Appearance",
+    "Fit & Comfort",
+    "Adhesive & Hold",
+    "Shipping & Delivery",
+    "Customer Support",
+    "Customer Expectation",
+    "Value for Money",
+    "Returns & Refunds",
+    "Other",
 ]
+RATING_ONLY = "Rating only"   # 1-3 stars with no text: nothing to classify, shown as its own slice
+# Labels the first version of this service wrote; /maintenance/classify may replace them. Any other
+# value in column E is treated as a manual edit and never overwritten.
+LEGACY_AI_TYPES = {"customer support", "shipping", "product defective - stock",
+                   "product defective - custom", "product defective - salon finished"}
+
+ISSUE_GUIDANCE = (
+    "Definitions (these are Google reviews of hair-replacement salons as well as online orders):\n"
+    "- Product Defective - Stock: a ready-made hairpiece arrived faulty or not as described\n"
+    "- Product Defective - Custom Made: a custom-ordered hairpiece did not match the order, including "
+    "being sent a stock unit instead\n"
+    "- Product Defective - Salon Finished: problem with salon work: haircut, base cut, installation, "
+    "maintenance, styling\n"
+    "- Product Quality: hair quality, lifespan, shedding or frizz in general, not one faulty unit\n"
+    "- Color & Appearance: colour match or an unnatural look\n"
+    "- Fit & Comfort: size, fit, comfort of the hairpiece\n"
+    "- Adhesive & Hold: tapes, glues, how long the bond holds\n"
+    "- Shipping & Delivery: delays, tracking, lost or misdelivered parcels\n"
+    "- Customer Support: staff attitude, communication, responsiveness, bookings, opening hours, "
+    "in-store experience, billing or payment practices\n"
+    "- Customer Expectation: the experience fell short of what was promised, without a clear defect\n"
+    "- Value for Money: prices, price increases, not worth the cost\n"
+    "- Returns & Refunds: return, exchange or refund problems\n"
+    "- Positive Experience: the text is positive despite the low star rating\n"
+    "- Other: none of the above\n"
+)
 
 
-def get_review_type(comment):
+def canonical_issue_type(raw):
+    v = (raw or "").strip().strip("\"' `*\n\r\t.")
+    for t in ISSUE_TYPES:
+        if v.lower() == t.lower():
+            return t
+    return ""
+
+
+def review_text_for_ai(comment):
+    """Google appends '(Translated by Google) ... (Original) ...' to non-English reviews; the
+    translation is what the classifier should read."""
+    c = comment or ""
+    i = c.find("(Translated by Google)")
+    if i >= 0:
+        c = c[i + len("(Translated by Google)"):]
+        j = c.find("(Original)")
+        if j >= 0:
+            c = c[:j]
+    return c.strip()
+
+
+def classify_reviews(items):
+    """items: [(rating, comment)] -> [category] in the same order, one Gemini call per 15 reviews.
+    Anything the model returns off-list is retried on its own, then falls back to Other."""
+    out = []
+    for start in range(0, len(items), 15):
+        chunk = items[start:start + 15]
+        numbered = "\n".join(f"{i + 1}. [{rating}★] {review_text_for_ai(c)[:900]}" for i, (rating, c) in enumerate(chunk))
+        prompt = (
+            "You are classifying low-rated (1-3 star) Google reviews of Superhairpieces, a hairpiece "
+            "company with its own hair-replacement salons.\n\n"
+            "For each numbered review pick the ONE most fitting category, exactly as written:\n"
+            + "\n".join(f"- {t}" for t in ISSUE_TYPES) + "\n\n" + ISSUE_GUIDANCE +
+            "\nPick the most specific category that applies.\n\n"
+            f"Reviews:\n{numbered}\n\n"
+            "Return STRICT JSON: an array of category strings with exactly the same order and length "
+            "as the reviews. No markdown, no explanation."
+        )
+        labels = []
+        try:
+            raw = (vertex_call(prompt, temperature=0) or "").strip()
+            first, last = raw.find("["), raw.rfind("]")
+            parsed = json.loads(raw[first:last + 1]) if first >= 0 and last > first else []
+            if isinstance(parsed, list) and len(parsed) == len(chunk):
+                labels = [canonical_issue_type(str(x)) for x in parsed]
+            else:
+                print(f"classify: batch returned {len(parsed) if isinstance(parsed, list) else 'non-list'} for {len(chunk)}")
+        except Exception as e:  # noqa: BLE001
+            print(f"classify: batch error {e}")
+        if len(labels) != len(chunk):
+            labels = [""] * len(chunk)
+        for i, label in enumerate(labels):
+            if not label:
+                labels[i] = get_review_type(chunk[i][1], chunk[i][0]) or "Other"
+        out.extend(labels)
+    return out
+
+
+def get_review_type(comment, rating=1):
+    """Single review -> category ("" on a Vertex error). Used for new reviews in /monitor."""
     prompt = (
-        "You are classifying a negative customer review of Superhairpieces, a hairpiece company "
-        "with hair-replacement salons.\n\n"
-        "Based on the review comment below, pick the single most relevant category from this list:\n"
-        + "\n".join(f"- {t}" for t in REVIEW_TYPES) +
-        "\n\nDefinitions:\n"
-        "- customer support: complaint about staff, communication, response time, or service attitude\n"
-        "- shipping: complaint about delivery, courier, packaging damage in transit, or delays\n"
-        "- product defective - stock: complaint about a ready-made/off-the-shelf hairpiece (quality, colour, size)\n"
-        "- product defective - custom: complaint about a custom-ordered hairpiece that didn't meet specifications\n"
-        "- product defective - salon finished: complaint about salon services such as haircut, base cut, "
-        "trim, installation, or maintenance applied to the product\n\n"
-        f"Review:\n\"{comment}\"\n\n"
-        "Reply with only the category name, exactly as written above. No explanation."
+        f"A customer left a {rating}-star Google review of Superhairpieces, a hairpiece company with "
+        "its own hair-replacement salons.\n"
+        f"Review: \"{review_text_for_ai(comment)[:1500]}\"\n\n"
+        "Classify into ONE category. Output ONLY the category name exactly as written below, "
+        "no quotes, no punctuation, no explanation.\n\n"
+        "Categories:\n" + "\n".join(f"- {t}" for t in ISSUE_TYPES) + "\n\n" + ISSUE_GUIDANCE
     )
     try:
-        result = vertex_call(prompt).lower().strip().strip("\"'`*. ")
-        if result in REVIEW_TYPES:
-            return result
+        return canonical_issue_type(vertex_call(prompt, temperature=0)) or "Other"
     except Exception as e:  # noqa: BLE001
         print(f"Vertex AI type error: {e}")
     return ""
@@ -442,7 +529,9 @@ def enrich(f, location, with_ai=True):
     has_comment = len(f["comment"]) > 5 and with_ai
     reply = get_reply_suggestion(f["comment"], f["rating"], f["reviewer"], location) if has_comment else ""
     suggestion = get_business_suggestion(f["comment"], f["rating"], location) if has_comment else ""
-    review_type = get_review_type(f["comment"]) if has_comment and 0 < f["rating"] <= 3 else ""
+    review_type = ""
+    if 0 < f["rating"] <= 3 and with_ai:
+        review_type = get_review_type(f["comment"], f["rating"]) if len(f["comment"]) > 5 else RATING_ONLY
     return reply, suggestion, review_type
 
 
@@ -553,6 +642,40 @@ def run_dedupe(apply=False):
             "applied": bool(apply)}
 
 
+def run_classify(limit=200, reclassify=False):
+    """Fill column E (Type) for 1-3 star rows: written reviews get an ISSUE_TYPES category from
+    Gemini, star-only ones get RATING_ONLY. Only empty cells and labels this service wrote earlier
+    (LEGACY_AI_TYPES, or any ISSUE_TYPES value when reclassify=True) are written; anything else in
+    E is a manual edit and is left alone."""
+    rows, _, _ = read_sheet()
+    cell = lambda row, col: row[col].strip() if len(row) > col else ""  # noqa: E731
+    todo = []
+    for i, row in enumerate(rows[1:], start=2):
+        stars = cell(row, 3)
+        if not stars.isdigit() or not 1 <= int(stars) <= 3:
+            continue
+        current = cell(row, 4)
+        replaceable = (not current or current.lower() in LEGACY_AI_TYPES
+                       or (reclassify and (current in ISSUE_TYPES or current == RATING_ONLY)))
+        if replaceable:
+            todo.append((i, int(stars), cell(row, 5), current))
+    batch, remaining = todo[:limit], max(len(todo) - limit, 0)
+    written = [(i, RATING_ONLY) for i, _, c, _ in batch if len(c) <= 5]
+    texts = [(i, stars, c) for i, stars, c, _ in batch if len(c) > 5]
+    labels = classify_reviews([(stars, c) for _, stars, c in texts]) if texts else []
+    written += [(i, label) for (i, _, _), label in zip(texts, labels)]
+    data = [{"range": f"E{i}", "values": [[label]]} for i, label in written]
+    for start in range(0, len(data), 200):
+        get_sheets_service().spreadsheets().values().batchUpdate(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            body={"valueInputOption": "RAW", "data": data[start:start + 200]}).execute()
+    counts = {}
+    for _, label in written:
+        counts[label] = counts.get(label, 0) + 1
+    return {"classified": len(texts), "rating_only": len(written) - len(texts), "remaining": remaining,
+            "by_type": dict(sorted(counts.items(), key=lambda kv: -kv[1]))}
+
+
 def run_locked(fn, *args):
     """Run a job inside the request (Cloud Run only guarantees CPU while a request
     is open), one at a time. Returns (http_status, payload)."""
@@ -610,6 +733,18 @@ def backfill():
     with_ai = request.args.get("ai") == "1"
     limit = int(request.args.get("limit", 100))
     status, payload = run_locked(run_backfill, days, with_ai, limit)
+    return jsonify(payload), status
+
+
+@app.route("/maintenance/classify", methods=["POST"])
+def maintenance_classify():
+    """Classify 1-3 star rows into column E (X-Api-Token). ?limit=200, ?reclassify=1 to redo AI labels."""
+    global _sheet_cache
+    if not authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    status, payload = run_locked(run_classify, int(request.args.get("limit", 200)),
+                                 request.args.get("reclassify") == "1")
+    _sheet_cache = None
     return jsonify(payload), status
 
 

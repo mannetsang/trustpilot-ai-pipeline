@@ -65,7 +65,7 @@ request step.
 | B Customer Name | reviewer's display name (or Anonymous) |
 | C Location | salon nickname - listing title (Trustpilot keeps the email here) |
 | D Star Rating | 1-5 |
-| E Type | AI, 1-3 stars only |
+| E Type | 1-3 stars only: an AI category from the Trustpilot issue taxonomy (14 values, same spelling), or "Rating only" when the review has no text; manual edits are never overwritten |
 | F Comment | review text, Google's translation block included when present |
 | G Reply Suggestion / H Business Suggestion | Gemini |
 | I Remark | manual |
@@ -82,6 +82,11 @@ Endpoints: `GET /monitor?days=N`, `POST /backfill?days=all&ai=1&limit=100`
 no key since 2026-10-01; it only answers requests whose `Origin` is the Reviews
 Dashboard (`ALLOWED_ORIGINS` env var). That stops other websites, not a
 determined script, so treat the reply endpoint as effectively public.
+
+`POST /maintenance/classify` (token-protected; `?limit=200`, `?reclassify=1` to
+redo earlier AI labels) fills column E for 1-3 star rows the live monitor never
+classified, such as the history seeded on 2026-10-01. It sends 15 reviews per
+Gemini call and skips any Type that looks hand-edited.
 
 The service runs as a single instance (`--max-instances 1`). Monitor, backfill
 and dedupe serialize on an in-process lock, which only holds within one
