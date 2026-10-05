@@ -1510,5 +1510,103 @@ class WebTests(unittest.TestCase):
         self.assertIn(f'data-version="{version}"', page)
 
 
+class DirectMessageTests(unittest.TestCase):
+    """Man AI messaging a colleague directly: found by name or email, their DM used or started, after Manne's OK."""
+
+    class Chat:
+        def __init__(self, existing=(), can_start=True):
+            self.existing, self.can_start = dict(existing), can_start
+            self.sent, self.started = [], []
+
+        def load_directory(self):
+            from google_apis import Directory
+            return Directory({
+                "users/2": {"name": "Sydney Lee", "email": "sydney@superhairpieces.com"},
+                "users/3": {"name": "Stephanie Ruiz", "email": "stephanie.r@superhairpieces.com"},
+                "users/4": {"name": "Stephanie Wong", "email": "stephanie.w@superhairpieces.com"},
+            })
+
+        def find_direct_message(self, user):
+            return self.existing.get(user)
+
+        def start_direct_message(self, user):
+            from google_apis import GoogleApiError
+            if not self.can_start:
+                raise GoogleApiError(403, '{"error": {"message": "Request had insufficient authentication scopes."}}')
+            self.started.append(user)
+            return {"name": "spaces/NEWDM", "spaceType": "DIRECT_MESSAGE"}
+
+        def reply_in_thread(self, space, thread, text):
+            self.sent.append((space, text))
+            return {"name": f"{space}/messages/1"}
+
+    def setUp(self):
+        import tools
+        tools._directory_cache["value"] = None  # the directory is cached across calls
+        self.addCleanup(tools._directory_cache.update, {"value": None})
+        self.store = MemoryStore()
+
+    def toolset(self, chat, may_change=True):
+        return Toolset(self.store, chat, caller="assistant", may_change=may_change)
+
+    def test_by_first_name_preview_then_send_in_the_existing_dm(self):
+        chat = self.Chat(existing={"users/sydney@superhairpieces.com": {"name": "spaces/DM1"}})
+        tools = self.toolset(chat)
+        preview = tools.call("send_chat_message", {"person": "Sydney", "text": "Tape arrives Thursday", "confirmed": False})
+        self.assertEqual(preview["to"], "Sydney Lee <sydney@superhairpieces.com>")
+        self.assertEqual(chat.sent, [])
+        sent = tools.call("send_chat_message", {"person": "Sydney", "text": "Tape arrives Thursday", "confirmed": True})
+        self.assertTrue(sent["sent"])
+        self.assertEqual((chat.sent, chat.started), ([("spaces/DM1", "Tape arrives Thursday")], []))
+        action = self.store.list_actions()[0]
+        self.assertEqual(action["space_label"], "Sydney Lee (direct message)")
+
+    def test_starts_a_dm_when_there_is_none(self):
+        chat = self.Chat()
+        sent = self.toolset(chat).call("send_chat_message", {"person": "sydney@superhairpieces.com", "text": "Hi",
+                                                             "confirmed": True})
+        self.assertTrue(sent["sent"])
+        self.assertEqual(chat.started, ["users/sydney@superhairpieces.com"])
+        self.assertEqual(chat.sent, [("spaces/NEWDM", "Hi")])
+
+    def test_without_the_permission_it_says_reconnect(self):
+        chat = self.Chat(can_start=False)
+        result = self.toolset(chat).call("send_chat_message", {"person": "Sydney", "text": "Hi", "confirmed": True})
+        self.assertIn("Reconnect", result["error"])
+        self.assertEqual(chat.sent, [])
+
+    def test_ambiguous_or_unknown_names_are_asked_about(self):
+        tools = self.toolset(self.Chat())
+        two = tools.call("send_chat_message", {"person": "Stephanie", "text": "Hi", "confirmed": True})
+        self.assertIn("matches 2 people", two["error"])
+        self.assertIn("stephanie.w@superhairpieces.com", two["error"])
+        self.assertIn("error", tools.call("send_chat_message", {"person": "Nobody", "text": "Hi", "confirmed": True}))
+        self.assertIn("error", tools.call("send_chat_message", {"text": "Hi", "confirmed": True}))  # no recipient
+
+    def test_never_sends_working_alone(self):
+        chat = self.Chat(existing={"users/sydney@superhairpieces.com": {"name": "spaces/DM1"}})
+        result = self.toolset(chat, may_change=False).call(
+            "send_chat_message", {"person": "Sydney", "text": "Hi", "confirmed": True})
+        self.assertTrue(result["not_sent"])
+        self.assertEqual(chat.sent, [])
+
+    def test_directory_find_tiers(self):
+        directory = self.Chat().load_directory()
+        self.assertEqual([p["name"] for p in directory.find("sydney lee")], ["Sydney Lee"])
+        self.assertEqual([p["name"] for p in directory.find("stephanie.r@superhairpieces.com")], ["Stephanie Ruiz"])
+        self.assertEqual([p["name"] for p in directory.find("stephanie.w")], ["Stephanie Wong"])
+        self.assertEqual(len(directory.find("Stephanie")), 2)
+        self.assertEqual([p["name"] for p in directory.find("wong")], ["Stephanie Wong"])
+        self.assertEqual(directory.find(""), [])
+
+    def test_state_asks_to_reconnect_for_a_new_permission(self):
+        import main
+        old = json.dumps({"refresh_token": "r", "scopes": [s for s in main.ASSISTANT_SCOPES
+                                                          if not s.endswith("chat.spaces.create")]})
+        self.assertEqual(main.scopes_missing_from(old), ["chat.spaces.create"])
+        self.assertEqual(main.scopes_missing_from(json.dumps({"scopes": main.ASSISTANT_SCOPES})), [])
+        self.assertEqual(main.scopes_missing_from(json.dumps({"refresh_token": "r"})), [])  # unknown: don't nag
+
+
 if __name__ == "__main__":
     unittest.main()

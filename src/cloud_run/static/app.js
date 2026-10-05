@@ -9,6 +9,15 @@ const SYSTEM_GROUPS = [
   ["no_access", "Key in Secret Manager, but the app can't read it"], ["error", "Key found, but the system refused it"],
   ["connected", "Connected"], ["not_used", "Not used"],
 ];
+// Google permissions in plain words, for the Reconnect banner.
+const SCOPE_LABEL = {
+  "chat.spaces.create": "starting a direct message with a colleague",
+  "chat.messages.create": "posting in Chat as you", "chat.spaces.readonly": "seeing your Chat conversations",
+  "chat.messages.readonly": "reading your Chat messages", "calendar.events": "your calendar",
+  "gmail.readonly": "reading Gmail", "gmail.compose": "drafting emails", "drive.readonly": "reading Drive",
+  "spreadsheets.readonly": "reading Sheets", "analytics.readonly": "Analytics", "webmasters.readonly": "Search Console",
+  "content": "Merchant Center", "directory.readonly": "the company directory",
+};
 const COMPANY_LABEL = { superhairpieces: "Superhairpieces", gencbeauty: "Gen'C Beauty", both: "Both" };
 const SUGGESTIONS = [
   "Interview me: what do you most need to know?", "What do you know so far about the companies?",
@@ -140,10 +149,11 @@ function renderBanners() {
       el("a", { class: "btn primary", href: "/login?connect=1" }, "Reconnect")));
   }
   if ((state.status.missing_scopes || []).length) {
+    const what = state.status.missing_scopes.map((s) => SCOPE_LABEL[s] || s);
     box.append(el("div", { class: "banner" },
-      el("span", {}, el("b", {}, "Some permissions weren't granted: "), state.status.missing_scopes.join(", "),
-        ". Parts of the assistant won't work until you reconnect and tick every box."),
-      el("a", { class: "btn", href: "/login?connect=1" }, "Reconnect")));
+      el("span", {}, el("b", {}, "Man AI needs your OK in Google for: "), what.join(", "),
+        ". Press Reconnect and allow everything Google asks."),
+      el("a", { class: "btn primary", href: "/login?connect=1" }, "Reconnect")));
   }
 }
 

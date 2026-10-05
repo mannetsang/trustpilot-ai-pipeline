@@ -250,10 +250,13 @@ def _clean_task(body):
 @app.get("/api/state")
 def api_state():
     status = store.get_status()
+    token = secret_store.get(USER_TOKEN_SECRET_ID)
+    if token:  # a permission added since the last sign-in (e.g. starting direct messages) needs one Reconnect
+        status["missing_scopes"] = sorted(set(status.get("missing_scopes") or []) | set(scopes_missing_from(token)))
     return jsonify(
         version=APP_VERSION,
         owner=OWNER_EMAIL,
-        connected=bool(secret_store.get(USER_TOKEN_SECRET_ID)),
+        connected=bool(token),
         status=status,
         settings=store.get_settings(),
         limits={"act_confidence": assistant.ACT_CONFIDENCE, "max_actions": assistant.MAX_ACTIONS_PER_RUN,
@@ -262,6 +265,17 @@ def api_state():
         actions=store.list_actions(150),
         runs=store.list_runs(12),
     )
+
+
+def scopes_missing_from(token_json):
+    """The assistant's permissions the stored sign-in wasn't asked for (short names, as in the banner)."""
+    try:
+        asked = set(json.loads(token_json).get("scopes") or [])
+    except (ValueError, AttributeError):
+        return []
+    if not asked:
+        return []  # an old token that doesn't record its scopes: nothing to compare
+    return [s.rsplit("/", 1)[-1] for s in ASSISTANT_SCOPES if s not in asked and s != "openid"]
 
 
 @app.post("/api/tasks")
