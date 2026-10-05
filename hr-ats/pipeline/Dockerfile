@@ -2,6 +2,8 @@
 #   indeed-pipeline  -> default CMD (new Indeed applications -> Supabase)
 #   offer-packet     -> deployed with --command python --args offer_packet.py,--run
 FROM python:3.12-slim
+# Unbuffered: a run killed at its timeout must not lose the log of what it did.
+ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
