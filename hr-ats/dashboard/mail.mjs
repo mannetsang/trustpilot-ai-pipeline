@@ -10,7 +10,7 @@
 //      (production — injected from Secret Manager).
 //   2. Fallback: ../token.json written by gmail_organizer.py (local dev only).
 //
-// SECURITY: like the Airtable proxy, this endpoint has no auth layer of its
+// SECURITY: like the /api/db routes, this endpoint has no auth layer of its
 // own. Put it behind IAP / app-level login before any wide rollout so it
 // cannot be used as an open relay to send mail as the connected account.
 import fs from 'node:fs'

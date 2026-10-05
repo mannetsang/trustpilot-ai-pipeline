@@ -5,6 +5,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import crypto from 'node:crypto'
 import { handleSendEmail, handleChatSpaces, handleShareCandidate } from './mail.mjs'
+import { handleDb } from './db.mjs'
 
 // Read a var from the shared ../.env for the dev server.
 function readEnv(name: string): string | null {
@@ -17,6 +18,7 @@ function readEnv(name: string): string | null {
 }
 
 const DASHBOARD_PASSWORD = readEnv('DASHBOARD_PASSWORD')
+process.env.SUPABASE_SECRET_KEY ??= readEnv('SUPABASE_SECRET_KEY') ?? undefined
 
 function devSessionToken(): string {
   return crypto
@@ -91,26 +93,20 @@ function apiEndpointsPlugin() {
           void handler(req, res)
           return
         }
-        next()
+        const readBody = (r: any) =>
+          new Promise<Buffer>((resolve, reject) => {
+            const chunks: Buffer[] = []
+            r.on('data', (c: Buffer) => chunks.push(c))
+            r.on('end', () => resolve(Buffer.concat(chunks)))
+            r.on('error', reject)
+          })
+        void handleDb(req, res, path ?? '', readBody).then((handled) => {
+          if (!handled) next()
+        })
       })
     },
   }
 }
-
-// Read the Airtable token from the shared .env one folder up so the secret
-// stays server-side; the browser only ever talks to the /api/airtable proxy.
-// Absent in CI/Docker builds, where only `vite build` runs and no proxy is needed.
-function readAirtableToken(): string | null {
-  try {
-    const envPath = path.resolve(__dirname, '../.env')
-    const content = fs.readFileSync(envPath, 'utf-8')
-    return content.match(/^AIRTABLE_TOKEN=(.+)$/m)?.[1].trim() ?? null
-  } catch {
-    return null
-  }
-}
-
-const token = readAirtableToken()
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), apiEndpointsPlugin()],
@@ -118,19 +114,5 @@ export default defineConfig({
     alias: {
       '@': path.resolve(__dirname, './src'),
     },
-  },
-  server: {
-    proxy: token
-      ? {
-          '/api/airtable': {
-            target: 'https://api.airtable.com',
-            changeOrigin: true,
-            rewrite: (p) => p.replace(/^\/api\/airtable/, ''),
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          },
-        }
-      : undefined,
   },
 })

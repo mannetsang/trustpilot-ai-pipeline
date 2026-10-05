@@ -76,6 +76,11 @@ from the environment need no third-party packages.
 | `google-business-profile-client-id` | `google-business/gbp_api.py` (env `GOOGLE_BUSINESS_PROFILE_CLIENT_ID`) |
 | `google-business-profile-client-secret` | `google-business/gbp_api.py` (env `GOOGLE_BUSINESS_PROFILE_CLIENT_SECRET`) |
 | `google-business-profile-refresh-token` | `google-business/gbp_api.py` (env `GOOGLE_BUSINESS_PROFILE_REFRESH_TOKEN`) — user OAuth token for the listings' manager, issued by a developer-owned OAuth client; the three must stay together |
+| `shp-ats-supabase-secret-key` | `hr-ats/` dashboard + both jobs (env `SUPABASE_SECRET_KEY`) — Supabase `shp-ats` secret key `hr_ats_services` |
+| `hr-ats-pipeline-gmail-token` | `hr-ats/pipeline` (env `PIPELINE_OAUTH_JSON`) — base64 OAuth token JSON for office@, gmail.modify + drive |
+| `jobs-dashboard-gmail-token` | `hr-ats/dashboard` (env `GMAIL_TOKEN_JSON_B64`) — base64 OAuth token JSON for office@, gmail.modify + Chat |
+| `jobs-dashboard-password` | `hr-ats/dashboard` (env `DASHBOARD_PASSWORD`) |
+| `hr-ats-maps-api-key` | `hr-ats/pipeline/offer_packet.py` (env `MAPS_API_KEY`) |
 
 Only genuine secrets belong here. The BigCommerce store hash identifies the
 store in a URL path and is not sensitive, so it is set inline in the workflow

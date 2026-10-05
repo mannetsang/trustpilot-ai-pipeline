@@ -5,8 +5,14 @@ For each new Indeed application email that carries a résumé PDF, this:
   2. Downloads the résumé PDF
   3. Uploads the PDF to the "Job Applications" Google Drive folder
   4. Uses Gemini to read the résumé and extract structured fields
-  5. Creates a record in the Candidates table (HR Manager base) with the
-     résumé attached, and marks the email processed with a Gmail label
+  5. Scores the candidate against the job's requirements with Gemini
+  6. Stores the résumé in Supabase Storage, creates a row in the Supabase
+     `candidates` table (project shp-ats), and marks the email processed
+     with a Gmail label
+
+Cloud Scheduler fires this every minute, more often than a run lasts, so each
+run takes a lease in `job_locks` first and exits quietly if another run holds
+it. A message that fails 3 times is parked in `ingest_failures` and skipped.
 
 Scope (what counts as an application email):
   sender ends with @indeedemail.com  AND
@@ -30,7 +36,6 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-import requests
 from google.oauth2.credentials import Credentials
 from google.oauth2 import service_account
 from google.auth.transport.requests import Request
@@ -39,6 +44,8 @@ from googleapiclient.http import MediaInMemoryUpload
 from google import genai
 from google.genai import types
 from pydantic import BaseModel
+
+import ats_db as db
 
 BASE_DIR = Path(__file__).parent
 TOKEN_FILE = BASE_DIR / "token_pipeline.json"
@@ -49,11 +56,10 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-# --- Airtable HR Manager base ---
-AIRTABLE_BASE = "appar5DLoak36lfyj"
-CANDIDATES_TABLE = "tbl4I3BpES6LDla89"
-JOBS_TABLE_ID = "tblEPFbViaY4EpjF8"
-RESUME_FIELD_ID = "fld7jO8tFF3hh7vgH"  # "Résumé" attachment field
+# A run's lease. Longer than the 900 s task timeout so a run can't lose it.
+LOCK_NAME = "indeed-pipeline"
+LOCK_TTL_SECONDS = 960
+MAX_ATTEMPTS = 3  # then the message is parked in ingest_failures
 
 # --- Google Drive ---
 DRIVE_FOLDER_ID = "15K8HWc0kvXmhJPjBUp1KQW6Vk7oYU8CN"  # "Job Applications"
@@ -76,25 +82,23 @@ PLACEHOLDER_JOB_STATUS = "Needs Review"
 
 
 def load_env():
-    """Read .env if present. In the cloud there is no .env — os.environ wins."""
-    env = {}
+    """Read .env into os.environ if present (local runs). Real env vars win."""
     if ENV_FILE.exists():
         for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
                 k, v = line.split("=", 1)
-                env[k.strip()] = v.strip()
-    return env
+                os.environ.setdefault(k.strip(), v.strip())
 
 
-ENV = load_env()
-AIRTABLE_TOKEN = os.environ.get("AIRTABLE_TOKEN") or ENV.get("AIRTABLE_TOKEN")
+load_env()
 
 
 def resolve_token_file():
     """Locate the Gmail/Drive OAuth token.
 
-    Cloud: PIPELINE_OAUTH_JSON env var holds the base64-encoded token JSON;
+    Cloud: PIPELINE_OAUTH_JSON env var (from Secret Manager
+    `hr-ats-pipeline-gmail-token`) holds the base64-encoded token JSON;
     decode it to a temp file. Local: use token_pipeline.json next to this file.
     """
     b64 = os.environ.get("PIPELINE_OAUTH_JSON")
@@ -321,104 +325,77 @@ def upload_to_drive(drive, pdf_bytes, filename):
     return f["id"], f.get("webViewLink")
 
 
-# ---------- Airtable ----------
-def airtable_headers():
-    return {"Authorization": f"Bearer {AIRTABLE_TOKEN}",
-            "Content-Type": "application/json"}
+# ---------- Supabase ----------
+# Job columns -> the field names _job_text() and the scoring prompt use.
+JOB_FIELD_NAMES = {
+    "title": "Job Title",
+    "status": "Status",
+    "role_summary": "Role Summary",
+    "core_responsibilities": "Core Responsibilities",
+    "requirements_qualifications": "Requirements & Qualifications",
+    "experience_required": "Experience Required",
+    "education_requirement": "Education Requirement",
+}
 
 
-def existing_message_ids():
-    """Return set of Gmail Message IDs already recorded (for idempotency)."""
-    ids, offset = set(), None
-    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE}/{CANDIDATES_TABLE}"
-    while True:
-        params = {"fields[]": "Gmail Message ID", "pageSize": 100}
-        if offset:
-            params["offset"] = offset
-        r = requests.get(url, headers=airtable_headers(), params=params, timeout=30)
-        r.raise_for_status()
-        data = r.json()
-        for rec in data.get("records", []):
-            mid = rec.get("fields", {}).get("Gmail Message ID")
-            if mid:
-                ids.add(mid)
-        offset = data.get("offset")
-        if not offset:
-            break
-    return ids
+def recorded_message_ids(msg_ids):
+    """Of these Gmail ids, return the ones already stored as candidates."""
+    found = set()
+    for i in range(0, len(msg_ids), 100):
+        chunk = msg_ids[i:i + 100]
+        rows = db.select("candidates", {"select": "gmail_message_id",
+                                        "gmail_message_id": db.in_list(chunk)})
+        found.update(r["gmail_message_id"] for r in rows)
+    return found
+
+
+def parked_message_ids(msg_ids):
+    """Of these Gmail ids, return the ones that already failed MAX_ATTEMPTS times."""
+    found = set()
+    for i in range(0, len(msg_ids), 100):
+        chunk = msg_ids[i:i + 100]
+        rows = db.select("ingest_failures", {"select": "gmail_message_id",
+                                             "gmail_message_id": db.in_list(chunk),
+                                             "attempts": f"gte.{MAX_ATTEMPTS}"})
+        found.update(r["gmail_message_id"] for r in rows)
+    return found
 
 
 def load_jobs_by_title():
-    """Map each Jobs record's exact title -> its fields (for match scoring)."""
-    out, offset = {}, None
-    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE}/{JOBS_TABLE_ID}"
-    while True:
-        params = {"pageSize": 100}
-        if offset:
-            params["offset"] = offset
-        r = requests.get(url, headers=airtable_headers(), params=params, timeout=30)
-        r.raise_for_status()
-        data = r.json()
-        for rec in data.get("records", []):
-            title = (rec.get("fields", {}).get("Job Title") or "").strip()
-            if title:
-                out[title] = rec["fields"]
-        offset = data.get("offset")
-        if not offset:
-            break
+    """Map each live job's exact title -> its fields (for match scoring)."""
+    cols = ",".join(JOB_FIELD_NAMES)
+    out = {}
+    for row in db.select("jobs", {"select": cols, "deleted_at": "is.null"}):
+        title = (row.get("title") or "").strip()
+        if title:
+            out[title] = {JOB_FIELD_NAMES[k]: v for k, v in row.items() if v is not None}
     return out
 
 
 def create_placeholder_job(job_title, apply_date):
-    """Create a minimal Jobs record for a role that isn't in the ATS yet.
+    """Create a minimal job for a role that isn't in the ATS yet.
 
-    Only ever reached from the trusted in-scope Indeed path. The record carries
-    the exact same title string written to the candidate's "Job Title Applied",
+    Only ever reached from the trusted in-scope Indeed path. The row carries
+    the exact same title string written to the candidate's job_title_applied,
     so the dashboard's title-based join links them. It is marked
     PLACEHOLDER_JOB_STATUS and annotated so HR knows to review and complete it.
-    Returns the new Airtable record id.
+    Returns the new job id.
     """
-    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE}/{JOBS_TABLE_ID}"
-    fields = {
-        "Job Title": job_title,
-        "Status": PLACEHOLDER_JOB_STATUS,
-        "Role Summary": (
+    row = db.insert("jobs", {
+        "title": job_title,
+        "status": PLACEHOLDER_JOB_STATUS,
+        "role_summary": (
             "⚠ Auto-created placeholder from an Indeed application received "
             f"on {apply_date}. This role had no posting in the ATS when the "
             "application arrived, so it was created automatically to record the "
             "candidate. Please review and fill in the real job details."
         ),
-    }
-    # typecast lets Airtable create the "Needs Review" single-select option
-    # on the fly (same behaviour the dashboard relies on for createJob).
-    r = requests.post(url, headers=airtable_headers(),
-                      json={"fields": fields, "typecast": True}, timeout=30)
-    if r.status_code >= 300:
-        raise RuntimeError(f"Airtable job create failed {r.status_code}: {r.text}")
-    return r.json()["id"]
+    })
+    return row["id"]
 
 
-def create_record(fields):
-    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE}/{CANDIDATES_TABLE}"
-    r = requests.post(url, headers=airtable_headers(),
-                      json={"fields": fields, "typecast": True}, timeout=30)
-    if r.status_code >= 300:
-        raise RuntimeError(f"Airtable create failed {r.status_code}: {r.text}")
-    return r.json()["id"]
-
-
-def attach_resume(record_id, pdf_bytes, filename):
-    """Upload the PDF into the record's Résumé attachment field (content API)."""
-    url = (f"https://content.airtable.com/v0/{AIRTABLE_BASE}/{record_id}/"
-           f"{RESUME_FIELD_ID}/uploadAttachment")
-    payload = {
-        "contentType": "application/pdf",
-        "filename": filename,
-        "file": base64.b64encode(pdf_bytes).decode("ascii"),
-    }
-    r = requests.post(url, headers=airtable_headers(), json=payload, timeout=60)
-    if r.status_code >= 300:
-        raise RuntimeError(f"Airtable attach failed {r.status_code}: {r.text}")
+def create_record(row):
+    return db.insert("candidates", row, on_conflict="gmail_message_id")["id"]
 
 
 # ---------- main pipeline ----------
@@ -432,8 +409,11 @@ def process(backfill=False, limit=None, dry_run=False):
     resp = gmail.users().messages().list(userId="me", q=query, maxResults=200).execute()
     msg_ids = [m["id"] for m in resp.get("messages", [])]
     print(f"Found {len(msg_ids)} candidate email(s) matching scope query.")
+    if not msg_ids:
+        return
 
-    already = set() if dry_run else existing_message_ids()
+    already = set() if dry_run else recorded_message_ids(msg_ids)
+    parked = set() if dry_run else parked_message_ids(msg_ids)
     label_id = None if dry_run else ensure_label(gmail, PROCESSED_LABEL)
     jobs_by_title = load_jobs_by_title()
 
@@ -441,122 +421,140 @@ def process(backfill=False, limit=None, dry_run=False):
     for mid in msg_ids:
         if limit and processed >= limit:
             break
-        full = gmail.users().messages().get(userId="me", id=mid, format="full").execute()
-        payload = full["payload"]
-        if not in_scope(payload):
-            continue
         if mid in already:
-            print(f"  skip (already recorded): {mid}")
+            # Recorded but never labelled (e.g. a run died after the insert):
+            # label it now so it drops out of the query for good.
+            if not backfill:
+                gmail.users().messages().modify(
+                    userId="me", id=mid, body={"addLabelIds": [label_id]}).execute()
             skipped += 1
             continue
-
-        subject = header(payload, "Subject") or ""
-        from_hdr = header(payload, "From") or ""
-        body = find_plain_text(payload)
-        job, location = parse_subject(subject)
-        name, indeed_link = parse_body(body)
-        if not name:  # fall back to the From display name
-            name = re.sub(r"<.*?>", "", from_hdr).strip() or "Unknown"
-        apply_date = datetime.fromtimestamp(
-            int(full["internalDate"]) / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
-
-        pdf_info = find_pdf_attachment(payload)
-        orig_name, att_id = pdf_info
-        att = gmail.users().messages().attachments().get(
-            userId="me", messageId=mid, id=att_id).execute()
-        pdf_bytes = base64.urlsafe_b64decode(att["data"])
-
-        print(f"\n> {name} - {job} ({apply_date})  [{len(pdf_bytes)} bytes]")
-
-        # AI parse
-        try:
-            rd = parse_resume(pdf_bytes)
-        except Exception as e:
-            print(f"    ! resume parse failed: {e}")
-            rd = ResumeData()
-
-        # AI match score vs. the matching job's requirements
-        cand_for_score = {
-            "Candidate Name": name,
-            "Years of Experience": rd.years_experience,
-            "Key Skills": rd.key_skills,
-            "Relevant Experience": rd.relevant_experience,
-            "Education & Qualifications": rd.education_qualifications,
-            "AI Summary": rd.summary,
-        }
-        # Resolve the job. If it isn't in the ATS, create a placeholder so the
-        # candidate can still be grouped on the dashboard (which joins on title).
-        job_key = job.strip()
-        job_fields = jobs_by_title.get(job_key)
-        if job_fields is None:
-            if dry_run:
-                print(f"    [dry-run] job '{job_key}' not in ATS — "
-                      f"would create a '{PLACEHOLDER_JOB_STATUS}' placeholder")
-                job_fields = {"Job Title": job}
-            else:
-                try:
-                    new_job_id = create_placeholder_job(job, apply_date)
-                    print(f"    + created placeholder job '{job_key}' "
-                          f"({new_job_id}) — status '{PLACEHOLDER_JOB_STATUS}'")
-                    job_fields = {"Job Title": job, "Status": PLACEHOLDER_JOB_STATUS}
-                    # Cache it so other applicants to the same new job in this
-                    # run reuse the record instead of creating duplicates.
-                    jobs_by_title[job_key] = job_fields
-                except Exception as e:
-                    print(f"    ! placeholder job create failed: {e}")
-                    job_fields = {"Job Title": job}
-        try:
-            sr = score_candidate(cand_for_score, job_fields)
-        except Exception as e:
-            print(f"    ! scoring failed: {e}")
-            sr = None
-
-        fname = sanitize(f"{name} - {job} - {apply_date}") + ".pdf"
-
-        if dry_run:
-            print(f"    [dry-run] would upload {fname} to Drive, create Airtable record")
-            print(f"    parsed: email={rd.email} phone={rd.phone} "
-                  f"exp={rd.years_experience} skills={(rd.key_skills or '')[:60]}")
-            if sr:
-                print(f"    match score: {sr.score} — {sr.notes}")
-            processed += 1
+        if mid in parked:
+            skipped += 1
             continue
-
         try:
-            _, drive_link = upload_to_drive(drive, pdf_bytes, fname)
-            fields = {
-                "Candidate Name": name,
-                "Status": "New",
-                "Job Title Applied": job,
-                "Job Location": location,
-                "Application Date": apply_date,
-                "Source": "Indeed",
-                "Email": rd.email,
-                "Phone": rd.phone,
-                "Candidate Location": rd.location,
-                "Years of Experience": rd.years_experience,
-                "Key Skills": rd.key_skills,
-                "Relevant Experience": rd.relevant_experience,
-                "Education & Qualifications": rd.education_qualifications,
-                "AI Summary": rd.summary,
-                "Résumé Drive Link": drive_link,
-                "Indeed Profile Link": indeed_link,
-                "Gmail Message ID": mid,
-                "Match Score": sr.score if sr else None,
-                "Match Notes": sr.notes if sr else None,
-            }
-            fields = {k: v for k, v in fields.items() if v is not None}
-            rec_id = create_record(fields)
-            attach_resume(rec_id, pdf_bytes, orig_name or fname)
-            gmail.users().messages().modify(
-                userId="me", id=mid, body={"addLabelIds": [label_id]}).execute()
-            print(f"    OK recorded {rec_id}, resume -> Drive + Airtable, email labelled")
-            processed += 1
+            if process_message(gmail, drive, mid, jobs_by_title, label_id, dry_run):
+                processed += 1
         except Exception as e:
             print(f"    FAILED: {e}")
             failed += 1
+            if not dry_run:
+                attempts = db.rpc("record_ingest_failure",
+                                  {"p_message_id": mid, "p_error": str(e)})
+                if attempts >= MAX_ATTEMPTS:
+                    print(f"    ! giving up on {mid} after {attempts} attempts "
+                          "(see ingest_failures)")
 
     print(f"\nDone. processed={processed} skipped={skipped} failed={failed}")
+
+
+def process_message(gmail, drive, mid, jobs_by_title, label_id, dry_run):
+    """Ingest one Indeed email. Returns False if it turned out to be out of scope."""
+    full = gmail.users().messages().get(userId="me", id=mid, format="full").execute()
+    payload = full["payload"]
+    if not in_scope(payload):
+        return False
+
+    subject = header(payload, "Subject") or ""
+    from_hdr = header(payload, "From") or ""
+    body = find_plain_text(payload)
+    job, location = parse_subject(subject)
+    name, indeed_link = parse_body(body)
+    if not name:  # fall back to the From display name
+        name = re.sub(r"<.*?>", "", from_hdr).strip() or "Unknown"
+    apply_date = datetime.fromtimestamp(
+        int(full["internalDate"]) / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+
+    orig_name, att_id = find_pdf_attachment(payload)
+    att = gmail.users().messages().attachments().get(
+        userId="me", messageId=mid, id=att_id).execute()
+    pdf_bytes = base64.urlsafe_b64decode(att["data"])
+
+    print(f"\n> {name} - {job} ({apply_date})  [{len(pdf_bytes)} bytes]")
+
+    # AI parse
+    try:
+        rd = parse_resume(pdf_bytes)
+    except Exception as e:
+        print(f"    ! resume parse failed: {e}")
+        rd = ResumeData()
+
+    # AI match score vs. the matching job's requirements
+    cand_for_score = {
+        "Candidate Name": name,
+        "Years of Experience": rd.years_experience,
+        "Key Skills": rd.key_skills,
+        "Relevant Experience": rd.relevant_experience,
+        "Education & Qualifications": rd.education_qualifications,
+        "AI Summary": rd.summary,
+    }
+    # Resolve the job. If it isn't in the ATS, create a placeholder so the
+    # candidate can still be grouped on the dashboard (which joins on title).
+    job_key = job.strip()
+    job_fields = jobs_by_title.get(job_key)
+    if job_fields is None:
+        if dry_run:
+            print(f"    [dry-run] job '{job_key}' not in ATS — "
+                  f"would create a '{PLACEHOLDER_JOB_STATUS}' placeholder")
+            job_fields = {"Job Title": job}
+        else:
+            try:
+                new_job_id = create_placeholder_job(job, apply_date)
+                print(f"    + created placeholder job '{job_key}' "
+                      f"({new_job_id}) — status '{PLACEHOLDER_JOB_STATUS}'")
+                job_fields = {"Job Title": job, "Status": PLACEHOLDER_JOB_STATUS}
+                # Cache it so other applicants to the same new job in this
+                # run reuse the record instead of creating duplicates.
+                jobs_by_title[job_key] = job_fields
+            except Exception as e:
+                print(f"    ! placeholder job create failed: {e}")
+                job_fields = {"Job Title": job}
+    try:
+        sr = score_candidate(cand_for_score, job_fields)
+    except Exception as e:
+        print(f"    ! scoring failed: {e}")
+        sr = None
+
+    fname = sanitize(f"{name} - {job} - {apply_date}") + ".pdf"
+
+    if dry_run:
+        print(f"    [dry-run] would upload {fname} to Drive + Supabase, create candidate")
+        print(f"    parsed: email={rd.email} phone={rd.phone} "
+              f"exp={rd.years_experience} skills={(rd.key_skills or '')[:60]}")
+        if sr:
+            print(f"    match score: {sr.score} — {sr.notes}")
+        return True
+
+    _, drive_link = upload_to_drive(drive, pdf_bytes, fname)
+    resume_path = db.upload_resume(pdf_bytes, fname)
+    row = {
+        "candidate_name": name,
+        "status": "New",
+        "job_title_applied": job,
+        "job_location": location,
+        "application_date": apply_date,
+        "source": "Indeed",
+        "email": rd.email,
+        "phone": rd.phone,
+        "candidate_location": rd.location,
+        "years_of_experience": rd.years_experience,
+        "key_skills": rd.key_skills,
+        "relevant_experience": rd.relevant_experience,
+        "education_qualifications": rd.education_qualifications,
+        "ai_summary": rd.summary,
+        "resume_path": resume_path,
+        "resume_filename": orig_name or fname,
+        "resume_drive_link": drive_link,
+        "indeed_profile_link": indeed_link,
+        "gmail_message_id": mid,
+        "match_score": sr.score if sr else None,
+        "match_notes": sr.notes if sr else None,
+    }
+    rec_id = create_record(row)
+    gmail.users().messages().modify(
+        userId="me", id=mid, body={"addLabelIds": [label_id]}).execute()
+    print(f"    OK recorded {rec_id}, resume -> Drive + Supabase, email labelled")
+    return True
 
 
 def main():
@@ -567,7 +565,7 @@ def main():
         except Exception:
             pass
 
-    ap = argparse.ArgumentParser(description="Indeed -> Airtable/Drive candidate pipeline")
+    ap = argparse.ArgumentParser(description="Indeed -> Supabase/Drive candidate pipeline")
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--backfill", action="store_true", help="process all in-scope emails")
     g.add_argument("--run", action="store_true", help="process only un-labelled emails")
@@ -575,13 +573,18 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="parse only; write nothing")
     args = ap.parse_args()
 
-    if not AIRTABLE_TOKEN:
-        sys.exit("AIRTABLE_TOKEN missing (set env var or .env)")
     if not os.environ.get("PIPELINE_OAUTH_JSON") and not TOKEN_FILE.exists():
         sys.exit("Gmail/Drive token missing — set PIPELINE_OAUTH_JSON env var "
                  "or run pipeline_auth.py locally first")
 
-    process(backfill=args.backfill, limit=args.limit, dry_run=args.dry_run)
+    if args.dry_run:
+        process(backfill=args.backfill, limit=args.limit, dry_run=True)
+        return
+    with db.JobLock(LOCK_NAME, LOCK_TTL_SECONDS) as got:
+        if not got:
+            print("Another run holds the lock; exiting.")
+            return
+        process(backfill=args.backfill, limit=args.limit)
 
 
 if __name__ == "__main__":

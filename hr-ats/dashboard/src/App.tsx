@@ -74,13 +74,13 @@ import {
   listJobs,
   updateCandidate,
   updateJob,
-} from '@/lib/airtable'
+} from '@/lib/db'
 import type {
   CandidateFields,
   CandidateRecord,
   JobFields,
   JobRecord,
-} from '@/lib/airtable'
+} from '@/lib/db'
 
 const STATUSES = ['Draft', 'Open', 'On Hold', 'Filled', 'Closed']
 const DEPARTMENTS = [
@@ -1023,7 +1023,7 @@ export default function App() {
                 </CardTitle>
                 <CardDescription>
                   {statusFilter === 'all' && locationFilter === 'all'
-                    ? 'Live from the HR Manager base in Airtable.'
+                    ? 'Live from the HR ATS database.'
                     : `Showing ${filteredJobs.length} of ${jobs.length} jobs.`}
                 </CardDescription>
               </div>
@@ -1191,9 +1191,9 @@ export default function App() {
                                   Delete “{f['Job Title'] ?? 'this job'}”?
                                 </AlertDialogTitle>
                                 <AlertDialogDescription>
-                                  This removes the record from the Jobs table in
-                                  Airtable. You can restore it from Airtable&apos;s
-                                  trash for a limited time.
+                                  This hides the job from the dashboard. It stays
+                                  in the database (marked deleted), so it can be
+                                  restored if needed.
                                 </AlertDialogDescription>
                               </AlertDialogHeader>
                               <AlertDialogFooter>

@@ -92,6 +92,15 @@ The review pipeline (Cloud Run `gbp-reviews`, scheduler every 30 min, Gemini
 suggestions, Chat card, Sheet `1I6RJ9SoESONvCRnRZWMCwLq6wU3utYukWqC3w7iUav4`)
 mirrors the Trustpilot one; see the README's pipeline section.
 
+### HR applicant tracking (jobs dashboard)
+
+`hr-ats/`: the jobs dashboard (Cloud Run service `jobs-dashboard`,
+northamerica-northeast2), the `indeed-pipeline` and `offer-packet` Cloud Run
+jobs, all on the Supabase project **`shp-ats`** (ref `qxmwygkwctyksfcmsqsf`).
+Moved off Airtable in 2026-10; the Airtable "HR Manager" base is retired.
+Gmail access is the shared `office@superhairpieces.com` mailbox. See
+`hr-ats/README.md`.
+
 ### Known data-quality caveats
 
 - `payment_method` on orders contains free text in places (service-request

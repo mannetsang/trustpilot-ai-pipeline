@@ -1,7 +1,7 @@
 // Production server for the jobs dashboard.
 // - Serves the static Vite build from ./dist
-// - Proxies /api/airtable/* to the Airtable API, injecting the token
-//   server-side so it never reaches the browser
+// - Serves /api/db/* and /api/resume/* from Supabase (db.mjs); the Supabase
+//   secret key stays server-side and never reaches the browser
 // - Password login: when DASHBOARD_PASSWORD is set, all /api/* routes (except
 //   the auth endpoints) require a valid session cookie. The password itself is
 //   only checked server-side and never ships to the browser.
@@ -15,15 +15,15 @@ import {
   handleChatSpaces,
   handleShareCandidate,
 } from './mail.mjs'
+import { handleDb } from './db.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DIST = path.join(__dirname, 'dist')
 const PORT = Number(process.env.PORT ?? 8080)
-const TOKEN = process.env.AIRTABLE_TOKEN
 const PASSWORD = process.env.DASHBOARD_PASSWORD
 
-if (!TOKEN) {
-  console.error('AIRTABLE_TOKEN environment variable is required')
+if (!process.env.SUPABASE_SECRET_KEY) {
+  console.error('SUPABASE_SECRET_KEY environment variable is required')
   process.exit(1)
 }
 
@@ -77,28 +77,6 @@ function readBody(req) {
   })
 }
 
-async function proxyAirtable(req, res, url) {
-  const target =
-    'https://api.airtable.com' +
-    url.pathname.replace(/^\/api\/airtable/, '') +
-    url.search
-  const init = {
-    method: req.method,
-    headers: { Authorization: `Bearer ${TOKEN}` },
-  }
-  if (!['GET', 'HEAD', 'DELETE'].includes(req.method)) {
-    init.headers['Content-Type'] =
-      req.headers['content-type'] ?? 'application/json'
-    init.body = await readBody(req)
-  }
-  const upstream = await fetch(target, init)
-  const body = Buffer.from(await upstream.arrayBuffer())
-  res.writeHead(upstream.status, {
-    'Content-Type': upstream.headers.get('content-type') ?? 'application/json',
-  })
-  res.end(body)
-}
-
 function serveStatic(res, pathname) {
   let filePath = path.normalize(path.join(DIST, pathname))
   if (!filePath.startsWith(DIST)) {
@@ -150,9 +128,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/share-candidate') {
       return void (await handleShareCandidate(req, res))
     }
-    if (url.pathname.startsWith('/api/airtable/')) {
-      return await proxyAirtable(req, res, url)
-    }
+    if (await handleDb(req, res, url.pathname, readBody)) return
     return serveStatic(res, url.pathname)
   } catch (err) {
     console.error(err)

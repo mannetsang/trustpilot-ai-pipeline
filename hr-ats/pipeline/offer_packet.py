@@ -2,9 +2,9 @@
 
 When a candidate replies to their offer email ("... offer (quick detail needed)")
 and includes their residential mailing address, this:
-  1. Looks the candidate up in the Employee table (by their email) — the offer
-     details (comp, location, start date, etc.) were recorded there by the
-     dashboard's "Send hire email" flow.
+  1. Looks the candidate up in the Supabase `employees` table (by their
+     email) — the offer details (comp, location, start date, etc.) were
+     recorded there by the dashboard's "Draft hire email" flow.
   2. Creates a Drive folder named after the candidate under the onboarding parent.
   3. Fills the confidentiality agreement and the offer letter templates
      (Docs API replaceAllText on a converted copy — preserves formatting) and
@@ -12,8 +12,8 @@ and includes their residential mailing address, this:
   4. Emails the candidate the offer letter + confidentiality agreement + the two
      static forms (Employee Information Form, Video Surveillance Form), from the
      connected Gmail with its signature.
-  5. Marks the reply with a Gmail label and stamps "Offer Packet Sent At" on the
-     Employee row so nobody is ever double-processed.
+  5. Marks the reply with a Gmail label and stamps offer_packet_sent_at on the
+     employee row so nobody is ever double-processed.
 
 Usage:
     python offer_packet.py --run                 # process new replies (scheduled)
@@ -41,12 +41,26 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaInMemoryUpload, MediaIoBaseDownload
 from pydantic import BaseModel
 
+import ats_db as db
 import indeed_pipeline as pipe
 
-# --- Airtable ---
-EMPLOYEE_TABLE = "tblZ38T0qi31dW4jD"
-OFFICE_TABLE = "tblPK8Q0ZsxH1BEUP"  # Company Office: location name -> full address
-INSURANCE_TABLE = "tbl5VPJz3EHqI4L3Z"  # Insurance Eligibility: start range -> eligible date
+LOCK_NAME = "offer-packet"
+LOCK_TTL_SECONDS = 960  # > the 900 s task timeout
+
+# employees columns -> the field names generate_and_send() reads.
+EMPLOYEE_FIELD_NAMES = {
+    "candidate_name": "Candidate Name",
+    "email": "Email",
+    "job_title": "Job Title",
+    "compensation_type": "Compensation Type",
+    "compensation_amount": "Compensation Amount",
+    "location": "Location",
+    "employment_type": "Employment Type",
+    "start_date": "Start Date",
+    "probation_period_months": "Probation Period (Months)",
+    "offer_emailed_at": "Offer Emailed At",
+    "offer_packet_sent_at": "Offer Packet Sent At",
+}
 
 # --- Google Drive / Docs ---
 PARENT_FOLDER_ID = "1MkTcwdk47dA2BAzsD72Fy5eIuXqIFLwE"   # onboarding parent
@@ -92,35 +106,32 @@ def get_services():
 
 # ---------- Employee table ----------
 def get_employee_by_email(email):
-    url = f"https://api.airtable.com/v0/{pipe.AIRTABLE_BASE}/{EMPLOYEE_TABLE}"
-    safe = email.lower().replace("'", "\\'")
-    params = {"filterByFormula": f"LOWER({{Email}})='{safe}'", "pageSize": 100}
-    r = requests.get(url, headers=pipe.airtable_headers(), params=params, timeout=30)
-    r.raise_for_status()
-    recs = r.json().get("records", [])
-    recs.sort(key=lambda x: x.get("createdTime", ""), reverse=True)
-    return recs[0] if recs else None
+    """Newest employee row for this email, as {"id", "fields"} (Airtable-shaped
+    so the rest of this file reads it unchanged)."""
+    # Case-insensitive exact match: escape LIKE's wildcards (_ is common in emails).
+    pattern = email.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    rows = db.select("employees", {
+        "select": "id," + ",".join(EMPLOYEE_FIELD_NAMES),
+        "email": f"ilike.{pattern}",
+        "order": "created_at.desc",
+        "limit": "1",
+    })
+    if not rows:
+        return None
+    row = rows[0]
+    fields = {EMPLOYEE_FIELD_NAMES[k]: v for k, v in row.items()
+              if k in EMPLOYEE_FIELD_NAMES and v is not None}
+    return {"id": row["id"], "fields": fields}
 
 
 def load_office_addresses():
-    """Return {location name: full mailing address} from the Company Office table."""
-    url = f"https://api.airtable.com/v0/{pipe.AIRTABLE_BASE}/{OFFICE_TABLE}"
-    out, offset = {}, None
-    while True:
-        params = {"pageSize": 100}
-        if offset:
-            params["offset"] = offset
-        r = requests.get(url, headers=pipe.airtable_headers(), params=params, timeout=30)
-        r.raise_for_status()
-        data = r.json()
-        for rec in data.get("records", []):
-            loc = (rec["fields"].get("Location") or "").strip()
-            addr = (rec["fields"].get("Address") or "").strip()
-            if loc and addr:
-                out[loc] = addr
-        offset = data.get("offset")
-        if not offset:
-            break
+    """Return {location name: full mailing address} from company_offices."""
+    out = {}
+    for row in db.select("company_offices", {"select": "location,address"}):
+        loc = (row.get("location") or "").strip()
+        addr = (row.get("address") or "").strip()
+        if loc and addr:
+            out[loc] = addr
     return out
 
 
@@ -145,24 +156,14 @@ def _parse_month_day(s):
 
 
 def load_insurance_mapping():
-    """Return [(from_month, eligible_month, eligible_day)] from Insurance Eligibility."""
-    url = f"https://api.airtable.com/v0/{pipe.AIRTABLE_BASE}/{INSURANCE_TABLE}"
-    rows, offset = [], None
-    while True:
-        params = {"pageSize": 100}
-        if offset:
-            params["offset"] = offset
-        r = requests.get(url, headers=pipe.airtable_headers(), params=params, timeout=30)
-        r.raise_for_status()
-        data = r.json()
-        for rec in data.get("records", []):
-            frm = _parse_month_day(rec["fields"].get("From"))
-            elig = _parse_month_day(rec["fields"].get("Eligible Date"))
-            if frm and elig:
-                rows.append((frm[0], elig[0], elig[1]))
-        offset = data.get("offset")
-        if not offset:
-            break
+    """Return [(from_month, eligible_month, eligible_day)] from insurance_eligibility."""
+    rows = []
+    for row in db.select("insurance_eligibility",
+                         {"select": "from_label,eligible_date_label"}):
+        frm = _parse_month_day(row.get("from_label"))
+        elig = _parse_month_day(row.get("eligible_date_label"))
+        if frm and elig:
+            rows.append((frm[0], elig[0], elig[1]))
     return rows
 
 
@@ -186,11 +187,8 @@ def compute_insurance_date(start_iso, rows):
 
 
 def mark_employee_sent(rec_id):
-    url = f"https://api.airtable.com/v0/{pipe.AIRTABLE_BASE}/{EMPLOYEE_TABLE}/{rec_id}"
-    now = datetime.now(timezone.utc).isoformat()
-    r = requests.patch(url, headers=pipe.airtable_headers(),
-                       json={"fields": {"Offer Packet Sent At": now}}, timeout=30)
-    r.raise_for_status()
+    db.update("employees", rec_id,
+              {"offer_packet_sent_at": datetime.now(timezone.utc).isoformat()})
 
 
 # ---------- formatting ----------
@@ -605,13 +603,16 @@ def main():
     ap.add_argument("--to", help="recipient override for --test")
     args = ap.parse_args()
 
-    if not pipe.AIRTABLE_TOKEN:
-        sys.exit("AIRTABLE_TOKEN missing (set env var or .env)")
-
     if args.test:
         run_test(args.test, args.to or args.test)
+    elif args.dry_run:
+        process(backfill=args.backfill, limit=args.limit, dry_run=True)
     else:
-        process(backfill=args.backfill, limit=args.limit, dry_run=args.dry_run)
+        with db.JobLock(LOCK_NAME, LOCK_TTL_SECONDS) as got:
+            if not got:
+                print("Another run holds the lock; exiting.")
+                return
+            process(backfill=args.backfill, limit=args.limit)
 
 
 if __name__ == "__main__":

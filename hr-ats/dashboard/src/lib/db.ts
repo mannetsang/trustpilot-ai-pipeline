@@ -1,13 +1,11 @@
-// Airtable client for the HR Manager base — all requests go through the Vite
-// dev-server proxy (/api/airtable), which injects the API token server-side.
+// Data client for the ATS. Talks to the dashboard server's /api/db routes
+// (db.mjs), which read and write Supabase with a server-side key. Records keep
+// the { id, createdTime, fields } shape and field names the UI used with
+// Airtable.
 
-const BASE_ID = 'appar5DLoak36lfyj'
-const JOBS_TABLE = 'tblEPFbViaY4EpjF8'
-const CANDIDATES_TABLE = 'tbl4I3BpES6LDla89'
-const EMPLOYEES_TABLE = 'tblZ38T0qi31dW4jD'
-const API = `/api/airtable/v0/${BASE_ID}/${JOBS_TABLE}`
-const CANDIDATES_API = `/api/airtable/v0/${BASE_ID}/${CANDIDATES_TABLE}`
-const EMPLOYEES_API = `/api/airtable/v0/${BASE_ID}/${EMPLOYEES_TABLE}`
+const API = '/api/db/jobs'
+const CANDIDATES_API = '/api/db/candidates'
+const EMPLOYEES_API = '/api/db/employees'
 
 export interface JobFields {
   'Job Title'?: string
@@ -47,27 +45,15 @@ async function handle<T>(res: Response): Promise<T> {
     } catch {
       /* non-JSON error body */
     }
-    throw new Error(`Airtable ${res.status}: ${detail}`)
+    throw new Error(`Database ${res.status}: ${detail}`)
   }
   return res.json() as Promise<T>
 }
 
 export async function listJobs(): Promise<JobRecord[]> {
-  const records: JobRecord[] = []
-  let offset: string | undefined
-  do {
-    const url = new URL(API, window.location.origin)
-    url.searchParams.set('pageSize', '100')
-    url.searchParams.set('sort[0][field]', 'Date Posted')
-    url.searchParams.set('sort[0][direction]', 'desc')
-    if (offset) url.searchParams.set('offset', offset)
-    const data = await handle<{ records: JobRecord[]; offset?: string }>(
-      await fetch(url),
-    )
-    records.push(...data.records)
-    offset = data.offset
-  } while (offset)
-  return records
+  // Newest posting first; deleted jobs are excluded server-side.
+  const data = await handle<{ records: JobRecord[] }>(await fetch(API))
+  return data.records
 }
 
 export async function createJob(fields: JobFields): Promise<JobRecord> {
@@ -75,8 +61,7 @@ export async function createJob(fields: JobFields): Promise<JobRecord> {
     await fetch(API, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      // typecast lets Airtable create new single-select options on the fly
-      body: JSON.stringify({ fields, typecast: true }),
+      body: JSON.stringify({ fields }),
     }),
   )
 }
@@ -89,7 +74,7 @@ export async function updateJob(
     await fetch(`${API}/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fields, typecast: true }),
+      body: JSON.stringify({ fields }),
     }),
   )
 }
@@ -134,21 +119,11 @@ export interface CandidateRecord {
 }
 
 export async function listCandidates(): Promise<CandidateRecord[]> {
-  const records: CandidateRecord[] = []
-  let offset: string | undefined
-  do {
-    const url = new URL(CANDIDATES_API, window.location.origin)
-    url.searchParams.set('pageSize', '100')
-    url.searchParams.set('sort[0][field]', 'Application Date')
-    url.searchParams.set('sort[0][direction]', 'desc')
-    if (offset) url.searchParams.set('offset', offset)
-    const data = await handle<{ records: CandidateRecord[]; offset?: string }>(
-      await fetch(url),
-    )
-    records.push(...data.records)
-    offset = data.offset
-  } while (offset)
-  return records
+  // Newest application first.
+  const data = await handle<{ records: CandidateRecord[] }>(
+    await fetch(CANDIDATES_API),
+  )
+  return data.records
 }
 
 export async function updateCandidate(
@@ -159,7 +134,7 @@ export async function updateCandidate(
     await fetch(`${CANDIDATES_API}/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fields, typecast: true }),
+      body: JSON.stringify({ fields }),
     }),
   )
 }
@@ -183,8 +158,7 @@ export interface EmployeeRecord {
   fields: EmployeeFields
 }
 
-// Records a hired candidate + offer details in the Employee table. typecast
-// lets Airtable accept the single-select values without exact option ids.
+// Records a hired candidate + offer details in the employees table.
 export async function createEmployee(
   fields: EmployeeFields,
 ): Promise<EmployeeRecord> {
@@ -192,7 +166,7 @@ export async function createEmployee(
     await fetch(EMPLOYEES_API, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fields, typecast: true }),
+      body: JSON.stringify({ fields }),
     }),
   )
 }

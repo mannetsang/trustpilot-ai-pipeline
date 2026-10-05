@@ -1,0 +1,103 @@
+name: Deploy HR ATS (jobs dashboard, indeed-pipeline, offer-packet)
+
+# Deploys hr-ats/ to its three Cloud Run resources. All three read and write
+# the Supabase project shp-ats (see hr-ats/README.md); nothing touches
+# Airtable any more.
+#
+#   indeed-pipeline  job      us-central1               hr-ats/pipeline (default CMD)
+#   offer-packet     job      us-central1               same image, offer_packet.py --run
+#   jobs-dashboard   service  northamerica-northeast2   hr-ats/dashboard
+#
+# Credentials reach the containers as Secret Manager references, never as
+# values in this file. The jobs' Cloud Scheduler triggers (indeed-pipeline
+# every minute, offer-packet every 10) call the jobs by name, so redeploys
+# don't touch them; claude-sessions has no Scheduler role anyway.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'hr-ats/pipeline/**'
+      - 'hr-ats/dashboard/**'
+      - '.github/workflows/deploy-hr-ats.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT: shp-ai-bot-2026
+  JOBS_REGION: us-central1
+  DASHBOARD_REGION: northamerica-northeast2
+  SUPABASE_URL: https://qxmwygkwctyksfcmsqsf.supabase.co
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/304363458561/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: claude-sessions@shp-ai-bot-2026.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      # The pre-Supabase deploys carried credentials as plaintext env vars.
+      # Cloud Run won't turn a plain var into a secret reference of the same
+      # name, so drop any that are still there. No-op once they're gone.
+      - name: Remove leftover plaintext credentials
+        run: |
+          strip() { # kind name region vars...
+            local kind=$1 name=$2 region=$3; shift 3
+            local present
+            present=$(gcloud run $kind describe "$name" --region "$region" --project "$PROJECT" --format=json \
+              | python3 -c 'import json,sys
+          d=json.load(sys.stdin); c=d["spec"]["template"]["spec"]
+          c=c["template"]["spec"] if "template" in c else c
+          plain={e["name"] for e in c["containers"][0].get("env",[]) if "value" in e}
+          print(",".join(v for v in sys.argv[1:] if v in plain))' "$@")
+            if [ -n "$present" ]; then
+              echo "Removing plaintext $present from $name"
+              gcloud run $kind update "$name" --region "$region" --project "$PROJECT" \
+                --remove-env-vars "$present" --quiet || true
+            fi
+          }
+          strip jobs indeed-pipeline "$JOBS_REGION" PIPELINE_OAUTH_JSON AIRTABLE_TOKEN
+          strip jobs offer-packet "$JOBS_REGION" PIPELINE_OAUTH_JSON AIRTABLE_TOKEN MAPS_API_KEY
+          strip services jobs-dashboard "$DASHBOARD_REGION" GMAIL_TOKEN_JSON_B64 DASHBOARD_PASSWORD AIRTABLE_TOKEN
+
+      - name: Deploy indeed-pipeline job
+        run: |
+          gcloud run jobs deploy indeed-pipeline \
+            --source ./hr-ats/pipeline \
+            --region "$JOBS_REGION" --project "$PROJECT" \
+            --tasks 1 --max-retries 0 --task-timeout 900 \
+            --set-env-vars "SUPABASE_URL=$SUPABASE_URL" \
+            --set-secrets "PIPELINE_OAUTH_JSON=hr-ats-pipeline-gmail-token:latest,SUPABASE_SECRET_KEY=shp-ats-supabase-secret-key:latest" \
+            --quiet
+
+      - name: Deploy offer-packet job (same image)
+        run: |
+          IMAGE=$(gcloud run jobs describe indeed-pipeline \
+            --region "$JOBS_REGION" --project "$PROJECT" \
+            --format 'value(spec.template.spec.template.spec.containers[0].image)')
+          gcloud run jobs deploy offer-packet \
+            --image "$IMAGE" \
+            --region "$JOBS_REGION" --project "$PROJECT" \
+            --command python --args offer_packet.py,--run \
+            --tasks 1 --max-retries 0 --task-timeout 900 \
+            --set-env-vars "SUPABASE_URL=$SUPABASE_URL" \
+            --set-secrets "PIPELINE_OAUTH_JSON=hr-ats-pipeline-gmail-token:latest,SUPABASE_SECRET_KEY=shp-ats-supabase-secret-key:latest,MAPS_API_KEY=hr-ats-maps-api-key:latest" \
+            --quiet
+
+      - name: Deploy jobs-dashboard service
+        run: |
+          gcloud run deploy jobs-dashboard \
+            --source ./hr-ats/dashboard \
+            --region "$DASHBOARD_REGION" --project "$PROJECT" \
+            --set-env-vars "SUPABASE_URL=$SUPABASE_URL" \
+            --set-secrets "SUPABASE_SECRET_KEY=shp-ats-supabase-secret-key:latest,GMAIL_TOKEN_JSON_B64=jobs-dashboard-gmail-token:latest,DASHBOARD_PASSWORD=jobs-dashboard-password:latest" \
+            --quiet

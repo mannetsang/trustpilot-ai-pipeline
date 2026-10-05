@@ -10,6 +10,6 @@ FROM node:24-slim
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=build /app/dist ./dist
-COPY server.mjs mail.mjs ./
+COPY server.mjs mail.mjs db.mjs ./
 EXPOSE 8080
 CMD ["node", "server.mjs"]
