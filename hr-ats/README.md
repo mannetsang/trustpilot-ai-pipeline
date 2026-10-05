@@ -31,7 +31,8 @@ data is personal data — never use the publishable/anon key from a browser.
 
 Candidates join to jobs by title (`candidates.job_title_applied = jobs.title`),
 as on Airtable. When an application names a job that isn't in `jobs`, the
-pipeline creates a placeholder job with status **Needs Review**.
+pipeline creates the job itself, status **Open** (HR posts every role on
+Indeed, so a role that gets applications is live).
 
 Deleting a job in the dashboard sets `jobs.deleted_at`; restore with
 `update jobs set deleted_at = null where id = '…'`.

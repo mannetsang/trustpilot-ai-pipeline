@@ -26,7 +26,7 @@ end $$;
 create table if not exists jobs (
   id                           uuid primary key default gen_random_uuid(),
   title                        text not null,
-  status                       text,          -- Draft, Open, On Hold, Filled, Closed, Needs Review
+  status                       text,          -- Draft, Open, On Hold, Filled, Closed
   date_posted                  date,
   employment_type              text,
   work_arrangement             text,

@@ -75,10 +75,9 @@ SUBJECT_PREFIX = "new application for"  # matched case-insensitively
 
 # When an application arrives for a job that isn't in the Jobs table yet, the
 # pipeline creates a minimal placeholder Job so the candidate still groups onto
-# the dashboard (which joins candidates to jobs by exact "Job Title"). The
-# placeholder is marked with this status so HR can spot and complete it; it is
-# deliberately NOT "Open", so it never inflates the open-positions count.
-PLACEHOLDER_JOB_STATUS = "Needs Review"
+# the dashboard (which joins candidates to jobs by exact "Job Title"). HR
+# posts these roles on Indeed, so the job is live: it goes straight to Open.
+PLACEHOLDER_JOB_STATUS = "Open"
 
 
 def load_env():
@@ -423,18 +422,14 @@ def create_placeholder_job(job_title, apply_date):
 
     Only ever reached from the trusted in-scope Indeed path. The row carries
     the exact same title string written to the candidate's job_title_applied,
-    so the dashboard's title-based join links them. It is marked
-    PLACEHOLDER_JOB_STATUS and annotated so HR knows to review and complete it.
-    Returns the new job id.
+    so the dashboard's title-based join links them. Returns the new job id.
     """
     row = db.insert("jobs", {
         "title": job_title,
         "status": PLACEHOLDER_JOB_STATUS,
         "role_summary": (
-            "⚠ Auto-created placeholder from an Indeed application received "
-            f"on {apply_date}. This role had no posting in the ATS when the "
-            "application arrived, so it was created automatically to record the "
-            "candidate. Please review and fill in the real job details."
+            "Created automatically from the first Indeed application for "
+            f"this role, received on {apply_date}."
         ),
     })
     return row["id"]

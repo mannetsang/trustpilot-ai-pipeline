@@ -83,13 +83,6 @@ import type {
 } from '@/lib/db'
 
 const STATUSES = ['Draft', 'Open', 'On Hold', 'Filled', 'Closed']
-// The pipeline creates a job with this status when an application arrives for
-// a role that isn't in the ATS yet. Not offered in the Add-job form, but it
-// must be filterable and settable, or those jobs (and their applicants) vanish.
-const NEEDS_REVIEW = 'Needs Review'
-const JOB_STATUSES = [NEEDS_REVIEW, ...STATUSES]
-// Default view: open roles plus the new ones HR still has to review.
-const ACTIVE_FILTER = 'active'
 const DEPARTMENTS = [
   'Customer Service',
   'Sales',
@@ -155,7 +148,6 @@ const STATUS_STYLES: Record<string, string> = {
   Open: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300',
   Draft: 'bg-zinc-100 text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300',
   'On Hold': 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
-  [NEEDS_REVIEW]: 'bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300',
   Filled: 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300',
   Closed: 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300',
 }
@@ -358,7 +350,7 @@ export default function App() {
   const [savingStatusId, setSavingStatusId] = useState<string | null>(null)
   const [form, setForm] = useState<AddJobFormState>(EMPTY_FORM)
   const [selectedJob, setSelectedJob] = useState<JobRecord | null>(null)
-  const [statusFilter, setStatusFilter] = useState(ACTIVE_FILTER)
+  const [statusFilter, setStatusFilter] = useState('Open')
   const [locationFilter, setLocationFilter] = useState('all')
   const [sentIds, setSentIds] = useState<Set<string>>(new Set())
   const [offerCandidate, setOfferCandidate] = useState<CandidateRecord | null>(null)
@@ -454,10 +446,7 @@ export default function App() {
     () =>
       jobs.filter(
         (j) =>
-          (statusFilter === 'all' ||
-            (statusFilter === ACTIVE_FILTER
-              ? j.fields.Status === 'Open' || j.fields.Status === NEEDS_REVIEW
-              : j.fields.Status === statusFilter)) &&
+          (statusFilter === 'all' || j.fields.Status === statusFilter) &&
           (locationFilter === 'all' || j.fields.Location === locationFilter),
       ),
     [jobs, statusFilter, locationFilter],
@@ -1040,13 +1029,12 @@ export default function App() {
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger className="h-8 w-48" aria-label="Filter by status">
+                  <SelectTrigger className="h-8 w-36" aria-label="Filter by status">
                     <SelectValue placeholder="Status" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={ACTIVE_FILTER}>Open &amp; needs review</SelectItem>
                     <SelectItem value="all">All statuses</SelectItem>
-                    {JOB_STATUSES.map((s) => (
+                    {STATUSES.map((s) => (
                       <SelectItem key={s} value={s}>
                         {s}
                       </SelectItem>
@@ -1134,7 +1122,7 @@ export default function App() {
                             disabled={savingStatusId === job.id}
                           >
                             <SelectTrigger
-                              className={`h-8 w-36 border-transparent font-medium ${
+                              className={`h-8 w-32 border-transparent font-medium ${
                                 f.Status ? STATUS_STYLES[f.Status] ?? '' : ''
                               }`}
                               aria-label={`Status for ${f['Job Title'] ?? 'job'}`}
@@ -1146,7 +1134,7 @@ export default function App() {
                               )}
                             </SelectTrigger>
                             <SelectContent>
-                              {JOB_STATUSES.map((s) => (
+                              {STATUSES.map((s) => (
                                 <SelectItem key={s} value={s}>
                                   {s}
                                 </SelectItem>
