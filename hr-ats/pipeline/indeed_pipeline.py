@@ -2,8 +2,8 @@
 
 For each new Indeed application email that carries a résumé PDF, this:
   1. Parses candidate name, job title, location, apply date, Indeed link
-  2. Downloads the résumé PDF
-  3. Uploads the PDF to the "Job Applications" Google Drive folder
+  2. Downloads the résumé (PDF, Word .docx or .txt)
+  3. Uploads it to the "Job Applications" Google Drive folder
   4. Uses Gemini to read the résumé and extract structured fields
   5. Scores the candidate against the job's requirements with Gemini
   6. Stores the résumé in Supabase Storage, creates a row in the Supabase
@@ -17,7 +17,7 @@ it. A message that fails 3 times is parked in `ingest_failures` and skipped.
 Scope (what counts as an application email):
   sender ends with @indeedemail.com  AND
   subject starts with "[Action required] New application for"  AND
-  a PDF attachment is present.
+  a résumé attachment (PDF, Word .docx or .txt) is present.
 The bundled digests from employers-noreply@indeed.com (no résumé) and all
 Indeed marketing mail are intentionally excluded.
 
@@ -150,17 +150,58 @@ def header(payload, name):
     return None
 
 
-def find_pdf_attachment(payload):
-    """Return (filename, attachmentId) of the first PDF part, else None."""
-    fn = payload.get("filename", "")
-    body = payload.get("body", {})
-    if fn.lower().endswith(".pdf") and body.get("attachmentId"):
-        return fn, body["attachmentId"]
-    for p in payload.get("parts", []) or []:
-        r = find_pdf_attachment(p)
-        if r:
-            return r
-    return None
+# Résumé formats we can read, in order of preference. Gemini reads PDFs
+# directly; Word and text résumés are sent as extracted text. (About 1% of
+# Indeed applicants attach a .docx; the old PDF-only pipeline dropped them.)
+RESUME_TYPES = {
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".txt": "text/plain",
+}
+
+
+def find_resume_attachment(payload):
+    """Return (filename, attachmentId, mime) of the best résumé part, else None."""
+    found = []
+
+    def walk(part):
+        fn = part.get("filename", "")
+        att = part.get("body", {}).get("attachmentId")
+        ext = os.path.splitext(fn.lower())[1]
+        if att and ext in RESUME_TYPES:
+            found.append((list(RESUME_TYPES).index(ext), fn, att, RESUME_TYPES[ext]))
+        for p in part.get("parts", []) or []:
+            walk(p)
+
+    walk(payload)
+    return min(found)[1:] if found else None
+
+
+def docx_text(data):
+    """Plain text of a .docx (paragraphs of word/document.xml), stdlib only."""
+    import io
+    import zipfile
+    from xml.etree import ElementTree
+    ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        root = ElementTree.fromstring(z.read("word/document.xml"))
+    lines = []
+    for para in root.iter(f"{ns}p"):
+        text = "".join(t.text or "" for t in para.iter(f"{ns}t"))
+        if text.strip():
+            lines.append(text)
+    return "\n".join(lines)
+
+
+def docx_images(data):
+    """Embedded images of a .docx as Gemini parts (for image-only résumés)."""
+    import io
+    import zipfile
+    mimes = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        return [types.Part.from_bytes(data=z.read(n), mime_type=mimes[os.path.splitext(n)[1].lower()])
+                for n in sorted(z.namelist())
+                if n.startswith("word/media/") and os.path.splitext(n)[1].lower() in mimes][:10]
 
 
 def find_plain_text(payload):
@@ -180,7 +221,7 @@ def in_scope(payload):
         return False
     if SUBJECT_PREFIX not in subj:
         return False
-    return find_pdf_attachment(payload) is not None
+    return find_resume_attachment(payload) is not None
 
 
 def parse_subject(subject):
@@ -253,7 +294,7 @@ def _generate(contents, schema):
     raise last_err
 
 
-def parse_resume(pdf_bytes):
+def parse_resume(data, mime="application/pdf"):
     prompt = (
         "You are an HR assistant. Read this candidate's résumé and extract the "
         "requested fields. For years_experience, estimate total years of relevant "
@@ -262,11 +303,16 @@ def parse_resume(pdf_bytes):
         "plain-text summaries (a few lines each). Use null for anything not found. "
         "Do not invent information."
     )
-    contents = [
-        types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"),
-        prompt,
-    ]
-    return _generate(contents, ResumeData) or ResumeData()
+    if mime == "application/pdf":
+        doc = types.Part.from_bytes(data=data, mime_type=mime)
+    elif mime == "text/plain":
+        doc = "=== RÉSUMÉ ===\n" + data.decode("utf-8", "replace")
+    else:
+        text = docx_text(data)
+        # Some Word résumés are a picture of a résumé; read the images instead.
+        doc = ("=== RÉSUMÉ ===\n" + text) if len(text) >= 200 else docx_images(data)
+    parts = doc if isinstance(doc, list) else [doc]
+    return _generate(parts + [prompt], ResumeData) or ResumeData()
 
 
 def _job_text(job):
@@ -314,8 +360,8 @@ def sanitize(s):
     return re.sub(r"[^\w()+\- ]", "_", s).strip()[:120]
 
 
-def upload_to_drive(drive, pdf_bytes, filename):
-    media = MediaInMemoryUpload(pdf_bytes, mimetype="application/pdf", resumable=False)
+def upload_to_drive(drive, data, filename, mime="application/pdf"):
+    media = MediaInMemoryUpload(data, mimetype=mime, resumable=False)
     f = drive.files().create(
         body={"name": filename, "parents": [DRIVE_FOLDER_ID]},
         media_body=media,
@@ -465,16 +511,16 @@ def process_message(gmail, drive, mid, jobs_by_title, label_id, dry_run):
     apply_date = datetime.fromtimestamp(
         int(full["internalDate"]) / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
 
-    orig_name, att_id = find_pdf_attachment(payload)
+    orig_name, att_id, mime = find_resume_attachment(payload)
     att = gmail.users().messages().attachments().get(
         userId="me", messageId=mid, id=att_id).execute()
-    pdf_bytes = base64.urlsafe_b64decode(att["data"])
+    resume_bytes = base64.urlsafe_b64decode(att["data"])
 
-    print(f"\n> {name} - {job} ({apply_date})  [{len(pdf_bytes)} bytes]")
+    print(f"\n> {name} - {job} ({apply_date})  [{orig_name}, {len(resume_bytes)} bytes]")
 
     # AI parse
     try:
-        rd = parse_resume(pdf_bytes)
+        rd = parse_resume(resume_bytes, mime)
     except Exception as e:
         print(f"    ! resume parse failed: {e}")
         rd = ResumeData()
@@ -515,7 +561,8 @@ def process_message(gmail, drive, mid, jobs_by_title, label_id, dry_run):
         print(f"    ! scoring failed: {e}")
         sr = None
 
-    fname = sanitize(f"{name} - {job} - {apply_date}") + ".pdf"
+    ext = os.path.splitext(orig_name.lower())[1]
+    fname = sanitize(f"{name} - {job} - {apply_date}") + ext
 
     if dry_run:
         print(f"    [dry-run] would upload {fname} to Drive + Supabase, create candidate")
@@ -525,8 +572,8 @@ def process_message(gmail, drive, mid, jobs_by_title, label_id, dry_run):
             print(f"    match score: {sr.score} — {sr.notes}")
         return True
 
-    _, drive_link = upload_to_drive(drive, pdf_bytes, fname)
-    resume_path = db.upload_resume(pdf_bytes, fname)
+    _, drive_link = upload_to_drive(drive, resume_bytes, fname, mime)
+    resume_path = db.upload_resume(resume_bytes, fname, mime)
     row = {
         "candidate_name": name,
         "status": "New",
