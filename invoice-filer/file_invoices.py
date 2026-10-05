@@ -145,6 +145,12 @@ def classify(pdf, email, filename, vendors):
                 time.sleep(5 * 2 ** attempt)
                 continue
             raise RuntimeError(f"Vertex AI HTTP {err.code}: {err.read()[:300]!r}") from err
+        except (urllib.error.URLError, ConnectionError, TimeoutError) as err:
+            # Dropped connections and timeouts (http.client.RemoteDisconnected is a ConnectionError).
+            if attempt < 3:
+                time.sleep(5 * 2 ** attempt)
+                continue
+            raise RuntimeError(f"Vertex AI connection failed: {err}") from err
 
 
 # ---------------------------------------------------------------------------
@@ -335,7 +341,7 @@ def main():
                         "invoiceNumber": (info.get("invoice_number") or "")[:100]})
                 tree.md5s.add(md5)
                 outcomes.append("saved")
-            except (WorkspaceError, RuntimeError, KeyError, ValueError) as exc:
+            except (WorkspaceError, RuntimeError, KeyError, ValueError, OSError) as exc:
                 print(f"    ! {filename}: {exc}")
                 outcomes.append("error")
         if not outcomes:  # "filename:pdf" matched, but no PDF part (e.g. inside an .eml)
