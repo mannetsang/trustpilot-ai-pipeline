@@ -74,6 +74,13 @@ all three. Manual equivalent: the `gcloud` commands in that file.
 
 ## Importing the Airtable data
 
+**Done 2026-10-05** over the API (`--api --yes`): 19 jobs (+4 pipeline
+placeholders merged, 17 duplicate placeholders dropped), 875 candidates
+(2,418 duplicates from overlapping old-pipeline runs dropped, 58 already
+ingested by the new pipeline), 852 résumés, 19 employees, 9 offices, 12
+insurance rows. Don't re-run it now that HR edits in Supabase; the steps
+below are kept for reference.
+
 The workspace is over its monthly API quota until the 1st, but the web UI
 still works:
 
