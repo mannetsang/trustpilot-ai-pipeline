@@ -18,3 +18,10 @@
     ]
   }
 }
+{
+  "permissions": {
+    "allow": [
+      "Bash(/opt/gcp-venv/bin/python chat-assistant/scripts/gchat.py *)"
+    ]
+  }
+}
