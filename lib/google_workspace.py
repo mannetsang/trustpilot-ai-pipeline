@@ -29,6 +29,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -37,6 +38,8 @@ from lib.secrets import get_secret  # noqa: E402
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me"
 DRIVE_API = "https://www.googleapis.com/drive/v3"
+DRIVE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3"
+FOLDER_MIME = "application/vnd.google-apps.folder"
 MAILBOX = "ap@superhairpieces.com"
 
 
@@ -79,12 +82,15 @@ class WorkspaceClient:
         return self._access_token
 
     # -- HTTP -------------------------------------------------------------
-    def request(self, method, url, params=None, payload=None):
+    def request(self, method, url, params=None, payload=None, body=None, content_type=None):
+        """payload is sent as JSON; body (bytes) is sent as-is with content_type."""
         if params:
             url = f"{url}?{urllib.parse.urlencode(params, doseq=True)}"
         headers = {"Authorization": f"Bearer {self.access_token()}"}
-        data = None
-        if payload is not None:
+        data = body
+        if body is not None:
+            headers["Content-Type"] = content_type
+        elif payload is not None:
             data = json.dumps(payload).encode()
             headers["Content-Type"] = "application/json"
         status, body = _send(urllib.request.Request(url, data=data, headers=headers, method=method))
@@ -137,6 +143,15 @@ class WorkspaceClient:
         return self.request("POST", f"{GMAIL_API}/messages/{message_id}/modify",
                             payload={"addLabelIds": list(add), "removeLabelIds": list(remove)})
 
+    def ensure_label(self, name):
+        """Id of the user label called name, creating it (and showing it) if missing."""
+        for label in self.list_labels():
+            if label["name"] == name:
+                return label["id"]
+        return self.request("POST", f"{GMAIL_API}/labels", payload={
+            "name": name, "labelListVisibility": "labelShow",
+            "messageListVisibility": "show"})["id"]
+
     # -- Drive ------------------------------------------------------------
     def drive_about(self):
         return self.get(f"{DRIVE_API}/about", {"fields": "user,storageQuota"})
@@ -152,10 +167,36 @@ class WorkspaceClient:
         return self.get(f"{DRIVE_API}/files/{file_id}",
                         {"fields": fields, "supportsAllDrives": "true"})
 
+    def create_folder(self, name, parent_id, app_properties=None):
+        metadata = {"name": name, "mimeType": FOLDER_MIME, "parents": [parent_id]}
+        if app_properties:
+            metadata["appProperties"] = app_properties
+        return self.request("POST", f"{DRIVE_API}/files", payload=metadata,
+                            params={"fields": "id,name", "supportsAllDrives": "true"})
+
+    def upload_file(self, name, parent_id, data, mime_type, app_properties=None,
+                    fields="id,name,md5Checksum,webViewLink"):
+        """Create a file from bytes (multipart upload, fine up to ~5 MB+)."""
+        metadata = {"name": name, "parents": [parent_id]}
+        if app_properties:
+            metadata["appProperties"] = app_properties
+        boundary = f"=={uuid.uuid4().hex}=="
+        body = b"".join([
+            f"--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n".encode(),
+            json.dumps(metadata).encode(),
+            f"\r\n--{boundary}\r\nContent-Type: {mime_type}\r\n\r\n".encode(),
+            data,
+            f"\r\n--{boundary}--".encode(),
+        ])
+        return self.request("POST", f"{DRIVE_UPLOAD_API}/files", body=body,
+                            content_type=f"multipart/related; boundary={boundary}",
+                            params={"uploadType": "multipart", "fields": fields,
+                                    "supportsAllDrives": "true"})
+
 
 def _send(request):
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
+        with urllib.request.urlopen(request, timeout=120) as response:
             raw = response.read()
             return response.status, json.loads(raw) if raw else {}
     except urllib.error.HTTPError as err:

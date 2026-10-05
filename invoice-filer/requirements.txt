@@ -1,0 +1,2 @@
+google-auth>=2.20
+google-cloud-secret-manager>=2.16

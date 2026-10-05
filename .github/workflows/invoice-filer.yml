@@ -1,0 +1,63 @@
+name: Invoice filer (ap@ Gmail -> Drive)
+
+# Saves invoice PDFs from ap@superhairpieces.com's Gmail into
+# My Drive/Invoice/<YYYY MM>/<Vendor>/ every hour. Gemini decides what is an
+# invoice, who the vendor is and the invoice date. See invoice-filer/README.md.
+# Credentials: claude-sessions via Workload Identity Federation reads the ap@
+# OAuth secrets (google-workspace-ap-*) and calls Vertex AI.
+
+on:
+  schedule:
+    - cron: '23 * * * *'   # hourly, off the top of the hour
+  workflow_dispatch:
+    inputs:
+      since:
+        description: 'Only mail on/after this date (YYYY-MM-DD)'
+        required: false
+        default: '2026-01-01'
+      dry_run:
+        description: 'Classify and log, but save and label nothing'
+        type: boolean
+        default: false
+
+concurrency:
+  group: invoice-filer
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  file:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/304363458561/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: claude-sessions@shp-ai-bot-2026.iam.gserviceaccount.com
+
+      - name: Install dependencies
+        run: pip install --quiet -r invoice-filer/requirements.txt
+
+      - name: File invoices
+        env:
+          GCP_PROJECT: shp-ai-bot-2026
+        run: |
+          set -o pipefail
+          python3 -u invoice-filer/file_invoices.py \
+            --since "${{ inputs.since || '2026-01-01' }}" \
+            ${{ inputs.dry_run && '--dry-run' || '' }} | tee filer.log
+          {
+            echo "## Invoice filer"
+            echo '```'
+            grep -E '^\s+[+!]|^PDFs:' filer.log || echo "nothing new"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
