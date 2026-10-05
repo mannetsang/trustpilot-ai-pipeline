@@ -92,6 +92,15 @@ The review pipeline (Cloud Run `gbp-reviews`, scheduler every 30 min, Gemini
 suggestions, Chat card, Sheet `1I6RJ9SoESONvCRnRZWMCwLq6wU3utYukWqC3w7iUav4`)
 mirrors the Trustpilot one; see the README's pipeline section.
 
+### ap@superhairpieces.com Gmail & Drive
+
+`lib/google_workspace.py` (`WorkspaceClient`) reads and manages the `ap@`
+mailbox and Drive. Domain-wide delegation is not available, so auth is a
+**user OAuth refresh token** that `ap@` granted to the `ap-mailbox` OAuth client
+in `shp-ai-bot-2026` (scopes `gmail.modify`, `drive`). Secret Manager ids
+`google-workspace-ap-*`, env vars `GOOGLE_WORKSPACE_AP_*`; how to mint a new token
+is in `docs/credentials.md`. Check it with `python lib/google_workspace.py`.
+
 ### Known data-quality caveats
 
 - `payment_method` on orders contains free text in places (service-request

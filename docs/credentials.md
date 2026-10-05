@@ -136,6 +136,25 @@ Then disable the old version once you've confirmed the new one works:
 gcloud secrets versions disable 1 --secret=bigcommerce-access-token --project=shp-ai-bot-2026
 ```
 
+## User OAuth tokens (ap@ Gmail & Drive)
+
+Domain-wide delegation is not available, so no service account can act as a
+Workspace user. `lib/google_workspace.py` instead uses a refresh token that
+`ap@superhairpieces.com` granted to the `ap-mailbox` OAuth client (Web
+application, Google Auth Platform in `shp-ai-bot-2026`, redirect URI
+`https://developers.google.com/oauthplayground`). Secrets
+`google-workspace-ap-client-id`, `-client-secret` and `-refresh-token`, each
+readable by `claude-sessions` (Secret Accessor per secret).
+
+To mint a new refresh token (after `invalid_grant`: password change or access
+removed): in an incognito window signed in **only** as `ap@`, open the OAuth
+2.0 Playground, gear icon, tick *Use your own OAuth credentials*, enter the
+client id and secret (Access type Offline, Force prompt Consent Screen),
+authorise `https://www.googleapis.com/auth/gmail.modify
+https://www.googleapis.com/auth/drive`, confirm the account picker says `ap@`,
+exchange the code, and add the refresh token as a new version of
+`google-workspace-ap-refresh-token`. Verify with `python lib/google_workspace.py`.
+
 ## Local development
 
 Put values in a gitignored `.env` at the repo root, using the environment
