@@ -57,6 +57,12 @@ aimed at you, not already answered, at confidence ≥ 0.85, at most 10 automatic
 actions per run, and **Act automatically** in the header pauses everything. In the chat
 or voice, it sends a Chat message only after you approve the exact text.
 
+It can message a colleague directly: "Tell Sydney the tape arrives Thursday." It finds the person in the
+company directory by name or email (and asks which one if two match), shows you the text and who it goes to,
+and after your OK posts in your direct message with them, starting one if you've never messaged them.
+Starting a direct message needs Google's `chat.spaces.create` permission; a sign-in from before it was added
+shows a banner, and one **Reconnect** adds it.
+
 ## AI partners
 
 | Partner | How it's called | Setup |

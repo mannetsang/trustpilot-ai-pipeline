@@ -80,9 +80,13 @@ SPECS = [
     ("read_conversation", "Recent messages in one Chat conversation, oldest first, with names.",
      _obj({"conversation": {**_S, "description": "Name, id (spaces/...) or DM person's name"}, "limit": _I},
           ["conversation"])),
-    ("send_chat_message", "Post a new message as the owner in a Chat conversation. Set confirmed=true ONLY after the "
-     "owner explicitly approved this exact text in this conversation; otherwise show them the text and ask.",
-     _obj({"conversation": _S, "text": _S, "confirmed": _B}, ["conversation", "text", "confirmed"])),
+    ("send_chat_message", "Post a new message as the owner: in a Chat conversation (conversation), or straight to a "
+     "colleague (person: their name or email; their direct message with the owner is used, or started). First call "
+     "it with confirmed=false: it checks who it would go to (\"to\") without sending. Show the owner the exact text "
+     "and the recipient, and set confirmed=true ONLY after they approved this exact text in this conversation.",
+     _obj({"conversation": {**_S, "description": "A chat or space: name or id (spaces/...)"},
+           "person": {**_S, "description": "A colleague's name or email, for a direct message"},
+           "text": _S, "confirmed": _B}, ["text", "confirmed"])),
     ("list_calendar", "The owner's upcoming calendar events.", _obj({"days_ahead": _I})),
     ("list_integrations", "Company systems you can use right now with credentials already stored in Secret Manager "
      "(BigCommerce stores, SkuVault, Amazon, Airtable, Trustpilot, Stamped, Omnisend, Notion, Figma, TeamDesk, and Manne's Gmail, Drive, Sheets, Analytics and Search Console): their ids, whether each is "
@@ -310,19 +314,62 @@ class Toolset:
                         "text": (m.get("text") or "")[:1500]})
         return {"conversation": space.get("label") if space else name, "messages": out}
 
-    def _t_send_chat_message(self, conversation, text, confirmed=False):
+    def _person(self, person):
+        """A colleague by name or email -> {"name", "email"}, or {"error"} the model can act on."""
+        matches = _directory(self.google).find(person)
+        if len(matches) == 1:
+            return matches[0]
+        if not matches:
+            if "@" in person:  # not in the directory, but Manne gave an address: Google decides if it can be reached
+                return {"name": person.strip(), "email": person.strip().lower()}
+            return {"error": f"No one in the company directory matches '{person}'. Ask Manne for their email."}
+        return {"error": f"'{person}' matches {len(matches)} people: "
+                         + ", ".join(f"{m['name']} <{m['email']}>" for m in matches[:8])
+                         + ". Ask Manne which one, then use their email."}
+
+    def _direct_message(self, who):
+        """The owner's direct message with a colleague, started if there isn't one yet."""
+        from google_apis import GoogleApiError
+
+        user = f"users/{who['email']}"
+        space = self.google.find_direct_message(user)
+        if space:
+            return space, None
+        try:
+            return self.google.start_direct_message(user), None
+        except GoogleApiError as exc:
+            if exc.status == 403:
+                return None, {"error": "Google hasn't allowed starting new direct messages yet. Ask Manne to press "
+                                       "Reconnect in the banner at the top of the page (it adds that permission), "
+                                       "then try again."}
+            raise
+
+    def _t_send_chat_message(self, text, confirmed=False, conversation="", person=""):
         self._need_google()
+        if not (conversation or person):
+            return {"error": "Say where: conversation (a chat or space) or person (a colleague's name or email)."}
+        who = self._person(person) if person else None
+        if who and who.get("error"):
+            return who
         if not confirmed or not self.may_change:  # working alone (no owner present): never sends
-            return {"not_sent": True, "reason": "Show the owner the exact text and ask them to confirm first."}
-        space = self._resolve_space(conversation)
-        name = f"spaces/{space['id']}" if space else (conversation if conversation.startswith("spaces/") else "")
-        if not name:
-            return {"error": f"no conversation matches '{conversation}'"}
+            return {"not_sent": True, "reason": "Show the owner the exact text and ask them to confirm first.",
+                    **({"to": f"{who['name']} <{who['email']}>"} if who else {})}
+        if who:
+            space, problem = self._direct_message(who)
+            if problem:
+                return problem
+            name, label, uri = space["name"], f"{who['name']} (direct message)", space.get("spaceUri", "")
+        else:
+            found = self._resolve_space(conversation)
+            name = f"spaces/{found['id']}" if found else (conversation if conversation.startswith("spaces/") else "")
+            if not name:
+                return {"error": f"no conversation matches '{conversation}'"}
+            label, uri = (found.get("label"), found.get("uri", "")) if found else (name, "")
         sent = self.google.reply_in_thread(name, None, text[:4000])
         now = utcnow_iso()
         self.store.save_action(knowledge.slug(f"{name}{now}", "m-"), {
             "type": "chat_reply", "status": "done", "space": name.split("/", 1)[1], "space_name": name,
-            "space_label": space.get("label") if space else name, "space_uri": space.get("uri", "") if space else "",
+            "space_label": label, "space_uri": uri,
             "reply_text": text[:4000], "source_from": "You", "source_excerpt": "(asked the assistant to send this)",
             "reason": f"sent on your instruction via {self.caller}", "sent_by": "you", "result": sent.get("name", ""),
             "created_at": now, "executed_at": now})

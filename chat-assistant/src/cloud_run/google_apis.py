@@ -21,6 +21,7 @@ ASSISTANT_SCOPES = IDENTITY_SCOPES + [
     "https://www.googleapis.com/auth/chat.spaces.readonly",
     "https://www.googleapis.com/auth/chat.messages.readonly",
     "https://www.googleapis.com/auth/chat.messages.create",
+    "https://www.googleapis.com/auth/chat.spaces.create",    # start a direct message with a colleague (after Manne's OK)
     "https://www.googleapis.com/auth/chat.memberships.readonly",
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/directory.readonly",
@@ -137,6 +138,21 @@ class GoogleClient:
         page = self.request("GET", f"{CHAT}/{space_name}/messages", params=params)
         return list(reversed(page.get("messages", [])))
 
+    def find_direct_message(self, user):
+        """The direct message with a person (users/<email or id>), or None if there isn't one yet."""
+        try:
+            return self.request("GET", f"{CHAT}/spaces:findDirectMessage", params={"name": user})
+        except GoogleApiError as exc:
+            if exc.status == 404:
+                return None
+            raise
+
+    def start_direct_message(self, user):
+        """Opens a direct message with a person (needs chat.spaces.create). Returns the new space."""
+        return self.request("POST", f"{CHAT}/spaces:setup", body={
+            "space": {"spaceType": "DIRECT_MESSAGE"},
+            "memberships": [{"member": {"name": user, "type": "HUMAN"}}]})
+
     def reply_in_thread(self, space_name, thread_name, text):
         body = {"text": text}
         params = {}
@@ -195,6 +211,23 @@ class Directory:
     def email(self, user_name):
         entry = self.entries.get(user_name)
         return entry["email"] if entry else ""
+
+    def find(self, query):
+        """People matching a name or email, best tier first: exact email, exact name, first name (or the part
+        before @), then any part of the name. Each: {"user", "name", "email"}."""
+        q = " ".join((query or "").lower().split())
+        if not q:
+            return []
+        people = [{"user": u, "name": e.get("name", ""), "email": e.get("email", "")} for u, e in self.entries.items()]
+        tiers = (lambda p: p["email"] == q,
+                 lambda p: p["name"].lower() == q,
+                 lambda p: p["name"].lower().split()[:1] == [q] or p["email"].split("@")[0] == q,
+                 lambda p: q in p["name"].lower())
+        for test in tiers:
+            found = [p for p in people if test(p)]
+            if found:
+                return found
+        return []
 
     def known_emails(self):
         return {e["email"] for e in self.entries.values() if e.get("email")}
