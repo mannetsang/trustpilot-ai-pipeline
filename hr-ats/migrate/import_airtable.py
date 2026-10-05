@@ -298,6 +298,26 @@ def copy_resume(attachments):
     return None, None
 
 
+def copy_resumes(pairs):
+    """Copy résumés in parallel: thousands at ~1 s each would outlast
+    Airtable's file links."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(pair):
+        row, attachments = pair
+        try:
+            row["resume_path"], row["resume_filename"] = copy_resume(attachments)
+            return None
+        except Exception as e:
+            return f"{row.get('candidate_name')}: {e}"
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        errors = [e for e in pool.map(one, pairs) if e]
+    for e in errors[:5]:
+        print(f"  ! résumé for {e}")
+    print(f"  résumés copied: {len(pairs) - len(errors)}, failed: {len(errors)}")
+
+
 def delete_imported(table):
     if table == "candidates":
         old = db.select("candidates", {"select": "resume_path",
@@ -349,6 +369,42 @@ def import_table(table, records, args):
         print(f"  extra fields kept only in airtable_fields: {unknown}")
     for e in errors[:20]:
         print(f"  ! {e}")
+
+    # Overlapping runs of the old pipeline recorded some emails more than once
+    # and created the same placeholder job several times. Keep the earliest
+    # (the one HR may have edited) and drop the rest.
+    rows.sort(key=lambda ra: ra[0].get("created_at") or "")
+    if table == "candidates":
+        seen, kept = set(), []
+        for r, a in rows:
+            mid = r.get("gmail_message_id")
+            if mid and mid in seen:
+                continue
+            seen.add(mid)
+            kept.append((r, a))
+        if len(kept) < len(rows):
+            print(f"  dropped {len(rows) - len(kept)} duplicate candidate(s) "
+                  "(same Gmail message recorded twice)")
+        rows = kept
+    if table == "jobs":
+        titles, kept = set(), []
+        for r, a in rows:
+            auto = (r.get("status") == "Needs Review"
+                    and (r.get("role_summary") or "").startswith("⚠ Auto-created"))
+            if auto and r["title"] in titles:
+                continue
+            titles.add(r["title"])
+            kept.append((r, a))
+        # A placeholder that sorted before the real posting of the same title
+        # is redundant too.
+        real = {r["title"] for r, _ in kept if r.get("status") != "Needs Review"}
+        kept = [(r, a) for r, a in kept
+                if not (r.get("status") == "Needs Review" and r["title"] in real
+                        and (r.get("role_summary") or "").startswith("⚠ Auto-created"))]
+        if len(kept) < len(rows):
+            print(f"  dropped {len(rows) - len(kept)} duplicate placeholder job(s)")
+        rows = kept
+
     if args.dry_run:
         for r, a in rows[:2]:
             print("  sample:", {k: v for k, v in r.items() if k != "airtable_fields"},
@@ -387,18 +443,7 @@ def import_table(table, records, args):
             print(f"  skipping {len(have)} already ingested by the new pipeline")
             rows = [(r, a) for r, a in rows if r.get("gmail_message_id") not in have]
         if not args.skip_resumes:
-            copied = failed = 0
-            for row, attachments in rows:
-                if not attachments:
-                    continue
-                try:
-                    row["resume_path"], row["resume_filename"] = copy_resume(attachments)
-                    copied += 1
-                except Exception as e:
-                    failed += 1
-                    if failed <= 5:
-                        print(f"  ! résumé for {row.get('candidate_name')}: {e}")
-            print(f"  résumés copied: {copied}, failed: {failed}")
+            copy_resumes([(r, a) for r, a in rows if a])
 
     # PostgREST bulk insert needs every object to have the same keys, and
     # created_at is NOT NULL: fill any gap rather than send null.
