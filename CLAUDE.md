@@ -100,6 +100,8 @@ mailbox and Drive. Domain-wide delegation is not available, so auth is a
 in `shp-ai-bot-2026` (scopes `gmail.modify`, `drive`). Secret Manager ids
 `google-workspace-ap-*`, env vars `GOOGLE_WORKSPACE_AP_*`; how to mint a new token
 is in `docs/credentials.md`. Check it with `python lib/google_workspace.py`.
+Automations on that mailbox (e.g. the invoice filer) live in the separate
+repo `mannetsang/ap-automation`, which carries its own copy of this client.
 
 ### Known data-quality caveats
 
