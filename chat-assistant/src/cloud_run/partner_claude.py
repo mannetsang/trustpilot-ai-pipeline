@@ -156,8 +156,13 @@ def respond(system, history, toolset, secrets=None, model=None):
             results = []
             for block in tool_uses:
                 result = toolset.call(block.name, block.input if isinstance(block.input, dict) else {})
-                results.append({"type": "tool_result", "tool_use_id": block.id,
-                                "content": json.dumps(result, ensure_ascii=False, default=str),
+                content = json.dumps(result, ensure_ascii=False, default=str)
+                images = getattr(toolset, "take_images", lambda: [])()
+                if images:  # the browser's screenshots, inside the result they belong to
+                    content = [{"type": "text", "text": content}] + [
+                        {"type": "image", "source": {"type": "base64", "media_type": i["mime"], "data": i["data"]}}
+                        for i in images]
+                results.append({"type": "tool_result", "tool_use_id": block.id, "content": content,
                                 "is_error": "error" in result})
             messages.append({"role": "user", "content": results})  # all results in one message
     return {"text": "I ran out of steps on that one. Ask me to continue.", "tools": toolset.log}

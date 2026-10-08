@@ -181,6 +181,38 @@ Not wired up yet: Meta/Instagram, Google Ads (needs a developer token), accounti
 the .com and EU BigCommerce stores (unless `qet21urb3p` turns out to be one of them),
 Walmart, and the MySQL database.
 
+## Web browser
+
+Man AI can open web pages in a real browser and **see** them: every `browser` call does one action (open,
+click, type, press a key, pick an option, scroll, back, screenshot) and shows the model a screenshot of the
+result, plus what's clickable (label and position) and the visible text. Use it for how a page looks or works:
+layout, images, pop-ups, menus, the mobile view (`device=mobile`), search, product options, checkout steps,
+competitors' sites. All three models see the screenshots (Gemini and ChatGPT as images after the tool result,
+Claude inside it); on a live call Gemini Flash describes the screenshot instead.
+
+The browser is its own Cloud Run service, `web-browser` (`src/browser/`): Playwright's Chromium, one instance at
+most (the open tabs live in its memory, closed after 10 idle minutes; at most 4), scaled to zero when unused.
+It runs as `web-browser@shp-ai-bot-2026.iam.gserviceaccount.com`, which holds **no** roles, and only Man AI's
+service account may call it (Cloud Run IAM; Man AI sends an ID token). Man AI finds it through `BROWSER_URL`;
+without it the tool isn't offered.
+
+Guards in the service itself, whatever the model asks:
+- only http(s) to public addresses: localhost, private and link-local ranges (the metadata server), and
+  `*.internal` / `*.local` are blocked for the page and every request it makes, names resolving to them too;
+- no typing into password or payment-card fields; no downloads, file pickers or device permissions; dialogs
+  are dismissed (and reported).
+
+And in Man AI: working alone on a task it may look and click but not type, press keys or pick options. The
+model is told never to log in, enter personal or payment details, place orders or send a form without your
+OK; that rule is an instruction, not a technical block (Manne accepted this risk on 2026-10-07).
+
+Deploy (once the `web-browser` service account exists):
+
+    gcloud run deploy web-browser --source chat-assistant/src/browser --region us-central1 --project shp-ai-bot-2026 --service-account web-browser@shp-ai-bot-2026.iam.gserviceaccount.com --no-allow-unauthenticated --memory 2Gi --cpu 2 --concurrency 8 --max-instances 1 --timeout 120
+    gcloud run services add-iam-policy-binding web-browser --region us-central1 --project shp-ai-bot-2026 --member serviceAccount:chat-assistant@shp-ai-bot-2026.iam.gserviceaccount.com --role roles/run.invoker
+
+then deploy Man AI with `BROWSER_URL=<the web-browser URL>` added to `--set-env-vars`.
+
 ## Read aloud
 
 **🔊** on any reply, or the **Read replies aloud** switch (remembered in this browser),

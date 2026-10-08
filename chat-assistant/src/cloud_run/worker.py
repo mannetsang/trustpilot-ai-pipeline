@@ -29,7 +29,8 @@ Task: {title}
 {detail}Priority: {priority}. Due: {due}. Status: {status}.{project}{previous}
 
 Do as much of it as you can with your tools, for real: look things up in company systems (list_integrations,
-then call_api), research the web (web_search, read_webpage), read the relevant chats, check the calendar and
+then call_api), research the web (web_search, read_webpage, and browser to see and click through a page), read
+the relevant chats, check the calendar and
 the knowledge base. Chain as many calls as it takes.
 
 This is your whole turn: do the work now and deliver what the task asks for (the summary, the numbers, the

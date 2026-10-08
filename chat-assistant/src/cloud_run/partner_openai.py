@@ -38,6 +38,7 @@ def respond(system, history, toolset, secrets=None, model=None):
         if not message.tool_calls:
             return {"text": (message.content or "(no answer)").strip(), "tools": toolset.log}
         messages.append(message.model_dump(exclude_none=True))
+        images = []
         for call in message.tool_calls:
             try:
                 args = json.loads(call.function.arguments or "{}")
@@ -47,6 +48,11 @@ def respond(system, history, toolset, secrets=None, model=None):
                 result = toolset.call(call.function.name, args)
             messages.append({"role": "tool", "tool_call_id": call.id,
                              "content": json.dumps(result, ensure_ascii=False, default=str)})
+            images += getattr(toolset, "take_images", lambda: [])()
+        if images:  # tool messages carry text only: the screenshots follow them, as what the browser showed
+            messages.append({"role": "user", "content": [
+                {"type": "text", "text": "(Screenshots from the browser tool calls above.)"}] + [
+                {"type": "image_url", "image_url": {"url": f"data:{i['mime']};base64,{i['data']}"}} for i in images]})
     return {"text": "I ran out of steps on that one. Ask me to continue.", "tools": toolset.log}
 
 
