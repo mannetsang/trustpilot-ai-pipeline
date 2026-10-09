@@ -600,7 +600,8 @@ class VendorAndAmountTests(unittest.TestCase):
         self.assertEqual(score(billed, {"total": 96.12, "currency": "CAD"})[0], 1.0)
         self.assertEqual(score(billed, {"total": 96.11, "currency": "CAD"})[0], 1.0)   # rounding tolerance
         self.assertEqual(score(billed, {"total": 70.40, "currency": "USD"})[0], 1.0)   # foreign currency
-        self.assertEqual(score(billed, {"total": 70.40, "currency": "EUR"})[0], 0.0)   # currency mismatch
+        self.assertEqual(score(billed, {"total": 70.40, "currency": "EUR"})[0], 1.0)   # exact foreign amount beats a misread label
+        self.assertEqual(score(billed, {"total": 71.00, "currency": "EUR"})[0], 0.0)   # currency mismatch, no exact amount
         self.assertEqual(score(billed, {"total": 70.40, "currency": None})[0], 1.0)    # unknown currency tries both
         self.assertEqual(score({"amount": 96.12, "currency": "CAD"}, {"total": 96.12, "currency": "USD"}),
                          (0.0, "currency differs"))
@@ -625,19 +626,26 @@ class RuleMatchTests(unittest.TestCase):
         out = matching.rule_match([t], [i])
         iid, status, conf, note = out["t1"]
         self.assertEqual((iid, status), ("i1", "matched"))
-        self.assertAlmostEqual(conf, 0.95)
+        self.assertAlmostEqual(conf, 0.94)
         self.assertIn("equals invoice total", note)
         self.assertIn("1 days apart", note)
 
-    def test_close_date_without_vendor_overlap_is_still_a_match(self):
+    def test_close_date_without_vendor_overlap_is_only_possible(self):
+        # Same amount a day apart but nothing links the vendors: a person has to confirm it.
         t = txn("t1", "2026-09-04", "Sq *Corner Cafe", 33.00)
         i = inv("i1", "Dunder Mifflin", 33.00, "2026-09-05")
-        self.assertEqual(matching.rule_match([t], [i])["t1"][1], "matched")
+        self.assertEqual(matching.rule_match([t], [i])["t1"][1:3], ("possible", 0.6))
 
-    def test_exact_amount_far_date_no_vendor_overlap_is_possible(self):
+    def test_exact_amount_far_date_no_vendor_overlap_is_not_proposed(self):
         t = txn("t1", "2026-09-20", "Costco Wholesale", 88.00)
         i = inv("i1", "Staples", 88.00, "2026-07-01")
-        self.assertEqual(matching.rule_match([t], [i])["t1"][1:3], ("possible", 0.6))
+        self.assertEqual(matching.rule_match([t], [i]), {})
+
+    def test_vendor_match_far_outside_the_window_is_only_possible(self):
+        t = txn("t1", "2026-09-20", "Google *Cloud", 12.00)
+        self.assertEqual(matching.rule_match([t], [inv("i1", "Google Cloud", 12.00, "2026-09-01")])["t1"][1], "matched")
+        self.assertEqual(matching.rule_match([t], [inv("i1", "Google Cloud", 12.00, "2026-08-01")])["t1"][1:3], ("possible", 0.6))
+        self.assertEqual(matching.rule_match([t], [inv("i1", "Google Cloud", 12.00, None)])["t1"][1], "matched")
 
     def test_near_amount_needs_vendor_and_date(self):
         t = txn("t1", "2026-09-04", "Anthropic* Claude Team", 150.00)
@@ -769,7 +777,7 @@ class MatchMonthTests(unittest.TestCase):
         self.assertEqual(self.status("t_mystery"), ("matched", "inv_mystery", "ai"))
         self.assertEqual(self.status("t_dup"), ("missing", None, None))
         anth = self.store.get_transaction("t_anth")
-        self.assertAlmostEqual(anth["match_confidence"], 0.95)
+        self.assertAlmostEqual(anth["match_confidence"], 0.94)
         self.assertIn("equals invoice total", anth["match_note"])
         self.assertIsNotNone(anth["updated_at"])
         mystery = self.store.get_transaction("t_mystery")
@@ -1002,7 +1010,7 @@ class IndexInvoicesTests(unittest.TestCase):
         self.assertIn({"file": "b.pdf", "error": "model unavailable"}, result["errors"])
         b = self.store.get_invoice("f_b")
         self.assertEqual(b["extraction_error"], "model unavailable")
-        self.assertNotIn("vendor", b)
+        self.assertIsNone(b["vendor"])          # every row carries every column (PostgREST bulk rule)
         failing.clear()
         result = self.run_index()
         self.assertEqual((result["indexed"], result["errors"]), (1, []))
@@ -1140,7 +1148,7 @@ class ApiTestCase(unittest.TestCase):
     def inject_invoices(self):
         self.store.upsert_invoices([
             inv("inv_anth", "Anthropic", 150.00, "2026-09-03"),
-            inv("inv_far", "Dunder Mifflin", 45.10, "2026-06-01", month_folder="2026 08"),
+            inv("inv_far", "Dunder Mifflin", 45.10, "2026-09-12", month_folder="2026 08"),   # same amount, other vendor
             inv("inv_spare", "Spare Vendor", 999.99, "2026-09-10"),
             inv("inv_old", "Old Vendor", 1.00, "2025-01-01", month_folder="2025 01"),
         ])
@@ -1347,7 +1355,8 @@ class ApiFlowTests(ApiTestCase):
                           cards["1610"]["holder_name"], cards["1610"]["active"]),
                          ("Visa 1610 - Yin", "yin@superhairpieces.com", "AP Visa 1610", "Yin Wei", True))
         self.assertTrue(cards["1610"]["webhook_configured"])
-        self.assertTrue(cards["4894"]["webhook_configured"])          # falls back to the default webhook
+        self.assertFalse(cards["4894"]["webhook_configured"])         # no entry of its own...
+        self.assertTrue(cards["4894"]["webhook_default"])             # ...but the default webhook catches it
         self.assertEqual(self.client.post("/api/cards", json={"last4": "12"}).status_code, 400)
         self.client.post("/api/cards", json={"last4": "2301", "active": False})
         cards = {c["last4"]: c for c in self.client.get("/api/cards").get_json()["cards"]}

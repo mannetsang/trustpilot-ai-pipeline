@@ -106,18 +106,27 @@ of the surrounding month folders:
 | Date: invoice date vs transaction date | 3 days 1.0, 7 days 0.8, 14 days 0.5, 35 days 0.2 |
 | Card digits printed on the invoice | a different card rules the pair out |
 
-An exact amount with either a vendor overlap or a date within a week is
-`matched`; an exact amount alone is `possible`; an amount within 1% with a
-strong vendor overlap and a date within 10 days is `possible`. Pairs are
-taken best-first and an invoice is linked to at most one transaction.
+An exact amount with a vendor overlap and an invoice date within three
+weeks (or no date on the invoice) is `matched`; an exact amount with only
+one of the two (the vendor, or a date within three weeks) is `possible`; an
+amount within 1% with a strong vendor overlap and a date within 10 days is
+`possible`. The same amount on its own, from another vendor and weeks away,
+proposes nothing: with three months of invoices in the pool it is usually a
+coincidence. Pairs are taken best-first, an invoice is linked to at most one
+transaction, and a pair someone rejected with *Not this* / *Unlink* is never
+proposed again. Credit notes and files no longer present in Drive stay out
+of the pool.
 
 **Gemini judge.** What is still unmatched (purchases and invoices) goes to
 the model in batches with the same instructions a person would get: same
 business, same amount (allowing tips, exchange rates or separate tax when
 it says so), invoice date within about two weeks, one invoice per charge,
 never a match on amount alone. Confidence 0.85 and up is `matched`, 0.6 and
-up is `possible`, the rest stay `missing`. The `match_note` on each
-transaction says which pass decided and why.
+up is `possible`, the rest stay `missing`. The model's answer is still
+checked against the numbers: a proposal whose invoice names another card is
+dropped, one whose total is more than 15% off any comparable amount is
+dropped, and one that is off by more than 2% can only be `possible`. The
+`match_note` on each transaction says which pass decided and why.
 
 **Manual actions** (the `action` field of `PATCH /api/transactions/<id>`):
 `confirm` a possible match, `link` an invoice chosen from the picker,

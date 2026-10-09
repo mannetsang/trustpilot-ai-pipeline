@@ -21,12 +21,14 @@ TRANSACTION_FIELDS = (
     "description", "supplier", "city", "country", "merchant_category", "type", "amount", "currency",
     "source_amount", "source_currency", "invoice_status", "invoice_id", "match_confidence",
     "match_method", "match_note", "cost_center", "usage", "note", "updated_by", "updated_at",
-    "created_at", "raw",
+    "created_at", "raw", "rejected_invoice_ids",
 )
+CARD_FIELDS = ("last4", "label", "holder_name", "owner_email", "chat_space", "active", "updated_at")
 INVOICE_FIELDS = (
     "id", "file_name", "mime_type", "web_view_link", "folder_path", "month_folder", "vendor_folder",
     "modified_time", "size", "vendor", "invoice_number", "invoice_date", "total", "currency",
     "card_last4", "payment_method", "summary", "is_invoice", "extracted_at", "extraction_error",
+    "document_type", "removed_at",
 )
 
 PAGE = 1000
@@ -67,7 +69,7 @@ class SupabaseStore:
         self.timeout = timeout
 
     # -- low level ----------------------------------------------------------
-    def _req(self, method, table, params=None, body=None, prefer=None):
+    def _req(self, method, table, params=None, body=None, prefer=None, want_response=False):
         headers = dict(self.headers)
         if prefer:
             headers["Prefer"] = prefer
@@ -75,21 +77,27 @@ class SupabaseStore:
                              headers=headers, timeout=self.timeout)
         if r.status_code >= 400:
             raise StoreError(f"{method} {table} -> {r.status_code} {r.text[:400]}")
+        if want_response:
+            return r
         if r.status_code == 204 or not r.text:
             return []
         return r.json()
 
     def select(self, table, params=None):
-        """Every matching row, paging through PostgREST's row limit."""
-        out, offset = [], 0
+        """Every matching row. Pages with offset/limit and stops on the exact count
+        PostgREST reports in Content-Range, so the project's max-rows setting
+        (1000 by default on Supabase, but adjustable) cannot truncate a result."""
+        out, offset, total = [], 0, None
         while True:
             page = dict(params or {})
             page["offset"], page["limit"] = offset, PAGE
-            rows = self._req("GET", table, page)
+            r = self._req("GET", table, page, prefer="count=exact", want_response=True)
+            rows = r.json() if r.text else []
             out.extend(rows)
-            if len(rows) < PAGE:
+            offset += len(rows)
+            total = _content_range_total(r.headers.get("Content-Range"), total)
+            if not rows or (total is not None and offset >= total):
                 return out
-            offset += PAGE
 
     def insert(self, table, rows, returning=False):
         if not rows:
@@ -111,6 +119,9 @@ class SupabaseStore:
     def patch(self, table, filters, patch):
         return self._req("PATCH", table, filters, patch, prefer="return=representation")
 
+    def delete(self, table, filters):
+        return self._req("DELETE", table, filters, prefer="return=representation")
+
     @staticmethod
     def _in(values):
         quoted = ",".join('"' + str(v).replace('"', '\\"') + '"' for v in values)
@@ -121,11 +132,47 @@ class SupabaseStore:
         return self.select("cards", {"order": "last4"})
 
     def upsert_cards(self, rows):
-        self.upsert("cards", rows, "last4")
+        """New cards are inserted as full rows, known ones are patched with just the
+        fields given: PostgREST wants every object of a bulk payload to carry the
+        same keys, and a merge upsert would write nulls over the columns a partial
+        row leaves out."""
+        if not rows:
+            return
+        known = {c["last4"] for c in self.select("cards", {"select": "last4", "order": "last4"})}
+        new, seen = [], set()
+        for r in rows:
+            if r["last4"] in known or r["last4"] in seen:
+                continue
+            seen.add(r["last4"])
+            row = {k: r.get(k) for k in CARD_FIELDS}
+            if row["active"] is None:
+                row["active"] = True
+            new.append(row)
+        self.insert("cards", new)
+        for r in rows:
+            if r["last4"] in known:
+                patch = {k: v for k, v in r.items() if k != "last4" and k in CARD_FIELDS}
+                if patch:
+                    self.patch("cards", {"last4": f"eq.{r['last4']}"}, patch)
 
     # -- statements ---------------------------------------------------------
     def insert_statement(self, row):
+        row = dict(row)
+        for key in ("period_start", "period_end"):
+            row[key] = row.get(key) or None        # '' is not a date for Postgres
         return self.insert("statements", [row], returning=True)[0]
+
+    def delete_statement(self, statement_id):
+        """Remove an upload and its transactions that nobody has touched (no cost
+        centre, usage, note or manual invoice decision). Returns the counts."""
+        removed = self.delete("transactions", {
+            "statement_id": f"eq.{statement_id}", "cost_center": "is.null", "usage": "is.null",
+            "note": "is.null", "or": "(match_method.is.null,match_method.neq.manual)"})
+        kept = self.select("transactions", {"select": "id", "statement_id": f"eq.{statement_id}", "order": "id"})
+        for t in kept:
+            self.patch("transactions", {"id": f"eq.{t['id']}"}, {"statement_id": None})
+        gone = self.delete("statements", {"id": f"eq.{statement_id}"})
+        return {"deleted": bool(gone), "transactions_removed": len(removed), "transactions_kept": len(kept)}
 
     def list_statements(self, year=None, month=None):
         params = {"order": "uploaded_at.desc"}
@@ -138,12 +185,21 @@ class SupabaseStore:
         found = set()
         ids = list(ids)
         for start in range(0, len(ids), 200):
-            rows = self.select("transactions", {"select": "id", "id": self._in(ids[start:start + 200])})
+            rows = self.select("transactions", {"select": "id", "order": "id", "id": self._in(ids[start:start + 200])})
             found.update(r["id"] for r in rows)
         return found
 
     def insert_transactions(self, rows):
-        self.insert("transactions", rows)
+        """Uniform rows (same keys everywhere, as PostgREST requires), empty dates as null."""
+        shaped = []
+        for r in rows:
+            row = {k: r.get(k) for k in TRANSACTION_FIELDS}
+            for key in ("post_date", "txn_date", "updated_at", "source_currency", "invoice_id"):
+                row[key] = row.get(key) or None
+            if row.get("rejected_invoice_ids") is None:
+                row["rejected_invoice_ids"] = []
+            shaped.append(row)
+        self.insert("transactions", shaped)
 
     def list_transactions(self, year, month, card=None, statuses=None):
         params = {"year": f"eq.{int(year)}", "month": f"eq.{int(month)}",
@@ -163,7 +219,7 @@ class SupabaseStore:
         return rows[0] if rows else None
 
     def used_invoice_ids(self):
-        rows = self.select("transactions", {"select": "invoice_id", "invoice_id": "not.is.null"})
+        rows = self.select("transactions", {"select": "invoice_id", "order": "id", "invoice_id": "not.is.null"})
         return {r["invoice_id"] for r in rows}
 
     def month_summary(self):
@@ -172,19 +228,25 @@ class SupabaseStore:
     # -- invoices -----------------------------------------------------------
     def invoice_index(self):
         """{file id: {modified_time, extraction_error}} for every invoice seen so far."""
-        rows = self.select("invoices", {"select": "id,modified_time,extraction_error"})
+        rows = self.select("invoices", {"select": "id,modified_time,extraction_error,month_folder,removed_at",
+                                        "order": "id"})
         return {r["id"]: r for r in rows}
 
     def list_invoices(self, month_folders=None, ids=None):
-        params = {"order": "invoice_date.asc,file_name.asc"}
+        params = {"order": "invoice_date.asc,file_name.asc,id.asc"}
         if month_folders is not None:
             if not month_folders:
                 return []
             params["month_folder"] = self._in(month_folders)
         if ids is not None:
+            ids = list(ids)
             if not ids:
                 return []
-            params["id"] = self._in(ids)
+            out = []
+            for start in range(0, len(ids), 100):     # keep each URL short
+                page = dict(params, id=self._in(ids[start:start + 100]))
+                out.extend(self.select("invoices", page))
+            return out
         return self.select("invoices", params)
 
     def get_invoice(self, invoice_id):
@@ -204,6 +266,14 @@ class SupabaseStore:
 
     def list_cost_centers(self):
         return [r["name"] for r in self.select("cost_centers", {"order": "sort.asc,name.asc"})]
+
+
+def _content_range_total(header, previous):
+    """'0-24/25' -> 25, '*/0' -> 0, '0-999/*' or missing -> previous."""
+    if not header or "/" not in header:
+        return previous
+    total = header.rsplit("/", 1)[1].strip()
+    return int(total) if total.isdigit() else previous
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +310,21 @@ class MemoryStore:
             self.statements.append(row)
             return dict(row)
 
+    def delete_statement(self, statement_id):
+        with self.lock:
+            removable = [t["id"] for t in self.transactions.values() if t.get("statement_id") == statement_id
+                         and not (t.get("cost_center") or t.get("usage") or t.get("note"))
+                         and t.get("match_method") != "manual"]
+            for tid in removable:
+                del self.transactions[tid]
+            kept = [t for t in self.transactions.values() if t.get("statement_id") == statement_id]
+            for t in kept:
+                t["statement_id"] = None
+            before = len(self.statements)
+            self.statements = [s for s in self.statements if s["id"] != statement_id]
+            return {"deleted": len(self.statements) < before, "transactions_removed": len(removable),
+                    "transactions_kept": len(kept)}
+
     def list_statements(self, year=None, month=None):
         rows = self.statements
         if year and month:
@@ -274,6 +359,10 @@ class MemoryStore:
             t = self.transactions.get(txn_id)
             if not t:
                 return None
+            wanted = patch.get("invoice_id")
+            if wanted and any(o["id"] != txn_id and o.get("invoice_id") == wanted for o in self.transactions.values()):
+                # Same rule as the unique index transactions_invoice_unique in schema.sql.
+                raise StoreError(f"invoice {wanted} is already linked to another transaction")
             t.update(patch)
             return dict(t)
 
@@ -297,7 +386,8 @@ class MemoryStore:
         return sorted(groups.values(), key=lambda g: (-g["year"], -g["month"], g["card_last4"]))
 
     def invoice_index(self):
-        return {i: {"modified_time": v.get("modified_time"), "extraction_error": v.get("extraction_error")}
+        return {i: {"modified_time": v.get("modified_time"), "extraction_error": v.get("extraction_error"),
+                    "month_folder": v.get("month_folder"), "removed_at": v.get("removed_at")}
                 for i, v in self.invoices.items()}
 
     def list_invoices(self, month_folders=None, ids=None):

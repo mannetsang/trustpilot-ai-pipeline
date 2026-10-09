@@ -197,7 +197,7 @@
     </div>
     <div id="gisButton" class="flex justify-center min-h-[44px]"></div>
     <div id="signinMsg" class="hidden mt-4 text-xs font-medium text-center" style="color: var(--down);"></div>
-    <div class="text-[11px] text-center mt-6" style="color: var(--text-mute);">Card owners see their own cards; accounts payable sees everything.</div>
+    <div class="text-[11px] text-center mt-6" style="color: var(--text-mute);">Everyone at Superhairpieces can see every card; you can only edit the cards you own, and accounts payable can edit everything.</div>
   </div>
 </div>
 
@@ -342,7 +342,15 @@
   function money(amount, currency) {
     var n = Number(amount) || 0;
     var abs = Math.abs(n).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    return (n < 0 ? '-' : '') + (currency || 'CAD') + ' ' + abs;
+    var cur = currency === undefined || currency === null ? 'CAD' : currency;
+    return (n < 0 ? '-' : '') + (cur ? cur + ' ' : '') + abs;
+  }
+  // Only http(s) links from the API are ever rendered as hrefs; anything else falls back to plain text.
+  function safeUrl(u) { u = String(u || '').trim(); return /^https?:\/\//i.test(u) ? u : ''; }
+  // Google ID tokens last an hour; seconds until this one expires (Infinity when unknown).
+  function tokenSecondsLeft() {
+    if (!state.token) return 0;
+    try { return JSON.parse(atob(state.token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).exp - Date.now() / 1000; } catch (e) { return Infinity; }
   }
   function fmtDay(iso) {
     if (!iso) return '';
@@ -391,7 +399,7 @@
     var data = null;
     try { data = await res.json(); } catch (e) { data = null; }
     if (res.status === 401) {
-      signOut('Your session has expired. Please sign in again.');
+      signOut(state.me ? 'Your session has expired. Please sign in again.' : ((data && data.error) || 'Sign in with your superhairpieces.com Google account.'));
       throw new ApiError(401, (data && data.error) || 'sign in required', data);
     }
     if (!res.ok) throw new ApiError(res.status, (data && (data.error || data.message)) || (res.status + ' ' + res.statusText), data);
@@ -456,12 +464,26 @@
     state.token = resp.credential;
     try { sessionStorage.setItem(TOKEN_KEY, resp.credential); } catch (e) { /* private mode: token lives in memory only */ }
     setSigninMsg('');
+    if (state.loaded && !$('#app').classList.contains('hidden')) return;   // silent renewal, nothing to reload
     loadApp().catch(function (e) { report(e, 'Could not load'); });
+  }
+  // Ask Google for a fresh credential a few minutes before the current one runs out, so a long
+  // coding session or a long upload does not end in a 401. One Tap re-issues silently when it can.
+  setInterval(function () {
+    if (!state.loaded || !state.token || !state.gisReady || (state.config && state.config.auth_disabled)) return;
+    var left = tokenSecondsLeft();
+    if (left < 300) { try { google.accounts.id.prompt(); } catch (e) { /* ignore */ } }
+  }, 60000);
+  function resetSession() {
+    state.me = null; state.loaded = false; state.year = null; state.month = null; state.card = '';
+    state.txns = []; state.statements = []; state.notifications = []; state.months = []; state.cards = [];
+    $('#txnBody').innerHTML = '';
   }
   function signOut(message) {
     state.token = null;
     try { sessionStorage.removeItem(TOKEN_KEY); } catch (e) { /* ignore */ }
     if (window.google && google.accounts && google.accounts.id) { try { google.accounts.id.disableAutoSelect(); } catch (e) { /* ignore */ } }
+    resetSession();
     if (state.config && state.config.auth_disabled) return;
     showSignIn(message);
   }
@@ -478,11 +500,17 @@
       toast('Could not reach the server: ' + e.message, 'err');
       return;
     }
-    if (state.config.invoice_folder_url) {
-      var a = $('#sideFolderLink'); a.href = state.config.invoice_folder_url; a.classList.remove('hidden');
+    if (safeUrl(state.config.invoice_folder_url)) {
+      var a = $('#sideFolderLink'); a.href = safeUrl(state.config.invoice_folder_url); a.classList.remove('hidden');
     }
     if (state.config.auth_disabled || state.token) {
-      try { await loadApp(); return; } catch (e) { report(e, 'Could not load'); if (e.status === 401) return; }
+      try { await loadApp(); return; } catch (e) {
+        report(e, 'Could not load');
+        if (e.status === 401) return;
+        // The token is fine but the server is not: say so instead of pretending the session ended.
+        if (!state.config.auth_disabled) showSignIn('The server could not be reached (' + (e.message || e) + '). Sign in again to retry.');
+        return;
+      }
     }
     if (!state.config.auth_disabled) showSignIn('');
   }
@@ -530,7 +558,8 @@
     var m = location.hash.match(/^#\/(\d{4})\/(\d{1,2})(?:\?(.*))?$/);
     if (!m) return null;
     var params = new URLSearchParams(m[3] || '');
-    return { year: Number(m[1]), month: Number(m[2]), card: (params.get('card') || '').replace(/\D/g, '').slice(-4) };
+    var c = params.get('card') || '';
+    return { year: Number(m[1]), month: Number(m[2]), card: /^\d{4}$/.test(c) ? c : '' };
   }
   function hashFor(year, month, card) {
     return '#/' + year + '/' + pad2(month) + (card ? '?card=' + encodeURIComponent(card) : '');
@@ -556,14 +585,25 @@
         target = { year: newest.year, month: newest.month, card: '' };
         history.replaceState(null, '', hashFor(newest.year, newest.month, ''));
       }
+      var entry = findMonth(target.year, target.month);
+      if (target.card && entry && entry.cards && !entry.cards[target.card]) target.card = '';
+      var normalised = hashFor(target.year, target.month, target.card || '');
+      if (location.hash !== normalised) history.replaceState(null, '', normalised);
       var changed = state.year !== target.year || state.month !== target.month;
+      var prev = { year: state.year, month: state.month, card: state.card };
       state.year = target.year; state.month = target.month; state.card = target.card || '';
       $('#emptyState').classList.add('hidden');
       $('#monthView').classList.remove('hidden');
       restoreApPanel();
       renderSidebar();
       if (changed) {
-        try { await loadMonth(); } catch (e) { report(e, 'Could not load the month'); }
+        try { await loadMonth(); } catch (e) {
+          report(e, 'Could not load the month');
+          // Roll back so the page and the URL agree, and a second click on the month tries again.
+          state.year = prev.year; state.month = prev.month; state.card = prev.card;
+          if (prev.year) history.replaceState(null, '', hashFor(prev.year, prev.month, prev.card)); else state.loaded = true;
+          renderSidebar();
+        }
       } else {
         renderMonth();
       }
@@ -572,6 +612,11 @@
     routing = null;
   }
   window.addEventListener('hashchange', function () { applyRoute(); });
+  $('#monthNav').addEventListener('click', function (ev) {
+    var row = ev.target.closest('a.nav-row'); if (!row) return;
+    ev.preventDefault();
+    navigate(Number(row.dataset.year), Number(row.dataset.month), '');
+  });
 
   var apHome = $('#apPanel').parentNode;
   function restoreApPanel() {
@@ -633,7 +678,7 @@
   function renderUser() {
     var me = state.me; if (!me) return;
     var initial = (me.name || me.email || '?').trim().charAt(0).toUpperCase();
-    var avatar = me.picture ? '<img src="' + esc(me.picture) + '" alt="" referrerpolicy="no-referrer" />' : esc(initial);
+    var avatar = safeUrl(me.picture) ? '<img src="' + esc(safeUrl(me.picture)) + '" alt="" referrerpolicy="no-referrer" />' : esc(initial);
     $('#userChip').innerHTML =
       '<div class="avatar">' + avatar + '</div>' +
       '<div class="min-w-0 user-text"><div class="text-xs font-semibold truncate">' + esc(me.name || me.email) + '</div>' +
@@ -725,7 +770,7 @@
       var n = scope.filter(function (t) { return matchesStatus(t, f[0]); }).length;
       return '<button type="button" data-status="' + f[0] + '" class="' + (state.status === f[0] ? 'active' : '') + '">' + f[1] + '<span class="n">' + n + '</span></button>';
     }).join('');
-    if ($('#search').value !== state.q) $('#search').value = state.q;
+    if (document.activeElement !== $('#search') && $('#search').value !== state.q) $('#search').value = state.q;
   }
 
   function invoiceCell(t) {
@@ -738,8 +783,8 @@
     if (inv) {
       var text = (inv.vendor || inv.vendor_folder || inv.file_name || 'invoice') + (inv.invoice_date ? ' · ' + fmtDate(inv.invoice_date) : '');
       var totalBit = inv.total !== null && inv.total !== undefined ? ' <span class="sub">' + esc(money(inv.total, inv.currency || '')) + '</span>' : '';
-      html += '<div class="mt-1 truncate" style="max-width: 260px;">' + (inv.web_view_link
-        ? '<a class="link" href="' + esc(inv.web_view_link) + '" target="_blank" rel="noopener" title="' + esc(inv.file_name || '') + '">' + esc(text) + ' ↗</a>'
+      html += '<div class="mt-1 truncate" style="max-width: 260px;">' + (safeUrl(inv.web_view_link)
+        ? '<a class="link" href="' + esc(safeUrl(inv.web_view_link)) + '" target="_blank" rel="noopener noreferrer" title="' + esc(inv.file_name || '') + '">' + esc(text) + ' ↗</a>'
         : '<span title="' + esc(inv.file_name || '') + '">' + esc(text) + '</span>') + totalBit + '</div>';
     }
     if (st === 'possible') {
@@ -801,9 +846,10 @@
     var up = $('#uploadsList');
     if (!state.statements.length) up.innerHTML = '<div class="sub">No uploads touch this month.</div>';
     else up.innerHTML = state.statements.map(function (s) {
-      var name = s.drive_link ? '<a class="link" href="' + esc(s.drive_link) + '" target="_blank" rel="noopener">' + esc(s.file_name) + ' ↗</a>' : '<span class="font-medium">' + esc(s.file_name) + '</span>';
+      var name = safeUrl(s.drive_link) ? '<a class="link" href="' + esc(safeUrl(s.drive_link)) + '" target="_blank" rel="noopener noreferrer">' + esc(s.file_name) + ' ↗</a>' : '<span class="font-medium">' + esc(s.file_name) + '</span>';
+      var del = (s.id && state.me && state.me.role === 'ap') ? ' <button class="btn btn-ghost btn-xs" data-delete-statement="' + esc(s.id) + '" title="Remove this upload and its lines that nobody has coded">Remove</button>' : '';
       var warn = (s.warnings || []).length ? '<div class="sub" style="color: var(--warn-text);">' + esc((s.warnings || []).join(' ')) + '</div>' : '';
-      return '<div class="py-1.5" style="border-bottom: 1px solid var(--border-subtle);">' + name +
+      return '<div class="py-1.5" style="border-bottom: 1px solid var(--border-subtle);">' + name + del +
         '<div class="sub">' + esc(fmtStamp(s.uploaded_at)) + ' · ' + esc(s.uploaded_by || '') + ' · ' + esc(String(s.transaction_count)) + ' lines, ' + esc(String(s.new_count)) + ' new' +
         (s.cards && s.cards.length ? ' · cards ' + esc(s.cards.join(', ')) : '') + (s.period_start ? ' · ' + esc(fmtDate(s.period_start)) + ' – ' + esc(fmtDate(s.period_end)) : '') + '</div>' + warn + '</div>';
     }).join('');
@@ -822,16 +868,31 @@
   // ---------------------------------------------------------------------------
   function rowEl(id) { return $('#txnBody').querySelector('tr[data-id="' + CSS.escape(id) + '"]'); }
   function txnById(id) { for (var i = 0; i < state.txns.length; i++) if (state.txns[i].id === id) return state.txns[i]; return null; }
-  function replaceTxn(updated) {
+  function replaceTxn(updated, at) {
+    at = at || { year: state.year, month: state.month };
+    if (at.year !== state.year || at.month !== state.month) return;   // the user has moved on
+    var found = false;
     for (var i = 0; i < state.txns.length; i++) if (state.txns[i].id === updated.id) {
       if (updated.editable === undefined) updated.editable = state.txns[i].editable;
-      state.txns[i] = updated; break;
+      state.txns[i] = updated; found = true; break;
     }
+    if (!found) return;
     var tr = rowEl(updated.id);
     if (tr) {
       var tpl = document.createElement('template');
       tpl.innerHTML = rowHtml(updated);
-      tr.replaceWith(tpl.content.firstElementChild);
+      var fresh = tpl.content.firstElementChild;
+      var active = document.activeElement;
+      if (active && tr.contains(active) && active.matches('input, select')) {
+        // Someone is typing in this row: swap every cell except the one being edited.
+        var oldCells = $all('td', tr), newCells = $all('td', fresh);
+        for (var c = 0; c < oldCells.length && c < newCells.length; c++) {
+          if (!oldCells[c].contains(active)) oldCells[c].replaceWith(newCells[c]);
+        }
+        tr.className = fresh.className;
+      } else {
+        tr.replaceWith(fresh);
+      }
     }
     refreshCounts();
   }
@@ -840,16 +901,18 @@
     renderKpis();
     renderCardStrip();
     renderToolbar();
+    $('#rowCount').textContent = visibleTxns().length + ' of ' + scopeTxns().length + ' rows';
     var k = kpisOf(state.txns);
     var entry = findMonth(state.year, state.month);
     if (entry) { entry.missing = k.missing; entry.possible = k.possible; entry.matched = k.matched; entry.waived = k.waived; entry.uncoded = k.uncoded; }
     renderSidebar();
   }
   async function patchTxn(id, body, okMessage) {
+    var at = { year: state.year, month: state.month };
     var data = await api('/api/transactions/' + encodeURIComponent(id), {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
-    replaceTxn(data.transaction);
+    replaceTxn(data.transaction, at);
     if (okMessage) toast(okMessage, 'ok');
     return data.transaction;
   }
@@ -872,16 +935,25 @@
 
   async function saveField(input, field) {
     var tr = input.closest('tr');
+    var id = tr.dataset.id;
     var value = input.value.trim();
-    if (input.dataset.saving === '1') return;
+    if (input.dataset.saving === '1') { input.dataset.pending = value; return; }   // queued behind the save in flight
     input.dataset.saving = '1';
     input.classList.add('saving');
     var body = {}; body[field] = value;
+    var ok = false;
     try {
-      await patchTxn(tr.dataset.id, body, field === 'usage' ? 'Usage saved' : 'Cost centre saved');
+      await patchTxn(id, body, field === 'usage' ? 'Usage saved' : 'Cost centre saved');
+      ok = true;
     } catch (e) {
       report(e, 'Could not save');
-      restoreRow(tr.dataset.id);
+      if (document.activeElement !== input) restoreRow(id);   // keep what is being typed
+      else { input.dataset.saving = ''; input.classList.remove('saving'); }
+    }
+    var pending = input.dataset.pending;
+    if (ok && pending !== undefined && pending !== value) {
+      var row = rowEl(id), again = row && row.querySelector('[data-field="' + field + '"]');
+      if (again) { again.value = pending; saveField(again, field); }
     }
   }
 
@@ -958,10 +1030,12 @@
   // ---------------------------------------------------------------------------
   function openModal(title, bodyHtml, wide) {
     $('#modalTitle').textContent = title;
-    $('#modalBody').innerHTML = bodyHtml;
+    var old = $('#modalBody'), body = old.cloneNode(false);   // drops the previous open's listeners
+    old.parentNode.replaceChild(body, old);
+    body.innerHTML = bodyHtml;
     $('#modalBox').classList.toggle('wide', !!wide);
     $('#modal').classList.remove('hidden');
-    return $('#modalBody');
+    return body;
   }
   function closeModal() { $('#modal').classList.add('hidden'); $('#modalBody').innerHTML = ''; }
   $('#modalClose').addEventListener('click', closeModal);
@@ -969,11 +1043,11 @@
   document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape' && !$('#modal').classList.contains('hidden')) closeModal(); });
 
   // -- Link an invoice ---------------------------------------------------------
-  async function openLinkModal(t) {
+  async function openLinkModal(t, allMonths) {
     if (!t) return;
     var body = openModal('Link an invoice', '<div class="sub">Loading invoices…</div>', true);
     var data;
-    try { data = await api('/api/invoices?year=' + state.year + '&month=' + state.month); }
+    try { data = await api('/api/invoices?year=' + state.year + '&month=' + state.month + (allMonths ? '&all=1' : '')); }
     catch (e) { report(e, 'Could not load invoices'); closeModal(); return; }
     var invoices = (data.invoices || []).slice();
     invoices.forEach(function (inv) {
@@ -983,8 +1057,9 @@
     var head = '<div class="flex flex-wrap items-center gap-3 mb-3">' +
       '<div class="min-w-0 flex-1"><div class="font-medium truncate">' + esc(t.description) + '</div><div class="sub">' + esc(fmtDate(t.txn_date)) + ' · ' + esc(cardLabel(t.card_last4)) + ' · <b>' + esc(money(t.amount, t.currency)) + '</b>' +
       (t.source_amount !== null && t.source_amount !== undefined && t.source_currency ? ' (' + esc(money(t.source_amount, t.source_currency)) + ')' : '') + '</div></div>' +
-      '<input id="invSearch" class="inp" type="search" placeholder="Search vendor, file, folder, amount" style="max-width: 280px;" /></div>' +
-      '<div class="sub mb-2">Folders ' + esc((data.month_folders || []).join(', ')) + ' · ' + invoices.length + ' files' + (invoices.some(function (i) { return i._same; }) ? ' · rows with the same amount are highlighted' : '') + '</div>' +
+      '<input id="invSearch" class="inp" type="search" placeholder="Search vendor, file, folder, amount" style="max-width: 280px;" />' +
+      '<label class="sub" style="white-space:nowrap;"><input type="checkbox" id="invAll"' + (allMonths ? ' checked' : '') + ' /> all months</label></div>' +
+      '<div class="sub mb-2">' + (allMonths ? 'Every indexed invoice' : 'Folders ' + esc((data.month_folders || []).join(', '))) + ' · ' + invoices.length + ' files' + (invoices.some(function (i) { return i._same; }) ? ' · rows with the same amount are highlighted' : '') + '</div>' +
       '<div class="list-wrap"><table class="list"><thead><tr><th>Vendor</th><th>Invoice date</th><th class="td-right">Total</th><th>Folder</th><th>File</th><th></th></tr></thead><tbody id="invBody"></tbody></table></div>';
     body.innerHTML = head;
     function draw() {
@@ -1007,12 +1082,13 @@
           '<td style="white-space:nowrap;">' + esc(fmtDate(inv.invoice_date) || '—') + '</td>' +
           '<td class="td-right" style="white-space:nowrap;">' + (inv.total !== null && inv.total !== undefined ? esc(money(inv.total, inv.currency || '')) : '—') + '</td>' +
           '<td class="sub" style="white-space:nowrap;">' + esc([inv.month_folder, inv.vendor_folder].filter(Boolean).join(' / ')) + '</td>' +
-          '<td style="max-width: 220px;"><div class="truncate">' + (inv.web_view_link ? '<a class="link" href="' + esc(inv.web_view_link) + '" target="_blank" rel="noopener" title="' + esc(inv.file_name) + '">' + esc(inv.file_name) + ' ↗</a>' : esc(inv.file_name)) + '</div></td>' +
+          '<td style="max-width: 220px;"><div class="truncate">' + (safeUrl(inv.web_view_link) ? '<a class="link" href="' + esc(safeUrl(inv.web_view_link)) + '" target="_blank" rel="noopener noreferrer" title="' + esc(inv.file_name) + '">' + esc(inv.file_name) + ' ↗</a>' : esc(inv.file_name)) + '</div></td>' +
           '<td class="td-right"><button class="btn btn-primary btn-xs" data-link="' + esc(inv.id) + '"' + (linked || isThis ? ' disabled' : '') + '>Link</button></td></tr>';
       }).join('') : '<tr><td colspan="6"><div class="empty" style="padding: 24px;">' + (invoices.length ? 'No invoice matches the search.' : 'No invoices have been indexed for these months yet.') + '</div></td></tr>';
     }
     draw();
     $('#invSearch', body).addEventListener('input', draw);
+    $('#invAll', body).addEventListener('change', function (ev) { openLinkModal(t, ev.target.checked); });
     body.addEventListener('click', async function (ev) {
       var b = ev.target.closest('button[data-link]'); if (!b || b.disabled) return;
       b.disabled = true; b.innerHTML = '<span class="spinner"></span>';
@@ -1038,7 +1114,7 @@
           '<td><input class="inp" data-cf="owner_email" type="email" value="' + esc(c.owner_email || '') + '" placeholder="name@superhairpieces.com" style="min-width:200px;" /></td>' +
           '<td><input class="inp" data-cf="chat_space" value="' + esc(c.chat_space || '') + '" style="min-width:140px;" /></td>' +
           '<td class="text-center"><input type="checkbox" data-cf="active"' + (c.active ? ' checked' : '') + ' aria-label="Active" /></td>' +
-          '<td class="text-center" title="' + (c.webhook_configured ? 'Chat webhook configured' : 'No webhook for this card: reminders go to the default space or fail') + '">' + (c.webhook_configured ? '<span style="color: var(--up-ink); font-weight: 700;">✓</span>' : '<span class="sub">—</span>') + '</td>' +
+          '<td class="text-center" title="' + (c.webhook_configured ? 'Chat webhook configured for this card' : (c.webhook_default ? 'No webhook for this card: reminders go to the default space' : 'No webhook for this card: reminders fail')) + '">' + (c.webhook_configured ? '<span style="color: var(--up-ink); font-weight: 700;">✓</span>' : (c.webhook_default ? '<span class="sub">default</span>' : '<span class="sub">—</span>')) + '</td>' +
           '<td class="td-right"><button class="btn btn-secondary btn-xs" data-save-card="' + esc(c.last4) + '">Save</button></td></tr>';
       }).join('') : '<tr><td colspan="8"><div class="empty" style="padding: 24px;">No cards yet; they appear after the first upload.</div></td></tr>') +
       '</tbody></table></div>';
@@ -1046,7 +1122,7 @@
   function openCardsModal() {
     var body = openModal('Cards', cardsModalHtml(), true);
     body.addEventListener('click', async function (ev) {
-      var b = ev.target.closest('button[data-save-card]'); if (!b) return;
+      var b = ev.target.closest('button[data-save-card]'); if (!b || b.disabled) return;
       var tr = b.closest('tr');
       var payload = { last4: b.dataset.saveCard };
       $all('[data-cf]', tr).forEach(function (el) { payload[el.dataset.cf] = el.type === 'checkbox' ? el.checked : el.value; });
@@ -1063,6 +1139,16 @@
     });
   }
   $('#cardsBtn').addEventListener('click', openCardsModal);
+  $('#uploadsList').addEventListener('click', async function (ev) {
+    var b = ev.target.closest('button[data-delete-statement]'); if (!b || b.disabled) return;
+    if (!window.confirm('Remove this upload? Lines that already have a cost centre, usage, note or a manual invoice decision are kept.')) return;
+    b.disabled = true;
+    try {
+      var r = await api('/api/statements/' + encodeURIComponent(b.dataset.deleteStatement), { method: 'DELETE' });
+      toast('Upload removed: ' + r.transactions_removed + ' lines deleted, ' + r.transactions_kept + ' kept', 'ok');
+      await reloadAll();
+    } catch (e) { report(e, 'Could not remove the upload'); b.disabled = false; }
+  });
 
   // ---------------------------------------------------------------------------
   // AP jobs: upload, index, match, notify
@@ -1147,16 +1233,22 @@
       log('  cards: ' + (cardBits.join(', ') || 'none') + ' · months: ' + (s.months || []).map(function (ym) { return monthLabel(ym[0], ym[1]); }).join(', '), 'info');
       (s.warnings || []).forEach(function (w) { log('  warning: ' + w, 'err'); });
       if (s.drive_link) log('  copy saved to Drive', 'info');
+      $('#fileInput').value = '';
       var notify = $('#notifyAfter').checked;
       var months = s.months || [];
-      for (var i = 0; i < months.length; i++) {
-        var y = months[i][0], m = months[i][1];
-        await indexLoop(y, m);
-        await matchStep(y, m);
-        if (notify) await notifyStep(y, m);
+      await loadMonths();
+      try {
+        for (var i = 0; i < months.length; i++) {
+          var y = months[i][0], m = months[i][1];
+          await indexLoop(y, m);
+          await matchStep(y, m);
+          if (notify) await notifyStep(y, m);
+        }
+        log('Done.', 'ok');
+      } catch (e2) {
+        log('Statement stored, but the follow-up failed: ' + (e2.message || e2) + '. Use "Re-run matching" to try again.', 'err');
+        report(e2, 'Invoice matching failed');
       }
-      log('Done.', 'ok');
-      $('#fileInput').value = '';
       await loadMonths();
       if (months.length) {
         var last = months[months.length - 1];

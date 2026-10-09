@@ -102,7 +102,8 @@ class Drive:
                         continue
                     try:
                         resolved = self.get(target)
-                    except DriveError:
+                    except DriveError as exc:
+                        print(f"drive: shortcut {f.get('name')!r} in {folder_id} points to an unreadable file: {exc}")
                         continue
                     resolved["name"] = f.get("name") or resolved.get("name")
                     f = resolved

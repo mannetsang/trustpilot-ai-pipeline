@@ -20,10 +20,11 @@ Endpoints (browser calls carry a Google ID token; see README)
   GET  /api/months               year/month navigation with per-card counts
   GET  /api/transactions?year&month[&card]
   PATCH /api/transactions/<id>   cost_center, usage, note, action=waive|unwaive|confirm|link|unlink
-  GET  /api/invoices?year&month  invoices of the surrounding month folders (link picker)
+  GET  /api/invoices?year&month[&all=1]  invoices of the surrounding month folders (link picker)
   GET  /api/cards  POST /api/cards (AP)     card labels, owners, Chat space names
   GET  /api/statements?year&month           uploads
   POST /api/statements (AP, multipart file; ?sync=1 also indexes, matches and notifies)
+  DELETE /api/statements/<id> (AP)          remove an upload and its untouched lines
   POST /api/index?year&month&limit (AP)     read new invoices for month-1..month+1, one batch
   POST /api/match?year&month[&card] (AP)    pair purchases with invoices
   POST /api/notify?year&month[&card] (AP)   post the "invoices needed" Chat cards
@@ -37,6 +38,7 @@ AP_EMAILS, DASHBOARD_URL, GEMINI_EXTRACT_MODEL, GEMINI_MATCH_MODEL, AI_DISABLED,
 
 import calendar
 import datetime as dt
+import hmac
 import json
 import os
 import sys
@@ -61,7 +63,7 @@ import invoices as invoice_index  # noqa: E402
 import matching  # noqa: E402
 import statements  # noqa: E402
 from drive import Drive, DriveError  # noqa: E402
-from gemini import Gemini  # noqa: E402
+from gemini import Gemini, GeminiError  # noqa: E402
 from store import MemoryStore, StoreError, SupabaseStore, month_folder_name, neighbouring_months, now_iso  # noqa: E402
 
 app = Flask(__name__, static_folder=os.path.join(HERE, "static"), static_url_path="/static")
@@ -96,7 +98,12 @@ GEMINI_MATCH_MODEL = os.environ.get("GEMINI_MATCH_MODEL", "gemini-2.5-pro")
 AI_DISABLED = os.environ.get("AI_DISABLED") == "1"
 INDEX_BATCH = int(os.environ.get("INDEX_BATCH", "30"))
 INDEX_WORKERS = int(os.environ.get("INDEX_WORKERS", "4"))
+MAX_INDEX_ROUNDS = 100
 SERVICE = "ap-reconciliation"
+
+if AUTH_DISABLED and os.environ.get("K_SERVICE"):
+    # K_SERVICE is set by Cloud Run; an open dashboard there would make every caller "ap".
+    raise SystemExit("AUTH_DISABLED=1 is only for local runs, never on Cloud Run")
 
 STATUS_LABELS = {"matched": "Invoice found", "possible": "Possible match", "missing": "Invoice missing",
                  "waived": "No invoice (waived)", "not_required": "No invoice needed"}
@@ -160,7 +167,8 @@ class AuthError(Exception):
 def verify_id_token(token):
     from google.auth.transport import requests as google_requests
     from google.oauth2 import id_token as google_id_token
-    info = google_id_token.verify_oauth2_token(token, google_requests.Request(), GOOGLE_OAUTH_CLIENT_ID)
+    info = google_id_token.verify_oauth2_token(token, google_requests.Request(), GOOGLE_OAUTH_CLIENT_ID,
+                                               clock_skew_in_seconds=10)
     return info
 
 
@@ -211,7 +219,7 @@ def require_user(ap_only=False):
 
 
 def api_token_ok():
-    return bool(API_TOKEN) and request.headers.get("X-Api-Token", "") == API_TOKEN
+    return bool(API_TOKEN) and hmac.compare_digest(request.headers.get("X-Api-Token", ""), API_TOKEN)
 
 
 def cards_owned_by(email, cards=None):
@@ -268,11 +276,14 @@ def month_folder_url(year, month):
     name = month_folder_name(year, month)
     if name not in _month_folder_ids:
         try:
-            _month_folder_ids[name] = get_drive().find_child_folder(INVOICE_FOLDER_ID, name)
+            found = get_drive().find_child_folder(INVOICE_FOLDER_ID, name)
         except Exception as exc:  # noqa: BLE001
             print(f"month folder lookup failed: {exc}")
             return folder_url(INVOICE_FOLDER_ID)
-    return folder_url(_month_folder_ids.get(name) or INVOICE_FOLDER_ID)
+        if not found:                       # the folder may be created later; look again next time
+            return folder_url(INVOICE_FOLDER_ID)
+        _month_folder_ids[name] = found
+    return folder_url(_month_folder_ids[name])
 
 
 # ---------------------------------------------------------------------------
@@ -404,7 +415,7 @@ def process_statement_sync(file_name, data, mime_type, uploaded_by, notify=True)
     summary = ingest_statement(file_name, data, mime_type, uploaded_by)
     summary["index"], summary["match"], summary["notify"] = [], [], []
     for year, month in summary["months"]:
-        while True:
+        for _ in range(MAX_INDEX_ROUNDS):
             result = index_month(year, month, limit=INDEX_BATCH)
             summary["index"].append({"year": year, "month": month, **result})
             if not result.get("remaining"):
@@ -453,7 +464,8 @@ def card_view(c):
     return {"last4": c["last4"], "label": c.get("label") or f"Card ending {c['last4']}",
             "holder_name": c.get("holder_name") or "", "owner_email": c.get("owner_email") or "",
             "chat_space": c.get("chat_space") or "", "active": c.get("active", True) is not False,
-            "webhook_configured": bool(chat.webhook_for(CARD_WEBHOOKS, c["last4"]))}
+            "webhook_configured": bool(CARD_WEBHOOKS.get(c["last4"])),
+            "webhook_default": bool(chat.webhook_for(CARD_WEBHOOKS, c["last4"]))}
 
 
 # ---------------------------------------------------------------------------
@@ -481,6 +493,23 @@ def _drive_error(exc):
     return jsonify({"error": f"Google Drive error: {exc}"}), 502
 
 
+@app.errorhandler(GeminiError)
+def _gemini_error(exc):
+    print(f"gemini error: {exc}")
+    return jsonify({"error": f"Gemini error: {exc}"}), 502
+
+
+@app.errorhandler(Exception)
+def _unexpected(exc):
+    from werkzeug.exceptions import HTTPException
+    if isinstance(exc, HTTPException):
+        if request.path.startswith("/api/"):
+            return jsonify({"error": exc.description}), exc.code
+        return exc
+    print(f"unexpected error on {request.path}: {exc!r}")
+    return jsonify({"error": f"unexpected error: {exc}"}), 500
+
+
 @app.after_request
 def _headers(response):
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -498,7 +527,8 @@ def index():
 
 @app.route("/healthz")
 def healthz():
-    return jsonify({"service": SERVICE, "ok": True, "store": STORE_KIND, "last_job": _last_job})
+    public = {k: _last_job.get(k) for k in ("name", "started", "finished")}   # no job output: it holds card data
+    return jsonify({"service": SERVICE, "ok": True, "store": STORE_KIND, "last_job": public})
 
 
 @app.route("/api/config")
@@ -561,13 +591,16 @@ def api_transaction_update(txn_id):
     if not may_edit(user, txn["card_last4"]):
         return jsonify({"error": "you can only edit transactions of cards you own"}), 403
     body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"error": "the body must be a JSON object"}), 400
     patch = {}
     for field, limit in EDITABLE_TEXT.items():
         if field in body:
-            value = (body.get(field) or "").strip()
+            value = str(body.get(field) or "").strip()
             patch[field] = value[:limit] or None
-    action = (body.get("action") or "").strip().lower()
+    action = str(body.get("action") or "").strip().lower()
     status = txn.get("invoice_status")
+    rejected = list(txn.get("rejected_invoice_ids") or [])
     if action == "waive":
         if status in ("missing", "possible"):
             patch.update({"invoice_status": "waived", "invoice_id": None, "match_confidence": None,
@@ -580,19 +613,25 @@ def api_transaction_update(txn_id):
             patch.update({"invoice_status": "matched", "match_confidence": 1.0, "match_method": "manual",
                           "match_note": "confirmed by " + user["email"]})
     elif action == "link":
-        invoice_id = (body.get("invoice_id") or "").strip()
+        invoice_id = str(body.get("invoice_id") or "").strip()
         inv = store.get_invoice(invoice_id) if invoice_id else None
         if not inv:
             return jsonify({"error": "invoice not found"}), 404
+        if user["role"] != "ap" and inv.get("card_last4") and inv["card_last4"] != txn["card_last4"]:
+            return jsonify({"error": f"that invoice shows card ending {inv['card_last4']}; ask accounts payable to link it"}), 403
         holder = store.used_invoice_ids()
         if invoice_id in holder and txn.get("invoice_id") != invoice_id:
             return jsonify({"error": "that invoice is already linked to another transaction"}), 409
         patch.update({"invoice_status": "matched", "invoice_id": invoice_id, "match_confidence": 1.0,
-                      "match_method": "manual", "match_note": "linked by " + user["email"]})
+                      "match_method": "manual", "match_note": "linked by " + user["email"],
+                      "rejected_invoice_ids": [i for i in rejected if i != invoice_id]})
     elif action == "unlink":
         if txn.get("invoice_id") or status == "matched":
+            # Remember the refusal so the matcher does not propose the same pair again.
+            if txn.get("invoice_id") and txn["invoice_id"] not in rejected:
+                rejected.append(txn["invoice_id"])
             patch.update({"invoice_status": "missing", "invoice_id": None, "match_confidence": None,
-                          "match_method": None, "match_note": None})
+                          "match_method": None, "match_note": None, "rejected_invoice_ids": rejected})
     elif action:
         return jsonify({"error": f"unknown action '{action}'"}), 400
     if not patch:
@@ -610,15 +649,18 @@ def api_invoices():
     year, month = _year_month()
     store = get_store()
     folders = [month_folder_name(y, m) for y, m in neighbouring_months(year, month)]
+    everything = request.args.get("all") == "1"
     used = store.used_invoice_ids()
     out = []
-    for inv in store.list_invoices(month_folders=folders):
+    for inv in store.list_invoices(month_folders=None if everything else folders):
+        if inv.get("removed_at") and inv["id"] not in used:
+            continue
         row = {k: inv.get(k) for k in ("id", "file_name", "web_view_link", "month_folder", "vendor_folder", "vendor",
                                        "invoice_number", "invoice_date", "total", "currency", "card_last4",
-                                       "summary", "is_invoice", "extraction_error")}
+                                       "summary", "is_invoice", "extraction_error", "document_type", "removed_at")}
         row["linked"] = inv["id"] in used
         out.append(row)
-    return jsonify({"invoices": out, "month_folders": folders})
+    return jsonify({"invoices": out, "month_folders": "all" if everything else folders})
 
 
 @app.route("/api/cards", methods=["GET"])
@@ -652,6 +694,17 @@ def api_statements():
     require_user()
     year, month = _year_month()
     return jsonify({"statements": get_store().list_statements(year, month)})
+
+
+@app.route("/api/statements/<statement_id>", methods=["DELETE"])
+def api_statement_delete(statement_id):
+    """Remove a wrong upload. Lines someone already coded or decided on are kept (detached)."""
+    user = require_user(ap_only=True)
+    result = get_store().delete_statement(statement_id)
+    if not result.get("deleted"):
+        return jsonify({"error": "upload not found"}), 404
+    print(f"statement {statement_id} removed by {user['email']}: {result}")
+    return jsonify({"status": "ok", **result})
 
 
 @app.route("/api/statements", methods=["POST"])
@@ -731,8 +784,9 @@ def remind_latest():
     months = sorted(set(latest.values()), reverse=True)
     out = []
     for year, month in months:
-        while index_month(year, month).get("remaining"):
-            pass
+        for _ in range(MAX_INDEX_ROUNDS):
+            if not index_month(year, month).get("remaining"):
+                break
         match_month(year, month)
         cards = [c for c, ym in latest.items() if ym == (year, month)]
         for card in cards:

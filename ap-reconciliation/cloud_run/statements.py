@@ -62,10 +62,18 @@ COLUMNS = {
     "period_end": ["period end date", "statement end", "period end", "statement date", "statement period end"],
     "reference": ["reference", "reference number", "transaction id", "reference no", "transaction reference"],
 }
+# normalised header -> (field, priority): the earlier a name sits in its list, the
+# more specific it is, so "card number" beats "account" when a file has both.
 HEADER_LOOKUP = {}
 for _field, _names in COLUMNS.items():
-    for _n in _names:
-        HEADER_LOOKUP.setdefault(_n, _field)
+    for _priority, _n in enumerate(_names):
+        HEADER_LOOKUP.setdefault(_n, (_field, _priority))
+CARD_NUMBER_RE = re.compile(r"(?<!\d)(\d{4})\d{5,8}(\d{4})(?!\d)")
+
+
+def mask_card_numbers(value):
+    """Keep only the first and last four digits of anything that looks like a full card number."""
+    return CARD_NUMBER_RE.sub(lambda m: m.group(1) + "*" * 8 + m.group(2), value)
 
 
 class StatementError(ValueError):
@@ -180,13 +188,13 @@ def card_from_file_name(file_name):
 
 def normalise_type(raw, amount):
     r = (raw or "").lower()
-    if any(k in r for k in ("payment", "pymt", "autopay", "pay ")):
+    if re.search(r"\b(payment|payments|pymt|autopay)\b", r) or r.startswith("pay "):
         return "payment"
-    if any(k in r for k in ("credit", "refund", "return", "reversal", "chargeback", "voucher")):
+    if re.search(r"\b(credit|credits|refund|refunds|return|returns|reversal|chargeback|voucher)\b", r):
         return "credit"
-    if any(k in r for k in ("fee", "interest")):
+    if re.search(r"\b(fee|fees|interest)\b", r):
         return "fee"
-    if any(k in r for k in ("purchase", "sale", "pos", "debit")):
+    if re.search(r"\b(purchase|purchases|sale|sales|pos|debit)\b", r):
         return "purchase"
     return "purchase" if (amount or 0) >= 0 else "credit"
 
@@ -219,7 +227,10 @@ def assign_ids(transactions):
 # ---------------------------------------------------------------------------
 def read_xlsx(data):
     import openpyxl
-    wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True, read_only=True)
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True, read_only=True)
+    except Exception as exc:  # noqa: BLE001
+        raise StatementError(f"The spreadsheet could not be opened: {exc}") from exc
     best = []
     for ws in wb.worksheets:
         rows = [list(r) for r in ws.iter_rows(values_only=True)]
@@ -236,7 +247,10 @@ def read_csv(data):
         dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
     except csv.Error:
         dialect = csv.excel
-    rows = [row for row in csv.reader(io.StringIO(text), dialect) if any(c.strip() for c in row)]
+    try:
+        rows = [row for row in csv.reader(io.StringIO(text), dialect) if any(c.strip() for c in row)]
+    except csv.Error as exc:
+        raise StatementError(f"The CSV could not be read: {exc}") from exc
     return rows
 
 
@@ -244,12 +258,13 @@ def detect_header(rows):
     """(header row index, {column index: field}) for the row that looks most like a header."""
     best, best_score = None, 0
     for i, row in enumerate(rows[:20]):
-        mapping, used = {}, set()
+        chosen = {}      # field -> (priority, column)
         for j, cell in enumerate(row):
-            field = HEADER_LOOKUP.get(norm_header(cell))
-            if field and field not in used:
-                mapping[j] = field
-                used.add(field)
+            hit = HEADER_LOOKUP.get(norm_header(cell))
+            if hit and (hit[0] not in chosen or hit[1] < chosen[hit[0]][0]):
+                chosen[hit[0]] = (hit[1], j)
+        mapping = {col: field for field, (_, col) in chosen.items()}
+        used = set(mapping.values())
         has_date = "txn_date" in used or "post_date" in used
         has_amount = "amount" in used or "debit" in used or "credit" in used
         score = len(used) + (2 if has_date and has_amount else 0)
@@ -275,6 +290,7 @@ def from_table(rows, header_index, mapping, file_name=""):
     fallback_card = card_from_file_name(file_name) if "card" not in fields else ""
     transactions, warnings = [], []
     period_start, period_end = "", ""
+    skipped = 0
     for row in data_rows:
         txn_date = parse_date(get(row, "txn_date"), dayfirst) or parse_date(get(row, "post_date"), dayfirst)
         if "amount" in fields:
@@ -283,6 +299,8 @@ def from_table(rows, header_index, mapping, file_name=""):
             debit, credit = parse_amount(get(row, "debit")), parse_amount(get(row, "credit"))
             amount = None if debit is None and credit is None else round((debit or 0) - (credit or 0), 2)
         if not txn_date or amount is None:
+            if any(clean(c) for c in row):
+                skipped += 1
             continue
         description = clean(get(row, "description"))
         raw_type = clean(get(row, "type"))
@@ -306,7 +324,8 @@ def from_table(rows, header_index, mapping, file_name=""):
             "currency": (clean(get(row, "currency")) or "CAD").upper()[:3],
             "source_amount": parse_amount(get(row, "source_amount")),
             "source_currency": (clean(get(row, "source_currency")) or "").upper()[:3],
-            "raw": {str(rows[header_index][j]): clean(c) for j, c in enumerate(row) if j < len(rows[header_index]) and clean(c)},
+            "raw": {str(rows[header_index][j]): mask_card_numbers(clean(c))
+                    for j, c in enumerate(row) if j < len(rows[header_index]) and clean(c)},
         }
         if t["source_currency"] == t["currency"] or t["source_amount"] is None:
             t["source_amount"], t["source_currency"] = None, ""
@@ -316,14 +335,23 @@ def from_table(rows, header_index, mapping, file_name=""):
         transactions.append(t)
     if not transactions:
         raise StatementError("The file has a header row but no transactions could be read from it.")
+    if skipped:
+        warnings.append(f"{skipped} line{'s' if skipped != 1 else ''} skipped: no readable date or amount.")
+    # Some banks list charges as negative numbers. Judge by the purchase lines when the
+    # file names its transaction types, by every line otherwise.
+    judged = [t for t in transactions if t["type"] == "purchase"] if "type" in fields else transactions
+    negatives = sum(1 for t in judged if t["amount"] < 0)
+    if judged and negatives >= 0.8 * len(judged):
+        for t in transactions:
+            t["amount"] = round(-t["amount"], 2)
+        warnings.append("Charges were listed as negative numbers; signs flipped so purchases are positive.")
     if "type" not in fields:
-        negatives = sum(1 for t in transactions if t["amount"] < 0)
-        if negatives >= 0.8 * len(transactions):
-            for t in transactions:
-                t["amount"] = round(-t["amount"], 2)
-            warnings.append("Charges were listed as negative numbers; signs flipped so purchases are positive.")
         for t in transactions:
             t["type"] = normalise_type("", t["amount"])
+    slash_dates = [v for v in (get(r, "txn_date") for r in data_rows)
+                   if re.match(r"^\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}$", clean(v))]
+    if slash_dates and not dayfirst:
+        warnings.append("Numeric dates were read as month/day/year; check one against the statement.")
     dates = sorted(t["txn_date"] for t in transactions)
     return {
         "format": "table",

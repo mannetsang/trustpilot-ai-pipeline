@@ -59,8 +59,12 @@ create table if not exists invoices (
   is_invoice       boolean,
   extracted_at     timestamptz,
   extraction_error text,
+  document_type    text,                      -- invoice | receipt | credit_note | statement | other
+  removed_at       timestamptz,               -- set when the file is no longer found in Drive
   created_at       timestamptz not null default now()
 );
+alter table invoices add column if not exists document_type text;
+alter table invoices add column if not exists removed_at timestamptz;
 create index if not exists invoices_month_folder_idx on invoices (month_folder);
 
 create table if not exists transactions (
@@ -93,8 +97,10 @@ create table if not exists transactions (
   updated_by        text,
   updated_at        timestamptz,
   created_at        timestamptz not null default now(),
-  raw               jsonb
+  raw               jsonb,
+  rejected_invoice_ids text[]                        -- invoices a person said are "not this one"
 );
+alter table transactions add column if not exists rejected_invoice_ids text[];
 create index if not exists transactions_month_idx on transactions (year, month, card_last4);
 create unique index if not exists transactions_invoice_unique on transactions (invoice_id) where invoice_id is not null;
 
@@ -137,6 +143,11 @@ select year, month, card_last4,
        count(*) filter (where type = 'purchase' and coalesce(cost_center, '') = '') as uncoded
 from transactions
 group by year, month, card_last4;
+-- Run the view with the caller's rights (so RLS applies to it too) and keep the
+-- public API roles away from everything: only the service-role key is used.
+alter view month_summary set (security_invoker = true);
+revoke all on cards, statements, invoices, transactions, notifications, cost_centers, month_summary
+  from anon, authenticated;
 
 -- The service uses the service-role key, which bypasses RLS. Enabling RLS with
 -- no policies keeps the anon/public key from reading anything.

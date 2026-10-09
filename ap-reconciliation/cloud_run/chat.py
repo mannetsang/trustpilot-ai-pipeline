@@ -7,6 +7,7 @@ and arrive as one JSON object in CARD_WEBHOOKS_JSON ({"1610": "https://...",
 """
 
 import calendar
+import html
 import json
 
 import requests
@@ -44,7 +45,7 @@ def _lines(txns, limit=25):
     for t in txns[:limit]:
         day = str(t.get("txn_date") or "")[5:]
         extra = f" ({money(t['source_amount'], t['source_currency'])})" if t.get("source_amount") else ""
-        lines.append(f"{day} · {t.get('description') or '-'} · <b>{money(t['amount'], t.get('currency') or 'CAD')}</b>{extra}")
+        lines.append(f"{day} · {html.escape(t.get('description') or '-')} · <b>{money(t['amount'], t.get('currency') or 'CAD')}</b>{extra}")
     if len(txns) > limit:
         lines.append(f"… and {len(txns) - limit} more")
     return "<br>".join(lines) or "—"
@@ -58,6 +59,7 @@ def missing_invoices_card(card, year, month, missing, possible, dashboard_url=""
         holder = ""          # the label already names the holder
     total_missing = sum(float(t["amount"]) for t in missing)
     currency = (missing or possible or [{}])[0].get("currency") or "CAD"
+    label, holder = html.escape(label), html.escape(holder)
     head = (f"\U0001f9fe <b>Invoices needed – {label}</b>" + (f" ({holder})" if holder else "") + "<br>"
             f"<b>Month:</b> {month_label(year, month)}<br>"
             f"<b>Missing:</b> {len(missing)} purchase{'s' if len(missing) != 1 else ''} · {money(total_missing, currency)}"
