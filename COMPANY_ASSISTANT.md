@@ -202,6 +202,12 @@ Guards in the service itself, whatever the model asks:
 - no typing into password or payment-card fields; no downloads, file pickers or device permissions; dialogs
   are dismissed (and reported).
 
+It runs full Chromium (new headless mode) and waits up to 20 s for a "checking you're not a bot" page to clear by
+itself; it doesn't disguise itself or solve challenges. Sites that challenge data-centre visitors stay blocked:
+on 2026-10-09 that included our own BigCommerce storefronts (.ca and .com), which sit behind BigCommerce's
+Cloudflare, while Wikipedia, Trustpilot and competitors such as Lordhair loaded fine (cookie banners and sign-in
+pop-ups included).
+
 And in Man AI: working alone on a task it may look and click but not type, press keys or pick options. The
 model is told never to log in, enter personal or payment details, place orders or send a form without your
 OK; that rule is an instruction, not a technical block (Manne accepted this risk on 2026-10-07).
