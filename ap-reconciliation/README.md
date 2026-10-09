@@ -272,9 +272,11 @@ Local `.env` names are the env vars above.
 ## One-time setup
 
 Commands are for Windows `cmd` (one line each, `python` not `python3`).
-Secret values go through a file written with Notepad, which adds no trailing
-newline (a newline would end up inside the token), and the file is deleted
-right after. Never paste a value into a chat, a ticket or this repo.
+A secret value is typed (right-click to paste) at a hidden prompt and piped
+straight into `gcloud`, stripped of whitespace, so no file is written and no
+trailing newline ends up inside the value (a newline inside a key breaks the
+HTTP headers it is sent in). Never paste a value into a chat, a ticket or
+this repo.
 
 1. **Supabase project.** Done 2026-10-09: project ref `bkkifrwfgtcnmfynbbdd`
    (<https://supabase.com/dashboard/project/bkkifrwfgtcnmfynbbdd>), URL
@@ -292,27 +294,25 @@ right after. Never paste a value into a chat, a ticket or this repo.
    The Table Editor now shows `cards`, `statements`, `invoices`,
    `transactions`, `notifications`, `cost_centers` and the `month_summary`
    view. Delete the token from `.env` (or keep it for future schema changes).
-3. **Service-role key.** Project Settings, *API Keys*, reveal `service_role`,
-   paste it into Notepad and save as `C:\temp\sb.txt`. Then:
-   `gcloud secrets create ap-reconciliation-supabase-service-key --replication-policy=automatic --project=shp-ai-bot-2026`
-   `gcloud secrets versions add ap-reconciliation-supabase-service-key --data-file=C:\temp\sb.txt --project=shp-ai-bot-2026`
-   `del C:\temp\sb.txt`
-   and the project URL as a GitHub Actions **variable** (not a secret, it is
+3. **Service-role key.** The secret `ap-reconciliation-supabase-service-key`
+   exists (created 2026-10-09). Project Settings, *API Keys*, reveal
+   `service_role`, then run the line below and paste the key at the prompt:
+   `python -c "import getpass,sys; sys.stdout.write(getpass.getpass('Paste the service_role key, then Enter: ').strip())" | gcloud secrets versions add ap-reconciliation-supabase-service-key --data-file=- --project=shp-ai-bot-2026`
+   Rotating the key later is the same line again (scripts read `latest`).
+   Then the project URL as a GitHub Actions **variable** (not a secret, it is
    public):
    `gh variable set AP_RECONCILIATION_SUPABASE_URL --body "https://bkkifrwfgtcnmfynbbdd.supabase.co" --repo mannetsang/trustpilot-ai-pipeline`
 4. **Chat spaces and webhooks.** For each credit card create a space (card
    owner + AP, e.g. `AP - Visa 1610`), add an incoming webhook as described
    above and collect the URLs in Notepad as the JSON object shown above,
-   saved as `C:\temp\hooks.json`. Version 2 of the secret (2026-10-09)
-   holds the webhooks of cards 1610, 2887 and 4421; add a new version with
-   the full object whenever a card is added:
-   `gcloud secrets versions add ap-reconciliation-card-webhooks --data-file=C:\temp\hooks.json --project=shp-ai-bot-2026`
-   `del C:\temp\hooks.json`
+   on ONE line. Version 2 of the secret (2026-10-09) holds the webhooks of
+   cards 1610, 2887 and 4421; add a new version with the full object whenever
+   a card is added, pasting the one-line JSON at the prompt:
+   `python -c "import getpass,sys,json; sys.stdout.write(json.dumps(json.loads(getpass.getpass('Paste the webhook JSON, then Enter: '))))" | gcloud secrets versions add ap-reconciliation-card-webhooks --data-file=- --project=shp-ai-bot-2026`
+   (the `json.loads` rejects a typo before anything is stored).
 5. **API token.** Already created on 2026-10-09 (`ap-reconciliation-api-token`,
    a random 43-character value nobody needs to remember). To rotate it:
-   `python -c "import secrets; open(r'C:\temp\token.txt', 'w').write(secrets.token_urlsafe(32))"`
-   `gcloud secrets versions add ap-reconciliation-api-token --data-file=C:\temp\token.txt --project=shp-ai-bot-2026`
-   `del C:\temp\token.txt`
+   `python -c "import secrets,sys; sys.stdout.write(secrets.token_urlsafe(32))" | gcloud secrets versions add ap-reconciliation-api-token --data-file=- --project=shp-ai-bot-2026`
    then recreate the scheduler job (step 9).
 6. **IAM grants.** One per secret. The webhooks and API token secrets
    were granted when they were created; the Supabase key and the three AP
