@@ -76,6 +76,11 @@ from the environment need no third-party packages.
 | `google-business-profile-client-id` | `google-business/gbp_api.py` (env `GOOGLE_BUSINESS_PROFILE_CLIENT_ID`) |
 | `google-business-profile-client-secret` | `google-business/gbp_api.py` (env `GOOGLE_BUSINESS_PROFILE_CLIENT_SECRET`) |
 | `google-business-profile-refresh-token` | `google-business/gbp_api.py` (env `GOOGLE_BUSINESS_PROFILE_REFRESH_TOKEN`) — user OAuth token for the listings' manager, issued by a developer-owned OAuth client; the three must stay together |
+| `google-workspace-ap-client-id` / `-client-secret` / `-refresh-token` | `ap-reconciliation/cloud_run/drive.py` (env `GOOGLE_WORKSPACE_AP_*`) — user OAuth token of `ap@superhairpieces.com` for the Invoice Drive folder; the three stay together |
+| `ap-reconciliation-supabase-service-key` | `ap-reconciliation/cloud_run/store.py` (env `SUPABASE_SERVICE_KEY`) — service-role key of the AP reconciliation Supabase project; bypasses RLS, server side only |
+| `ap-reconciliation-card-webhooks` | `ap-reconciliation/cloud_run/chat.py` (env `CARD_WEBHOOKS_JSON`) — JSON object of Chat incoming-webhook URLs keyed by card last4, plus `default` |
+| `ap-reconciliation-api-token` | `ap-reconciliation/cloud_run/main.py` (env `API_TOKEN`) — `X-Api-Token` for `/maintenance/*`; also in the Cloud Scheduler job's header |
+| `SUPABASE_ACCESS_TOKEN` | `ap-reconciliation/setup_db.py` (env `SUPABASE_ACCESS_TOKEN`) — Supabase Management API personal access token, only to apply `schema.sql` |
 
 Only genuine secrets belong here. The BigCommerce store hash identifies the
 store in a URL path and is not sensitive, so it is set inline in the workflow

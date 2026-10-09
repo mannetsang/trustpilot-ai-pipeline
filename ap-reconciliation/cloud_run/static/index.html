@@ -1,0 +1,1212 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#15181c" />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20width%3D%2234%22%20height%3D%2232%22%20viewBox%3D%220%200%2034%2032%22%20fill%3D%22%23000%22%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%3E%3Cpath%20fill-rule%3D%22evenodd%22%20clip-rule%3D%22evenodd%22%20d%3D%22M27.1627%206.68825L25.8392%203.80659C25.8392%203.80659%2025.7429%203.11202%2025.3968%202.57235C25.0863%202.08729%2024.5186%201.75066%2024.5186%201.75066C24.5186%201.75066%2023.224%201.87491%2022.3267%200.933594C21.8174%201.0727%2017.751%202.09091%209.66212%209.63543C4.05848%2014.8618%200.0742188%2022.4494%200.0742188%2022.4494L0.380647%2023.9022L0.530388%2027.3947C0.530388%2027.3947%205.29581%2022.9589%2010.5689%2018.7022C15.5451%2014.6849%2021.0493%2010.8319%2021.0493%2010.8319L27.1637%206.68824L27.1627%206.68825Z%22%20fill%3D%22%23000%22/%3E%3Cpath%20fill-rule%3D%22evenodd%22%20clip-rule%3D%22evenodd%22%20d%3D%22M27.1743%209.98186C27.1743%209.98186%2021.9315%2013.2986%2016.2558%2017.8536C13.6044%2019.9811%208.79133%2026.7941%208.42188%2031.0734L11.9139%2027.7627C11.9139%2027.7627%2014.0273%2026.6225%2016.2799%2024.8619C18.6449%2023.0148%2021.1723%2020.5315%2021.9552%2019.895C23.4831%2018.6529%2025.9936%2016.6865%2027.6315%2015.7519C29.2693%2014.8184%2030.5803%2014.0929%2029.8104%2012.8589C29.4119%2012.2191%2028.9086%2011.3887%2028.4898%2010.802C28.1009%2010.2569%2027.8067%209.93043%2027.1752%209.98186H27.1743Z%22%20fill%3D%22%23000%22/%3E%3Cpath%20fill-rule%3D%22evenodd%22%20clip-rule%3D%22evenodd%22%20d%3D%22M31.5551%2016.6311C31.5551%2016.6311%2026.8005%2018.5545%2023.2555%2021.6073C22.7138%2022.0731%2020.9832%2023.8773%2019.7663%2025.7418C18.7651%2027.2771%2017.7893%2029.7252%2017.5931%2030.2853C17.1592%2031.5236%2018.6863%2029.7666%2021.087%2027.7986C23.4878%2025.8316%2025.9468%2025.1021%2027.2042%2024.4797C28.2332%2023.9686%2033.1052%2022.0875%2033.3172%2019.9222C33.5284%2017.7579%2032.867%2016.4205%2031.5542%2016.6311H31.5551Z%22%20fill%3D%22%23000%22/%3E%3C/svg%3E" />
+  <title>AP Reconciliation</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <style>
+    /* Same token set as the Reviews Dashboard so the two pages read as one family. Light theme only. */
+    :root {
+      --bg: #f7f8f9;
+      --surface: #ffffff;
+      --border: #e5e7ea;
+      --border-subtle: #eff1f3;
+      --text: #191919;
+      --text-mid: #5b5b5b;
+      --text-mute: #6b6f78;
+      --brand: #00b67a;
+      --brand-soft: #e6f8f2;
+      --brand-ink: #00754d;
+      --up: #00a86b;
+      --up-soft: #e5f6ef;
+      --up-ink: #007a4d;
+      --down: #d43f3f;
+      --down-soft: #ffeded;
+      --warn: #fff7e6;
+      --warn-text: #8a5a00;
+      --warn-strong: #e0a100;
+      --info-soft: #eef3ff;
+      --info-text: #2d4fa8;
+      --sidebar: #15181c;
+      --sidebar-active: #282d36;
+      --sidebar-text: #bbbfc6;
+      --hover-wash: rgba(0,0,0,0.045);
+      --r-pill: 9999px;
+      --card-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+    html, body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: var(--text); line-height: 1.45; -webkit-font-smoothing: antialiased; font-variant-numeric: tabular-nums; font-size: 14px; }
+    body { overflow-x: hidden; }
+    .hidden { display: none !important; }
+
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--card-shadow); }
+    .sub { font-size: 11.5px; color: var(--text-mute); }
+    .label { font-size: 11px; font-weight: 600; letter-spacing: 1.2px; text-transform: uppercase; color: var(--text-mute); }
+    a.link { color: var(--brand-ink); text-decoration: none; }
+    a.link:hover { text-decoration: underline; }
+
+    .pill { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 3px 9px; font-size: 11px; font-weight: 500; line-height: 1.2; white-space: nowrap; flex-shrink: 0; }
+    .pill-up { background: var(--up-soft); color: var(--up-ink); }
+    .pill-down { background: var(--down-soft); color: var(--down); }
+    .pill-warn { background: var(--warn); color: var(--warn-text); }
+    .pill-grey { background: var(--border-subtle); color: var(--text-mid); }
+    .pill-info { background: var(--info-soft); color: var(--info-text); }
+    .pill-brand { background: var(--brand-soft); color: var(--brand-ink); }
+    .badge { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 1; }
+    .badge-red { background: var(--down); color: #fff; }
+    .badge-amber { background: var(--warn-strong); color: #fff; }
+    .badge-grey { background: rgba(255,255,255,0.1); color: #fff; }
+
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 14px; border-radius: var(--r-pill); font-size: 12.5px; font-weight: 500; cursor: pointer; border: 1px solid transparent; line-height: 1.2; white-space: nowrap; transition: background-color .15s ease, filter .15s ease, transform .15s ease; }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-primary { background: var(--brand); color: #fff; font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.18); }
+    .btn-primary:hover:not(:disabled) { filter: brightness(1.06); }
+    .btn-primary:active:not(:disabled) { transform: scale(0.97); }
+    .btn-secondary { background: var(--surface); color: var(--text-mid); border-color: var(--border); }
+    .btn-secondary:hover:not(:disabled) { background: var(--hover-wash); color: var(--text); }
+    .btn-ghost { background: transparent; color: var(--text-mid); }
+    .btn-ghost:hover:not(:disabled) { background: var(--hover-wash); color: var(--text); }
+    .btn-danger { background: var(--down-soft); color: var(--down); }
+    .btn-danger:hover:not(:disabled) { filter: brightness(0.97); }
+    .btn-xs { padding: 4px 10px; font-size: 11.5px; }
+
+    .inp { width: 100%; height: 32px; padding: 0 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font-size: 12.5px; outline: none; font-variant-numeric: normal; }
+    .inp:focus { border-color: var(--brand); box-shadow: 0 0 0 3px rgba(0,182,122,0.15); }
+    .inp:disabled { background: var(--bg); color: var(--text-mute); cursor: not-allowed; }
+    .inp.saving { border-color: var(--warn-strong); }
+    select.inp { padding-right: 24px; appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b6f78' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; }
+    input[type="file"].inp { padding: 5px 9px; height: auto; }
+    input[type="checkbox"] { accent-color: var(--brand); width: 15px; height: 15px; }
+
+    /* Layout: dark sidebar on the left, scrolling main area on the right. Under 900px the sidebar
+       goes away and the month list becomes a dropdown in the top bar. */
+    #app { display: flex; min-height: 100vh; }
+    #sidebar { width: 264px; flex-shrink: 0; background: var(--sidebar); color: var(--sidebar-text); position: sticky; top: 0; height: 100vh; overflow-y: auto; padding: 20px 12px; display: flex; flex-direction: column; }
+    #main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    #topbar { background: var(--surface); border-bottom: 1px solid var(--border-subtle); min-height: 56px; display: flex; align-items: center; gap: 12px; padding: 8px 16px; position: sticky; top: 0; z-index: 20; }
+    #content { padding: 16px; max-width: 1480px; width: 100%; }
+    #mobileNav { display: none; flex: 1; min-width: 0; }
+    @media (max-width: 899px) {
+      #sidebar { display: none; }
+      #mobileNav { display: flex; }
+      #topTitle { display: none; }
+    }
+    @media (min-width: 1100px) { #content { padding: 24px 28px; } }
+
+    .nav-year { font-size: 11px; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-mute); padding: 14px 12px 6px; }
+    .nav-row { position: relative; display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-radius: 10px; font-size: 13.5px; color: var(--sidebar-text); cursor: pointer; min-height: 40px; transition: background .12s ease; text-decoration: none; }
+    .nav-row:hover { background: rgba(255,255,255,0.04); }
+    .nav-row.active { background: var(--sidebar-active); color: #fff; font-weight: 600; }
+    .nav-row.active::before { content: ""; position: absolute; left: -12px; top: 50%; transform: translateY(-50%); width: 4px; height: 22px; border-radius: 0 4px 4px 0; background: var(--brand); }
+    .nav-row .badges { margin-left: auto; display: flex; gap: 4px; }
+
+    .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; min-width: 0; }
+    .kpi .label { font-size: 10.5px; }
+    .kpi .value { font-size: 20px; font-weight: 600; line-height: 1.2; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .kpi .value.small { font-size: 15px; }
+    .kpi.kpi-spend .value { font-size: 17px; }
+    .kpi.kpi-missing .value { color: var(--down); }
+    .kpi.kpi-possible .value { color: var(--warn-text); }
+    .kpi.kpi-matched .value { color: var(--up-ink); }
+    .kpi.kpi-uncoded .value { color: var(--info-text); }
+    /* Tiles take as many columns as fit at 140px each: 2 on a phone, 7 on a wide desktop. */
+    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
+
+    .chip { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: var(--r-pill); border: 1px solid var(--border); background: var(--surface); font-size: 12.5px; font-weight: 500; color: var(--text-mid); cursor: pointer; white-space: nowrap; }
+    .chip:hover { background: var(--hover-wash); color: var(--text); }
+    .chip.active { background: var(--sidebar); border-color: var(--sidebar); color: #fff; }
+    .chip .badge-red { height: 18px; min-width: 18px; font-size: 10.5px; }
+    .chip .badge-amber { height: 18px; min-width: 18px; font-size: 10.5px; }
+    .chip.active .badge-red { background: #ff6b6b; }
+
+    .seg { display: inline-flex; flex-wrap: wrap; gap: 2px; background: var(--border-subtle); padding: 3px; border-radius: 10px; }
+    .seg button { padding: 5px 10px; border-radius: 8px; font-size: 12px; font-weight: 500; color: var(--text-mid); display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+    .seg button .n { font-size: 10.5px; color: var(--text-mute); }
+    .seg button.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
+
+    /* The table scrolls inside its card; the page itself never scrolls sideways. */
+    .table-wrap { overflow-x: auto; overflow-y: visible; -webkit-overflow-scrolling: touch; border-radius: 0 0 12px 12px; }
+    table.txns { width: 100%; min-width: 1080px; border-collapse: separate; border-spacing: 0; font-size: 12.5px; }
+    table.txns th { position: sticky; top: 0; background: var(--bg); z-index: 1; text-align: left; font-size: 10.5px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--text-mute); padding: 9px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    table.txns td { padding: 8px 10px; border-bottom: 1px solid var(--border-subtle); vertical-align: top; }
+    table.txns tr:last-child td { border-bottom: none; }
+    table.txns tbody tr:hover td { background: #fbfcfc; }
+    table.txns tr.row-muted td { color: var(--text-mute); }
+    table.txns tr.row-muted .amt { color: var(--text-mute); font-weight: 400; }
+    .amt { font-weight: 600; white-space: nowrap; text-align: right; }
+    .td-right { text-align: right; }
+    .td-desc .desc { font-weight: 500; }
+    .td-desc, .td-inv { min-width: 220px; }
+    .btn-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+    .conf { font-size: 10.5px; color: var(--text-mute); }
+
+    .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); }
+    .toolbar .inp { height: 34px; }
+
+    .log { background: #0f1115; color: #d7dbe2; border-radius: 10px; padding: 10px 12px; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 260px; overflow-y: auto; margin-top: 12px; line-height: 1.5; }
+    .log .ok { color: #7ee2b8; }
+    .log .err { color: #ff8a8a; }
+    .log .info { color: #9fb6ff; }
+    .log .progress { color: #ffd479; }
+
+    .modal-backdrop { position: fixed; inset: 0; background: rgba(10,11,14,0.55); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 12px; }
+    .modal { background: var(--surface); border-radius: 16px; box-shadow: 0 24px 60px rgba(0,0,0,0.35), 0 0 0 1px var(--border); width: 760px; max-width: 100%; max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; }
+    .modal.wide { width: 980px; }
+    .modal-head { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--border-subtle); }
+    .modal-body { padding: 14px 18px; overflow-y: auto; }
+    @media (max-width: 640px) { .modal-backdrop { align-items: flex-end; padding: 0; } .modal { border-radius: 16px 16px 0 0; max-height: 92vh; } }
+    table.list { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+    table.list th { text-align: left; font-size: 10.5px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--text-mute); padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    table.list td { padding: 7px 8px; border-bottom: 1px solid var(--border-subtle); vertical-align: top; }
+    table.list tr.same-amount td { background: #f3fbf7; }
+    .list-wrap { overflow-x: auto; }
+
+    #toast { position: fixed; right: 16px; bottom: 16px; z-index: 60; display: flex; flex-direction: column; gap: 8px; max-width: calc(100vw - 32px); }
+    .toast { background: #1d2128; color: #fff; padding: 10px 14px; border-radius: 10px; font-size: 13px; box-shadow: 0 10px 30px rgba(0,0,0,0.25); max-width: 420px; animation: toast-in .18s ease; }
+    .toast.err { background: var(--down); }
+    .toast.ok { background: var(--brand-ink); }
+    @keyframes toast-in { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+    .user-text { display: none; }
+    @media (min-width: 640px) { .user-text { display: block; } }
+    .avatar { width: 28px; height: 28px; border-radius: 999px; background: var(--brand-soft); color: var(--brand-ink); display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; flex-shrink: 0; overflow: hidden; }
+    .avatar img { width: 100%; height: 100%; object-fit: cover; }
+    .empty { text-align: center; padding: 56px 16px; color: var(--text-mute); }
+    .spinner { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.35); border-top-color: #fff; border-radius: 999px; animation: spin .7s linear infinite; display: inline-block; }
+    .btn-secondary .spinner { border-color: rgba(0,0,0,0.15); border-top-color: var(--text-mid); }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+  </style>
+</head>
+<body>
+
+<!-- Sign-in overlay: shown only when the server verifies Google ID tokens. -->
+<div id="signin" class="hidden fixed inset-0 z-[100] flex items-center justify-center p-6" style="background: linear-gradient(135deg, #f7f8f9 0%, #eef0f3 100%);">
+  <div class="w-full max-w-[380px] bg-white rounded-2xl border p-7 sm:p-9" style="border-color: var(--border); box-shadow: 0 24px 48px rgba(0,0,0,0.08);">
+    <div class="flex flex-col items-center text-center gap-2 mb-6">
+      <img src="https://superhairpieces.ca/content/images/common/shp-main-logo.svg" alt="Superhairpieces" class="h-10 w-auto" />
+      <h1 class="text-xl font-semibold mt-2">AP Reconciliation</h1>
+      <p class="text-sm" style="color: var(--text-mute);">Sign in with your superhairpieces.com Google account.</p>
+    </div>
+    <div id="gisButton" class="flex justify-center min-h-[44px]"></div>
+    <div id="signinMsg" class="hidden mt-4 text-xs font-medium text-center" style="color: var(--down);"></div>
+    <div class="text-[11px] text-center mt-6" style="color: var(--text-mute);">Card owners see their own cards; accounts payable sees everything.</div>
+  </div>
+</div>
+
+<div id="app" class="hidden">
+  <aside id="sidebar">
+    <div class="px-3 pb-4 mb-1">
+      <img src="https://superhairpieces.ca/content/images/common/shp-main-logo.svg" alt="Superhairpieces" class="h-7 w-auto block" style="filter: brightness(0) invert(0.91) sepia(0.18) saturate(0.55);" />
+      <div class="text-[11px] mt-2 tracking-wide" style="color: var(--text-mute);">AP credit-card reconciliation</div>
+    </div>
+    <nav id="monthNav" class="flex-1"></nav>
+    <div class="px-3 pt-4 mt-4 text-[11px]" style="border-top: 1px solid rgba(255,255,255,0.06); color: var(--text-mute);">
+      <a id="sideFolderLink" class="hover:underline hidden" target="_blank" rel="noopener">Invoice folder on Drive ↗</a>
+    </div>
+  </aside>
+
+  <main id="main">
+    <header id="topbar">
+      <div id="topTitle" class="text-sm font-semibold truncate" style="color: var(--text-mid);">Credit-card reconciliation</div>
+      <div id="mobileNav">
+        <select id="monthSelect" class="inp" aria-label="Month" style="height: 36px; font-weight: 600;"></select>
+      </div>
+      <div class="ml-auto flex items-center gap-2 min-w-0">
+        <div id="userChip" class="flex items-center gap-2 min-w-0"></div>
+        <a id="signOut" class="btn btn-ghost btn-xs hidden" href="#">Sign out</a>
+      </div>
+    </header>
+
+    <div id="content">
+      <div id="emptyState" class="hidden card empty">
+        <div class="text-base font-semibold" style="color: var(--text);" id="emptyTitle">Nothing to show yet</div>
+        <div class="text-sm mt-1" id="emptyBody">No statement has been uploaded.</div>
+      </div>
+
+      <div id="monthView" class="hidden">
+        <div class="flex flex-wrap items-end justify-between gap-3 mb-3">
+          <div>
+            <h1 id="monthTitle" class="text-2xl font-semibold leading-tight"></h1>
+            <div id="monthSub" class="sub mt-0.5"></div>
+          </div>
+        </div>
+        <div class="kpi-grid mb-4" id="kpis">
+          <div class="kpi kpi-spend"><div class="label">Spend</div><div class="value" data-kpi="spend">—</div></div>
+          <div class="kpi"><div class="label">Purchases</div><div class="value" data-kpi="purchases">—</div></div>
+          <div class="kpi kpi-matched"><div class="label">Invoices found</div><div class="value" data-kpi="matched">—</div></div>
+          <div class="kpi kpi-missing"><div class="label">Missing</div><div class="value" data-kpi="missing">—</div></div>
+          <div class="kpi kpi-possible"><div class="label">Possible</div><div class="value" data-kpi="possible">—</div></div>
+          <div class="kpi"><div class="label">Waived</div><div class="value" data-kpi="waived">—</div></div>
+          <div class="kpi kpi-uncoded"><div class="label">No cost centre</div><div class="value" data-kpi="uncoded">—</div></div>
+        </div>
+
+        <section id="apPanel" class="card p-4 mb-4 hidden">
+          <div class="flex flex-wrap gap-6">
+            <form id="uploadForm" class="flex flex-col gap-2 flex-1 min-w-[260px]">
+              <div class="label">Upload statement</div>
+              <input type="file" id="fileInput" class="inp" accept=".xlsx,.csv,.pdf,.jpg,.jpeg,.png" />
+              <label class="flex items-center gap-2 text-xs" style="color: var(--text-mid);"><input type="checkbox" id="notifyAfter" checked /> Send Chat reminders after matching</label>
+              <div><button type="submit" id="uploadBtn" class="btn btn-primary">Upload and process</button></div>
+            </form>
+            <div class="flex flex-col gap-2">
+              <div class="label">This month</div>
+              <div class="flex flex-wrap gap-2">
+                <button id="rematchBtn" class="btn btn-secondary">Re-run matching</button>
+                <button id="notifyBtn" class="btn btn-secondary">Send reminders</button>
+                <button id="cardsBtn" class="btn btn-secondary">Cards…</button>
+              </div>
+              <div id="aiNote" class="sub hidden">Invoice reading is switched off on this server (AI_DISABLED): matching uses invoices already indexed.</div>
+            </div>
+          </div>
+          <div id="jobLog" class="log hidden" aria-live="polite"></div>
+        </section>
+
+        <div id="cardStrip" class="flex flex-wrap gap-2 mb-3"></div>
+
+        <div class="card">
+          <div class="toolbar">
+            <div class="seg" id="statusSeg"></div>
+            <input id="search" class="inp" type="search" placeholder="Search description, amount, cost centre, usage" style="max-width: 320px; flex: 1; min-width: 180px;" />
+            <select id="cardSelect" class="inp" style="width: auto; min-width: 150px;" aria-label="Card"></select>
+            <div id="rowCount" class="sub ml-auto"></div>
+          </div>
+          <div class="table-wrap">
+            <table class="txns">
+              <thead><tr>
+                <th>Date</th><th>Card</th><th>Supplier / description</th><th class="td-right">Amount</th><th>Invoice</th><th>Cost centre</th><th>Usage</th><th>Updated by</th>
+              </tr></thead>
+              <tbody id="txnBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="apLists" class="hidden grid gap-4 mt-4" style="grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));">
+          <div class="card p-4"><div class="label mb-2">Uploads this month</div><div id="uploadsList" class="text-xs"></div></div>
+          <div class="card p-4"><div class="label mb-2">Last notifications</div><div id="notifList" class="text-xs"></div></div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div id="modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+  <div class="modal" id="modalBox">
+    <div class="modal-head">
+      <div class="font-semibold text-base flex-1 min-w-0 truncate" id="modalTitle"></div>
+      <button class="btn btn-ghost btn-xs" id="modalClose" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  var TOKEN_KEY = 'ap_recon_id_token';
+  var MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  var MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  var STATUS_PILL = { matched: 'pill-up', possible: 'pill-warn', missing: 'pill-down', waived: 'pill-grey', not_required: 'pill-grey' };
+  var STATUS_FILTERS = [['all', 'All'], ['missing', 'Missing'], ['possible', 'Possible'], ['matched', 'Matched'], ['waived', 'Waived'], ['uncoded', 'No cost centre']];
+
+  var state = {
+    token: null, config: null, me: null,
+    months: [], cards: [], costCenters: [],
+    year: null, month: null, card: '', status: 'all', q: '',
+    txns: [], statements: [], notifications: [],
+    loaded: false, jobRunning: false, gisReady: false,
+  };
+  try { state.token = sessionStorage.getItem(TOKEN_KEY) || null; } catch (e) { state.token = null; }
+
+  // ---------------------------------------------------------------------------
+  // Helpers
+  // ---------------------------------------------------------------------------
+  function $(sel, el) { return (el || document).querySelector(sel); }
+  function $all(sel, el) { return Array.prototype.slice.call((el || document).querySelectorAll(sel)); }
+  // Every piece of text coming from the API or the user goes through esc() before it is put into HTML.
+  function esc(s) {
+    return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function pad2(n) { return String(n).padStart(2, '0'); }
+  function money(amount, currency) {
+    var n = Number(amount) || 0;
+    var abs = Math.abs(n).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return (n < 0 ? '-' : '') + (currency || 'CAD') + ' ' + abs;
+  }
+  function fmtDay(iso) {
+    if (!iso) return '';
+    var p = String(iso).slice(0, 10).split('-');
+    if (p.length < 3) return String(iso);
+    return MONTHS_SHORT[Number(p[1]) - 1] + ' ' + Number(p[2]);
+  }
+  function fmtDate(iso) {
+    if (!iso) return '';
+    var p = String(iso).slice(0, 10).split('-');
+    if (p.length < 3) return String(iso);
+    return MONTHS_SHORT[Number(p[1]) - 1] + ' ' + Number(p[2]) + ', ' + p[0];
+  }
+  function fmtStamp(iso) {
+    if (!iso) return '';
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return String(iso).slice(0, 16);
+    return MONTHS_SHORT[d.getMonth()] + ' ' + d.getDate() + ', ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+  }
+  function monthLabel(y, m) { return MONTHS[m - 1] + ' ' + y; }
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  function nearly(a, b) { return a !== null && a !== undefined && b !== null && b !== undefined && Math.abs(Math.abs(Number(a)) - Math.abs(Number(b))) <= 0.011; }
+
+  function toast(msg, kind) {
+    var el = document.createElement('div');
+    el.className = 'toast' + (kind ? ' ' + kind : '');
+    el.textContent = msg;
+    $('#toast').appendChild(el);
+    setTimeout(function () { el.style.opacity = '0'; el.style.transition = 'opacity .3s'; }, kind === 'err' ? 6000 : 2600);
+    setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, kind === 'err' ? 6400 : 3000);
+  }
+
+  function ApiError(status, message, data) { this.status = status; this.message = message; this.data = data; }
+  ApiError.prototype = Object.create(Error.prototype);
+
+  async function api(path, opts) {
+    opts = opts || {};
+    var headers = Object.assign({}, opts.headers || {});
+    if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
+    var res;
+    try {
+      res = await fetch(path, Object.assign({}, opts, { headers: headers, cache: 'no-store' }));
+    } catch (e) {
+      throw new ApiError(0, 'Network error: ' + (e && e.message ? e.message : e), null);
+    }
+    var data = null;
+    try { data = await res.json(); } catch (e) { data = null; }
+    if (res.status === 401) {
+      signOut('Your session has expired. Please sign in again.');
+      throw new ApiError(401, (data && data.error) || 'sign in required', data);
+    }
+    if (!res.ok) throw new ApiError(res.status, (data && (data.error || data.message)) || (res.status + ' ' + res.statusText), data);
+    return data;
+  }
+  // The server runs one job at a time and answers 409 while another is going; wait and try again.
+  async function apiRetryBusy(path, opts, onWait) {
+    for (var attempt = 0; attempt < 60; attempt++) {
+      try {
+        return await api(path, opts);
+      } catch (e) {
+        if (e.status !== 409) throw e;
+        if (onWait) onWait(attempt);
+        await sleep(4000);
+      }
+    }
+    throw new ApiError(409, 'the server stayed busy for too long; try again later', null);
+  }
+  function report(e, prefix) {
+    if (e && e.status === 401) return;
+    console.error(e);
+    toast((prefix ? prefix + ': ' : '') + (e && e.message ? e.message : String(e)), 'err');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Sign-in
+  // ---------------------------------------------------------------------------
+  function whenGisReady(fn) {
+    if (window.google && google.accounts && google.accounts.id) return fn();
+    var tries = 0;
+    var timer = setInterval(function () {
+      tries++;
+      if (window.google && google.accounts && google.accounts.id) { clearInterval(timer); fn(); }
+      else if (tries > 100) { clearInterval(timer); setSigninMsg('The Google sign-in library did not load. Check your connection and reload.'); }
+    }, 100);
+  }
+  function setSigninMsg(msg) {
+    var el = $('#signinMsg');
+    el.textContent = msg || '';
+    el.classList.toggle('hidden', !msg);
+  }
+  function showSignIn(message) {
+    $('#app').classList.add('hidden');
+    $('#signin').classList.remove('hidden');
+    setSigninMsg(message || '');
+    if (!state.config.client_id) {
+      setSigninMsg('Sign-in is not configured on this server (GOOGLE_OAUTH_CLIENT_ID).');
+      return;
+    }
+    whenGisReady(function () {
+      if (!state.gisReady) {
+        google.accounts.id.initialize({ client_id: state.config.client_id, callback: onCredential, auto_select: true, cancel_on_tap_outside: false });
+        state.gisReady = true;
+      }
+      $('#gisButton').innerHTML = '';
+      google.accounts.id.renderButton($('#gisButton'), { theme: 'outline', size: 'large', shape: 'pill', text: 'signin_with', width: 280 });
+      google.accounts.id.prompt();
+    });
+  }
+  function onCredential(resp) {
+    if (!resp || !resp.credential) return;
+    state.token = resp.credential;
+    try { sessionStorage.setItem(TOKEN_KEY, resp.credential); } catch (e) { /* private mode: token lives in memory only */ }
+    setSigninMsg('');
+    loadApp().catch(function (e) { report(e, 'Could not load'); });
+  }
+  function signOut(message) {
+    state.token = null;
+    try { sessionStorage.removeItem(TOKEN_KEY); } catch (e) { /* ignore */ }
+    if (window.google && google.accounts && google.accounts.id) { try { google.accounts.id.disableAutoSelect(); } catch (e) { /* ignore */ } }
+    if (state.config && state.config.auth_disabled) return;
+    showSignIn(message);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Loading
+  // ---------------------------------------------------------------------------
+  async function boot() {
+    try {
+      var res = await fetch('/api/config', { cache: 'no-store' });
+      state.config = await res.json();
+    } catch (e) {
+      state.config = { auth_disabled: false, client_id: '' };
+      toast('Could not reach the server: ' + e.message, 'err');
+      return;
+    }
+    if (state.config.invoice_folder_url) {
+      var a = $('#sideFolderLink'); a.href = state.config.invoice_folder_url; a.classList.remove('hidden');
+    }
+    if (state.config.auth_disabled || state.token) {
+      try { await loadApp(); return; } catch (e) { report(e, 'Could not load'); if (e.status === 401) return; }
+    }
+    if (!state.config.auth_disabled) showSignIn('');
+  }
+
+  async function loadApp() {
+    state.me = await api('/api/me');
+    await loadMonths();
+    renderUser();
+    $('#signin').classList.add('hidden');
+    $('#app').classList.remove('hidden');
+    $('#signOut').classList.toggle('hidden', !!state.config.auth_disabled);
+    var isAp = state.me.role === 'ap';
+    $('#apPanel').classList.toggle('hidden', !isAp);
+    $('#apLists').classList.toggle('hidden', !isAp);
+    $('#aiNote').classList.toggle('hidden', state.config.ai_enabled !== false);
+    state.loaded = true;
+    await applyRoute();
+  }
+
+  async function loadMonths() {
+    var data = await api('/api/months');
+    state.months = data.months || [];
+    state.cards = data.cards || [];
+    state.costCenters = data.cost_centers || [];
+    renderSidebar();
+  }
+
+  async function loadMonth() {
+    var data = await api('/api/transactions?year=' + state.year + '&month=' + state.month);
+    state.txns = data.transactions || [];
+    state.statements = data.statements || [];
+    state.notifications = (data.notifications || []).slice().sort(function (a, b) { return String(b.sent_at || '').localeCompare(String(a.sent_at || '')); });
+    if (data.cards) state.cards = data.cards;
+    if (data.cost_centers) state.costCenters = data.cost_centers;
+    var cardsHere = {};
+    state.txns.forEach(function (t) { cardsHere[t.card_last4] = true; });
+    if (state.card && !cardsHere[state.card]) state.card = '';
+    renderMonth();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Routing: #/YYYY/MM?card=1610
+  // ---------------------------------------------------------------------------
+  function parseHash() {
+    var m = location.hash.match(/^#\/(\d{4})\/(\d{1,2})(?:\?(.*))?$/);
+    if (!m) return null;
+    var params = new URLSearchParams(m[3] || '');
+    return { year: Number(m[1]), month: Number(m[2]), card: (params.get('card') || '').replace(/\D/g, '').slice(-4) };
+  }
+  function hashFor(year, month, card) {
+    return '#/' + year + '/' + pad2(month) + (card ? '?card=' + encodeURIComponent(card) : '');
+  }
+  function findMonth(y, m) {
+    for (var i = 0; i < state.months.length; i++) if (state.months[i].year === y && state.months[i].month === m) return state.months[i];
+    return null;
+  }
+  function navigate(year, month, card) {
+    var h = hashFor(year, month, card);
+    if (location.hash === h) applyRoute(); else location.hash = h;
+  }
+  var routing = null;
+  async function applyRoute() {
+    if (!state.loaded) return;
+    if (routing) { await routing; }
+    routing = (async function () {
+      if (!state.months.length) { showEmpty(); return; }
+      var r = parseHash();
+      var target = (r && findMonth(r.year, r.month)) ? r : null;
+      if (!target) {
+        var newest = state.months[0];
+        target = { year: newest.year, month: newest.month, card: '' };
+        history.replaceState(null, '', hashFor(newest.year, newest.month, ''));
+      }
+      var changed = state.year !== target.year || state.month !== target.month;
+      state.year = target.year; state.month = target.month; state.card = target.card || '';
+      $('#emptyState').classList.add('hidden');
+      $('#monthView').classList.remove('hidden');
+      restoreApPanel();
+      renderSidebar();
+      if (changed) {
+        try { await loadMonth(); } catch (e) { report(e, 'Could not load the month'); }
+      } else {
+        renderMonth();
+      }
+    })();
+    await routing;
+    routing = null;
+  }
+  window.addEventListener('hashchange', function () { applyRoute(); });
+
+  var apHome = $('#apPanel').parentNode;
+  function restoreApPanel() {
+    var panel = $('#apPanel');
+    if (panel.parentNode !== apHome) { apHome.insertBefore(panel, $('#cardStrip')); panel.style.textAlign = ''; panel.style.marginTop = ''; }
+  }
+  function showEmpty() {
+    var isAp = state.me && state.me.role === 'ap';
+    $('#monthView').classList.add('hidden');
+    $('#emptyState').classList.remove('hidden');
+    $('#emptyTitle').textContent = isAp ? 'Upload the first statement' : 'Nothing to show yet';
+    $('#emptyBody').textContent = isAp ? 'Upload a credit-card statement or transaction export below to start reconciling.' : 'No statement has been uploaded yet. Ask accounts payable.';
+    // AP needs the upload panel even with no months, so hoist it out of the month view.
+    if (isAp) { $('#emptyState').appendChild($('#apPanel')); $('#apPanel').classList.remove('hidden'); $('#apPanel').style.textAlign = 'left'; $('#apPanel').style.marginTop = '24px'; }
+    renderSidebar();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Derived data
+  // ---------------------------------------------------------------------------
+  function cardLabel(last4) {
+    for (var i = 0; i < state.cards.length; i++) if (state.cards[i].last4 === last4) return state.cards[i].label || ('Card ending ' + last4);
+    return 'Card ending ' + last4;
+  }
+  function scopeTxns() { return state.card ? state.txns.filter(function (t) { return t.card_last4 === state.card; }) : state.txns; }
+  function matchesStatus(t, status) {
+    if (status === 'all') return true;
+    if (status === 'uncoded') return t.type === 'purchase' && !(t.cost_center || '');
+    return t.invoice_status === status;
+  }
+  function matchesSearch(t, q) {
+    if (!q) return true;
+    var hay = [t.description, t.supplier, t.city, t.country, t.merchant_category, t.cost_center, t.usage, t.note, t.updated_by,
+      String(t.amount), money(t.amount, t.currency), t.source_amount !== null && t.source_amount !== undefined ? String(t.source_amount) : '',
+      t.invoice && t.invoice.vendor, t.invoice && t.invoice.invoice_number].join(' ').toLowerCase();
+    return hay.indexOf(q) >= 0;
+  }
+  function visibleTxns() {
+    var q = state.q.trim().toLowerCase();
+    return scopeTxns().filter(function (t) { return matchesStatus(t, state.status) && matchesSearch(t, q); });
+  }
+  function kpisOf(txns) {
+    var k = { spend: {}, purchases: 0, matched: 0, possible: 0, missing: 0, waived: 0, uncoded: 0 };
+    txns.forEach(function (t) {
+      if (t.type === 'purchase') {
+        k.purchases++;
+        var cur = t.currency || 'CAD';
+        k.spend[cur] = (k.spend[cur] || 0) + Number(t.amount || 0);
+        if (!(t.cost_center || '')) k.uncoded++;
+      }
+      if (k.hasOwnProperty(t.invoice_status)) k[t.invoice_status]++;
+    });
+    return k;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Rendering
+  // ---------------------------------------------------------------------------
+  function renderUser() {
+    var me = state.me; if (!me) return;
+    var initial = (me.name || me.email || '?').trim().charAt(0).toUpperCase();
+    var avatar = me.picture ? '<img src="' + esc(me.picture) + '" alt="" referrerpolicy="no-referrer" />' : esc(initial);
+    $('#userChip').innerHTML =
+      '<div class="avatar">' + avatar + '</div>' +
+      '<div class="min-w-0 user-text"><div class="text-xs font-semibold truncate">' + esc(me.name || me.email) + '</div>' +
+      '<div class="sub truncate" style="font-size:10.5px;">' + esc(me.email) + '</div></div>' +
+      '<span class="pill ' + (me.role === 'ap' ? 'pill-brand' : 'pill-grey') + '">' + (me.role === 'ap' ? 'AP' : 'Member') + '</span>';
+  }
+
+  function renderSidebar() {
+    var nav = $('#monthNav'), sel = $('#monthSelect');
+    if (!state.months.length) {
+      nav.innerHTML = '<div class="nav-year">Months</div><div class="px-3 text-xs" style="color: var(--text-mute);">No statements yet.</div>';
+      sel.innerHTML = '<option>No months yet</option>';
+      return;
+    }
+    var html = '', optHtml = '', year = null;
+    state.months.forEach(function (m) {
+      if (m.year !== year) {
+        year = m.year;
+        html += '<div class="nav-year">' + year + '</div>';
+        if (optHtml) optHtml += '</optgroup>';
+        optHtml += '<optgroup label="' + year + '">';
+      }
+      var active = m.year === state.year && m.month === state.month;
+      var badges = '';
+      if (m.missing) badges += '<span class="badge badge-red" title="Invoices missing">' + m.missing + '</span>';
+      if (m.possible) badges += '<span class="badge badge-amber" title="Possible matches to confirm">' + m.possible + '</span>';
+      html += '<a class="nav-row' + (active ? ' active' : '') + '" href="' + hashFor(m.year, m.month, '') + '" data-year="' + m.year + '" data-month="' + m.month + '">' +
+        '<span>' + esc(MONTHS[m.month - 1]) + '</span><span class="badges">' + badges + '</span></a>';
+      var tail = [];
+      if (m.missing) tail.push(m.missing + ' missing');
+      if (m.possible) tail.push(m.possible + ' possible');
+      optHtml += '<option value="' + m.year + '-' + m.month + '"' + (active ? ' selected' : '') + '>' + esc(MONTHS[m.month - 1]) + (tail.length ? ' · ' + tail.join(', ') : '') + '</option>';
+    });
+    if (optHtml) optHtml += '</optgroup>';
+    nav.innerHTML = html;
+    sel.innerHTML = optHtml;
+  }
+
+  function renderMonth() {
+    $('#monthTitle').textContent = monthLabel(state.year, state.month);
+    renderKpis();
+    renderCardStrip();
+    renderToolbar();
+    renderTable();
+    renderLists();
+  }
+
+  function renderKpis() {
+    var k = kpisOf(scopeTxns());
+    var currencies = Object.keys(k.spend).sort();
+    var spendEl = $('[data-kpi="spend"]');
+    if (!currencies.length) spendEl.textContent = '—';
+    else spendEl.innerHTML = currencies.map(function (c) { return '<div>' + esc(money(k.spend[c], c)) + '</div>'; }).join('');
+    spendEl.classList.toggle('small', currencies.length > 1 || (currencies.length === 1 && k.spend[currencies[0]] >= 100000));
+    ['purchases', 'matched', 'missing', 'possible', 'waived', 'uncoded'].forEach(function (key) { $('[data-kpi="' + key + '"]').textContent = String(k[key]); });
+    var cardsHere = {};
+    state.txns.forEach(function (t) { cardsHere[t.card_last4] = true; });
+    var n = Object.keys(cardsHere).length;
+    $('#monthSub').textContent = state.card
+      ? cardLabel(state.card) + ' · ' + scopeTxns().length + ' transactions'
+      : state.txns.length + ' transactions on ' + n + (n === 1 ? ' card' : ' cards');
+  }
+
+  function renderCardStrip() {
+    var per = {};
+    state.txns.forEach(function (t) {
+      var b = per[t.card_last4] || (per[t.card_last4] = { missing: 0, possible: 0 });
+      if (t.invoice_status === 'missing') b.missing++;
+      if (t.invoice_status === 'possible') b.possible++;
+    });
+    var all = kpisOf(state.txns);
+    var html = '<button class="chip' + (!state.card ? ' active' : '') + '" data-card="">All cards' + (all.missing ? '<span class="badge badge-red">' + all.missing + '</span>' : '') + '</button>';
+    Object.keys(per).sort().forEach(function (l4) {
+      var b = per[l4];
+      html += '<button class="chip' + (state.card === l4 ? ' active' : '') + '" data-card="' + esc(l4) + '" title="' + esc('Card ending ' + l4) + '">' + esc(cardLabel(l4)) +
+        (b.missing ? '<span class="badge badge-red" title="missing">' + b.missing + '</span>' : '') +
+        (b.possible ? '<span class="badge badge-amber" title="possible">' + b.possible + '</span>' : '') + '</button>';
+    });
+    $('#cardStrip').innerHTML = html;
+    var sel = $('#cardSelect');
+    sel.innerHTML = '<option value="">All cards</option>' + Object.keys(per).sort().map(function (l4) {
+      return '<option value="' + esc(l4) + '"' + (state.card === l4 ? ' selected' : '') + '>' + esc(cardLabel(l4)) + '</option>';
+    }).join('');
+  }
+
+  function renderToolbar() {
+    var scope = scopeTxns();
+    $('#statusSeg').innerHTML = STATUS_FILTERS.map(function (f) {
+      var n = scope.filter(function (t) { return matchesStatus(t, f[0]); }).length;
+      return '<button type="button" data-status="' + f[0] + '" class="' + (state.status === f[0] ? 'active' : '') + '">' + f[1] + '<span class="n">' + n + '</span></button>';
+    }).join('');
+    if ($('#search').value !== state.q) $('#search').value = state.q;
+  }
+
+  function invoiceCell(t) {
+    var st = t.invoice_status || 'missing';
+    var ed = t.editable, dis = ed ? '' : ' disabled title="Only the card owner or AP can change this"';
+    var tip = t.match_note ? ' title="' + esc(t.match_note) + '"' : '';
+    var html = '<span class="pill ' + (STATUS_PILL[st] || 'pill-grey') + '"' + tip + '>' + esc(t.status_label || st) + '</span>';
+    if (t.match_confidence !== null && t.match_confidence !== undefined && st === 'possible') html += ' <span class="conf">' + Math.round(Number(t.match_confidence) * 100) + '%</span>';
+    var inv = t.invoice;
+    if (inv) {
+      var text = (inv.vendor || inv.vendor_folder || inv.file_name || 'invoice') + (inv.invoice_date ? ' · ' + fmtDate(inv.invoice_date) : '');
+      var totalBit = inv.total !== null && inv.total !== undefined ? ' <span class="sub">' + esc(money(inv.total, inv.currency || '')) + '</span>' : '';
+      html += '<div class="mt-1 truncate" style="max-width: 260px;">' + (inv.web_view_link
+        ? '<a class="link" href="' + esc(inv.web_view_link) + '" target="_blank" rel="noopener" title="' + esc(inv.file_name || '') + '">' + esc(text) + ' ↗</a>'
+        : '<span title="' + esc(inv.file_name || '') + '">' + esc(text) + '</span>') + totalBit + '</div>';
+    }
+    if (st === 'possible') {
+      html += '<div class="btn-row"><button class="btn btn-primary btn-xs" data-action="confirm"' + dis + '>Confirm</button><button class="btn btn-secondary btn-xs" data-action="unlink"' + dis + '>Not this</button></div>';
+    } else if (st === 'missing') {
+      html += '<div class="btn-row"><button class="btn btn-secondary btn-xs" data-action="pick"' + dis + '>Link…</button><button class="btn btn-ghost btn-xs" data-action="waive"' + dis + '>No invoice</button></div>';
+    } else if (st === 'waived') {
+      html += '<div class="btn-row"><button class="btn btn-secondary btn-xs" data-action="unwaive"' + dis + '>Undo</button></div>';
+    } else if (st === 'matched') {
+      html += '<div class="btn-row"><button class="btn btn-ghost btn-xs" data-action="unlink"' + dis + '>Unlink</button></div>';
+    }
+    return html;
+  }
+
+  function costCenterCell(t) {
+    var current = t.cost_center || '';
+    var list = state.costCenters.slice();
+    if (current && list.indexOf(current) < 0) list.push(current);
+    var opts = '<option value="">— none —</option>' + list.map(function (c) {
+      return '<option value="' + esc(c) + '"' + (c === current ? ' selected' : '') + '>' + esc(c) + '</option>';
+    }).join('') + '<option value="__custom__">Custom…</option>';
+    return '<select class="inp" data-field="cost_center" aria-label="Cost centre"' + (t.editable ? '' : ' disabled') + '>' + opts + '</select>';
+  }
+
+  function rowHtml(t) {
+    var nonPurchase = t.type !== 'purchase';
+    var where = [t.city, t.country].filter(Boolean).join(', ');
+    var subBits = [where, t.merchant_category].filter(Boolean);
+    if (nonPurchase) subBits.unshift(t.type);
+    var post = t.post_date && t.post_date !== t.txn_date ? '<div class="sub">posted ' + esc(fmtDay(t.post_date)) + '</div>' : '';
+    var src = t.source_amount !== null && t.source_amount !== undefined && t.source_currency
+      ? '<div class="sub">' + esc(money(t.source_amount, t.source_currency)) + '</div>' : '';
+    var by = t.updated_by ? '<div class="truncate" style="max-width: 150px;" title="' + esc(t.updated_by) + '">' + esc(t.updated_by) + '</div><div class="sub">' + esc(fmtStamp(t.updated_at)) + '</div>' : '<span class="sub">—</span>';
+    return '<tr data-id="' + esc(t.id) + '" class="' + (nonPurchase ? 'row-muted' : '') + '">' +
+      '<td style="white-space:nowrap;">' + esc(fmtDay(t.txn_date)) + post + '</td>' +
+      '<td><span class="pill pill-grey" title="' + esc(t.holder_name || '') + '">' + esc(cardLabel(t.card_last4)) + '</span></td>' +
+      '<td class="td-desc"><div class="desc">' + esc(t.description) + '</div>' + (subBits.length ? '<div class="sub">' + esc(subBits.join(' · ')) + '</div>' : '') + '</td>' +
+      '<td class="td-right"><div class="amt">' + esc(money(t.amount, t.currency)) + '</div>' + src + '</td>' +
+      '<td class="td-inv">' + invoiceCell(t) + '</td>' +
+      '<td style="min-width:170px;">' + costCenterCell(t) + '</td>' +
+      '<td style="min-width:200px;"><input class="inp" data-field="usage" aria-label="Usage" placeholder="' + (nonPurchase ? '' : 'What was this for?') + '" value="' + esc(t.usage || '') + '" data-original="' + esc(t.usage || '') + '"' + (t.editable ? '' : ' disabled') + ' /></td>' +
+      '<td>' + by + '</td>' +
+      '</tr>';
+  }
+
+  function renderTable() {
+    var rows = visibleTxns();
+    var body = $('#txnBody');
+    if (!rows.length) {
+      body.innerHTML = '<tr><td colspan="8"><div class="empty" style="padding: 32px;">' + (state.txns.length ? 'No transactions match the current filter.' : 'No transactions in this month.') + '</div></td></tr>';
+    } else {
+      body.innerHTML = rows.map(rowHtml).join('');
+    }
+    $('#rowCount').textContent = rows.length + ' of ' + scopeTxns().length + ' rows';
+  }
+
+  function renderLists() {
+    if (!state.me || state.me.role !== 'ap') return;
+    var up = $('#uploadsList');
+    if (!state.statements.length) up.innerHTML = '<div class="sub">No uploads touch this month.</div>';
+    else up.innerHTML = state.statements.map(function (s) {
+      var name = s.drive_link ? '<a class="link" href="' + esc(s.drive_link) + '" target="_blank" rel="noopener">' + esc(s.file_name) + ' ↗</a>' : '<span class="font-medium">' + esc(s.file_name) + '</span>';
+      var warn = (s.warnings || []).length ? '<div class="sub" style="color: var(--warn-text);">' + esc((s.warnings || []).join(' ')) + '</div>' : '';
+      return '<div class="py-1.5" style="border-bottom: 1px solid var(--border-subtle);">' + name +
+        '<div class="sub">' + esc(fmtStamp(s.uploaded_at)) + ' · ' + esc(s.uploaded_by || '') + ' · ' + esc(String(s.transaction_count)) + ' lines, ' + esc(String(s.new_count)) + ' new' +
+        (s.cards && s.cards.length ? ' · cards ' + esc(s.cards.join(', ')) : '') + (s.period_start ? ' · ' + esc(fmtDate(s.period_start)) + ' – ' + esc(fmtDate(s.period_end)) : '') + '</div>' + warn + '</div>';
+    }).join('');
+    var nl = $('#notifList');
+    if (!state.notifications.length) nl.innerHTML = '<div class="sub">No reminders sent for this month.</div>';
+    else nl.innerHTML = state.notifications.slice(0, 20).map(function (n) {
+      return '<div class="py-1.5 flex gap-2 items-start" style="border-bottom: 1px solid var(--border-subtle);">' +
+        '<span class="pill ' + (n.ok ? 'pill-up' : 'pill-down') + '">' + (n.ok ? 'sent' : 'failed') + '</span>' +
+        '<div class="min-w-0"><div class="font-medium">' + esc(cardLabel(n.card_last4)) + ' <span class="sub">' + esc(String(n.missing_count || 0)) + ' missing' + (n.possible_count ? ', ' + esc(String(n.possible_count)) + ' possible' : '') + '</span></div>' +
+        '<div class="sub">' + esc(fmtStamp(n.sent_at)) + ' · ' + esc(n.sent_by || '') + (n.ok ? '' : ' · ' + esc(n.detail || '')) + '</div></div></div>';
+    }).join('');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Row edits
+  // ---------------------------------------------------------------------------
+  function rowEl(id) { return $('#txnBody').querySelector('tr[data-id="' + CSS.escape(id) + '"]'); }
+  function txnById(id) { for (var i = 0; i < state.txns.length; i++) if (state.txns[i].id === id) return state.txns[i]; return null; }
+  function replaceTxn(updated) {
+    for (var i = 0; i < state.txns.length; i++) if (state.txns[i].id === updated.id) {
+      if (updated.editable === undefined) updated.editable = state.txns[i].editable;
+      state.txns[i] = updated; break;
+    }
+    var tr = rowEl(updated.id);
+    if (tr) {
+      var tpl = document.createElement('template');
+      tpl.innerHTML = rowHtml(updated);
+      tr.replaceWith(tpl.content.firstElementChild);
+    }
+    refreshCounts();
+  }
+  // After a single-row change the month's counts are recomputed here instead of reloading everything.
+  function refreshCounts() {
+    renderKpis();
+    renderCardStrip();
+    renderToolbar();
+    var k = kpisOf(state.txns);
+    var entry = findMonth(state.year, state.month);
+    if (entry) { entry.missing = k.missing; entry.possible = k.possible; entry.matched = k.matched; entry.waived = k.waived; entry.uncoded = k.uncoded; }
+    renderSidebar();
+  }
+  async function patchTxn(id, body, okMessage) {
+    var data = await api('/api/transactions/' + encodeURIComponent(id), {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    replaceTxn(data.transaction);
+    if (okMessage) toast(okMessage, 'ok');
+    return data.transaction;
+  }
+  function setRowBusy(tr) {
+    if (tr) $all('button, select, input', tr).forEach(function (el) { el.disabled = true; });
+  }
+  function restoreRow(id) { var t = txnById(id); if (t) replaceTxn(t); }
+
+  async function rowAction(tr, action, extra) {
+    var id = tr.dataset.id;
+    var messages = { waive: 'Marked as having no invoice', unwaive: 'Back to missing', confirm: 'Invoice confirmed', unlink: 'Invoice unlinked', link: 'Invoice linked' };
+    setRowBusy(tr);
+    try {
+      await patchTxn(id, Object.assign({ action: action }, extra || {}), messages[action]);
+    } catch (e) {
+      report(e, 'Could not update');
+      restoreRow(id);
+    }
+  }
+
+  async function saveField(input, field) {
+    var tr = input.closest('tr');
+    var value = input.value.trim();
+    if (input.dataset.saving === '1') return;
+    input.dataset.saving = '1';
+    input.classList.add('saving');
+    var body = {}; body[field] = value;
+    try {
+      await patchTxn(tr.dataset.id, body, field === 'usage' ? 'Usage saved' : 'Cost centre saved');
+    } catch (e) {
+      report(e, 'Could not save');
+      restoreRow(tr.dataset.id);
+    }
+  }
+
+  function swapToCustomInput(select) {
+    var td = select.parentNode;
+    var input = document.createElement('input');
+    input.className = 'inp';
+    input.setAttribute('data-field', 'cost_center_custom');
+    input.placeholder = 'Type a cost centre';
+    input.setAttribute('aria-label', 'Custom cost centre');
+    td.innerHTML = '';
+    td.appendChild(input);
+    input.focus();
+  }
+
+  $('#txnBody').addEventListener('click', function (ev) {
+    var btn = ev.target.closest('button[data-action]');
+    if (!btn || btn.disabled) return;
+    var tr = btn.closest('tr');
+    var action = btn.dataset.action;
+    if (action === 'pick') { openLinkModal(txnById(tr.dataset.id)); return; }
+    rowAction(tr, action);
+  });
+  $('#txnBody').addEventListener('change', function (ev) {
+    var el = ev.target;
+    if (el.matches('select[data-field="cost_center"]')) {
+      if (el.value === '__custom__') { swapToCustomInput(el); return; }
+      saveField(el, 'cost_center');
+    }
+  });
+  $('#txnBody').addEventListener('focusout', function (ev) {
+    var el = ev.target;
+    if (el.matches('input[data-field="usage"]')) {
+      if (el.value.trim() !== (el.dataset.original || '')) saveField(el, 'usage');
+    } else if (el.matches('input[data-field="cost_center_custom"]')) {
+      if (el.dataset.cancelled === '1') return;
+      if (el.value.trim()) saveField(el, 'cost_center');
+      else { var t = txnById(el.closest('tr').dataset.id); if (t) replaceTxn(t); }
+    }
+  });
+  $('#txnBody').addEventListener('keydown', function (ev) {
+    var el = ev.target;
+    if (!el.matches('input[data-field]')) return;
+    if (ev.key === 'Enter') { ev.preventDefault(); el.blur(); }
+    if (ev.key === 'Escape') {
+      ev.preventDefault();
+      if (el.dataset.field === 'cost_center_custom') { el.dataset.cancelled = '1'; var t = txnById(el.closest('tr').dataset.id); if (t) replaceTxn(t); }
+      else { el.value = el.dataset.original || ''; el.blur(); }
+    }
+  });
+
+  // Toolbar, card strip, navigation
+  $('#statusSeg').addEventListener('click', function (ev) {
+    var b = ev.target.closest('button[data-status]'); if (!b) return;
+    state.status = b.dataset.status; renderToolbar(); renderTable();
+  });
+  var searchTimer = null;
+  $('#search').addEventListener('input', function (ev) {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(function () { state.q = ev.target.value; renderTable(); }, 120);
+  });
+  $('#cardStrip').addEventListener('click', function (ev) {
+    var chip = ev.target.closest('button[data-card]'); if (!chip) return;
+    navigate(state.year, state.month, chip.dataset.card);
+  });
+  $('#cardSelect').addEventListener('change', function (ev) { navigate(state.year, state.month, ev.target.value); });
+  $('#monthSelect').addEventListener('change', function (ev) {
+    var p = ev.target.value.split('-'); if (p.length === 2) navigate(Number(p[0]), Number(p[1]), '');
+  });
+  $('#signOut').addEventListener('click', function (ev) { ev.preventDefault(); signOut(''); });
+
+  // ---------------------------------------------------------------------------
+  // Modal
+  // ---------------------------------------------------------------------------
+  function openModal(title, bodyHtml, wide) {
+    $('#modalTitle').textContent = title;
+    $('#modalBody').innerHTML = bodyHtml;
+    $('#modalBox').classList.toggle('wide', !!wide);
+    $('#modal').classList.remove('hidden');
+    return $('#modalBody');
+  }
+  function closeModal() { $('#modal').classList.add('hidden'); $('#modalBody').innerHTML = ''; }
+  $('#modalClose').addEventListener('click', closeModal);
+  $('#modal').addEventListener('click', function (ev) { if (ev.target === $('#modal')) closeModal(); });
+  document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape' && !$('#modal').classList.contains('hidden')) closeModal(); });
+
+  // -- Link an invoice ---------------------------------------------------------
+  async function openLinkModal(t) {
+    if (!t) return;
+    var body = openModal('Link an invoice', '<div class="sub">Loading invoices…</div>', true);
+    var data;
+    try { data = await api('/api/invoices?year=' + state.year + '&month=' + state.month); }
+    catch (e) { report(e, 'Could not load invoices'); closeModal(); return; }
+    var invoices = (data.invoices || []).slice();
+    invoices.forEach(function (inv) {
+      inv._same = nearly(inv.total, t.amount) || (t.source_amount !== null && t.source_amount !== undefined && nearly(inv.total, t.source_amount));
+    });
+    invoices.sort(function (a, b) { return (b._same ? 1 : 0) - (a._same ? 1 : 0); });
+    var head = '<div class="flex flex-wrap items-center gap-3 mb-3">' +
+      '<div class="min-w-0 flex-1"><div class="font-medium truncate">' + esc(t.description) + '</div><div class="sub">' + esc(fmtDate(t.txn_date)) + ' · ' + esc(cardLabel(t.card_last4)) + ' · <b>' + esc(money(t.amount, t.currency)) + '</b>' +
+      (t.source_amount !== null && t.source_amount !== undefined && t.source_currency ? ' (' + esc(money(t.source_amount, t.source_currency)) + ')' : '') + '</div></div>' +
+      '<input id="invSearch" class="inp" type="search" placeholder="Search vendor, file, folder, amount" style="max-width: 280px;" /></div>' +
+      '<div class="sub mb-2">Folders ' + esc((data.month_folders || []).join(', ')) + ' · ' + invoices.length + ' files' + (invoices.some(function (i) { return i._same; }) ? ' · rows with the same amount are highlighted' : '') + '</div>' +
+      '<div class="list-wrap"><table class="list"><thead><tr><th>Vendor</th><th>Invoice date</th><th class="td-right">Total</th><th>Folder</th><th>File</th><th></th></tr></thead><tbody id="invBody"></tbody></table></div>';
+    body.innerHTML = head;
+    function draw() {
+      var q = ($('#invSearch', body).value || '').trim().toLowerCase();
+      var rows = invoices.filter(function (inv) {
+        if (!q) return true;
+        return [inv.vendor, inv.vendor_folder, inv.month_folder, inv.file_name, inv.invoice_number, inv.summary, inv.total !== null && inv.total !== undefined ? String(inv.total) : ''].join(' ').toLowerCase().indexOf(q) >= 0;
+      });
+      $('#invBody', body).innerHTML = rows.length ? rows.map(function (inv) {
+        var isThis = t.invoice_id === inv.id;
+        var linked = inv.linked && !isThis;
+        var flags = '';
+        if (isThis) flags += ' <span class="pill pill-up">this one</span>';
+        else if (linked) flags += ' <span class="pill pill-grey">linked</span>';
+        if (inv.is_invoice === false) flags += ' <span class="pill pill-warn" title="' + esc(inv.summary || '') + '">not an invoice</span>';
+        if (inv.extraction_error) flags += ' <span class="pill pill-down" title="' + esc(inv.extraction_error) + '">unreadable</span>';
+        if (inv._same) flags += ' <span class="pill pill-brand">same amount</span>';
+        return '<tr class="' + (inv._same ? 'same-amount' : '') + '">' +
+          '<td><div class="font-medium">' + esc(inv.vendor || inv.vendor_folder || '—') + '</div><div class="sub">' + esc([inv.invoice_number, inv.summary].filter(Boolean).join(' · ')) + '</div><div>' + flags + '</div></td>' +
+          '<td style="white-space:nowrap;">' + esc(fmtDate(inv.invoice_date) || '—') + '</td>' +
+          '<td class="td-right" style="white-space:nowrap;">' + (inv.total !== null && inv.total !== undefined ? esc(money(inv.total, inv.currency || '')) : '—') + '</td>' +
+          '<td class="sub" style="white-space:nowrap;">' + esc([inv.month_folder, inv.vendor_folder].filter(Boolean).join(' / ')) + '</td>' +
+          '<td style="max-width: 220px;"><div class="truncate">' + (inv.web_view_link ? '<a class="link" href="' + esc(inv.web_view_link) + '" target="_blank" rel="noopener" title="' + esc(inv.file_name) + '">' + esc(inv.file_name) + ' ↗</a>' : esc(inv.file_name)) + '</div></td>' +
+          '<td class="td-right"><button class="btn btn-primary btn-xs" data-link="' + esc(inv.id) + '"' + (linked || isThis ? ' disabled' : '') + '>Link</button></td></tr>';
+      }).join('') : '<tr><td colspan="6"><div class="empty" style="padding: 24px;">' + (invoices.length ? 'No invoice matches the search.' : 'No invoices have been indexed for these months yet.') + '</div></td></tr>';
+    }
+    draw();
+    $('#invSearch', body).addEventListener('input', draw);
+    body.addEventListener('click', async function (ev) {
+      var b = ev.target.closest('button[data-link]'); if (!b || b.disabled) return;
+      b.disabled = true; b.innerHTML = '<span class="spinner"></span>';
+      try {
+        await patchTxn(t.id, { action: 'link', invoice_id: b.dataset.link }, 'Invoice linked');
+        closeModal();
+      } catch (e) {
+        report(e, 'Could not link');
+        b.disabled = false; b.textContent = 'Link';
+      }
+    });
+  }
+
+  // -- Cards settings ------------------------------------------------------------
+  function cardsModalHtml() {
+    return '<div class="sub mb-3">Labels show in the dashboard and in the Chat cards. The owner may code the card\'s transactions. The Chat space name is for reference; the webhook itself is configured on the server.</div>' +
+      '<div class="list-wrap"><table class="list" id="cardsTable"><thead><tr><th>Card</th><th>Label</th><th>Holder</th><th>Owner email</th><th>Chat space</th><th>Active</th><th>Webhook</th><th></th></tr></thead><tbody>' +
+      (state.cards.length ? state.cards.map(function (c) {
+        return '<tr data-last4="' + esc(c.last4) + '">' +
+          '<td class="font-medium" style="white-space:nowrap;">•••• ' + esc(c.last4) + '</td>' +
+          '<td><input class="inp" data-cf="label" value="' + esc(c.label || '') + '" style="min-width:160px;" /></td>' +
+          '<td><input class="inp" data-cf="holder_name" value="' + esc(c.holder_name || '') + '" style="min-width:130px;" /></td>' +
+          '<td><input class="inp" data-cf="owner_email" type="email" value="' + esc(c.owner_email || '') + '" placeholder="name@superhairpieces.com" style="min-width:200px;" /></td>' +
+          '<td><input class="inp" data-cf="chat_space" value="' + esc(c.chat_space || '') + '" style="min-width:140px;" /></td>' +
+          '<td class="text-center"><input type="checkbox" data-cf="active"' + (c.active ? ' checked' : '') + ' aria-label="Active" /></td>' +
+          '<td class="text-center" title="' + (c.webhook_configured ? 'Chat webhook configured' : 'No webhook for this card: reminders go to the default space or fail') + '">' + (c.webhook_configured ? '<span style="color: var(--up-ink); font-weight: 700;">✓</span>' : '<span class="sub">—</span>') + '</td>' +
+          '<td class="td-right"><button class="btn btn-secondary btn-xs" data-save-card="' + esc(c.last4) + '">Save</button></td></tr>';
+      }).join('') : '<tr><td colspan="8"><div class="empty" style="padding: 24px;">No cards yet; they appear after the first upload.</div></td></tr>') +
+      '</tbody></table></div>';
+  }
+  function openCardsModal() {
+    var body = openModal('Cards', cardsModalHtml(), true);
+    body.addEventListener('click', async function (ev) {
+      var b = ev.target.closest('button[data-save-card]'); if (!b) return;
+      var tr = b.closest('tr');
+      var payload = { last4: b.dataset.saveCard };
+      $all('[data-cf]', tr).forEach(function (el) { payload[el.dataset.cf] = el.type === 'checkbox' ? el.checked : el.value; });
+      b.disabled = true; b.innerHTML = '<span class="spinner"></span>';
+      try {
+        var data = await api('/api/cards', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        state.cards = data.cards || state.cards;
+        toast('Card ' + payload.last4 + ' saved', 'ok');
+        renderCardStrip(); renderTable(); renderLists(); renderKpis();
+      } catch (e) {
+        report(e, 'Could not save the card');
+      }
+      b.disabled = false; b.textContent = 'Save';
+    });
+  }
+  $('#cardsBtn').addEventListener('click', openCardsModal);
+
+  // ---------------------------------------------------------------------------
+  // AP jobs: upload, index, match, notify
+  // ---------------------------------------------------------------------------
+  var logEl = $('#jobLog'), progressLine = null;
+  function log(text, kind) {
+    logEl.classList.remove('hidden');
+    var line = document.createElement('div');
+    if (kind) line.className = kind;
+    line.textContent = text;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+    progressLine = null;
+    return line;
+  }
+  function progress(text) {
+    if (!progressLine) progressLine = log(text, 'progress'); else progressLine.textContent = text;
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  function setJobRunning(on) {
+    state.jobRunning = on;
+    ['#uploadBtn', '#rematchBtn', '#notifyBtn'].forEach(function (s) { $(s).disabled = on; });
+  }
+  function onBusyWait(what) { return function () { progress(what + ': the server is busy with another job, waiting…'); }; }
+
+  async function indexLoop(year, month) {
+    var read = 0, errors = 0, rounds = 0, lastRemaining = null, stalls = 0;
+    progress('Reading invoices for ' + monthLabel(year, month) + '…');
+    while (true) {
+      var r = await apiRetryBusy('/api/index?year=' + year + '&month=' + month, { method: 'POST' }, onBusyWait('Reading invoices'));
+      rounds++;
+      if (r.skipped) { log('Invoices not read: ' + r.skipped, 'info'); return { read: read, errors: errors }; }
+      read += Number(r.indexed || 0);
+      (r.errors || []).forEach(function (e) { errors++; log('  could not read ' + (e.file || '?') + ': ' + (e.error || ''), 'err'); });
+      var remaining = Number(r.remaining || 0);
+      progress('Reading invoices… ' + read + ' read, ' + remaining + ' remaining (' + (r.files_seen || 0) + ' files in ' + (r.month_folders || []).join(', ') + ')');
+      if (!remaining) break;
+      if (lastRemaining !== null && remaining >= lastRemaining) stalls++; else stalls = 0;
+      if (stalls >= 2) { log('Stopping: the remaining files are not getting read (see the errors above).', 'err'); break; }
+      lastRemaining = remaining;
+      if (rounds > 200) { log('Stopping after 200 batches.', 'err'); break; }
+    }
+    log('Invoices: ' + read + ' read' + (errors ? ', ' + errors + ' errors' : ''), 'ok');
+    return { read: read, errors: errors };
+  }
+  async function matchStep(year, month) {
+    progress('Matching ' + monthLabel(year, month) + '…');
+    var r = await apiRetryBusy('/api/match?year=' + year + '&month=' + month, { method: 'POST' }, onBusyWait('Matching'));
+    log('Matching: ' + (r.checked || 0) + ' purchases checked, ' + (r.matched || 0) + ' matched, ' + (r.possible || 0) + ' possible, ' + (r.missing || 0) + ' missing (' + (r.invoices_available || 0) + ' invoices available)', 'ok');
+    return r;
+  }
+  async function notifyStep(year, month) {
+    progress('Sending Chat reminders for ' + monthLabel(year, month) + '…');
+    var r = await apiRetryBusy('/api/notify?year=' + year + '&month=' + month, { method: 'POST' }, onBusyWait('Sending reminders'));
+    var cards = r.cards || [];
+    if (!cards.length) log('Reminders: no cards with transactions in this month.', 'info');
+    cards.forEach(function (c) {
+      var text = '  ' + cardLabel(c.card) + ': ' + (c.sent ? 'sent' : 'not sent') + ' (' + (c.detail || '') + ')' + (c.missing !== undefined ? ' · ' + c.missing + ' missing, ' + (c.possible || 0) + ' possible' : '');
+      log(text, c.sent ? 'ok' : (c.detail === 'nothing missing' || c.detail === 'card inactive' ? 'info' : 'err'));
+    });
+    return r;
+  }
+  async function reloadAll() {
+    await loadMonths();
+    if (state.year) { await loadMonth(); }
+  }
+
+  $('#uploadForm').addEventListener('submit', async function (ev) {
+    ev.preventDefault();
+    var file = $('#fileInput').files[0];
+    if (!file) { toast('Choose a statement file first.', 'err'); return; }
+    if (state.jobRunning) return;
+    setJobRunning(true);
+    logEl.innerHTML = '';
+    try {
+      progress('Uploading ' + file.name + '…');
+      var fd = new FormData();
+      fd.append('file', file, file.name);
+      var s = await api('/api/statements', { method: 'POST', body: fd });
+      var cardBits = Object.keys(s.cards || {}).sort().map(function (l4) { return l4 + (s.cards[l4].holder_name ? ' (' + s.cards[l4].holder_name + ')' : '') + ' ×' + s.cards[l4].count; });
+      log('Statement ' + s.file_name + ': ' + s.transactions + ' transactions, ' + s.new + ' new, ' + s.already_stored + ' already stored' + (s.period_start ? ' · ' + s.period_start + ' to ' + s.period_end : ''), 'ok');
+      log('  cards: ' + (cardBits.join(', ') || 'none') + ' · months: ' + (s.months || []).map(function (ym) { return monthLabel(ym[0], ym[1]); }).join(', '), 'info');
+      (s.warnings || []).forEach(function (w) { log('  warning: ' + w, 'err'); });
+      if (s.drive_link) log('  copy saved to Drive', 'info');
+      var notify = $('#notifyAfter').checked;
+      var months = s.months || [];
+      for (var i = 0; i < months.length; i++) {
+        var y = months[i][0], m = months[i][1];
+        await indexLoop(y, m);
+        await matchStep(y, m);
+        if (notify) await notifyStep(y, m);
+      }
+      log('Done.', 'ok');
+      $('#fileInput').value = '';
+      await loadMonths();
+      if (months.length) {
+        var last = months[months.length - 1];
+        // Navigating to the month loads it; when it is already open, reload it in place.
+        if (state.year === last[0] && state.month === last[1]) { await loadMonth(); renderSidebar(); }
+        else navigate(last[0], last[1], '');
+      } else {
+        await reloadAll();
+      }
+    } catch (e) {
+      log('Failed: ' + (e.message || e), 'err');
+      report(e, 'Upload failed');
+    } finally {
+      setJobRunning(false);
+    }
+  });
+
+  $('#rematchBtn').addEventListener('click', async function () {
+    if (state.jobRunning || !state.year) return;
+    setJobRunning(true);
+    logEl.innerHTML = '';
+    try {
+      await indexLoop(state.year, state.month);
+      await matchStep(state.year, state.month);
+      await reloadAll();
+      renderSidebar();
+      toast('Matching finished', 'ok');
+    } catch (e) {
+      log('Failed: ' + (e.message || e), 'err');
+      report(e, 'Matching failed');
+    } finally { setJobRunning(false); }
+  });
+
+  $('#notifyBtn').addEventListener('click', async function () {
+    if (state.jobRunning || !state.year) return;
+    if (!window.confirm('Post the "invoices needed" card to the Chat space of every card with missing or possible invoices in ' + monthLabel(state.year, state.month) + '?')) return;
+    setJobRunning(true);
+    logEl.innerHTML = '';
+    try {
+      await notifyStep(state.year, state.month);
+      await loadMonth();
+      toast('Reminders processed', 'ok');
+    } catch (e) {
+      log('Failed: ' + (e.message || e), 'err');
+      report(e, 'Reminders failed');
+    } finally { setJobRunning(false); }
+  });
+
+  boot();
+})();
+</script>
+</body>
+</html>
