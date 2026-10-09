@@ -276,17 +276,19 @@ Secret values go through a file written with Notepad, which adds no trailing
 newline (a newline would end up inside the token), and the file is deleted
 right after. Never paste a value into a chat, a ticket or this repo.
 
-1. **Supabase project.** At <https://supabase.com/dashboard/projects> create a
-   new project named `ap-reconciliation` in the company organisation, region
-   *East US (North Virginia)* (closest to `us-central1`); generate a database
-   password and keep it in the password manager (nothing here uses it). Note
-   the **project ref** (Project Settings, General) and the URL
-   `https://<ref>.supabase.co`.
-2. **Schema.** Create a personal access token (avatar, *Account*, *Access
-   Tokens*, name `setup_db`), put it in the gitignored root `.env` as
-   `SUPABASE_ACCESS_TOKEN=...`, then run
-   `python ap-reconciliation\setup_db.py --project-ref <ref>`
-   and expect `ok: applied 18 statements from schema.sql to project <ref>`.
+1. **Supabase project.** Done 2026-10-09: project ref `bkkifrwfgtcnmfynbbdd`
+   (<https://supabase.com/dashboard/project/bkkifrwfgtcnmfynbbdd>), URL
+   `https://bkkifrwfgtcnmfynbbdd.supabase.co`. For a replacement project:
+   create it at <https://supabase.com/dashboard/projects> in the company
+   organisation, region *East US (North Virginia)* (closest to `us-central1`),
+   keep the database password in the password manager (nothing here uses it),
+   and note the **project ref** (Project Settings, General).
+2. **Schema.** Applied to `bkkifrwfgtcnmfynbbdd` on 2026-10-09 (23 statements).
+   To re-apply after a schema change: the Management API token is Secret
+   Manager `SUPABASE_ACCESS_TOKEN` (or a personal token from avatar, *Account*,
+   *Access Tokens*, in the gitignored root `.env` as `SUPABASE_ACCESS_TOKEN=...`), then
+   `python ap-reconciliation\setup_db.py --project-ref bkkifrwfgtcnmfynbbdd`
+   and expect `ok: applied 23 statements from schema.sql to project bkkifrwfgtcnmfynbbdd`.
    The Table Editor now shows `cards`, `statements`, `invoices`,
    `transactions`, `notifications`, `cost_centers` and the `month_summary`
    view. Delete the token from `.env` (or keep it for future schema changes).
@@ -297,14 +299,13 @@ right after. Never paste a value into a chat, a ticket or this repo.
    `del C:\temp\sb.txt`
    and the project URL as a GitHub Actions **variable** (not a secret, it is
    public):
-   `gh variable set AP_RECONCILIATION_SUPABASE_URL --body "https://<ref>.supabase.co" --repo mannetsang/trustpilot-ai-pipeline`
+   `gh variable set AP_RECONCILIATION_SUPABASE_URL --body "https://bkkifrwfgtcnmfynbbdd.supabase.co" --repo mannetsang/trustpilot-ai-pipeline`
 4. **Chat spaces and webhooks.** For each credit card create a space (card
    owner + AP, e.g. `AP - Visa 1610`), add an incoming webhook as described
    above and collect the URLs in Notepad as the JSON object shown above,
-   saved as `C:\temp\hooks.json`. The secret already exists with a
-   placeholder version `{}` (created 2026-10-09, so the first deploy works
-   before any space exists); add the real object as a new version, and
-   again whenever a card is added:
+   saved as `C:\temp\hooks.json`. Version 2 of the secret (2026-10-09)
+   holds the webhooks of cards 1610, 2887 and 4421; add a new version with
+   the full object whenever a card is added:
    `gcloud secrets versions add ap-reconciliation-card-webhooks --data-file=C:\temp\hooks.json --project=shp-ai-bot-2026`
    `del C:\temp\hooks.json`
 5. **API token.** Already created on 2026-10-09 (`ap-reconciliation-api-token`,

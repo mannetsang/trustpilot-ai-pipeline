@@ -100,9 +100,9 @@ AP user's Drive folder **Invoice** (`18YkGTNDIrxdQgHRgquvQizI8fLsFOpPk`, laid
 out `Invoice/YYYY MM/<vendor>/`), purchases are matched to invoices, each
 card's own Chat space gets an "invoices needed" card, and card owners code
 the cost centre and usage on the dashboard (Google sign-in; roles `ap` and
-`member`). Storage is a **separate Supabase project** (schema in
-`ap-reconciliation/schema.sql`, applied with `setup_db.py`), not shared with
-anything else. Secrets are `ap-reconciliation-*` plus the AP user's Drive
+`member`). Storage is a **separate Supabase project** (ref
+`bkkifrwfgtcnmfynbbdd`; schema in `ap-reconciliation/schema.sql`, applied
+with `setup_db.py`), not shared with anything else. Secrets are `ap-reconciliation-*` plus the AP user's Drive
 OAuth triple `google-workspace-ap-*`; see `ap-reconciliation/README.md`.
 
 ### Known data-quality caveats
