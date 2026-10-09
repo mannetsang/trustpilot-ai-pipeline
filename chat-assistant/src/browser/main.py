@@ -135,7 +135,10 @@ def _browser():
 
         if _state["playwright"] is None:
             _state["playwright"] = sync_playwright().start()
-        _state["browser"] = _state["playwright"].chromium.launch(args=["--disable-dev-shm-usage"])
+        try:  # full Chromium in its new headless mode: the same browser people use, not the stripped-down shell
+            _state["browser"] = _state["playwright"].chromium.launch(channel="chromium", args=["--disable-dev-shm-usage"])
+        except Exception:  # noqa: BLE001 - only the headless shell is installed
+            _state["browser"] = _state["playwright"].chromium.launch(args=["--disable-dev-shm-usage"])
     return _state["browser"]
 
 
@@ -187,17 +190,37 @@ FIELD_JS = """(el) => [el.type || '', el.name || '', el.id || '', el.getAttribut
   el.getAttribute('aria-label') || '', el.getAttribute('placeholder') || ''].join(' ')"""
 
 
+CHECK_TITLES = ("just a moment", "attention required", "checking your browser", "security check")
+CHECK_SECONDS = 20
+
+
+def _bot_check(page):
+    """True while the page is a "checking you're not a bot" interstitial (Cloudflare and the like)."""
+    try:
+        return any(t in (page.title() or "").lower() for t in CHECK_TITLES)
+    except Exception:  # noqa: BLE001 - navigating
+        return True
+
+
 def _settle(page):
     try:
         page.wait_for_load_state("domcontentloaded", timeout=NAV_TIMEOUT_MS)
         page.wait_for_load_state("networkidle", timeout=3000)
     except Exception:  # noqa: BLE001 - busy pages never go idle; what's there is what we show
         pass
+    # A bot check usually finishes on its own in a real browser and moves to the page: give it that time.
+    # (Nothing here solves or disguises anything; if it doesn't clear, the model sees the check page.)
+    deadline = time.time() + CHECK_SECONDS
+    while _bot_check(page) and time.time() < deadline:
+        page.wait_for_timeout(1000)
+    if _bot_check(page):
+        return ["The site is still showing a bot check, so the real page isn't visible."]
+    return []
 
 
 def _snapshot(sid, session, notes=()):
     page = session.page
-    _settle(page)
+    notes = list(notes) + _settle(page)
     shot = page.screenshot(type="jpeg", quality=JPEG_QUALITY, scale="css", timeout=15000)
     try:
         elements = page.evaluate(ELEMENTS_JS, MAX_ELEMENTS)
@@ -249,7 +272,9 @@ def _goto(page, url):
     if reason:
         raise PermissionError(f"Can't open that: {reason}.")
     response = page.goto(url, wait_until="domcontentloaded")
-    return [f"The page answered HTTP {response.status}."] if response is not None and response.status >= 400 else []
+    if response is not None and response.status >= 400:  # many sites still show a page; the screenshot tells
+        return [f"The server answered HTTP {response.status}; check the screenshot for what actually loaded."]
+    return []
 
 
 def _follow_new_tab(session, before):
