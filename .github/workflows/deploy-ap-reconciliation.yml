@@ -8,11 +8,11 @@ name: Deploy AP credit-card reconciliation service
 # values in this file: the Supabase service-role key, the AP user's Drive
 # OAuth triple, the per-card Chat webhooks and the API token.
 #
-# Two values come from GitHub Actions *variables* (Settings > Secrets and
-# variables > Actions > Variables), not secrets, because neither is sensitive:
-# the Supabase project URL is the public hostname every client uses, and the
-# OAuth client id is sent to every browser by /api/config. Keeping them as
-# variables means they show up in the logs and can be checked at a glance.
+# The Supabase project URL is set inline below: it is the public hostname of
+# the project, not a secret. The OAuth client id comes from a GitHub Actions
+# *variable* (Settings > Secrets and variables > Actions > Variables), also not
+# sensitive since /api/config sends it to every browser; a variable because it
+# is created after the first deploy (it needs the service URL as its origin).
 
 on:
   push:
@@ -35,6 +35,7 @@ env:
   SERVICE: ap-reconciliation
   SCHEDULER_JOB: ap-reconciliation-remind
   INVOICE_FOLDER_ID: 18YkGTNDIrxdQgHRgquvQizI8fLsFOpPk
+  SUPABASE_URL: https://bkkifrwfgtcnmfynbbdd.supabase.co
   ALLOWED_DOMAINS: superhairpieces.com
   AP_EMAILS: ap@superhairpieces.com,manne@superhairpieces.com
 
@@ -65,7 +66,7 @@ jobs:
             --region "$REGION" --project "$PROJECT" \
             --allow-unauthenticated \
             --min-instances 0 --max-instances 1 --timeout 1800 --memory 1Gi \
-            --set-env-vars "^;^INVOICE_FOLDER_ID=$INVOICE_FOLDER_ID;ALLOWED_DOMAINS=$ALLOWED_DOMAINS;AP_EMAILS=$AP_EMAILS;SUPABASE_URL=${{ vars.AP_RECONCILIATION_SUPABASE_URL }};GOOGLE_OAUTH_CLIENT_ID=${{ vars.AP_RECONCILIATION_OAUTH_CLIENT_ID }}" \
+            --set-env-vars "^;^INVOICE_FOLDER_ID=$INVOICE_FOLDER_ID;ALLOWED_DOMAINS=$ALLOWED_DOMAINS;AP_EMAILS=$AP_EMAILS;SUPABASE_URL=$SUPABASE_URL;GOOGLE_OAUTH_CLIENT_ID=${{ vars.AP_RECONCILIATION_OAUTH_CLIENT_ID }}" \
             --set-secrets "SUPABASE_SERVICE_KEY=ap-reconciliation-supabase-service-key:latest,GOOGLE_WORKSPACE_AP_CLIENT_ID=google-workspace-ap-client-id:latest,GOOGLE_WORKSPACE_AP_CLIENT_SECRET=google-workspace-ap-client-secret:latest,GOOGLE_WORKSPACE_AP_REFRESH_TOKEN=google-workspace-ap-refresh-token:latest,CARD_WEBHOOKS_JSON=ap-reconciliation-card-webhooks:latest,API_TOKEN=ap-reconciliation-api-token:latest" \
             --quiet
 

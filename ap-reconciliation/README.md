@@ -229,7 +229,7 @@ Job endpoints answer `409 {"status": "busy"}` while another job runs and
 | Env var | Default | Meaning |
 |---|---|---|
 | `STORE` | `supabase` | `memory` keeps everything in-process (tests, demos) |
-| `SUPABASE_URL` | | `https://<ref>.supabase.co` (GitHub variable `AP_RECONCILIATION_SUPABASE_URL`) |
+| `SUPABASE_URL` | | `https://bkkifrwfgtcnmfynbbdd.supabase.co`, set in the deploy workflow |
 | `SUPABASE_SERVICE_KEY` | | service-role key; secret |
 | `INVOICE_FOLDER_ID` | the Invoice folder above | root of the walk |
 | `STATEMENTS_FOLDER_ID` | empty | when set, uploads are copied to Drive under `<folder>/<YYYY MM>/` |
@@ -299,9 +299,8 @@ this repo.
    `service_role`, then run the line below and paste the key at the prompt:
    `python -c "import getpass,sys; sys.stdout.write(getpass.getpass('Paste the service_role key, then Enter: ').strip())" | gcloud secrets versions add ap-reconciliation-supabase-service-key --data-file=- --project=shp-ai-bot-2026`
    Rotating the key later is the same line again (scripts read `latest`).
-   Then the project URL as a GitHub Actions **variable** (not a secret, it is
-   public):
-   `gh variable set AP_RECONCILIATION_SUPABASE_URL --body "https://bkkifrwfgtcnmfynbbdd.supabase.co" --repo mannetsang/trustpilot-ai-pipeline`
+   Version 1 was added on 2026-10-10 straight from the Management API. The
+   project URL is not a secret and sits in the deploy workflow's `env`.
 4. **Chat spaces and webhooks.** For each credit card create a space (card
    owner + AP, e.g. `AP - Visa 1610`), add an incoming webhook as described
    above and collect the URLs in Notepad as the JSON object shown above,
