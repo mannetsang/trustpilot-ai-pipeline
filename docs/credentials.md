@@ -79,7 +79,7 @@ from the environment need no third-party packages.
 | `google-workspace-ap-client-id` / `-client-secret` / `-refresh-token` | `ap-reconciliation/cloud_run/drive.py` (env `GOOGLE_WORKSPACE_AP_*`) — user OAuth token of `ap@superhairpieces.com` for the Invoice Drive folder; the three stay together |
 | `ap-reconciliation-supabase-service-key` | `ap-reconciliation/cloud_run/store.py` (env `SUPABASE_SERVICE_KEY`) — service-role key of the AP reconciliation Supabase project; bypasses RLS, server side only |
 | `ap-reconciliation-card-webhooks` | `ap-reconciliation/cloud_run/chat.py` (env `CARD_WEBHOOKS_JSON`) — JSON object of Chat incoming-webhook URLs keyed by card last4, plus `default` |
-| `ap-reconciliation-api-token` | `ap-reconciliation/cloud_run/main.py` (env `API_TOKEN`) — `X-Api-Token` for `/maintenance/*`; also in the Cloud Scheduler job's header |
+| `ap-reconciliation-api-token` | unused since 2026-10-12 (the weekly reminder became a Cloud Run job started by Cloud Scheduler, and the dashboard sits behind Identity-Aware Proxy); can be deleted |
 | `SUPABASE_ACCESS_TOKEN` | `ap-reconciliation/setup_db.py` (env `SUPABASE_ACCESS_TOKEN`) — Supabase Management API personal access token, only to apply `schema.sql` |
 
 Only genuine secrets belong here. The BigCommerce store hash identifies the

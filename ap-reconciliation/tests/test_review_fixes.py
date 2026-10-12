@@ -252,7 +252,7 @@ class ApiReviewTests(ApiTestCase):
         self.assertFalse(deep["checks"]["drive"]["ok"])        # the fake Drive has no folder lookup
         self.assertEqual((deep["checks"]["store"]["ok"], deep["checks"]["store"]["cost_centers"]), (True, 20))
         self.assertIn("chat_webhooks", deep["checks"])
-        self.assertFalse(deep["checks"]["sign_in_configured"])
+        self.assertEqual(deep["checks"]["auth"], {"mode": "disabled", "audience": ""})
         r = self.client.get("/api/does-not-exist")
         self.assertEqual((r.status_code, r.get_json()["error"][:8]), (404, "The requ"))
         self.assertEqual(self.client.get("/api/invoices?year=2026&month=9&all=1").get_json()["month_folders"], "all")

@@ -82,9 +82,10 @@ updates its folder hints without another model call.
    possible matches to confirm and the number of charges without a cost
    centre, with *Open dashboard* (deep link to the card's month) and
    *Invoice folder* buttons. Every post is logged in `notifications`.
-5. **Weekly reminder** (`POST /maintenance/remind`, Cloud Scheduler, Monday
-   14:00 UTC). For each card, the newest month that still has missing or
-   possible purchases is re-indexed, re-matched and notified again.
+5. **Weekly reminder** (the Cloud Run job `ap-reconciliation-remind`, which
+   Cloud Scheduler starts on Mondays 14:00 UTC; it runs `python main.py remind`).
+   For each card, the newest month that still has missing or possible
+   purchases is re-indexed, re-matched and notified again.
 
 `POST /api/statements?sync=1` runs steps 1-4 in one request (the CLI, curl
 and the tests use it); the dashboard's *Upload and process* button runs them
@@ -137,27 +138,33 @@ dropped, and one that is off by more than 2% can only be `possible`. The
 
 ## Roles and sign-in
 
-The page signs the user in with Google Identity Services (the project's
-OAuth client, `GOOGLE_OAUTH_CLIENT_ID`) and sends the ID token as
-`Authorization: Bearer <token>` on every `/api` call. The server verifies the
-token against the client id, requires a verified e-mail in `ALLOWED_DOMAINS`
-(`superhairpieces.com`) and derives the role:
+The service runs behind **Identity-Aware Proxy** (IAP, enabled on the Cloud
+Run service itself): Google signs the person in before any request reaches
+the container, and only accounts on IAP's access list (the
+`superhairpieces.com` domain, step 5 of the setup) get through. IAP adds the
+signed header `X-Goog-IAP-JWT-Assertion` to every request it forwards; the
+app verifies it (ES256, IAP's published keys, `IAP_AUDIENCE` as the audience,
+issuer `https://cloud.google.com/iap`), takes the e-mail from it, requires
+the domain to be in `ALLOWED_DOMAINS` (`superhairpieces.com`) and derives
+the role:
 
 | Role | Who | May |
 |---|---|---|
 | `ap` | the addresses in `AP_EMAILS` (`ap@`, `manne@`) | upload, index, match, notify, edit cards, edit every transaction |
 | `member` | anyone else in the domain | read everything; edit only the transactions of cards whose **owner e-mail** (set by AP under *Cards...*) is theirs. `/api/transactions` returns an `editable` flag per row and the page disables the rest |
 
-The service URL is public (`--allow-unauthenticated`) because the browser
-must reach `/` and `/api/config` before signing in; nothing else answers
-without a valid token. `/api/config` only carries the client id (public by
-design) and the dashboard URL. With `AUTH_DISABLED=1` (local runs) no sign-in
-is shown and every caller is `ap`.
+Nothing is reachable without IAP: the service has no `allUsers` invoker,
+only IAP's service agent, so a request that does not come through IAP is
+refused by Cloud Run before the app sees it, and the app itself answers 401
+to any `/api` call without a valid assertion. There is no OAuth client, no
+sign-in button and no token in the page. With `AUTH_DISABLED=1` (local runs
+only; refused on Cloud Run) every caller is `ap`.
 
 ## Dashboard
 
-- **Sign-in** screen with the Google button; the token lives in the tab's
-  session storage, *Sign out* clears it.
+- **No sign-in screen**: IAP has already signed the person in. *Switch
+  account* in the header clears IAP's cookie for this site; when the Google
+  session ends mid-use the page shows a *Reload* gate instead of errors.
 - **Months** down the left (newest first), each with its spend and badges for
   missing and possible invoices; the URL hash is `#/YYYY/MM?card=1610`, which
   is what the Chat card buttons open.
@@ -203,11 +210,13 @@ under *Cards...*) are never notified.
 
 ## Endpoints
 
+Every path sits behind IAP; *Auth* is what the app checks on top of that.
+
 | Method and path | Auth | What it does |
 |---|---|---|
 | `GET /` | none | the dashboard page |
-| `GET /health` | none | `{"ok": true, "store": ..., "last_job": ...}`; `?deep=1` adds reachability checks for Supabase, the Invoice folder, the configured card webhooks and sign-in. (`/healthz` is answered by Cloud Run's front end itself, not the container.) |
-| `GET /api/config` | none | OAuth client id, `auth_disabled`, dashboard URL, Invoice folder URL, `ai_enabled` |
+| `GET /health` | none | `{"ok": true, "store": ..., "last_job": ...}`; `?deep=1` adds reachability checks for Supabase, the Invoice folder, the configured card webhooks and the auth mode. (`/healthz` is answered by Cloud Run's front end itself, not the container.) |
+| `GET /api/config` | none | `auth` (`iap` or `disabled`), `auth_disabled`, dashboard URL, Invoice folder URL, `ai_enabled` |
 | `GET /api/me` | signed in | e-mail, name, role, cards owned |
 | `GET /api/months` | signed in | month navigation with per-card counts, cards, cost centres |
 | `GET /api/transactions?year&month[&card]` | signed in | the month's transactions with their invoice, `editable` flag, uploads and recent notifications |
@@ -220,9 +229,6 @@ under *Cards...*) are never notified.
 | `POST /api/index?year&month[&limit]` | AP | read up to `limit` (max 100) new invoices for month-1..month+1 |
 | `POST /api/match?year&month[&card]` | AP | pair purchases with invoices |
 | `POST /api/notify?year&month[&card][&dry_run=1]` | AP | post the Chat cards (`dry_run` returns the payloads instead) |
-| `POST /maintenance/index[?months=2026 09,2026 10&limit=30]` | `X-Api-Token` | index the whole folder, or the named month folders |
-| `POST /maintenance/match?year&month[&card]` | `X-Api-Token` | same as `/api/match` for curl and schedulers |
-| `POST /maintenance/remind` | `X-Api-Token` | the weekly reminder described above |
 
 Job endpoints answer `409 {"status": "busy"}` while another job runs and
 `500 {"status": "error"}` with the message when one fails.
@@ -239,11 +245,10 @@ Job endpoints answer `409 {"status": "busy"}` while another job runs and
 | `GOOGLE_WORKSPACE_AP_CLIENT_ID` / `_CLIENT_SECRET` / `_REFRESH_TOKEN` | | the AP user's OAuth triple for Drive; secrets. ADC when unset |
 | `CARD_WEBHOOKS_JSON` | | the webhook object above; secret |
 | `GCHAT_WEBHOOK_URL` | empty | optional single fallback webhook |
-| `API_TOKEN` | | value of the `X-Api-Token` header for `/maintenance/*`; secret |
-| `GOOGLE_OAUTH_CLIENT_ID` | | Web application client id for the sign-in; the deploy mounts the ap-mailbox client's id from the `google-workspace-ap-client-id` secret |
-| `ALLOWED_DOMAINS` | `superhairpieces.com` | comma-separated e-mail domains allowed to sign in |
+| `IAP_AUDIENCE` | | what the IAP assertion's audience must be, `/projects/304363458561/locations/us-central1/services/ap-reconciliation`; the workflow sets it and the service refuses to start on Cloud Run without it |
+| `ALLOWED_DOMAINS` | `superhairpieces.com` | comma-separated e-mail domains allowed in, on top of IAP's access list |
 | `AP_EMAILS` | `ap@superhairpieces.com,manne@superhairpieces.com` | addresses with the `ap` role |
-| `AUTH_DISABLED` | | `1` skips sign-in (local only) |
+| `AUTH_DISABLED` | | `1` skips the IAP check and makes every caller `ap` (local only; refused on Cloud Run) |
 | `DASHBOARD_URL` | request origin | absolute URL for the Chat card buttons; the workflow sets it |
 | `GCP_PROJECT` / `VERTEX_LOCATION` | `shp-ai-bot-2026` / `us-central1` | where Gemini runs (ADC) |
 | `GEMINI_EXTRACT_MODEL` / `GEMINI_MATCH_MODEL` | see `main.py` | the reading and judging models |
@@ -265,11 +270,12 @@ secret* otherwise):
 | `google-workspace-ap-client-secret` | `GOOGLE_WORKSPACE_AP_CLIENT_SECRET` | already exists; the three stay together |
 | `google-workspace-ap-refresh-token` | `GOOGLE_WORKSPACE_AP_REFRESH_TOKEN` | already exists: `ap@superhairpieces.com`'s refresh token with the Drive scope |
 | `ap-reconciliation-card-webhooks` | `CARD_WEBHOOKS_JSON` | the JSON object of Chat webhooks |
-| `ap-reconciliation-api-token` | `API_TOKEN` | random string; also pasted into the scheduler job's header |
 | `SUPABASE_ACCESS_TOKEN` | (not mounted) | Supabase personal access token for `setup_db.py` only; optional, a local `.env` entry does the same |
 
 Gemini (Vertex AI) runs as the compute service account through Application
 Default Credentials, as it does for `gbp-reviews`; no secret is involved.
+`ap-reconciliation-api-token` is no longer used (the weekly reminder is a
+Cloud Run job, not a token-protected endpoint) and can be deleted.
 Local `.env` names are the env vars above.
 
 ## One-time setup
@@ -312,10 +318,25 @@ this repo.
    a card is added, pasting the one-line JSON at the prompt:
    `python -c "import getpass,sys,json; sys.stdout.write(json.dumps(json.loads(getpass.getpass('Paste the webhook JSON, then Enter: '))))" | gcloud secrets versions add ap-reconciliation-card-webhooks --data-file=- --project=shp-ai-bot-2026`
    (the `json.loads` rejects a typo before anything is stored).
-5. **API token.** Already created on 2026-10-09 (`ap-reconciliation-api-token`,
-   a random 43-character value nobody needs to remember). To rotate it:
-   `python -c "import secrets,sys; sys.stdout.write(secrets.token_urlsafe(32))" | gcloud secrets versions add ap-reconciliation-api-token --data-file=- --project=shp-ai-bot-2026`
-   then recreate the scheduler job (step 9).
+5. **Identity-Aware Proxy (sign-in).** The deploy runs the service with
+   `--no-allow-unauthenticated --iap`, so Google signs people in before a
+   request reaches the container; the page needs nothing, the app only
+   `IAP_AUDIENCE`, which the workflow sets. Four one-time commands by an
+   owner (the deploy identity may not enable APIs or grant roles):
+   `gcloud services enable iap.googleapis.com --project=shp-ai-bot-2026`
+   `gcloud beta services identity create --service=iap.googleapis.com --project=shp-ai-bot-2026`
+   `gcloud run services add-iam-policy-binding ap-reconciliation --region=us-central1 --project=shp-ai-bot-2026 --member="serviceAccount:service-304363458561@gcp-sa-iap.iam.gserviceaccount.com" --role="roles/run.invoker"`
+   `gcloud iap web add-iam-policy-binding --project=shp-ai-bot-2026 --resource-type=cloud-run --region=us-central1 --service=ap-reconciliation --member="domain:superhairpieces.com" --role="roles/iap.httpsResourceAccessor"`
+   The first two enable the API and create IAP's service agent; the third
+   lets that agent (and nobody else: there is no `allUsers` invoker) reach
+   the service; the fourth lets every superhairpieces.com Google account
+   through IAP, and the app applies `ALLOWED_DOMAINS` and `AP_EMAILS` on
+   top. If the last command answers that the resource does not exist, run
+   it again once a deploy has enabled IAP on the service. To let one
+   outside person in, grant the same role to `user:<address>`. This
+   replaced the Google Identity Services sign-in on 2026-10-12, which needed
+   the service URL registered as an authorised JavaScript origin of an
+   OAuth client; IAP needs none of that.
 6. **IAM grants.** One per secret. The webhooks and API token secrets
    were granted when they were created; the Supabase key and the three AP
    Drive secrets (which pre-date this service) still need it:
@@ -332,33 +353,27 @@ this repo.
    Actions tab (*Deploy AP credit-card reconciliation service*). The URL is
    also printed by
    `gcloud run services describe ap-reconciliation --region us-central1 --project shp-ai-bot-2026 --format "value(status.url)"`
-8. **Google OAuth client.** The dashboard signs people in with the existing
-   **ap-mailbox** Web client (Google Auth Platform, *Clients*), the one that
-   issued the AP user's Drive refresh token; the deploy mounts its id from
-   the `google-workspace-ap-client-id` secret, so no variable is needed. The
-   one manual step: open the client and add
-   `https://ap-reconciliation-onvg62bzra-uc.a.run.app` under **Authorised
-   JavaScript origins** (scheme and host only, no trailing slash; also
-   `http://localhost:8765` for local runs with sign-in), then save. Changes
-   take a few minutes to propagate. The client secret is never used by the
-   dashboard. To sign in with a different Web client later, leave the
-   `google-workspace-ap-client-id` secret alone (the Drive token depends on
-   it): move `GOOGLE_OAUTH_CLIENT_ID` from the workflow's `--set-secrets` to
-   its `--set-env-vars` with the new client id.
-9. **Scheduler job**, created once by an owner because the job carries the
-   token in its header and Cloud Scheduler cannot read Secret Manager (the
-   workflow only refreshes the schedule and URI of an existing job). The
-   `for /f` reads the token from Secret Manager so it never touches the
-   clipboard:
-   `for /f "delims=" %t in ('gcloud secrets versions access latest --secret=ap-reconciliation-api-token --project=shp-ai-bot-2026') do gcloud scheduler jobs create http ap-reconciliation-remind --location us-central1 --project shp-ai-bot-2026 --schedule "0 14 * * 1" --time-zone Etc/UTC --uri "https://ap-reconciliation-onvg62bzra-uc.a.run.app/maintenance/remind" --http-method POST --headers "X-Api-Token=%t" --attempt-deadline 1800s`
+8. **Weekly reminder.** The deploy also creates the Cloud Run job
+   `ap-reconciliation-remind` (`python main.py remind` in the service's
+   image, same secrets: for each card, the newest month that still has
+   missing or possible invoices is re-indexed, re-matched and notified
+   again). Cloud Scheduler starts it on Mondays 14:00 UTC through the Cloud
+   Run API as the compute service account, so no token and no path through
+   IAP are involved; the scheduler job is created once by an owner:
+   `gcloud scheduler jobs create http ap-reconciliation-remind --location=us-central1 --project=shp-ai-bot-2026 --schedule="0 14 * * 1" --time-zone=Etc/UTC --uri="https://run.googleapis.com/v2/projects/shp-ai-bot-2026/locations/us-central1/jobs/ap-reconciliation-remind:run" --http-method=POST --oauth-service-account-email=304363458561-compute@developer.gserviceaccount.com`
    Test it with
-   `gcloud scheduler jobs run ap-reconciliation-remind --location us-central1 --project shp-ai-bot-2026`
-   and check the service logs. When the token is rotated, delete and
-   recreate the job the same way.
-10. **Cards.** Sign in as AP, upload the first export, then under *Cards...*
-    give each card its label, owner e-mail (the person who may code its
-    charges) and Chat space name. The *Webhook* column shows whether the
-    card has an entry in `CARD_WEBHOOKS_JSON`.
+   `gcloud scheduler jobs run ap-reconciliation-remind --location=us-central1 --project=shp-ai-bot-2026`
+   then
+   `gcloud run jobs executions list --job=ap-reconciliation-remind --region=us-central1 --project=shp-ai-bot-2026`
+   and the execution's logs. A 403 on the run means the compute account may
+   not start the job:
+   `gcloud run jobs add-iam-policy-binding ap-reconciliation-remind --region=us-central1 --project=shp-ai-bot-2026 --member="serviceAccount:304363458561-compute@developer.gserviceaccount.com" --role="roles/run.invoker"`
+   The job can also be started by hand:
+   `gcloud run jobs execute ap-reconciliation-remind --region=us-central1 --project=shp-ai-bot-2026`
+9. **Cards.** Open the dashboard as AP, upload the first export, then under
+   *Cards...* give each card its label, owner e-mail (the person who may
+   code its charges) and Chat space name. The *Webhook* column shows
+   whether the card has an entry in `CARD_WEBHOOKS_JSON`.
 
 ## Local runs
 
@@ -405,12 +420,12 @@ post) `CARD_WEBHOOKS_JSON` in `.env`, then:
 python main.py index --months "2026 09,2026 10"
 python main.py match --year 2026 --month 9
 python main.py notify --year 2026 --month 9 --dry-run
+python main.py remind
 python main.py serve --port 8765
 ```
 
-`serve` without `AUTH_DISABLED` shows the real sign-in, which works locally
-once `http://localhost:8765` is an authorised origin of the OAuth client and
-`GOOGLE_OAUTH_CLIENT_ID` is in `.env`.
+`serve` without `AUTH_DISABLED` answers 401 to every `/api` call, because
+only IAP can add the assertion header; local runs use `AUTH_DISABLED=1`.
 
 **Tests** (standard library, no network): from `ap-reconciliation`,
 `python -m unittest discover -s tests -v`.
@@ -422,9 +437,10 @@ runs on every push to `main` touching `cloud_run/`, signs in to Google Cloud
 through Workload Identity Federation (`docs/credentials.md`), deploys with
 `--source` (one instance, 1 GiB, 30-minute request timeout), mounts the
 secrets above, then reads the service URL and sets `DASHBOARD_URL` to it so
-the Chat card buttons point at the right place. A last step refreshes the
-scheduler job's schedule and URI and only warns when the job is missing or
-when `claude-sessions` may not touch it.
+the Chat card buttons point at the right place. The service is deployed
+with `--no-allow-unauthenticated --iap` (step 5 of the setup). A last step
+deploys the Cloud Run job `ap-reconciliation-remind` from the same image
+and only warns when `claude-sessions` may not manage jobs.
 
 Secrets mounted as environment variables are read when an instance starts,
 so a new secret version (a rotated key, an added card webhook) reaches the
@@ -443,12 +459,15 @@ next idle period, or at once with *Run workflow*.
 | `database error: GET transactions -> 401` (PostgREST) | `SUPABASE_SERVICE_KEY` is wrong: the anon key instead of `service_role`, or the key was rotated in Supabase. Add the right one as a new secret version and redeploy |
 | `database error: ... 404 ... relation "..." does not exist` | the schema is not applied to this project: `setup_db.py --project-ref <ref>` |
 | `database error: ... 5xx` or connection errors for hours | the Supabase project is paused (free-tier projects pause after a week idle). Restore it from the dashboard; consider the paid tier |
-| Sign-in button missing, or *token rejected* / 401 right after signing in | `GOOGLE_OAUTH_CLIENT_ID` is empty or belongs to a different client than the one the page used; or the browser shows *The given origin is not allowed for the given client ID*: add the service URL to the client's authorised JavaScript origins (changes take a few minutes) |
-| 401 *sign in with your superhairpieces.com Google account* for a real colleague | the account is outside `ALLOWED_DOMAINS`, or its e-mail is not verified by Google |
+| Google answers *You don't have access* (IAP's 403 page) | the account is not on IAP's access list: the last command of step 5 (the domain), or a `user:` grant; a minute to take effect |
+| Cloud Run answers 403 *Forbidden* without a Google sign-in page | IAP is not enabled on the service (a deploy before step 5, or `--no-iap`): run the workflow again after step 5 |
+| 401 *sign in with your superhairpieces.com Google account* for a real colleague | the account got through IAP but is outside `ALLOWED_DOMAINS`; or `IAP_AUDIENCE` does not match the service (`/health?deep=1` shows it, the logs say *IAP assertion rejected*) |
+| The page shows *Your Google session has ended* | IAP's session expired (about an hour); *Reload* signs in again |
 | Notify says *no webhook configured for this card* | add the card's `last4` (or a `default`) to `CARD_WEBHOOKS_JSON`, new secret version, redeploy |
 | Notify says *chat webhook returned 404/403* | the webhook was deleted in the space or the space was archived; create a new one and update the secret |
-| Deploy fails with *Permission denied on secret* or *secret not found* | step 6 (grant) or steps 3-5 (create) were skipped for that secret |
-| Scheduler run returns 401 | the token in the job's header differs from `ap-reconciliation-api-token` (rotated since the job was created): delete and recreate the job (step 9) |
+| Deploy fails with *Permission denied on secret* or *secret not found* | step 6 (grant) or steps 3-4 (create) were skipped for that secret |
+| Deploy fails on `--iap` (*IAP API has not been used*, service agent missing) | the first two commands of step 5 were not run |
+| The weekly reminder never runs, or the scheduler run fails with 403 | the scheduler job was not created, or the compute account may not start the Cloud Run job: step 8 |
 | Upload reports `new: 0` | the same lines are already stored (ids are deterministic); nothing is lost. Legacy `.xls` is refused: save as `.xlsx` |
 | Everything stays `missing` although invoices are filed | the invoices are not indexed yet (`AI_DISABLED`, or `remaining` > 0), are filed under a month folder outside month-1..month+1, or have no readable total (`extraction_error` in the picker) |
 | A Chat card's *Open dashboard* button opens the wrong host | `DASHBOARD_URL` was not set (the workflow's second step failed); set it with `gcloud run services update ap-reconciliation --region us-central1 --project shp-ai-bot-2026 --update-env-vars DASHBOARD_URL=<service url>` |

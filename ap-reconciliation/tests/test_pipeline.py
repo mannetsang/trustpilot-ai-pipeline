@@ -31,7 +31,6 @@ os.environ.update({
     "AI_DISABLED": "1",
     "STATEMENTS_FOLDER_ID": "",
     "DASHBOARD_URL": "https://ap.test",
-    "API_TOKEN": "test-token",
     "CARD_WEBHOOKS_JSON": '{"1610": "https://chat.test/1610", "default": "https://chat.test/default"}',
 })
 
@@ -1471,36 +1470,23 @@ class MemberRoleTests(ApiTestCase):
         self.assertEqual(self.client.get("/api/config").status_code, 200)   # public
 
 
-class MaintenanceTests(ApiTestCase):
-    def test_requires_api_token(self):
-        for url in ("/maintenance/index", "/maintenance/match?year=2026&month=9", "/maintenance/remind"):
-            self.assertEqual(self.client.post(url).status_code, 401, url)
-            self.assertEqual(self.client.post(url, headers={"X-Api-Token": "wrong"}).status_code, 401, url)
-            self.assertEqual(self.client.post(url).get_json(), {"error": "unauthorized"})
-
-    def test_jobs_with_token(self):
-        headers = {"X-Api-Token": "test-token"}
-        r = self.client.post("/maintenance/index?months=2026 09,2026 10", headers=headers)
-        self.assertEqual(r.status_code, 200, r.get_json())
-        self.assertEqual((r.get_json()["status"], r.get_json()["skipped"]), ("ok", "AI_DISABLED=1"))
-        r = self.client.post("/maintenance/match?year=2026&month=9", headers=headers)
-        self.assertEqual((r.status_code, r.get_json()["checked"]), (200, 0))
-        self.assertEqual(self.client.post("/maintenance/match", headers=headers).status_code, 400)
-        r = self.client.post("/maintenance/remind", headers=headers)
-        self.assertEqual((r.status_code, r.get_json()["reminded"]), (200, []))
+class RemindTests(ApiTestCase):
+    def test_remind_latest(self):
+        """What the weekly Cloud Run job runs (`python main.py remind`)."""
+        self.assertEqual(main.remind_latest(), {"reminded": []})
         self.upload()
         self.inject_invoices()
         with mock.patch.object(chat, "post", return_value=(True, "sent")) as post:
-            r = self.client.post("/maintenance/remind", headers=headers)
-        self.assertEqual(r.status_code, 200, r.get_json())
-        reminded = r.get_json()["reminded"]
+            reminded = main.remind_latest()["reminded"]
         # Each card's newest month with something missing: 2301 has October, the others September.
         self.assertEqual(sorted((n["year"], n["month"], n["cards"][0]["card"]) for n in reminded),
                          [(2026, 9, "1610"), (2026, 9, "4894"), (2026, 10, "2301")])
         self.assertEqual(post.call_count, 3)
-        self.assertEqual(self.store.get_transaction(self.ids()["anth"])["invoice_status"], "matched")
-        self.assertEqual([n["sent_by"] for n in self.store.notifications], ["scheduler"] * 3)
-        self.assertEqual(self.client.get("/health").get_json()["last_job"]["name"], "remind")
+
+    def test_no_token_protected_http_jobs(self):
+        # The scheduler used to POST /maintenance/* with an API token; behind IAP that path is gone.
+        for url in ("/maintenance/index", "/maintenance/match?year=2026&month=9", "/maintenance/remind"):
+            self.assertEqual(self.client.post(url, headers={"X-Api-Token": "anything"}).status_code, 404, url)
 
 
 if __name__ == "__main__":

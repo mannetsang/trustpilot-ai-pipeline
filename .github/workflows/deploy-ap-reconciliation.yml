@@ -2,18 +2,23 @@ name: Deploy AP credit-card reconciliation service
 
 # Deploys ap-reconciliation/cloud_run to the Cloud Run service
 # `ap-reconciliation` (statement upload, invoice matching, Chat reminders and
-# the reconciliation dashboard; see ap-reconciliation/README.md).
+# the reconciliation dashboard; see ap-reconciliation/README.md) and, from
+# the same image, the Cloud Run job `ap-reconciliation-remind` that Cloud
+# Scheduler runs every Monday.
 #
-# Credentials reach the container as Secret Manager references, never as
+# Credentials reach the containers as Secret Manager references, never as
 # values in this file: the Supabase service-role key, the AP user's Drive
-# OAuth triple, the per-card Chat webhooks and the API token.
+# OAuth triple and the per-card Chat webhooks.
 #
-# The Supabase project URL is set inline below: it is the public hostname of
-# the project, not a secret. The sign-in OAuth client is the existing
-# "ap-mailbox" Web client, the same one that issued the AP user's Drive
-# refresh token, so its id is mounted from the google-workspace-ap-client-id
-# secret and never needs a separate variable (the id itself is public: the
-# page sends it to every browser).
+# Sign-in is Identity-Aware Proxy on the service itself (--iap): Google signs
+# people in before a request reaches the container, and the app reads who
+# they are from the signed header IAP adds. No OAuth client, no token in the
+# page. IAP needs two one-time grants an owner makes (README, "One-time
+# setup"): its service agent as invoker of this service, and the Workspace
+# domain as IAP-secured Web App User.
+#
+# The Supabase project URL and the project number are set inline below: they
+# are public identifiers, not secrets.
 
 on:
   push:
@@ -32,13 +37,15 @@ permissions:
 
 env:
   PROJECT: shp-ai-bot-2026
+  PROJECT_NUMBER: "304363458561"
   REGION: us-central1
   SERVICE: ap-reconciliation
-  SCHEDULER_JOB: ap-reconciliation-remind
+  JOB: ap-reconciliation-remind
   INVOICE_FOLDER_ID: 18YkGTNDIrxdQgHRgquvQizI8fLsFOpPk
   SUPABASE_URL: https://bkkifrwfgtcnmfynbbdd.supabase.co
   ALLOWED_DOMAINS: superhairpieces.com
   AP_EMAILS: ap@superhairpieces.com,manne@superhairpieces.com
+  SECRETS: SUPABASE_SERVICE_KEY=ap-reconciliation-supabase-service-key:latest,GOOGLE_WORKSPACE_AP_CLIENT_ID=google-workspace-ap-client-id:latest,GOOGLE_WORKSPACE_AP_CLIENT_SECRET=google-workspace-ap-client-secret:latest,GOOGLE_WORKSPACE_AP_REFRESH_TOKEN=google-workspace-ap-refresh-token:latest,CARD_WEBHOOKS_JSON=ap-reconciliation-card-webhooks:latest
 
 jobs:
   deploy:
@@ -53,29 +60,30 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
-      # Public at the network level: the app verifies the Google ID token the
-      # dashboard sends on every /api call itself, and /maintenance/* needs
-      # the API token. One instance, because jobs serialize on an in-process
-      # lock. 30 minutes because a synchronous upload reads every new invoice
-      # before it answers. The "^;^" prefix makes gcloud split the env-var
-      # list on semicolons instead of commas, because AP_EMAILS holds a
-      # comma-separated list itself.
+      # Behind IAP and closed to anonymous callers: only IAP's service agent may
+      # invoke the service, and it only forwards signed-in people on the access
+      # list. IAP_AUDIENCE is what the app checks the signed header against.
+      # One instance, because jobs serialize on an in-process lock. 30 minutes
+      # because a synchronous upload reads every new invoice before it
+      # answers. The "^;^" prefix makes gcloud split the env-var list on
+      # semicolons instead of commas, because AP_EMAILS holds a comma-separated
+      # list itself.
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy "$SERVICE" \
             --source ./ap-reconciliation/cloud_run \
             --region "$REGION" --project "$PROJECT" \
-            --allow-unauthenticated \
+            --no-allow-unauthenticated --iap \
             --min-instances 0 --max-instances 1 --timeout 1800 --memory 1Gi \
-            --set-env-vars "^;^INVOICE_FOLDER_ID=$INVOICE_FOLDER_ID;ALLOWED_DOMAINS=$ALLOWED_DOMAINS;AP_EMAILS=$AP_EMAILS;SUPABASE_URL=$SUPABASE_URL" \
-            --set-secrets "SUPABASE_SERVICE_KEY=ap-reconciliation-supabase-service-key:latest,GOOGLE_OAUTH_CLIENT_ID=google-workspace-ap-client-id:latest,GOOGLE_WORKSPACE_AP_CLIENT_ID=google-workspace-ap-client-id:latest,GOOGLE_WORKSPACE_AP_CLIENT_SECRET=google-workspace-ap-client-secret:latest,GOOGLE_WORKSPACE_AP_REFRESH_TOKEN=google-workspace-ap-refresh-token:latest,CARD_WEBHOOKS_JSON=ap-reconciliation-card-webhooks:latest,API_TOKEN=ap-reconciliation-api-token:latest" \
+            --set-env-vars "^;^INVOICE_FOLDER_ID=$INVOICE_FOLDER_ID;ALLOWED_DOMAINS=$ALLOWED_DOMAINS;AP_EMAILS=$AP_EMAILS;SUPABASE_URL=$SUPABASE_URL;IAP_AUDIENCE=/projects/$PROJECT_NUMBER/locations/$REGION/services/$SERVICE" \
+            --set-secrets "$SECRETS" \
             --quiet
 
       # The Chat cards carry "Open dashboard" buttons, which need the absolute
-      # URL of the service; a request-less job (the scheduler's reminder) has
-      # nothing to derive it from. The URL is only known after the first
-      # deploy, and --set-env-vars above replaces the whole set on every
-      # deploy, so this step runs each time.
+      # URL of the service; a request-less run (the weekly job) has nothing to
+      # derive it from. The URL is only known after the first deploy, and
+      # --set-env-vars above replaces the whole set on every deploy, so this
+      # step runs each time.
       - name: Point DASHBOARD_URL at the service
         run: |
           SERVICE_URL=$(gcloud run services describe "$SERVICE" \
@@ -86,27 +94,26 @@ jobs:
             --update-env-vars "DASHBOARD_URL=$SERVICE_URL" \
             --quiet
 
-      # Weekly reminder: Monday 14:00 UTC -> POST /maintenance/remind. The
-      # job carries the API token in its X-Api-Token header, and Cloud
-      # Scheduler cannot read Secret Manager, so the job is created once by
-      # an owner with the token value (see ap-reconciliation/README.md). This
-      # step only refreshes the schedule and URI of an existing job - never
-      # creates one, which would have to mean a job without the header - and
-      # only warns when it can't, because claude-sessions has no Cloud
-      # Scheduler role.
-      - name: Update the weekly reminder job
+      # Weekly reminder: a Cloud Run job running `python main.py remind` in the
+      # image the service was just built from, with the same secrets. Cloud
+      # Scheduler starts it on Mondays through the Cloud Run API with its own
+      # service account (no token, no path through IAP); that scheduler job is
+      # created once by an owner (README, "One-time setup"). Only warns when
+      # claude-sessions may not manage jobs.
+      - name: Deploy the weekly reminder job
         continue-on-error: true
         run: |
+          IMAGE=$(gcloud run services describe "$SERVICE" \
+            --region "$REGION" --project "$PROJECT" --format 'value(spec.template.spec.containers[0].image)')
           SERVICE_URL=$(gcloud run services describe "$SERVICE" \
             --region "$REGION" --project "$PROJECT" --format 'value(status.url)')
-          if gcloud scheduler jobs describe "$SCHEDULER_JOB" \
-               --location "$REGION" --project "$PROJECT" >/dev/null 2>&1; then
-            gcloud scheduler jobs update http "$SCHEDULER_JOB" \
-              --location "$REGION" --project "$PROJECT" \
-              --schedule "0 14 * * 1" --time-zone "Etc/UTC" \
-              --uri "$SERVICE_URL/maintenance/remind" --http-method POST \
-              --attempt-deadline 1800s --quiet \
-            || echo "::warning::Could not update the scheduler job $SCHEDULER_JOB (claude-sessions lacks roles/cloudscheduler.admin); update it as an owner if the service URL changed, see ap-reconciliation/README.md"
-          else
-            echo "::warning::Scheduler job $SCHEDULER_JOB was not found (or is not readable by claude-sessions). Create it once as an owner with the API token, see ap-reconciliation/README.md"
-          fi
+          echo "Job image: $IMAGE"
+          gcloud run jobs deploy "$JOB" \
+            --image "$IMAGE" \
+            --region "$REGION" --project "$PROJECT" \
+            --command python --args main.py,remind \
+            --tasks 1 --max-retries 0 --task-timeout 1800 --memory 1Gi \
+            --set-env-vars "^;^INVOICE_FOLDER_ID=$INVOICE_FOLDER_ID;ALLOWED_DOMAINS=$ALLOWED_DOMAINS;AP_EMAILS=$AP_EMAILS;SUPABASE_URL=$SUPABASE_URL;DASHBOARD_URL=$SERVICE_URL" \
+            --set-secrets "$SECRETS" \
+            --quiet \
+          || echo "::warning::Could not deploy the Cloud Run job $JOB (claude-sessions needs roles/run.admin on jobs); the weekly reminder will not run until it is deployed, see ap-reconciliation/README.md"

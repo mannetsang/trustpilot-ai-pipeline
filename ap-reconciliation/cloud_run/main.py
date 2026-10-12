@@ -13,10 +13,11 @@ Storage is a dedicated Supabase project (schema in ../schema.sql), reached
 with the service-role key from this server only. STORE=memory runs everything
 in-process for tests and demos.
 
-Endpoints (browser calls carry a Google ID token; see README)
+Endpoints (the browser reaches the service through Identity-Aware Proxy, which signs every
+request it lets through with the X-Goog-IAP-JWT-Assertion header; see README)
   GET  /                         dashboard
   GET  /health[?deep=1]          liveness; deep=1 also checks Supabase and the Invoice folder
-  GET  /api/config               OAuth client id, dashboard URL (public, no secrets)
+  GET  /api/config               auth mode, dashboard URL (public, no secrets)
   GET  /api/me                   who am I, role (ap | member), cards I own
   GET  /api/months               year/month navigation with per-card counts
   GET  /api/transactions?year&month[&card]
@@ -29,17 +30,16 @@ Endpoints (browser calls carry a Google ID token; see README)
   POST /api/index?year&month&limit (AP)     read new invoices for month-1..month+1, one batch
   POST /api/match?year&month[&card] (AP)    pair purchases with invoices
   POST /api/notify?year&month[&card] (AP)   post the "invoices needed" Chat cards
-  POST /maintenance/index|match|remind      same jobs for Cloud Scheduler / curl (X-Api-Token)
+The weekly reminder is a Cloud Run job running `python main.py remind` (see the deploy workflow).
 
 Env: SUPABASE_URL, SUPABASE_SERVICE_KEY, INVOICE_FOLDER_ID, STATEMENTS_FOLDER_ID (optional),
 GOOGLE_WORKSPACE_AP_CLIENT_ID/_CLIENT_SECRET/_REFRESH_TOKEN (Drive as ap@; ADC when unset),
-CARD_WEBHOOKS_JSON, GCHAT_WEBHOOK_URL, API_TOKEN, GOOGLE_OAUTH_CLIENT_ID, ALLOWED_DOMAINS,
+CARD_WEBHOOKS_JSON, GCHAT_WEBHOOK_URL, IAP_AUDIENCE, ALLOWED_DOMAINS,
 AP_EMAILS, DASHBOARD_URL, GEMINI_EXTRACT_MODEL, GEMINI_MATCH_MODEL, AI_DISABLED, AUTH_DISABLED, STORE.
 """
 
 import calendar
 import datetime as dt
-import hmac
 import json
 import os
 import sys
@@ -86,8 +86,12 @@ AP_CLIENT_ID = os.environ.get("GOOGLE_WORKSPACE_AP_CLIENT_ID", "")
 AP_CLIENT_SECRET = os.environ.get("GOOGLE_WORKSPACE_AP_CLIENT_SECRET", "")
 AP_REFRESH_TOKEN = os.environ.get("GOOGLE_WORKSPACE_AP_REFRESH_TOKEN", "")
 CARD_WEBHOOKS = chat.load_webhooks(os.environ.get("CARD_WEBHOOKS_JSON", ""), os.environ.get("GCHAT_WEBHOOK_URL", ""))
-API_TOKEN = os.environ.get("API_TOKEN", "")
-GOOGLE_OAUTH_CLIENT_ID = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+# Identity-Aware Proxy signs every request it lets through; the JWT's audience names this
+# service: /projects/<project number>/locations/<region>/services/<service>.
+IAP_AUDIENCE = os.environ.get("IAP_AUDIENCE", "")
+IAP_HEADER = "X-Goog-IAP-JWT-Assertion"
+IAP_CERTS_URL = "https://www.gstatic.com/iap/verify/public_key"
+IAP_ISSUER = "https://cloud.google.com/iap"
 ALLOWED_DOMAINS = set(_csv("ALLOWED_DOMAINS", "superhairpieces.com"))
 AP_EMAILS = set(_csv("AP_EMAILS", "ap@superhairpieces.com,manne@superhairpieces.com"))
 AUTH_DISABLED = os.environ.get("AUTH_DISABLED") == "1"
@@ -105,6 +109,9 @@ SERVICE = "ap-reconciliation"
 if AUTH_DISABLED and os.environ.get("K_SERVICE"):
     # K_SERVICE is set by Cloud Run; an open dashboard there would make every caller "ap".
     raise SystemExit("AUTH_DISABLED=1 is only for local runs, never on Cloud Run")
+if os.environ.get("K_SERVICE") and not AUTH_DISABLED and not IAP_AUDIENCE:
+    # Without the audience no assertion can be checked, so nobody could get in anyway.
+    raise SystemExit("IAP_AUDIENCE is required on Cloud Run (the service sits behind Identity-Aware Proxy)")
 
 STATUS_LABELS = {"matched": "Invoice found", "possible": "Possible match", "missing": "Invoice missing",
                  "waived": "No invoice (waived)", "not_required": "No invoice needed"}
@@ -153,7 +160,7 @@ def set_clients(store=None, drive=None, gemini=None):
 
 
 # ---------------------------------------------------------------------------
-# Auth: Google ID token from the dashboard, verified here; roles from env + cards table
+# Auth: the signed header Identity-Aware Proxy adds to every request; roles from env + cards table
 # ---------------------------------------------------------------------------
 _token_cache = {}
 _token_lock = threading.Lock()
@@ -165,21 +172,24 @@ class AuthError(Exception):
         self.status, self.message = status, message
 
 
-def verify_id_token(token):
+def verify_iap_jwt(token):
+    """Check the signed header IAP adds to every request: ES256, IAP's published keys, our audience."""
     from google.auth.transport import requests as google_requests
     from google.oauth2 import id_token as google_id_token
-    info = google_id_token.verify_oauth2_token(token, google_requests.Request(), GOOGLE_OAUTH_CLIENT_ID,
-                                               clock_skew_in_seconds=10)
+    info = google_id_token.verify_token(token, google_requests.Request(), audience=IAP_AUDIENCE,
+                                        certs_url=IAP_CERTS_URL, clock_skew_in_seconds=30)
+    if info.get("iss") != IAP_ISSUER:
+        raise ValueError(f"unexpected issuer {info.get('iss')!r}")
     return info
 
 
 def current_user():
+    """Who IAP signed in, from its assertion header; None when the request did not come through IAP."""
     if AUTH_DISABLED:
         return {"email": "local@dev", "name": "Local developer", "role": "ap", "picture": ""}
-    header = request.headers.get("Authorization", "")
-    if not header.startswith("Bearer "):
+    token = request.headers.get(IAP_HEADER, "").strip()
+    if not token or not IAP_AUDIENCE:
         return None
-    token = header[7:].strip()
     now = time.time()
     with _token_lock:
         cached = _token_cache.get(token)
@@ -188,22 +198,20 @@ def current_user():
         if len(_token_cache) > 500:
             for key in [k for k, v in _token_cache.items() if v[0] <= now]:
                 _token_cache.pop(key, None)
-    if not GOOGLE_OAUTH_CLIENT_ID:
-        return None
     try:
-        info = verify_id_token(token)
+        info = verify_iap_jwt(token)
     except Exception as exc:  # noqa: BLE001
-        print(f"auth: token rejected: {exc}")
+        print(f"auth: IAP assertion rejected: {exc}")
         return None
     email = (info.get("email") or "").lower()
-    if not email or not info.get("email_verified", False):
+    if not email:
         return None
     domain = email.rsplit("@", 1)[-1]
     if email not in AP_EMAILS and domain not in ALLOWED_DOMAINS:
+        # IAP's own access list is the first gate; this keeps an accidental wider grant harmless.
         print(f"auth: {email} is outside the allowed domains")
         return None
-    user = {"email": email, "name": info.get("name") or email, "picture": info.get("picture", ""),
-            "role": "ap" if email in AP_EMAILS else "member"}
+    user = {"email": email, "name": "", "picture": "", "role": "ap" if email in AP_EMAILS else "member"}
     with _token_lock:
         _token_cache[token] = (float(info.get("exp") or now + 300), user)
     return user
@@ -217,10 +225,6 @@ def require_user(ap_only=False):
         raise AuthError(403, "only the accounts-payable team can do this")
     g.user = user
     return user
-
-
-def api_token_ok():
-    return bool(API_TOKEN) and hmac.compare_digest(request.headers.get("X-Api-Token", ""), API_TOKEN)
 
 
 def cards_owned_by(email, cards=None):
@@ -545,7 +549,7 @@ def healthz():
         except Exception as exc:  # noqa: BLE001
             checks["drive"] = {"ok": False, "error": str(exc)[:160]}
         checks["chat_webhooks"] = sorted(k for k in CARD_WEBHOOKS if k != "default") + (["default"] if "default" in CARD_WEBHOOKS else [])
-        checks["sign_in_configured"] = bool(GOOGLE_OAUTH_CLIENT_ID)
+        checks["auth"] = {"mode": "disabled" if AUTH_DISABLED else "iap", "audience": IAP_AUDIENCE}
         body["checks"] = checks
         body["ok"] = checks["store"]["ok"] and checks["drive"]["ok"]
     return jsonify(body)
@@ -553,7 +557,7 @@ def healthz():
 
 @app.route("/api/config")
 def api_config():
-    return jsonify({"client_id": GOOGLE_OAUTH_CLIENT_ID, "auth_disabled": AUTH_DISABLED,
+    return jsonify({"auth": "disabled" if AUTH_DISABLED else "iap", "auth_disabled": AUTH_DISABLED,
                     "dashboard_url": dashboard_url(), "invoice_folder_url": folder_url(INVOICE_FOLDER_ID),
                     "ai_enabled": not AI_DISABLED})
 
@@ -773,28 +777,11 @@ def api_notify():
     return jsonify(payload), status
 
 
-# -- token-protected jobs for Cloud Scheduler / curl ---------------------------
-@app.route("/maintenance/index", methods=["POST"])
-def maintenance_index():
-    if not api_token_ok():
-        return jsonify({"error": "unauthorized"}), 401
-    months = [m.strip() for m in request.args.get("months", "").split(",") if m.strip()] or None
-    limit = min(int(request.args.get("limit", INDEX_BATCH)), 100)
-    status, payload = run_locked("index", index_all, months, limit)
-    return jsonify(payload), status
-
-
-@app.route("/maintenance/match", methods=["POST"])
-def maintenance_match():
-    if not api_token_ok():
-        return jsonify({"error": "unauthorized"}), 401
-    year, month = _year_month()
-    status, payload = run_locked("match", match_month, year, month, request.args.get("card") or None)
-    return jsonify(payload), status
-
-
 def remind_latest():
-    """Re-index, re-match and re-notify the newest month per card that still has missing invoices."""
+    """Re-index, re-match and re-notify the newest month per card that still has missing invoices.
+
+    This is what the weekly Cloud Run job runs (`python main.py remind`, started by Cloud Scheduler).
+    """
     store = get_store()
     latest = {}
     for row in store.month_summary():          # newest month first, so the first hit per card wins
@@ -814,27 +801,20 @@ def remind_latest():
     return {"reminded": out}
 
 
-@app.route("/maintenance/remind", methods=["POST"])
-def maintenance_remind():
-    if not api_token_ok():
-        return jsonify({"error": "unauthorized"}), 401
-    status, payload = run_locked("remind", remind_latest)
-    return jsonify(payload), status
-
-
 # ---------------------------------------------------------------------------
-# Local CLI
+# Local CLI (and the weekly Cloud Run job, which runs `remind`)
 #   python main.py parse <file>                       print the parsed transactions
 #   python main.py dry-run <file> [--no-ai]           full flow on an in-memory store, Chat cards printed
 #   python main.py index [--months "2026 09,2026 10"] read new invoices into the configured store
 #   python main.py match --year 2026 --month 9
 #   python main.py notify --year 2026 --month 9 [--dry-run]
+#   python main.py remind                             the weekly reminder (what the Cloud Run job runs)
 #   python main.py serve [--port 8080]
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("command", choices=["parse", "dry-run", "index", "match", "notify", "serve"])
+    ap.add_argument("command", choices=["parse", "dry-run", "index", "match", "notify", "remind", "serve"])
     ap.add_argument("file", nargs="?")
     ap.add_argument("--year", type=int)
     ap.add_argument("--month", type=int)
@@ -876,5 +856,7 @@ if __name__ == "__main__":
         print(json.dumps(match_month(args.year, args.month, args.card), indent=2))
     elif args.command == "notify":
         print(json.dumps(notify_month(args.year, args.month, args.card, sent_by="cli", dry_run=args.dry_run), indent=2))
+    elif args.command == "remind":
+        print(json.dumps(remind_latest(), indent=2))
     else:
         app.run(host="127.0.0.1", port=args.port, debug=False)
