@@ -341,10 +341,10 @@ this repo.
    JavaScript origins** (scheme and host only, no trailing slash; also
    `http://localhost:8765` for local runs with sign-in), then save. Changes
    take a few minutes to propagate. The client secret is never used by the
-   dashboard. To switch to another Web client later, put its id in a new
-   version of that secret... no: that secret belongs to the Drive token, so
-   instead set `GOOGLE_OAUTH_CLIENT_ID` to the new id in the workflow's
-   `--set-env-vars` and drop it from `--set-secrets`.
+   dashboard. To sign in with a different Web client later, leave the
+   `google-workspace-ap-client-id` secret alone (the Drive token depends on
+   it): move `GOOGLE_OAUTH_CLIENT_ID` from the workflow's `--set-secrets` to
+   its `--set-env-vars` with the new client id.
 9. **Scheduler job**, created once by an owner because the job carries the
    token in its header and Cloud Scheduler cannot read Secret Manager (the
    workflow only refreshes the schedule and URI of an existing job). The
