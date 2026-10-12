@@ -12,7 +12,10 @@ link or waive invoices.
 Storage is a **dedicated Supabase project** (Postgres, schema in
 [`schema.sql`](schema.sql)), separate from every other Supabase project the
 company runs, reached from the server only with the service-role key. The
-Cloud Run service is `ap-reconciliation` in `us-central1`.
+Cloud Run service is `ap-reconciliation` in `us-central1`, live since
+2026-10-12 at <https://ap-reconciliation-onvg62bzra-uc.a.run.app> (the
+`DASHBOARD_URL` the Chat cards link to; the same service also answers at
+`https://ap-reconciliation-304363458561.us-central1.run.app`).
 
 ## The Invoice folder
 
@@ -322,10 +325,12 @@ this repo.
    `gcloud secrets add-iam-policy-binding google-workspace-ap-refresh-token --member="serviceAccount:304363458561-compute@developer.gserviceaccount.com" --role="roles/secretmanager.secretAccessor" --project=shp-ai-bot-2026`
    The compute account normally carries Editor, which covers Vertex AI; if
    that was trimmed, add `roles/aiplatform.user` on the project.
-7. **First deploy.** Push to `main` or run *Deploy AP credit-card
-   reconciliation service* from the Actions tab. Sign-in does not work yet
-   (no client id); read the service URL from the *Point DASHBOARD_URL* step
-   or with
+7. **First deploy.** Done 2026-10-12: the service answers at
+   `https://ap-reconciliation-onvg62bzra-uc.a.run.app` and
+   `/health?deep=1` reports Supabase and the Invoice folder reachable. Later
+   deploys happen on every push to `main` touching `cloud_run/`, or from the
+   Actions tab (*Deploy AP credit-card reconciliation service*). The URL is
+   also printed by
    `gcloud run services describe ap-reconciliation --region us-central1 --project shp-ai-bot-2026 --format "value(status.url)"`
 8. **Google OAuth client.** In the Cloud console, project `shp-ai-bot-2026`,
    *APIs & Services*, *OAuth consent screen*: if none is configured yet, app
@@ -333,10 +338,10 @@ this repo.
    when the project sits in the Workspace organisation (otherwise *External*;
    the server's domain check still keeps outsiders out). Then *Credentials*,
    *Create credentials*, *OAuth client ID*, type **Web application**, name
-   `AP Reconciliation dashboard`, **Authorised JavaScript origins**: the
-   service URL from step 7 (scheme and host only, no path or trailing
-   slash), plus `http://localhost:8765` and `http://127.0.0.1:8765` for local
-   runs with sign-in. No redirect URI is needed. Copy the client id (ends in
+   `AP Reconciliation dashboard`, **Authorised JavaScript origins**:
+   `https://ap-reconciliation-onvg62bzra-uc.a.run.app` (scheme and host
+   only, no path or trailing slash), plus `http://localhost:8765` and
+   `http://127.0.0.1:8765` for local runs with sign-in. No redirect URI is needed. Copy the client id (ends in
    `.apps.googleusercontent.com`; the client secret is never used) into the
    GitHub variable and redeploy:
    `gh variable set AP_RECONCILIATION_OAUTH_CLIENT_ID --body "<client id>" --repo mannetsang/trustpilot-ai-pipeline`
@@ -345,8 +350,8 @@ this repo.
    token in its header and Cloud Scheduler cannot read Secret Manager (the
    workflow only refreshes the schedule and URI of an existing job). The
    `for /f` reads the token from Secret Manager so it never touches the
-   clipboard; replace the URI with the service URL from step 7:
-   `for /f "delims=" %t in ('gcloud secrets versions access latest --secret=ap-reconciliation-api-token --project=shp-ai-bot-2026') do gcloud scheduler jobs create http ap-reconciliation-remind --location us-central1 --project shp-ai-bot-2026 --schedule "0 14 * * 1" --time-zone Etc/UTC --uri "https://ap-reconciliation-304363458561.us-central1.run.app/maintenance/remind" --http-method POST --headers "X-Api-Token=%t" --attempt-deadline 1800s`
+   clipboard:
+   `for /f "delims=" %t in ('gcloud secrets versions access latest --secret=ap-reconciliation-api-token --project=shp-ai-bot-2026') do gcloud scheduler jobs create http ap-reconciliation-remind --location us-central1 --project shp-ai-bot-2026 --schedule "0 14 * * 1" --time-zone Etc/UTC --uri "https://ap-reconciliation-onvg62bzra-uc.a.run.app/maintenance/remind" --http-method POST --headers "X-Api-Token=%t" --attempt-deadline 1800s`
    Test it with
    `gcloud scheduler jobs run ap-reconciliation-remind --location us-central1 --project shp-ai-bot-2026`
    and check the service logs. When the token is rotated, delete and
