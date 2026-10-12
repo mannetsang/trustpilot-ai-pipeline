@@ -203,7 +203,7 @@ under *Cards...*) are never notified.
 | Method and path | Auth | What it does |
 |---|---|---|
 | `GET /` | none | the dashboard page |
-| `GET /healthz` | none | `{"ok": true, "store": ..., "last_job": ...}` |
+| `GET /health` | none | `{"ok": true, "store": ..., "last_job": ...}`; `?deep=1` adds reachability checks for Supabase, the Invoice folder, the configured card webhooks and sign-in. (`/healthz` is answered by Cloud Run's front end itself, not the container.) |
 | `GET /api/config` | none | OAuth client id, `auth_disabled`, dashboard URL, Invoice folder URL, `ai_enabled` |
 | `GET /api/me` | signed in | e-mail, name, role, cards owned |
 | `GET /api/months` | signed in | month navigation with per-card counts, cards, cost centres |
@@ -431,7 +431,7 @@ next idle period, or at once with *Run workflow*.
 
 | Symptom | Cause and fix |
 |---|---|
-| `409 {"status": "busy"}` from an upload, index, match or notify | one job at a time per instance; wait for it (`/healthz` shows `last_job`) and retry. The dashboard retries by itself |
+| `409 {"status": "busy"}` from an upload, index, match or notify | one job at a time per instance; wait for it (`/health` shows `last_job`) and retry. The dashboard retries by itself |
 | Invoice listed in the picker with *unsupported file type* | Word, Excel, zip or e-mail files are not read; save as PDF into the same folder. Files over 15 MB likewise. Such files are not retried; any other extraction error is retried on the next index |
 | Index keeps reporting the same `remaining` count | the files that fail are listed in the job log (`errors`); fix or remove them. The dashboard stops after two stalled rounds |
 | *AP token refresh failed ... invalid_grant* | the AP user's refresh token was revoked (password change, app removed under the account's third-party access, token unused for six months while the OAuth app is in *testing*). Mint a new one with the same client (OAuth Playground, scope `https://www.googleapis.com/auth/drive`, signed in as `ap@`), add it as a new version of `google-workspace-ap-refresh-token`, redeploy |

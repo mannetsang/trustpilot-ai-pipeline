@@ -15,6 +15,7 @@ in-process for tests and demos.
 
 Endpoints (browser calls carry a Google ID token; see README)
   GET  /                         dashboard
+  GET  /health[?deep=1]          liveness; deep=1 also checks Supabase and the Invoice folder
   GET  /api/config               OAuth client id, dashboard URL (public, no secrets)
   GET  /api/me                   who am I, role (ap | member), cards I own
   GET  /api/months               year/month navigation with per-card counts
@@ -525,8 +526,10 @@ def index():
     return send_from_directory(app.static_folder, "index.html")
 
 
+@app.route("/health")
 @app.route("/healthz")
 def healthz():
+    """/health is the public one: Cloud Run's front end answers the exact path /healthz itself (404)."""
     public = {k: _last_job.get(k) for k in ("name", "started", "finished")}   # no job output: it holds card data
     body = {"service": SERVICE, "ok": True, "store": STORE_KIND, "last_job": public}
     if request.args.get("deep") == "1":

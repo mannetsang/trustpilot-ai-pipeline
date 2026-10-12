@@ -245,10 +245,10 @@ class ApiReviewTests(ApiTestCase):
     def test_healthz_hides_job_output_and_api_errors_are_json(self):
         import main
         main._last_job.update({"name": "match", "result": {"secret": "card data"}})
-        body = self.client.get("/healthz").get_json()
+        body = self.client.get("/health").get_json()
         self.assertEqual(set(body["last_job"]), {"name", "started", "finished"})
         self.assertNotIn("checks", body)
-        deep = self.client.get("/healthz?deep=1").get_json()
+        deep = self.client.get("/health?deep=1").get_json()
         self.assertFalse(deep["checks"]["drive"]["ok"])        # the fake Drive has no folder lookup
         self.assertEqual((deep["checks"]["store"]["ok"], deep["checks"]["store"]["cost_centers"]), (True, 20))
         self.assertIn("chat_webhooks", deep["checks"])

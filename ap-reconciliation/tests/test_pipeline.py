@@ -1160,7 +1160,7 @@ class ApiFlowTests(ApiTestCase):
         self.assertEqual((config["auth_disabled"], config["ai_enabled"], config["dashboard_url"]),
                          (True, False, "https://ap.test"))
         self.assertTrue(config["invoice_folder_url"].startswith("https://drive.google.com/drive/folders/"))
-        health = self.client.get("/healthz").get_json()
+        health = self.client.get("/health").get_json()
         self.assertEqual((health["ok"], health["store"]), (True, "memory"))
         me = self.client.get("/api/me").get_json()
         self.assertEqual((me["role"], me["cards_owned"]), ("ap", []))
@@ -1500,7 +1500,7 @@ class MaintenanceTests(ApiTestCase):
         self.assertEqual(post.call_count, 3)
         self.assertEqual(self.store.get_transaction(self.ids()["anth"])["invoice_status"], "matched")
         self.assertEqual([n["sent_by"] for n in self.store.notifications], ["scheduler"] * 3)
-        self.assertEqual(self.client.get("/healthz").get_json()["last_job"]["name"], "remind")
+        self.assertEqual(self.client.get("/health").get_json()["last_job"]["name"], "remind")
 
 
 if __name__ == "__main__":
