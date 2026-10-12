@@ -528,7 +528,24 @@ def index():
 @app.route("/healthz")
 def healthz():
     public = {k: _last_job.get(k) for k in ("name", "started", "finished")}   # no job output: it holds card data
-    return jsonify({"service": SERVICE, "ok": True, "store": STORE_KIND, "last_job": public})
+    body = {"service": SERVICE, "ok": True, "store": STORE_KIND, "last_job": public}
+    if request.args.get("deep") == "1":
+        # Reachability only (no data): can the service read its database and the Invoice folder?
+        checks = {}
+        try:
+            checks["store"] = {"ok": True, "cost_centers": len(get_store().list_cost_centers())}
+        except Exception as exc:  # noqa: BLE001
+            checks["store"] = {"ok": False, "error": str(exc)[:160]}
+        try:
+            folder = get_drive().get(INVOICE_FOLDER_ID)
+            checks["drive"] = {"ok": True, "folder": folder.get("name"), "identity": get_drive().identity}
+        except Exception as exc:  # noqa: BLE001
+            checks["drive"] = {"ok": False, "error": str(exc)[:160]}
+        checks["chat_webhooks"] = sorted(k for k in CARD_WEBHOOKS if k != "default") + (["default"] if "default" in CARD_WEBHOOKS else [])
+        checks["sign_in_configured"] = bool(GOOGLE_OAUTH_CLIENT_ID)
+        body["checks"] = checks
+        body["ok"] = checks["store"]["ok"] and checks["drive"]["ok"]
+    return jsonify(body)
 
 
 @app.route("/api/config")
