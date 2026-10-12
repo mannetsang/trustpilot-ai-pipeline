@@ -240,7 +240,7 @@ Job endpoints answer `409 {"status": "busy"}` while another job runs and
 | `CARD_WEBHOOKS_JSON` | | the webhook object above; secret |
 | `GCHAT_WEBHOOK_URL` | empty | optional single fallback webhook |
 | `API_TOKEN` | | value of the `X-Api-Token` header for `/maintenance/*`; secret |
-| `GOOGLE_OAUTH_CLIENT_ID` | | Web application client id (GitHub variable `AP_RECONCILIATION_OAUTH_CLIENT_ID`) |
+| `GOOGLE_OAUTH_CLIENT_ID` | | Web application client id for the sign-in; the deploy mounts the ap-mailbox client's id from the `google-workspace-ap-client-id` secret |
 | `ALLOWED_DOMAINS` | `superhairpieces.com` | comma-separated e-mail domains allowed to sign in |
 | `AP_EMAILS` | `ap@superhairpieces.com,manne@superhairpieces.com` | addresses with the `ap` role |
 | `AUTH_DISABLED` | | `1` skips sign-in (local only) |
@@ -332,20 +332,19 @@ this repo.
    Actions tab (*Deploy AP credit-card reconciliation service*). The URL is
    also printed by
    `gcloud run services describe ap-reconciliation --region us-central1 --project shp-ai-bot-2026 --format "value(status.url)"`
-8. **Google OAuth client.** In the Cloud console, project `shp-ai-bot-2026`,
-   *APIs & Services*, *OAuth consent screen*: if none is configured yet, app
-   name `AP Reconciliation`, the AP support e-mail, user type *Internal*
-   when the project sits in the Workspace organisation (otherwise *External*;
-   the server's domain check still keeps outsiders out). Then *Credentials*,
-   *Create credentials*, *OAuth client ID*, type **Web application**, name
-   `AP Reconciliation dashboard`, **Authorised JavaScript origins**:
-   `https://ap-reconciliation-onvg62bzra-uc.a.run.app` (scheme and host
-   only, no path or trailing slash), plus `http://localhost:8765` and
-   `http://127.0.0.1:8765` for local runs with sign-in. No redirect URI is needed. Copy the client id (ends in
-   `.apps.googleusercontent.com`; the client secret is never used) into the
-   GitHub variable and redeploy:
-   `gh variable set AP_RECONCILIATION_OAUTH_CLIENT_ID --body "<client id>" --repo mannetsang/trustpilot-ai-pipeline`
-   `gh workflow run deploy-ap-reconciliation.yml --repo mannetsang/trustpilot-ai-pipeline`
+8. **Google OAuth client.** The dashboard signs people in with the existing
+   **ap-mailbox** Web client (Google Auth Platform, *Clients*), the one that
+   issued the AP user's Drive refresh token; the deploy mounts its id from
+   the `google-workspace-ap-client-id` secret, so no variable is needed. The
+   one manual step: open the client and add
+   `https://ap-reconciliation-onvg62bzra-uc.a.run.app` under **Authorised
+   JavaScript origins** (scheme and host only, no trailing slash; also
+   `http://localhost:8765` for local runs with sign-in), then save. Changes
+   take a few minutes to propagate. The client secret is never used by the
+   dashboard. To switch to another Web client later, put its id in a new
+   version of that secret... no: that secret belongs to the Drive token, so
+   instead set `GOOGLE_OAUTH_CLIENT_ID` to the new id in the workflow's
+   `--set-env-vars` and drop it from `--set-secrets`.
 9. **Scheduler job**, created once by an owner because the job carries the
    token in its header and Cloud Scheduler cannot read Secret Manager (the
    workflow only refreshes the schedule and URI of an existing job). The

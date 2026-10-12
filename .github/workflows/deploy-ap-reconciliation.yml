@@ -9,10 +9,11 @@ name: Deploy AP credit-card reconciliation service
 # OAuth triple, the per-card Chat webhooks and the API token.
 #
 # The Supabase project URL is set inline below: it is the public hostname of
-# the project, not a secret. The OAuth client id comes from a GitHub Actions
-# *variable* (Settings > Secrets and variables > Actions > Variables), also not
-# sensitive since /api/config sends it to every browser; a variable because it
-# is created after the first deploy (it needs the service URL as its origin).
+# the project, not a secret. The sign-in OAuth client is the existing
+# "ap-mailbox" Web client, the same one that issued the AP user's Drive
+# refresh token, so its id is mounted from the google-workspace-ap-client-id
+# secret and never needs a separate variable (the id itself is public: the
+# page sends it to every browser).
 
 on:
   push:
@@ -66,8 +67,8 @@ jobs:
             --region "$REGION" --project "$PROJECT" \
             --allow-unauthenticated \
             --min-instances 0 --max-instances 1 --timeout 1800 --memory 1Gi \
-            --set-env-vars "^;^INVOICE_FOLDER_ID=$INVOICE_FOLDER_ID;ALLOWED_DOMAINS=$ALLOWED_DOMAINS;AP_EMAILS=$AP_EMAILS;SUPABASE_URL=$SUPABASE_URL;GOOGLE_OAUTH_CLIENT_ID=${{ vars.AP_RECONCILIATION_OAUTH_CLIENT_ID }}" \
-            --set-secrets "SUPABASE_SERVICE_KEY=ap-reconciliation-supabase-service-key:latest,GOOGLE_WORKSPACE_AP_CLIENT_ID=google-workspace-ap-client-id:latest,GOOGLE_WORKSPACE_AP_CLIENT_SECRET=google-workspace-ap-client-secret:latest,GOOGLE_WORKSPACE_AP_REFRESH_TOKEN=google-workspace-ap-refresh-token:latest,CARD_WEBHOOKS_JSON=ap-reconciliation-card-webhooks:latest,API_TOKEN=ap-reconciliation-api-token:latest" \
+            --set-env-vars "^;^INVOICE_FOLDER_ID=$INVOICE_FOLDER_ID;ALLOWED_DOMAINS=$ALLOWED_DOMAINS;AP_EMAILS=$AP_EMAILS;SUPABASE_URL=$SUPABASE_URL" \
+            --set-secrets "SUPABASE_SERVICE_KEY=ap-reconciliation-supabase-service-key:latest,GOOGLE_OAUTH_CLIENT_ID=google-workspace-ap-client-id:latest,GOOGLE_WORKSPACE_AP_CLIENT_ID=google-workspace-ap-client-id:latest,GOOGLE_WORKSPACE_AP_CLIENT_SECRET=google-workspace-ap-client-secret:latest,GOOGLE_WORKSPACE_AP_REFRESH_TOKEN=google-workspace-ap-refresh-token:latest,CARD_WEBHOOKS_JSON=ap-reconciliation-card-webhooks:latest,API_TOKEN=ap-reconciliation-api-token:latest" \
             --quiet
 
       # The Chat cards carry "Open dashboard" buttons, which need the absolute
