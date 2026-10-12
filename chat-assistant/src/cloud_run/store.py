@@ -21,6 +21,8 @@ import time
 from datetime import datetime, timezone
 
 GCP_PROJECT = os.environ.get("GCP_PROJECT", "shp-ai-bot-2026")
+# A named Firestore database keeps the app's data apart when it shares a project with another app.
+FIRESTORE_DATABASE = os.environ.get("FIRESTORE_DATABASE", "(default)")
 
 # What the assistant may do without asking, per category ("auto" or "ask").
 # "Tiered" autonomy: internal work runs on its own; anything that reaches
@@ -226,7 +228,7 @@ class FirestoreStore(MemoryStore):
         from google.cloud import firestore
 
         self._fs = firestore
-        self._db = firestore.Client(project=GCP_PROJECT)
+        self._db = firestore.Client(project=GCP_PROJECT, database=FIRESTORE_DATABASE)
 
     def _get(self, coll, doc_id):
         snap = self._db.collection(coll).document(doc_id).get()
