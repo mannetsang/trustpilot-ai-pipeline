@@ -149,11 +149,31 @@
     .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); }
     .toolbar .inp { height: 34px; }
 
-    .log { background: #0f1115; color: #d7dbe2; border-radius: 10px; padding: 10px 12px; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 260px; overflow-y: auto; margin-top: 12px; line-height: 1.5; }
+    /* Job progress: plain-language steps with a bar; the technical lines sit in a collapsed Details box. */
+    .job { margin-top: 14px; border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; background: var(--bg); }
+    .job ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+    .step { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; }
+    .step.pending { opacity: .5; }
+    .step-icon { width: 22px; height: 22px; border-radius: 999px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; background: var(--border-subtle); color: var(--text-mute); margin-top: 1px; }
+    .step.running .step-icon { background: var(--brand-soft); }
+    .step.done .step-icon { background: var(--up-soft); color: var(--up-ink); }
+    .step.warn .step-icon { background: var(--warn); color: var(--warn-text); }
+    .step.failed .step-icon { background: var(--down-soft); color: var(--down); }
+    .step-title { font-weight: 600; color: var(--text); }
+    .step-text { color: var(--text-mute); font-size: 12.5px; margin-top: 1px; }
+    .step.failed .step-text { color: var(--down); }
+    .bar { height: 8px; border-radius: 999px; background: var(--border-subtle); overflow: hidden; margin-top: 12px; }
+    .bar > i { display: block; height: 100%; width: 0; background: var(--brand); border-radius: 999px; transition: width .4s ease; }
+    .bar.indeterminate > i { width: 35%; animation: bar-slide 1.3s ease-in-out infinite; }
+    @keyframes bar-slide { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
+    .job details { margin-top: 10px; }
+    .job summary { cursor: pointer; font-size: 11.5px; color: var(--text-mute); user-select: none; }
+    .job summary:hover { color: var(--text); }
+    .log { background: #0f1115; color: #d7dbe2; border-radius: 10px; padding: 10px 12px; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 220px; overflow-y: auto; margin-top: 8px; line-height: 1.5; }
+    .log:empty::before { content: "Nothing yet."; color: #8a909a; }
     .log .ok { color: #7ee2b8; }
     .log .err { color: #ff8a8a; }
     .log .info { color: #9fb6ff; }
-    .log .progress { color: #ffd479; }
 
     .modal-backdrop { position: fixed; inset: 0; background: rgba(10,11,14,0.55); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 12px; }
     .modal { background: var(--surface); border-radius: 16px; box-shadow: 0 24px 60px rgba(0,0,0,0.35), 0 0 0 1px var(--border); width: 760px; max-width: 100%; max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -180,6 +200,7 @@
     .empty { text-align: center; padding: 56px 16px; color: var(--text-mute); }
     .spinner { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.35); border-top-color: #fff; border-radius: 999px; animation: spin .7s linear infinite; display: inline-block; }
     .btn-secondary .spinner { border-color: rgba(0,0,0,0.15); border-top-color: var(--text-mid); }
+    .spinner.dark { width: 12px; height: 12px; border-color: rgba(0,117,77,0.25); border-top-color: var(--brand-ink); }
     @keyframes spin { to { transform: rotate(360deg); } }
     @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
   </style>
@@ -266,7 +287,11 @@
               <div id="aiNote" class="sub hidden">Invoice reading is switched off on this server (AI_DISABLED): matching uses invoices already indexed.</div>
             </div>
           </div>
-          <div id="jobLog" class="log hidden" aria-live="polite"></div>
+          <div id="job" class="job hidden" aria-live="polite">
+            <ol id="jobSteps"></ol>
+            <div id="jobBar" class="bar hidden"><i></i></div>
+            <details id="jobDetails"><summary>Details for troubleshooting</summary><div id="jobLog" class="log"></div></details>
+          </div>
         </section>
 
         <div id="cardStrip" class="flex flex-wrap gap-2 mb-3"></div>
@@ -1098,64 +1123,130 @@
   });
 
   // ---------------------------------------------------------------------------
-  // AP jobs: upload, index, match, notify
+  // AP jobs: upload, index, match, notify. Progress is shown as plain-language steps with a bar;
+  // the technical lines go to the collapsed "Details" box, which opens by itself on a problem.
   // ---------------------------------------------------------------------------
-  var logEl = $('#jobLog'), progressLine = null;
+  var STEP_TITLES = { upload: 'Upload the statement', read: 'Read invoices from the Drive folder', match: 'Match purchases with invoices', notify: 'Send Chat reminders' };
+  var STEP_ICONS = { pending: '', running: '<span class="spinner dark"></span>', done: '✓', warn: '!', failed: '✕' };
+  var logEl = $('#jobLog'), jobEl = $('#job'), stepsEl = $('#jobSteps'), barEl = $('#jobBar'), detailsEl = $('#jobDetails');
+
   function log(text, kind) {
-    logEl.classList.remove('hidden');
     var line = document.createElement('div');
     if (kind) line.className = kind;
     line.textContent = text;
     logEl.appendChild(line);
     logEl.scrollTop = logEl.scrollHeight;
-    progressLine = null;
     return line;
   }
-  function progress(text) {
-    if (!progressLine) progressLine = log(text, 'progress'); else progressLine.textContent = text;
-    logEl.scrollTop = logEl.scrollHeight;
+  // A fresh run: the steps it will go through, all waiting.
+  function startJob(steps) {
+    logEl.innerHTML = '';
+    detailsEl.open = false;
+    stepsEl.innerHTML = steps.map(function (key) {
+      return '<li class="step pending" data-step="' + key + '"><span class="step-icon"></span><div class="min-w-0"><div class="step-title">' + esc(STEP_TITLES[key]) + '</div><div class="step-text"></div></div></li>';
+    }).join('');
+    setBar(null);
+    jobEl.classList.remove('hidden');
+  }
+  // status: pending | running | done | warn | failed. text: the plain-language line under the title.
+  function setStep(key, status, text) {
+    var li = stepsEl.querySelector('li[data-step="' + key + '"]');
+    if (!li) return;
+    li.className = 'step ' + status;
+    $('.step-icon', li).innerHTML = STEP_ICONS[status] || '';
+    $('.step-text', li).textContent = text || '';
+    if (status !== 'running') setBar(null);
+  }
+  // percent: null hides the bar, -1 shows the moving "working on it" bar, 0..100 fills it.
+  function setBar(percent) {
+    if (percent === null || percent === undefined) { barEl.classList.add('hidden'); return; }
+    barEl.classList.remove('hidden');
+    barEl.classList.toggle('indeterminate', percent < 0);
+    $('i', barEl).style.width = percent < 0 ? '' : Math.max(2, Math.min(100, percent)) + '%';
+  }
+  // Marks whatever is running (or next) as failed, with a message a non-technical person can act on.
+  function failStep(message) {
+    var li = stepsEl.querySelector('li.running') || stepsEl.querySelector('li.pending');
+    if (li) setStep(li.dataset.step, 'failed', message);
+    setBar(null);
+    detailsEl.open = true;     // a failure is worth the technical lines
+  }
+  // The server's reasons in words a card owner can act on; anything unknown is shown as is.
+  function friendlyDetail(detail) {
+    detail = String(detail || '');
+    if (/no webhook/i.test(detail)) return 'no Chat space is set up for this card yet';
+    if (/40[34]/.test(detail)) return 'the Chat space no longer accepts messages; its webhook needs replacing';
+    if (/timed? ?out|timeout/i.test(detail)) return 'Google Chat did not answer in time';
+    return detail || 'not sent';
   }
   function setJobRunning(on) {
     state.jobRunning = on;
     ['#uploadBtn', '#rematchBtn', '#notifyBtn'].forEach(function (s) { $(s).disabled = on; });
   }
-  function onBusyWait(what) { return function () { progress(what + ': the server is busy with another job, waiting…'); }; }
+  function count(x, one, many) { x = Number(x) || 0; return x + ' ' + (x === 1 ? one : many); }
+  function onBusyWait(step, what) {
+    return function () { setStep(step, 'running', what + ' is waiting for another job on the server to finish…'); setBar(-1); };
+  }
 
   async function indexLoop(year, month) {
-    var read = 0, errors = 0, rounds = 0, lastRemaining = null, stalls = 0;
-    progress('Reading invoices for ' + monthLabel(year, month) + '…');
+    var read = 0, errors = 0, rounds = 0, lastRemaining = null, stalls = 0, stalled = false, label = monthLabel(year, month);
+    setStep('read', 'running', 'Looking for new invoices for ' + label + ' in the Drive folder…');
+    setBar(-1);
+    log('Reading invoices for ' + label);
     while (true) {
-      var r = await apiRetryBusy('/api/index?year=' + year + '&month=' + month, { method: 'POST' }, onBusyWait('Reading invoices'));
+      var r = await apiRetryBusy('/api/index?year=' + year + '&month=' + month, { method: 'POST' }, onBusyWait('read', 'Reading invoices'));
       rounds++;
-      if (r.skipped) { log('Invoices not read: ' + r.skipped, 'info'); return { read: read, errors: errors }; }
+      if (r.skipped) {
+        log('Invoices not read: ' + r.skipped, 'info');
+        setStep('read', 'warn', 'Invoice reading is switched off on this server; matching uses the invoices already read.');
+        return { read: read, errors: errors };
+      }
       read += Number(r.indexed || 0);
-      (r.errors || []).forEach(function (e) { errors++; log('  could not read ' + (e.file || '?') + ': ' + (e.error || ''), 'err'); });
-      var remaining = Number(r.remaining || 0);
-      progress('Reading invoices… ' + read + ' read, ' + remaining + ' remaining (' + (r.files_seen || 0) + ' files in ' + (r.month_folders || []).join(', ') + ')');
+      (r.errors || []).forEach(function (e) { errors++; log('could not read ' + (e.file || '?') + ': ' + (e.error || ''), 'err'); });
+      var remaining = Number(r.remaining || 0), total = read + remaining;
+      log('batch ' + rounds + ': ' + read + ' read, ' + remaining + ' remaining, ' + (r.files_seen || 0) + ' files in ' + (r.month_folders || []).join(', '));
+      setStep('read', 'running', total ? read + ' of ' + total + ' new invoices read for ' + label + '… each one takes a few seconds' : 'No new invoices to read for ' + label);
+      setBar(total ? Math.round(100 * read / total) : -1);
       if (!remaining) break;
       if (lastRemaining !== null && remaining >= lastRemaining) stalls++; else stalls = 0;
-      if (stalls >= 2) { log('Stopping: the remaining files are not getting read (see the errors above).', 'err'); break; }
+      if (stalls >= 2) { stalled = true; log('Stopping: the remaining files are not getting read (see the errors above).', 'err'); break; }
       lastRemaining = remaining;
-      if (rounds > 200) { log('Stopping after 200 batches.', 'err'); break; }
+      if (rounds > 200) { stalled = true; log('Stopping after 200 batches.', 'err'); break; }
     }
+    var summary = read ? count(read, 'new invoice', 'new invoices') + ' read for ' + label : 'No new invoices for ' + label;
+    if (errors) summary += '; ' + count(errors, 'file', 'files') + ' could not be read (see Details)';
+    if (stalled && !errors) summary += '; some files could not be read (see Details)';
+    setStep('read', errors || stalled ? 'warn' : 'done', summary + '.');
     log('Invoices: ' + read + ' read' + (errors ? ', ' + errors + ' errors' : ''), 'ok');
     return { read: read, errors: errors };
   }
   async function matchStep(year, month) {
-    progress('Matching ' + monthLabel(year, month) + '…');
-    var r = await apiRetryBusy('/api/match?year=' + year + '&month=' + month, { method: 'POST' }, onBusyWait('Matching'));
+    var label = monthLabel(year, month);
+    setStep('match', 'running', 'Pairing each purchase in ' + label + ' with an invoice…');
+    setBar(-1);
+    var r = await apiRetryBusy('/api/match?year=' + year + '&month=' + month, { method: 'POST' }, onBusyWait('match', 'Matching'));
     log('Matching: ' + (r.checked || 0) + ' purchases checked, ' + (r.matched || 0) + ' matched, ' + (r.possible || 0) + ' possible, ' + (r.missing || 0) + ' missing (' + (r.invoices_available || 0) + ' invoices available)', 'ok');
+    var parts = [count(r.matched, 'purchase has', 'purchases have') + ' an invoice'];
+    if (r.possible) parts.push(count(r.possible, 'possible match', 'possible matches') + ' to confirm');
+    parts.push(count(r.missing, 'invoice', 'invoices') + ' still missing');
+    setStep('match', 'done', label + ': ' + parts.join(', ') + '.');
     return r;
   }
   async function notifyStep(year, month) {
-    progress('Sending Chat reminders for ' + monthLabel(year, month) + '…');
-    var r = await apiRetryBusy('/api/notify?year=' + year + '&month=' + month, { method: 'POST' }, onBusyWait('Sending reminders'));
-    var cards = r.cards || [];
+    var label = monthLabel(year, month);
+    setStep('notify', 'running', 'Posting the "invoices needed" card to each card\'s Chat space…');
+    setBar(-1);
+    var r = await apiRetryBusy('/api/notify?year=' + year + '&month=' + month, { method: 'POST' }, onBusyWait('notify', 'Sending reminders'));
+    var cards = r.cards || [], sent = [], failed = [];
     if (!cards.length) log('Reminders: no cards with transactions in this month.', 'info');
     cards.forEach(function (c) {
-      var text = '  ' + cardLabel(c.card) + ': ' + (c.sent ? 'sent' : 'not sent') + ' (' + (c.detail || '') + ')' + (c.missing !== undefined ? ' · ' + c.missing + ' missing, ' + (c.possible || 0) + ' possible' : '');
-      log(text, c.sent ? 'ok' : (c.detail === 'nothing missing' || c.detail === 'card inactive' ? 'info' : 'err'));
+      var fine = c.sent || c.detail === 'nothing missing' || c.detail === 'card inactive';
+      log(cardLabel(c.card) + ': ' + (c.sent ? 'sent' : 'not sent') + ' (' + (c.detail || '') + ')' + (c.missing !== undefined ? ' · ' + c.missing + ' missing, ' + (c.possible || 0) + ' possible' : ''), c.sent ? 'ok' : (fine ? 'info' : 'err'));
+      if (c.sent) sent.push(cardLabel(c.card)); else if (!fine) failed.push(cardLabel(c.card) + ': ' + friendlyDetail(c.detail));
     });
+    var text = sent.length ? 'Reminders sent for ' + sent.join(', ') : (failed.length ? 'No reminder went out' : 'Nothing to send: no card in ' + label + ' is missing an invoice');
+    if (failed.length) text += '. Not sent for ' + failed.join('; ');
+    setStep('notify', failed.length ? 'warn' : 'done', text + '.');
     return r;
   }
   async function reloadAll() {
@@ -1169,20 +1260,26 @@
     if (!file) { toast('Choose a statement file first.', 'err'); return; }
     if (state.jobRunning) return;
     setJobRunning(true);
-    logEl.innerHTML = '';
+    var notify = $('#notifyAfter').checked;
+    startJob(notify ? ['upload', 'read', 'match', 'notify'] : ['upload', 'read', 'match']);
     try {
-      progress('Uploading ' + file.name + '…');
+      setStep('upload', 'running', 'Uploading ' + file.name + ' and reading its transactions…');
+      setBar(-1);
       var fd = new FormData();
       fd.append('file', file, file.name);
       var s = await api('/api/statements', { method: 'POST', body: fd });
       var cardBits = Object.keys(s.cards || {}).sort().map(function (l4) { return l4 + (s.cards[l4].holder_name ? ' (' + s.cards[l4].holder_name + ')' : '') + ' ×' + s.cards[l4].count; });
       log('Statement ' + s.file_name + ': ' + s.transactions + ' transactions, ' + s.new + ' new, ' + s.already_stored + ' already stored' + (s.period_start ? ' · ' + s.period_start + ' to ' + s.period_end : ''), 'ok');
-      log('  cards: ' + (cardBits.join(', ') || 'none') + ' · months: ' + (s.months || []).map(function (ym) { return monthLabel(ym[0], ym[1]); }).join(', '), 'info');
-      (s.warnings || []).forEach(function (w) { log('  warning: ' + w, 'err'); });
-      if (s.drive_link) log('  copy saved to Drive', 'info');
-      $('#fileInput').value = '';
-      var notify = $('#notifyAfter').checked;
+      log('cards: ' + (cardBits.join(', ') || 'none') + ' · months: ' + (s.months || []).map(function (ym) { return monthLabel(ym[0], ym[1]); }).join(', '), 'info');
+      var warnings = s.warnings || [];
+      warnings.forEach(function (w) { log('warning: ' + w, 'err'); });
+      if (s.drive_link) log('copy saved to Drive', 'info');
       var months = s.months || [];
+      var got = count(s.transactions, 'transaction', 'transactions') + ' on ' + count(Object.keys(s.cards || {}).length, 'card', 'cards') +
+        (s.already_stored ? ' (' + s.already_stored + ' already in the dashboard)' : '') +
+        (months.length ? ', for ' + months.map(function (ym) { return monthLabel(ym[0], ym[1]); }).join(' and ') : '');
+      setStep('upload', warnings.length ? 'warn' : 'done', got + (warnings.length ? '. Some lines need a look, see Details.' : '.'));
+      $('#fileInput').value = '';
       await loadMonths();
       try {
         for (var i = 0; i < months.length; i++) {
@@ -1192,8 +1289,10 @@
           if (notify) await notifyStep(y, m);
         }
         log('Done.', 'ok');
+        toast('All done', 'ok');
       } catch (e2) {
-        log('Statement stored, but the follow-up failed: ' + (e2.message || e2) + '. Use "Re-run matching" to try again.', 'err');
+        failStep('The statement is saved, but this step failed: ' + (e2.message || e2) + '. Use "Re-run matching" to try again.');
+        log('Statement stored, but the follow-up failed: ' + (e2.message || e2), 'err');
         report(e2, 'Invoice matching failed');
       }
       await loadMonths();
@@ -1206,6 +1305,7 @@
         await reloadAll();
       }
     } catch (e) {
+      failStep('The upload did not go through: ' + (e.message || e) + '. Check the file and try again.');
       log('Failed: ' + (e.message || e), 'err');
       report(e, 'Upload failed');
     } finally {
@@ -1216,7 +1316,7 @@
   $('#rematchBtn').addEventListener('click', async function () {
     if (state.jobRunning || !state.year) return;
     setJobRunning(true);
-    logEl.innerHTML = '';
+    startJob(['read', 'match']);
     try {
       await indexLoop(state.year, state.month);
       await matchStep(state.year, state.month);
@@ -1224,6 +1324,7 @@
       renderSidebar();
       toast('Matching finished', 'ok');
     } catch (e) {
+      failStep('This step failed: ' + (e.message || e) + '. Try again in a minute.');
       log('Failed: ' + (e.message || e), 'err');
       report(e, 'Matching failed');
     } finally { setJobRunning(false); }
@@ -1233,12 +1334,13 @@
     if (state.jobRunning || !state.year) return;
     if (!window.confirm('Post the "invoices needed" card to the Chat space of every card with missing or possible invoices in ' + monthLabel(state.year, state.month) + '?')) return;
     setJobRunning(true);
-    logEl.innerHTML = '';
+    startJob(['notify']);
     try {
       await notifyStep(state.year, state.month);
       await loadMonth();
       toast('Reminders processed', 'ok');
     } catch (e) {
+      failStep('The reminders could not be sent: ' + (e.message || e) + '. Try again in a minute.');
       log('Failed: ' + (e.message || e), 'err');
       report(e, 'Reminders failed');
     } finally { setJobRunning(false); }
