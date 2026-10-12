@@ -112,9 +112,9 @@ Tests use a fake Google, a fake Gemini and an in-memory store, so they need
 no network or credentials:
 
 ```
-python -m unittest discover -s chat-assistant/tests
+python -m unittest discover -s tests
 ```
 
-`STORE_BACKEND=memory python chat-assistant/src/cloud_run/main.py` runs the
+`STORE_BACKEND=memory python src/cloud_run/main.py` runs the
 app locally against the in-memory store (sign-in still needs a real OAuth
 client).

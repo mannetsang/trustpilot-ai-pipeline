@@ -1,7 +1,7 @@
 """Offline tests for the company-assistant layer: knowledge base, autonomy tiers, learning from chats,
 tools, talking to partners, the interview, and the live voice bridge. No network, no real models.
 
-    python -m unittest discover -s chat-assistant/tests
+    python -m unittest discover -s tests
 """
 
 import asyncio

@@ -214,7 +214,7 @@ OK; that rule is an instruction, not a technical block (Manne accepted this risk
 
 Deploy (once the `web-browser` service account exists):
 
-    gcloud run deploy web-browser --source chat-assistant/src/browser --region us-central1 --project shp-ai-bot-2026 --service-account web-browser@shp-ai-bot-2026.iam.gserviceaccount.com --no-allow-unauthenticated --memory 2Gi --cpu 2 --concurrency 8 --max-instances 1 --timeout 120
+    gcloud run deploy web-browser --source src/browser --region us-central1 --project shp-ai-bot-2026 --service-account web-browser@shp-ai-bot-2026.iam.gserviceaccount.com --no-allow-unauthenticated --memory 2Gi --cpu 2 --concurrency 8 --max-instances 1 --timeout 120
     gcloud run services add-iam-policy-binding web-browser --region us-central1 --project shp-ai-bot-2026 --member serviceAccount:chat-assistant@shp-ai-bot-2026.iam.gserviceaccount.com --role roles/run.invoker
 
 then deploy Man AI with `BROWSER_URL=<the web-browser URL>` added to `--set-env-vars`.
@@ -256,7 +256,7 @@ per-project work loop (plan, do, report) and monitors with alerts.
 
 ## Tests
 
-`python -m unittest discover -s chat-assistant/tests` runs everything offline with a
+`python -m unittest discover -s tests` runs everything offline with a
 fake Google, fake models and a scripted Gemini Live session: the knowledge base,
 autonomy tiers, learning from chats, every tool, the partners, the interview, and the
 voice bridge's audio, transcript and tool-call path.

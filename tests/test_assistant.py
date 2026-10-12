@@ -1,6 +1,6 @@
 """Offline tests: fake Google + fake Gemini, in-memory store. No network, no real chats.
 
-    python -m unittest discover -s chat-assistant/tests
+    python -m unittest discover -s tests
 """
 
 import json

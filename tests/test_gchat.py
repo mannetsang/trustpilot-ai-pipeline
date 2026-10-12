@@ -1,4 +1,4 @@
-"""chat-assistant/scripts/gchat.py: Google Chat from a Claude Code session, never sending without --confirm."""
+"""scripts/gchat.py: Google Chat from a Claude Code session, never sending without --confirm."""
 
 import importlib.util
 import os
