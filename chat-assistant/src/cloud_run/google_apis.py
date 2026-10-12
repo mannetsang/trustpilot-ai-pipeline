@@ -9,6 +9,7 @@ Workspace directory once per run and resolves ids to names and emails.
 """
 
 import json
+import os
 
 import requests
 
@@ -17,6 +18,11 @@ PEOPLE = "https://people.googleapis.com/v1"
 CALENDAR = "https://www.googleapis.com/calendar/v3"
 
 IDENTITY_SCOPES = ["openid", "https://www.googleapis.com/auth/userinfo.email"]
+# Google Chat and the company directory exist only for Google Workspace accounts. GOOGLE_CHAT=0 (an owner on plain
+# Gmail): no Chat or directory permissions are asked for, the hourly run doesn't read chats, and the Chat tools
+# aren't offered. Everything else (calendar, Gmail, Drive, the web, voice, the partners) works the same.
+GOOGLE_CHAT = os.environ.get("GOOGLE_CHAT", "1") != "0"
+WORKSPACE_ONLY = ("/auth/chat.", "/auth/directory.")
 ASSISTANT_SCOPES = IDENTITY_SCOPES + [
     "https://www.googleapis.com/auth/chat.spaces.readonly",
     "https://www.googleapis.com/auth/chat.messages.readonly",
@@ -36,7 +42,8 @@ GOOGLE_TOOL_SCOPES = [
     "https://www.googleapis.com/auth/webmasters.readonly",
     "https://www.googleapis.com/auth/content",               # Merchant Center (changes need Manne's OK)
 ]
-ASSISTANT_SCOPES = ASSISTANT_SCOPES + GOOGLE_TOOL_SCOPES
+ASSISTANT_SCOPES = [s for s in ASSISTANT_SCOPES + GOOGLE_TOOL_SCOPES
+                    if GOOGLE_CHAT or not any(part in s for part in WORKSPACE_ONLY)]
 
 
 class GoogleApiError(RuntimeError):

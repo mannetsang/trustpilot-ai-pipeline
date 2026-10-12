@@ -31,7 +31,8 @@ import assistant
 import integrations
 import knowledge
 import worker
-from google_apis import ASSISTANT_SCOPES, IDENTITY_SCOPES, GoogleClient, credentials_from_json, naive_utc_expiry
+from google_apis import (ASSISTANT_SCOPES, GOOGLE_CHAT, IDENTITY_SCOPES, GoogleClient, credentials_from_json,
+                         naive_utc_expiry)
 from store import AUTONOMY_CATEGORIES, make_secrets, make_store, utcnow_iso
 from talk import PARTNERS, Talk
 
@@ -40,6 +41,8 @@ os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 
 OWNER_EMAIL = os.environ.get("OWNER_EMAIL", "manne@superhairpieces.com").lower()
 OWNER_DOMAIN = OWNER_EMAIL.split("@")[-1]
+# Google's sign-in can be limited to a Workspace domain; a Gmail address has none to limit to.
+HOSTED_DOMAIN = {} if OWNER_DOMAIN in ("gmail.com", "googlemail.com") else {"hd": OWNER_DOMAIN}
 OAUTH_CLIENT_SECRET_ID = os.environ.get("OAUTH_CLIENT_SECRET_ID", "chat-assistant-oauth-client")
 USER_TOKEN_SECRET_ID = os.environ.get("USER_TOKEN_SECRET_ID", "chat-assistant-user-token")
 CHATGPT_VOICE = os.environ.get("CHATGPT_VOICE", "realtime")  # realtime (ChatGPT hears you) | relay (via Gemini)
@@ -144,7 +147,7 @@ def login():
     connect = request.args.get("connect") == "1" or not secret_store.get(USER_TOKEN_SECRET_ID)
     flow = make_flow(ASSISTANT_SCOPES if connect else IDENTITY_SCOPES)
     extra = {"prompt": "consent", "access_type": "offline"} if connect else {"prompt": "select_account"}
-    url, state = flow.authorization_url(login_hint=OWNER_EMAIL, hd=OWNER_DOMAIN, **extra)
+    url, state = flow.authorization_url(login_hint=OWNER_EMAIL, **HOSTED_DOMAIN, **extra)
     session["oauth"] = {"state": state, "verifier": flow.code_verifier, "connect": connect,
                         "back": "access" if request.args.get("back") == "access" else ""}
     return redirect(url)
@@ -161,7 +164,7 @@ def connect_setup():
         return login_page()
     flow = make_flow(IDENTITY_SCOPES + [cloud_setup.CLOUD_SCOPE])
     # online: only a one-hour token, no refresh token (the library asks for offline unless told otherwise)
-    url, state = flow.authorization_url(login_hint=OWNER_EMAIL, hd=OWNER_DOMAIN, access_type="online")
+    url, state = flow.authorization_url(login_hint=OWNER_EMAIL, **HOSTED_DOMAIN, access_type="online")
     then = request.args.get("then", "")
     session["oauth"] = {"state": state, "verifier": flow.code_verifier, "connect": False, "mode": "setup",
                         "then": then if re.fullmatch(r"[a-z0-9_]{1,40}", then) else ""}
@@ -680,7 +683,10 @@ def do_run(trigger):
         google = app.config["MAKE_GOOGLE"]()
         if not google:
             raise assistant.ReconnectNeeded("Google isn't connected yet.")
-        summary = assistant.run(store, google, app.config["MAKE_LLM"](), progress=progress)
+        if GOOGLE_CHAT:
+            summary = assistant.run(store, google, app.config["MAKE_LLM"](), progress=progress)
+        else:  # no Google Chat (a Gmail owner): the run works the assistant's tasks and checks the systems
+            summary = assistant.empty_summary()
         summary["trigger"] = trigger
         progress.phase("Working on the assistant's own tasks")
         try:

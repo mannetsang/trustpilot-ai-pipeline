@@ -17,6 +17,7 @@ import threading
 import time
 
 import integrations
+from google_apis import GOOGLE_CHAT
 import knowledge
 from store import utcnow_iso
 
@@ -25,6 +26,7 @@ MAX_RESULT_CHARS = 12000
 BROWSER_URL = os.environ.get("BROWSER_URL", "").rstrip("/")
 BROWSER_ACTIONS = ["open", "goto", "click", "type", "press", "select", "scroll", "back", "forward", "reload",
                    "screenshot", "close"]
+CHAT_TOOLS = {"list_conversations", "read_conversation", "send_chat_message"}  # Google Workspace only
 LOOK_ONLY = {"open", "goto", "click", "scroll", "back", "forward", "reload", "screenshot", "close"}
 
 
@@ -156,7 +158,8 @@ class Toolset:
         self.images = images
         self._images = []
         self._names = [n for n, _, _ in SPECS if n not in exclude and not (n == "consult_partner" and not consult)
-                       and not (n == "browser" and not BROWSER_URL)]
+                       and not (n == "browser" and not BROWSER_URL)
+                       and not (n in CHAT_TOOLS and not GOOGLE_CHAT)]
 
     def specs(self):
         return [{"name": n, "description": d, "parameters": p} for n, d, p in SPECS if n in self._names]

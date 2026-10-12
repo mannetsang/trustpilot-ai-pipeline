@@ -470,6 +470,14 @@ def _resolve_owner(google, spaces, directory, owner):
 
 # -- the whole pass ---------------------------------------------------------------
 
+def empty_summary(now=None):
+    """A run's counters before anything is read (also the whole Chat part of a run without Google Chat)."""
+    now = now or datetime.now(timezone.utc)
+    return {"started_at": now.isoformat(), "spaces_total": 0, "spaces_processed": 0, "messages": 0,
+            "tasks_created": 0, "tasks_updated": 0, "actions_done": 0, "actions_suggested": 0,
+            "actions_failed": 0, "projects": 0, "facts": 0, "questions": 0, "errors": []}
+
+
 def run(store, google, llm, now=None, progress=None):
     """One pass. A caller that passes `progress` finishes it; otherwise this run finishes its own."""
     if progress is None:
@@ -479,9 +487,7 @@ def run(store, google, llm, now=None, progress=None):
         finally:
             own.finish()
     now = now or datetime.now(timezone.utc)
-    summary = {"started_at": now.isoformat(), "spaces_total": 0, "spaces_processed": 0, "messages": 0,
-               "tasks_created": 0, "tasks_updated": 0, "actions_done": 0, "actions_suggested": 0,
-               "actions_failed": 0, "projects": 0, "facts": 0, "questions": 0, "errors": []}
+    summary = empty_summary(now)
     owner = store.get_owner()
     if not owner:
         raise ReconnectNeeded("no owner has signed in yet")
