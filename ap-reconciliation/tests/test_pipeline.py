@@ -1259,7 +1259,7 @@ class ApiFlowTests(ApiTestCase):
         ids = self.ids()
         row = self.patch(ids["anth"], {"cost_center": "IT & Software", "usage": "Claude Team seats", "note": "monthly"})["transaction"]
         self.assertEqual((row["cost_center"], row["usage"], row["note"], row["updated_by"]),
-                         ("IT & Software", "Claude Team seats", "monthly", "local@dev"))
+                         ("IT & Software", "Claude Team seats", "monthly", "anonymous"))
         self.assertTrue(row["updated_at"])
         self.assertEqual(row["invoice_status"], "missing")
         row = self.patch(ids["anth"], {"usage": "   "})["transaction"]
@@ -1287,7 +1287,7 @@ class ApiFlowTests(ApiTestCase):
         self.inject_invoices()
         row = self.patch(ids["retell"], {"action": "link", "invoice_id": "inv_spare"})["transaction"]
         self.assertEqual((row["invoice_status"], row["invoice_id"], row["match_confidence"], row["match_method"],
-                          row["match_note"]), ("matched", "inv_spare", 1.0, "manual", "linked by local@dev"))
+                          row["match_note"]), ("matched", "inv_spare", 1.0, "manual", "linked by anonymous"))
         self.assertEqual(row["invoice"]["file_name"], "inv_spare.pdf")
         self.assertEqual(row["invoice"]["vendor"], "Spare Vendor")
         self.assertEqual(row["status_label"], "Invoice found")
@@ -1332,7 +1332,7 @@ class ApiFlowTests(ApiTestCase):
         self.patch(ids["anth"], {"action": "confirm"}, expect=400)       # only a possible match can be confirmed
         row = self.patch(ids["amzn"], {"action": "confirm"})["transaction"]
         self.assertEqual((row["invoice_status"], row["match_confidence"], row["match_method"], row["match_note"]),
-                         ("matched", 1.0, "manual", "confirmed by local@dev"))
+                         ("matched", 1.0, "manual", "confirmed by anonymous"))
         self.assertEqual(row["invoice_id"], "inv_far")
         r = self.client.post("/api/match?year=2026&month=9")
         self.assertEqual(r.get_json()["checked"], 4)                       # confirmed and matched lines stay put
@@ -1391,7 +1391,7 @@ class ApiFlowTests(ApiTestCase):
         self.assertEqual(post.call_args_list[0].args[1]["cardsV2"][0]["cardId"], "ap-1610-2026-09")
         logged = self.store.list_notifications(2026, 9)
         self.assertEqual([(n["card_last4"], n["missing_count"], n["ok"], n["sent_by"]) for n in logged],
-                         [("1610", 2, True, "local@dev"), ("2301", 1, True, "local@dev"), ("4894", 3, True, "local@dev")])
+                         [("1610", 2, True, "anonymous"), ("2301", 1, True, "anonymous"), ("4894", 3, True, "anonymous")])
         self.assertEqual(len(logged[2]["transaction_ids"]), 3)
         self.assertEqual(len(self.transactions()["notifications"]), 3)
         with mock.patch.object(chat, "post", return_value=(False, "chat webhook returned 404")):
@@ -1468,6 +1468,27 @@ class MemberRoleTests(ApiTestCase):
             self.assertEqual(self.patch(self.ids_["anth"], {"cost_center": "x"}, expect=401)["error"],
                              "sign in with your superhairpieces.com Google account")
         self.assertEqual(self.client.get("/api/config").status_code, 200)   # public
+
+
+class OpenAccessTests(ApiTestCase):
+    """AUTH_DISABLED=1, the live deployment: no sign-in, everyone is AP, the typed name is recorded."""
+
+    def test_everyone_is_ap_and_the_typed_name_is_recorded(self):
+        self.assertEqual(self.client.get("/api/config").get_json()["auth"], "open")
+        me = self.client.get("/api/me").get_json()
+        self.assertEqual((me["email"], me["name"], me["role"]), ("anonymous", "anonymous", "ap"))
+        me = self.client.get("/api/me", headers={"X-Dashboard-User": "  Kelly (STC)  "}).get_json()
+        self.assertEqual((me["email"], me["role"]), ("Kelly (STC)", "ap"))
+        # Control characters go, the rest is capped at 80 characters.
+        long = self.client.get("/api/me", headers={"X-Dashboard-User": "x\ty" + "z" * 200}).get_json()
+        self.assertEqual(long["email"], "xy" + "z" * 78)
+        self.upload()
+        ids = self.ids()
+        r = self.client.patch(f"/api/transactions/{ids['anth']}", json={"cost_center": "Marketing"},
+                              headers={"X-Dashboard-User": "Kelly"})
+        self.assertEqual(r.status_code, 200, r.get_json())
+        self.assertEqual(r.get_json()["transaction"]["updated_by"], "Kelly")
+        self.assertEqual(self.client.get("/health?deep=1").get_json()["checks"]["auth"]["mode"], "open")
 
 
 class RemindTests(ApiTestCase):

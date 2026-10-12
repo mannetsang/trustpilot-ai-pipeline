@@ -13,8 +13,12 @@ Storage is a dedicated Supabase project (schema in ../schema.sql), reached
 with the service-role key from this server only. STORE=memory runs everything
 in-process for tests and demos.
 
-Endpoints (the browser reaches the service through Identity-Aware Proxy, which signs every
-request it lets through with the X-Goog-IAP-JWT-Assertion header; see README)
+Access. With AUTH_DISABLED=1 (the live deployment, by decision on 2026-10-12) the dashboard is
+open to anyone who can reach it: every caller is "ap" and the name typed into the page
+(X-Dashboard-User header) is what gets recorded. Without it the service expects to sit behind
+Identity-Aware Proxy and verifies the X-Goog-IAP-JWT-Assertion header (see README).
+
+Endpoints
   GET  /                         dashboard
   GET  /health[?deep=1]          liveness; deep=1 also checks Supabase and the Invoice folder
   GET  /api/config               auth mode, dashboard URL (public, no secrets)
@@ -92,6 +96,7 @@ IAP_AUDIENCE = os.environ.get("IAP_AUDIENCE", "")
 IAP_HEADER = "X-Goog-IAP-JWT-Assertion"
 IAP_CERTS_URL = "https://www.gstatic.com/iap/verify/public_key"
 IAP_ISSUER = "https://cloud.google.com/iap"
+DASHBOARD_USER_HEADER = "X-Dashboard-User"     # open mode: the name typed into the page
 ALLOWED_DOMAINS = set(_csv("ALLOWED_DOMAINS", "superhairpieces.com"))
 AP_EMAILS = set(_csv("AP_EMAILS", "ap@superhairpieces.com,manne@superhairpieces.com"))
 AUTH_DISABLED = os.environ.get("AUTH_DISABLED") == "1"
@@ -106,12 +111,13 @@ INDEX_WORKERS = int(os.environ.get("INDEX_WORKERS", "4"))
 MAX_INDEX_ROUNDS = 100
 SERVICE = "ap-reconciliation"
 
-if AUTH_DISABLED and os.environ.get("K_SERVICE"):
-    # K_SERVICE is set by Cloud Run; an open dashboard there would make every caller "ap".
-    raise SystemExit("AUTH_DISABLED=1 is only for local runs, never on Cloud Run")
-if os.environ.get("K_SERVICE") and not AUTH_DISABLED and not IAP_AUDIENCE:
+if AUTH_DISABLED:
+    # Chosen for the live deployment on 2026-10-12: anyone who can reach the URL sees every card
+    # and may change anything, as AP. Unset it and deploy with --iap to put Google sign-in back.
+    print("AUTH_DISABLED=1: the dashboard is open to anyone who can reach it; every caller is AP")
+elif os.environ.get("K_SERVICE") and not IAP_AUDIENCE:
     # Without the audience no assertion can be checked, so nobody could get in anyway.
-    raise SystemExit("IAP_AUDIENCE is required on Cloud Run (the service sits behind Identity-Aware Proxy)")
+    raise SystemExit("IAP_AUDIENCE is required on Cloud Run when AUTH_DISABLED is not set (Identity-Aware Proxy)")
 
 STATUS_LABELS = {"matched": "Invoice found", "possible": "Possible match", "missing": "Invoice missing",
                  "waived": "No invoice (waived)", "not_required": "No invoice needed"}
@@ -172,21 +178,59 @@ class AuthError(Exception):
         self.status, self.message = status, message
 
 
+_iap_keys = {"fetched": 0.0, "keys": {}}
+IAP_KEYS_TTL = 3600          # IAP rotates keys rarely; an unknown key id refreshes early
+IAP_KEYS_COOLDOWN = 60       # but garbage key ids cannot make us hammer gstatic
+
+
+def fetch_iap_keys():
+    """IAP's published public keys: a JSON map of key id to PEM. Tests patch this."""
+    import requests as http
+    resp = http.get(IAP_CERTS_URL, timeout=10)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def iap_keys(kid):
+    """The key map, cached in-process so verifying an assertion normally costs no network call."""
+    now = time.time()
+    with _token_lock:
+        age = now - _iap_keys["fetched"]
+        known = not kid or kid in _iap_keys["keys"]
+        if (age < IAP_KEYS_TTL and known) or age < IAP_KEYS_COOLDOWN:
+            return _iap_keys["keys"]
+    keys = fetch_iap_keys()
+    with _token_lock:
+        _iap_keys.update({"fetched": time.time(), "keys": keys})
+    return keys
+
+
 def verify_iap_jwt(token):
     """Check the signed header IAP adds to every request: ES256, IAP's published keys, our audience."""
-    from google.auth.transport import requests as google_requests
-    from google.oauth2 import id_token as google_id_token
-    info = google_id_token.verify_token(token, google_requests.Request(), audience=IAP_AUDIENCE,
-                                        certs_url=IAP_CERTS_URL, clock_skew_in_seconds=30)
+    from google.auth import jwt as google_jwt
+    kid = google_jwt.decode_header(token).get("kid")
+    info = google_jwt.decode(token, certs=iap_keys(kid), audience=IAP_AUDIENCE, clock_skew_in_seconds=30)
     if info.get("iss") != IAP_ISSUER:
         raise ValueError(f"unexpected issuer {info.get('iss')!r}")
     return info
 
 
+def declared_user():
+    """Open mode: the name the page says is typing (remembered in the browser), else "anonymous"."""
+    try:
+        raw = request.headers.get(DASHBOARD_USER_HEADER, "")
+    except RuntimeError:            # no request: the CLI or the weekly job
+        raw = ""
+    name = "".join(ch for ch in raw if ch.isprintable()).strip()[:80]
+    return name or "anonymous"
+
+
 def current_user():
-    """Who IAP signed in, from its assertion header; None when the request did not come through IAP."""
+    """Open mode: whoever says they are typing, as AP. Behind IAP: who its assertion header names,
+    or None when the request did not come through IAP."""
     if AUTH_DISABLED:
-        return {"email": "local@dev", "name": "Local developer", "role": "ap", "picture": ""}
+        who = declared_user()
+        return {"email": who, "name": who, "role": "ap", "picture": ""}
     token = request.headers.get(IAP_HEADER, "").strip()
     if not token or not IAP_AUDIENCE:
         return None
@@ -221,6 +265,11 @@ def require_user(ap_only=False):
     user = current_user()
     if not user:
         raise AuthError(401, "sign in with your superhairpieces.com Google account")
+    if (not AUTH_DISABLED and request.method not in ("GET", "HEAD", "OPTIONS")
+            and request.headers.get("X-Requested-With") != "XMLHttpRequest"):
+        # Behind IAP identity rides on a browser cookie, so a form on another site could post here
+        # with it; the page sends this header on every call and a cross-site form cannot.
+        raise AuthError(403, "changes must come from the dashboard page (X-Requested-With header)")
     if ap_only and user["role"] != "ap":
         raise AuthError(403, "only the accounts-payable team can do this")
     g.user = user
@@ -549,7 +598,7 @@ def healthz():
         except Exception as exc:  # noqa: BLE001
             checks["drive"] = {"ok": False, "error": str(exc)[:160]}
         checks["chat_webhooks"] = sorted(k for k in CARD_WEBHOOKS if k != "default") + (["default"] if "default" in CARD_WEBHOOKS else [])
-        checks["auth"] = {"mode": "disabled" if AUTH_DISABLED else "iap", "audience": IAP_AUDIENCE}
+        checks["auth"] = {"mode": "open" if AUTH_DISABLED else "iap", "audience": IAP_AUDIENCE}
         body["checks"] = checks
         body["ok"] = checks["store"]["ok"] and checks["drive"]["ok"]
     return jsonify(body)
@@ -557,7 +606,7 @@ def healthz():
 
 @app.route("/api/config")
 def api_config():
-    return jsonify({"auth": "disabled" if AUTH_DISABLED else "iap", "auth_disabled": AUTH_DISABLED,
+    return jsonify({"auth": "open" if AUTH_DISABLED else "iap", "auth_disabled": AUTH_DISABLED,
                     "dashboard_url": dashboard_url(), "invoice_folder_url": folder_url(INVOICE_FOLDER_ID),
                     "ai_enabled": not AI_DISABLED})
 

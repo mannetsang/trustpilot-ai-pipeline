@@ -219,6 +219,7 @@
         <select id="monthSelect" class="inp" aria-label="Month" style="height: 36px; font-weight: 600;"></select>
       </div>
       <div class="ml-auto flex items-center gap-2 min-w-0">
+        <input id="whoAmI" class="inp hidden" type="text" placeholder="Your name" maxlength="80" autocomplete="name" aria-label="Your name, recorded with your changes" title="Recorded as 'Updated by' on anything you change; remembered by this browser" style="width: 150px; height: 30px;" />
         <div id="userChip" class="flex items-center gap-2 min-w-0"></div>
         <a id="switchAccount" class="btn btn-ghost btn-xs hidden" href="/_gcp_iap/clear_login_cookie" title="Sign out of this site to pick another Google account">Switch account</a>
       </div>
@@ -316,6 +317,10 @@
   var STATUS_PILL = { matched: 'pill-up', possible: 'pill-warn', missing: 'pill-down', waived: 'pill-grey', not_required: 'pill-grey' };
   var STATUS_FILTERS = [['all', 'All'], ['missing', 'Missing'], ['possible', 'Possible'], ['matched', 'Matched'], ['waived', 'Waived'], ['uncoded', 'No cost centre']];
 
+  // Open access: the name typed into the header is sent with every call and recorded as "Updated by".
+  var NAME_KEY = 'ap_recon_user';
+  function currentName() { try { return (localStorage.getItem(NAME_KEY) || '').trim().slice(0, 80); } catch (e) { return ''; } }
+
   var state = {
     config: null, me: null,
     months: [], cards: [], costCenters: [],
@@ -381,7 +386,9 @@
   async function api(path, opts) {
     opts = opts || {};
     var headers = Object.assign({}, opts.headers || {});
-    headers['X-Requested-With'] = 'XMLHttpRequest';   // an ended IAP session then answers 401 instead of redirecting
+    headers['X-Requested-With'] = 'XMLHttpRequest';   // behind IAP an ended session then answers 401 instead of redirecting
+    var who = currentName();
+    if (who) headers['X-Dashboard-User'] = who;
     var res;
     try {
       res = await fetch(path, Object.assign({}, opts, { headers: headers, cache: 'no-store' }));
@@ -454,6 +461,8 @@
     $('#gate').classList.add('hidden');
     $('#app').classList.remove('hidden');
     $('#switchAccount').classList.toggle('hidden', !!state.config.auth_disabled);
+    $('#whoAmI').classList.toggle('hidden', !state.config.auth_disabled);
+    $('#whoAmI').value = currentName();
     var isAp = state.me.role === 'ap';
     $('#apPanel').classList.toggle('hidden', !isAp);
     $('#apLists').classList.toggle('hidden', !isAp);
@@ -958,6 +967,10 @@
     var p = ev.target.value.split('-'); if (p.length === 2) navigate(Number(p[0]), Number(p[1]), '');
   });
   $('#gateReload').addEventListener('click', function () { location.reload(); });
+  $('#whoAmI').addEventListener('change', async function () {
+    try { localStorage.setItem(NAME_KEY, this.value.trim().slice(0, 80)); } catch (e) { /* private mode: the name lasts for this page only */ }
+    try { state.me = await api('/api/me'); renderUser(); } catch (e) { report(e, 'Could not update your name'); }
+  });
 
   // ---------------------------------------------------------------------------
   // Modal

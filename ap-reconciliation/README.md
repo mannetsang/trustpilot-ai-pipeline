@@ -136,35 +136,47 @@ dropped, and one that is off by more than 2% can only be `possible`. The
 `confirm` a possible match, `link` an invoice chosen from the picker,
 `unlink`, `waive` (no invoice exists, with a reason) and `unwaive`.
 
-## Roles and sign-in
+## Access and roles
 
-The service runs behind **Identity-Aware Proxy** (IAP, enabled on the Cloud
-Run service itself): Google signs the person in before any request reaches
-the container, and only accounts on IAP's access list (the
-`superhairpieces.com` domain, step 5 of the setup) get through. IAP adds the
-signed header `X-Goog-IAP-JWT-Assertion` to every request it forwards; the
-app verifies it (ES256, IAP's published keys, `IAP_AUDIENCE` as the audience,
-issuer `https://cloud.google.com/iap`), takes the e-mail from it, requires
-the domain to be in `ALLOWED_DOMAINS` (`superhairpieces.com`) and derives
-the role:
+**The live dashboard has no sign-in**, by decision on 2026-10-12: the
+service is public (`--allow-unauthenticated --no-iap`) and runs with
+`AUTH_DISABLED=1`, so anyone who can reach the URL sees every card and may
+change anything. Every visitor acts as `ap`; the name typed into the
+*Your name* box in the header (remembered by that browser, sent as the
+`X-Dashboard-User` header) is what *Updated by*, *uploaded by* and the
+notification log record, `anonymous` when the box is empty. Treat the URL
+accordingly: it is the only thing between the internet and the card data.
+
+The sign-in that was built, and can be switched back on in one deploy
+(step 5 of the setup), is **Identity-Aware Proxy** (IAP) on the Cloud Run
+service: Google signs the person in before any request reaches the
+container, only accounts on IAP's access list (the `superhairpieces.com`
+domain) get through, and the app verifies the signed header
+`X-Goog-IAP-JWT-Assertion` IAP adds (ES256, IAP's published keys,
+`IAP_AUDIENCE` as the audience, issuer `https://cloud.google.com/iap`),
+takes the e-mail from it, requires the domain to be in `ALLOWED_DOMAINS` and
+derives the role:
 
 | Role | Who | May |
 |---|---|---|
-| `ap` | the addresses in `AP_EMAILS` (`ap@`, `manne@`) | upload, index, match, notify, edit cards, edit every transaction |
-| `member` | anyone else in the domain | read everything; edit only the transactions of cards whose **owner e-mail** (set by AP under *Cards...*) is theirs. `/api/transactions` returns an `editable` flag per row and the page disables the rest |
+| `ap` | the addresses in `AP_EMAILS` (`ap@`, `manne@`); everyone, in open mode | upload, index, match, notify, edit cards, edit every transaction |
+| `member` | anyone else in the domain (IAP mode only) | read everything; edit only the transactions of cards whose **owner e-mail** (set by AP under *Cards...*) is theirs. `/api/transactions` returns an `editable` flag per row and the page disables the rest |
 
-Nothing is reachable without IAP: the service has no `allUsers` invoker,
-only IAP's service agent, so a request that does not come through IAP is
-refused by Cloud Run before the app sees it, and the app itself answers 401
-to any `/api` call without a valid assertion. There is no OAuth client, no
-sign-in button and no token in the page. With `AUTH_DISABLED=1` (local runs
-only; refused on Cloud Run) every caller is `ap`.
+In IAP mode nothing is reachable without IAP: the service has no `allUsers`
+invoker, only IAP's service agent, and the app answers 401 to any `/api`
+call without a valid assertion. Because identity then rides on IAP's browser
+cookie, changing calls (POST, PATCH, DELETE) must also carry
+`X-Requested-With: XMLHttpRequest`, which the page sends on every call and a
+form on another site cannot; `curl` adds `-H "X-Requested-With: XMLHttpRequest"`.
+IAP's public keys are cached in the process for an hour. There is no OAuth
+client, no sign-in button and no token in the page in either mode.
 
 ## Dashboard
 
-- **No sign-in screen**: IAP has already signed the person in. *Switch
-  account* in the header clears IAP's cookie for this site; when the Google
-  session ends mid-use the page shows a *Reload* gate instead of errors.
+- **No sign-in**: the page opens for anyone with the link. A *Your name*
+  box in the header (remembered by the browser) is what *Updated by*
+  records. (Behind IAP the box is hidden, *Switch account* clears IAP's
+  cookie for this site, and an ended Google session shows a *Reload* gate.)
 - **Months** down the left (newest first), each with its spend and badges for
   missing and possible invoices; the URL hash is `#/YYYY/MM?card=1610`, which
   is what the Chat card buttons open.
@@ -210,7 +222,7 @@ under *Cards...*) are never notified.
 
 ## Endpoints
 
-Every path sits behind IAP; *Auth* is what the app checks on top of that.
+*Auth* is what the app checks: in open mode (the live deployment) every caller is `ap`, so "signed in" means anyone; behind IAP it means a valid assertion.
 
 | Method and path | Auth | What it does |
 |---|---|---|
@@ -245,10 +257,10 @@ Job endpoints answer `409 {"status": "busy"}` while another job runs and
 | `GOOGLE_WORKSPACE_AP_CLIENT_ID` / `_CLIENT_SECRET` / `_REFRESH_TOKEN` | | the AP user's OAuth triple for Drive; secrets. ADC when unset |
 | `CARD_WEBHOOKS_JSON` | | the webhook object above; secret |
 | `GCHAT_WEBHOOK_URL` | empty | optional single fallback webhook |
-| `IAP_AUDIENCE` | | what the IAP assertion's audience must be, `/projects/304363458561/locations/us-central1/services/ap-reconciliation`; the workflow sets it and the service refuses to start on Cloud Run without it |
+| `IAP_AUDIENCE` | | IAP mode only: what the assertion's audience must be, `/projects/304363458561/locations/us-central1/services/ap-reconciliation`; required on Cloud Run when `AUTH_DISABLED` is not set |
 | `ALLOWED_DOMAINS` | `superhairpieces.com` | comma-separated e-mail domains allowed in, on top of IAP's access list |
 | `AP_EMAILS` | `ap@superhairpieces.com,manne@superhairpieces.com` | addresses with the `ap` role |
-| `AUTH_DISABLED` | | `1` skips the IAP check and makes every caller `ap` (local only; refused on Cloud Run) |
+| `AUTH_DISABLED` | | `1` opens the dashboard to anyone who can reach it and makes every caller `ap`; the live deployment since 2026-10-12, by decision, and the setting for local runs |
 | `DASHBOARD_URL` | request origin | absolute URL for the Chat card buttons; the workflow sets it |
 | `GCP_PROJECT` / `VERTEX_LOCATION` | `shp-ai-bot-2026` / `us-central1` | where Gemini runs (ADC) |
 | `GEMINI_EXTRACT_MODEL` / `GEMINI_MATCH_MODEL` | see `main.py` | the reading and judging models |
@@ -318,25 +330,23 @@ this repo.
    a card is added, pasting the one-line JSON at the prompt:
    `python -c "import getpass,sys,json; sys.stdout.write(json.dumps(json.loads(getpass.getpass('Paste the webhook JSON, then Enter: '))))" | gcloud secrets versions add ap-reconciliation-card-webhooks --data-file=- --project=shp-ai-bot-2026`
    (the `json.loads` rejects a typo before anything is stored).
-5. **Identity-Aware Proxy (sign-in).** The deploy runs the service with
-   `--no-allow-unauthenticated --iap`, so Google signs people in before a
-   request reaches the container; the page needs nothing, the app only
-   `IAP_AUDIENCE`, which the workflow sets. Four one-time commands by an
-   owner (the deploy identity may not enable APIs or grant roles):
+5. **Access.** The live deployment is open: the workflow deploys with
+   `--allow-unauthenticated --no-iap` and `AUTH_DISABLED=1`, nothing to set
+   up, anyone with the URL is AP. To require a Google sign-in instead
+   (Identity-Aware Proxy, no button or popup for people already signed in
+   to Google), change the workflow to `--no-allow-unauthenticated --iap`
+   and replace `AUTH_DISABLED=1` in its `--set-env-vars` with
+   `IAP_AUDIENCE=/projects/304363458561/locations/us-central1/services/ap-reconciliation`,
+   then push. The one-time grants are already in place (done 2026-10-12:
+   the IAP API is enabled, IAP's service agent may invoke the service, and
+   the `superhairpieces.com` domain holds `roles/iap.httpsResourceAccessor`
+   on the service); for a fresh project they are, by an owner:
    `gcloud services enable iap.googleapis.com --project=shp-ai-bot-2026`
    `gcloud beta services identity create --service=iap.googleapis.com --project=shp-ai-bot-2026`
    `gcloud run services add-iam-policy-binding ap-reconciliation --region=us-central1 --project=shp-ai-bot-2026 --member="serviceAccount:service-304363458561@gcp-sa-iap.iam.gserviceaccount.com" --role="roles/run.invoker"`
    `gcloud iap web add-iam-policy-binding --project=shp-ai-bot-2026 --resource-type=cloud-run --region=us-central1 --service=ap-reconciliation --member="domain:superhairpieces.com" --role="roles/iap.httpsResourceAccessor"`
-   The first two enable the API and create IAP's service agent; the third
-   lets that agent (and nobody else: there is no `allUsers` invoker) reach
-   the service; the fourth lets every superhairpieces.com Google account
-   through IAP, and the app applies `ALLOWED_DOMAINS` and `AP_EMAILS` on
-   top. If the last command answers that the resource does not exist, run
-   it again once a deploy has enabled IAP on the service. To let one
-   outside person in, grant the same role to `user:<address>`. This
-   replaced the Google Identity Services sign-in on 2026-10-12, which needed
-   the service URL registered as an authorised JavaScript origin of an
-   OAuth client; IAP needs none of that.
+   (the last one only after a deploy has enabled IAP on the service). The
+   app then applies `ALLOWED_DOMAINS` and `AP_EMAILS` on top of IAP's list.
 6. **IAM grants.** One per secret. The webhooks and API token secrets
    were granted when they were created; the Supabase key and the three AP
    Drive secrets (which pre-date this service) still need it:
@@ -424,8 +434,9 @@ python main.py remind
 python main.py serve --port 8765
 ```
 
-`serve` without `AUTH_DISABLED` answers 401 to every `/api` call, because
-only IAP can add the assertion header; local runs use `AUTH_DISABLED=1`.
+`serve` without `AUTH_DISABLED` is IAP mode and answers 401 to every `/api`
+call, because only IAP can add the assertion header; local runs use
+`AUTH_DISABLED=1`, which is also how the live service runs.
 
 **Tests** (standard library, no network): from `ap-reconciliation`,
 `python -m unittest discover -s tests -v`.
@@ -438,7 +449,8 @@ through Workload Identity Federation (`docs/credentials.md`), deploys with
 `--source` (one instance, 1 GiB, 30-minute request timeout), mounts the
 secrets above, then reads the service URL and sets `DASHBOARD_URL` to it so
 the Chat card buttons point at the right place. The service is deployed
-with `--no-allow-unauthenticated --iap` (step 5 of the setup). A last step
+public and open (`--allow-unauthenticated --no-iap`, `AUTH_DISABLED=1`; step
+5 of the setup says how to put sign-in back). A last step
 deploys the Cloud Run job `ap-reconciliation-remind` from the same image
 and only warns when `claude-sessions` may not manage jobs.
 
@@ -459,14 +471,16 @@ next idle period, or at once with *Run workflow*.
 | `database error: GET transactions -> 401` (PostgREST) | `SUPABASE_SERVICE_KEY` is wrong: the anon key instead of `service_role`, or the key was rotated in Supabase. Add the right one as a new secret version and redeploy |
 | `database error: ... 404 ... relation "..." does not exist` | the schema is not applied to this project: `setup_db.py --project-ref <ref>` |
 | `database error: ... 5xx` or connection errors for hours | the Supabase project is paused (free-tier projects pause after a week idle). Restore it from the dashboard; consider the paid tier |
-| Google answers *You don't have access* (IAP's 403 page) | the account is not on IAP's access list: the last command of step 5 (the domain), or a `user:` grant; a minute to take effect |
-| Cloud Run answers 403 *Forbidden* without a Google sign-in page | IAP is not enabled on the service (a deploy before step 5, or `--no-iap`): run the workflow again after step 5 |
-| 401 *sign in with your superhairpieces.com Google account* for a real colleague | the account got through IAP but is outside `ALLOWED_DOMAINS`; or `IAP_AUDIENCE` does not match the service (`/health?deep=1` shows it, the logs say *IAP assertion rejected*) |
-| The page shows *Your Google session has ended* | IAP's session expired (about an hour); *Reload* signs in again |
+| Anyone can open the dashboard and change things | by decision (step 5): the live deployment has no sign-in. To require one, deploy behind IAP as step 5 describes |
+| *Updated by* says `anonymous` | the person left the *Your name* box in the header empty; the name is remembered per browser |
+| (IAP mode) Google answers *You don't have access* | the account is not on IAP's access list: the domain grant in step 5, or a `user:` grant; a minute to take effect |
+| (IAP mode) Cloud Run answers 403 *Forbidden* without a Google sign-in page | IAP is not enabled on the service (`--no-iap`): deploy with `--iap` |
+| (IAP mode) 401 *sign in with your superhairpieces.com Google account* for a real colleague | the account got through IAP but is outside `ALLOWED_DOMAINS`; or `IAP_AUDIENCE` does not match the service (`/health?deep=1` shows it, the logs say *IAP assertion rejected*) |
+| (IAP mode) The page shows *Your Google session has ended* | IAP's session expired (about an hour); *Reload* signs in again |
 | Notify says *no webhook configured for this card* | add the card's `last4` (or a `default`) to `CARD_WEBHOOKS_JSON`, new secret version, redeploy |
 | Notify says *chat webhook returned 404/403* | the webhook was deleted in the space or the space was archived; create a new one and update the secret |
 | Deploy fails with *Permission denied on secret* or *secret not found* | step 6 (grant) or steps 3-4 (create) were skipped for that secret |
-| Deploy fails on `--iap` (*IAP API has not been used*, service agent missing) | the first two commands of step 5 were not run |
+| Deploy fails on `--iap` (*IAP API has not been used*, service agent missing) | the first two IAP commands in step 5 were not run |
 | The weekly reminder never runs, or the scheduler run fails with 403 | the scheduler job was not created, or the compute account may not start the Cloud Run job: step 8 |
 | Upload reports `new: 0` | the same lines are already stored (ids are deterministic); nothing is lost. Legacy `.xls` is refused: save as `.xlsx` |
 | Everything stays `missing` although invoices are filed | the invoices are not indexed yet (`AI_DISABLED`, or `remaining` > 0), are filed under a month folder outside month-1..month+1, or have no readable total (`extraction_error` in the picker) |

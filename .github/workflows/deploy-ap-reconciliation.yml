@@ -10,15 +10,15 @@ name: Deploy AP credit-card reconciliation service
 # values in this file: the Supabase service-role key, the AP user's Drive
 # OAuth triple and the per-card Chat webhooks.
 #
-# Sign-in is Identity-Aware Proxy on the service itself (--iap): Google signs
-# people in before a request reaches the container, and the app reads who
-# they are from the signed header IAP adds. No OAuth client, no token in the
-# page. IAP needs two one-time grants an owner makes (README, "One-time
-# setup"): its service agent as invoker of this service, and the Workspace
-# domain as IAP-secured Web App User.
+# Access: open, by decision on 2026-10-12. The service is public
+# (--allow-unauthenticated --no-iap) and AUTH_DISABLED=1 tells the app to
+# treat every visitor as AP, recording the name typed into the page. To put
+# Google sign-in back, switch to --no-allow-unauthenticated --iap, replace
+# AUTH_DISABLED with IAP_AUDIENCE=/projects/304363458561/locations/us-central1/services/ap-reconciliation
+# and follow README step 5 (the IAP grants are already in place).
 #
-# The Supabase project URL and the project number are set inline below: they
-# are public identifiers, not secrets.
+# The Supabase project URL is set inline below: a public identifier, not a
+# secret.
 
 on:
   push:
@@ -37,7 +37,6 @@ permissions:
 
 env:
   PROJECT: shp-ai-bot-2026
-  PROJECT_NUMBER: "304363458561"
   REGION: us-central1
   SERVICE: ap-reconciliation
   JOB: ap-reconciliation-remind
@@ -60,22 +59,20 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
-      # Behind IAP and closed to anonymous callers: only IAP's service agent may
-      # invoke the service, and it only forwards signed-in people on the access
-      # list. IAP_AUDIENCE is what the app checks the signed header against.
-      # One instance, because jobs serialize on an in-process lock. 30 minutes
-      # because a synchronous upload reads every new invoice before it
-      # answers. The "^;^" prefix makes gcloud split the env-var list on
-      # semicolons instead of commas, because AP_EMAILS holds a comma-separated
-      # list itself.
+      # Public and open: anyone who reaches the URL gets the dashboard as AP
+      # (AUTH_DISABLED=1), by decision. One instance, because jobs serialize
+      # on an in-process lock. 30 minutes because a synchronous upload reads
+      # every new invoice before it answers. The "^;^" prefix makes gcloud
+      # split the env-var list on semicolons instead of commas, because
+      # AP_EMAILS holds a comma-separated list itself.
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy "$SERVICE" \
             --source ./ap-reconciliation/cloud_run \
             --region "$REGION" --project "$PROJECT" \
-            --no-allow-unauthenticated --iap \
+            --allow-unauthenticated --no-iap \
             --min-instances 0 --max-instances 1 --timeout 1800 --memory 1Gi \
-            --set-env-vars "^;^INVOICE_FOLDER_ID=$INVOICE_FOLDER_ID;ALLOWED_DOMAINS=$ALLOWED_DOMAINS;AP_EMAILS=$AP_EMAILS;SUPABASE_URL=$SUPABASE_URL;IAP_AUDIENCE=/projects/$PROJECT_NUMBER/locations/$REGION/services/$SERVICE" \
+            --set-env-vars "^;^INVOICE_FOLDER_ID=$INVOICE_FOLDER_ID;ALLOWED_DOMAINS=$ALLOWED_DOMAINS;AP_EMAILS=$AP_EMAILS;SUPABASE_URL=$SUPABASE_URL;AUTH_DISABLED=1" \
             --set-secrets "$SECRETS" \
             --quiet
 

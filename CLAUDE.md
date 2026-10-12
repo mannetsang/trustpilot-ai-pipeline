@@ -99,8 +99,9 @@ card statement or RBC transaction export, Gemini reads every invoice in the
 AP user's Drive folder **Invoice** (`18YkGTNDIrxdQgHRgquvQizI8fLsFOpPk`, laid
 out `Invoice/YYYY MM/<vendor>/`), purchases are matched to invoices, each
 card's own Chat space gets an "invoices needed" card, and card owners code
-the cost centre and usage on the dashboard (behind Identity-Aware Proxy;
-roles `ap` and `member`). Storage is a **separate Supabase project** (ref
+the cost centre and usage on the dashboard (open to anyone with the link, by
+decision on 2026-10-12: no sign-in, every visitor acts as AP and types a
+name; Identity-Aware Proxy sign-in can be switched back on, see the README). Storage is a **separate Supabase project** (ref
 `bkkifrwfgtcnmfynbbdd`; schema in `ap-reconciliation/schema.sql`, applied
 with `setup_db.py`), not shared with anything else. Secrets are `ap-reconciliation-*` plus the AP user's Drive
 OAuth triple `google-workspace-ap-*`; see `ap-reconciliation/README.md`.
