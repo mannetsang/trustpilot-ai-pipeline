@@ -82,6 +82,14 @@
     .inp.saving { border-color: var(--warn-strong); }
     select.inp { padding-right: 24px; appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b6f78' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; }
     input[type="file"].inp { padding: 5px 9px; height: auto; }
+    /* Upload drop zone: drag a statement onto it, or click to browse. */
+    .dropzone { position: relative; display: block; border: 1.5px dashed var(--border); border-radius: 12px; padding: 18px 16px; text-align: center; cursor: pointer; background: var(--surface); transition: border-color .15s ease, background-color .15s ease; }
+    .dropzone:hover, .dropzone:focus-within { border-color: var(--brand); }
+    .dropzone.over { border-color: var(--brand); background: var(--brand-soft); }
+    .dropzone input[type="file"] { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+    .dropzone .dz-text { font-size: 13px; color: var(--text-mid); }
+    .dropzone .dz-text b { color: var(--text); }
+    .dropzone .dz-file { margin-top: 8px; font-size: 12.5px; font-weight: 600; color: var(--brand-ink); }
     input[type="checkbox"] { accent-color: var(--brand); width: 15px; height: 15px; }
 
     /* Layout: dark sidebar on the left, scrolling main area on the right. Under 900px the sidebar
@@ -284,7 +292,11 @@
           <div class="flex flex-wrap gap-6">
             <form id="uploadForm" class="flex flex-col gap-2 flex-1 min-w-[260px]">
               <div class="label">Upload statement</div>
-              <input type="file" id="fileInput" class="inp" accept=".xlsx,.csv,.pdf,.jpg,.jpeg,.png" />
+              <label id="dropZone" class="dropzone" for="fileInput">
+                <input type="file" id="fileInput" accept=".xlsx,.xlsm,.csv,.tsv,.pdf,.jpg,.jpeg,.png" />
+                <div class="dz-text"><b>Drop the statement here</b> or click to choose a file<div class="sub mt-1">RBC transaction export (.xlsx, .csv), or a statement as PDF or photo</div></div>
+                <div id="dzFile" class="dz-file hidden"></div>
+              </label>
               <div class="sub">After matching, the page shows which cards would get a Chat reminder and waits for you to send them.</div>
               <div><button type="submit" id="uploadBtn" class="btn btn-primary">Upload and process</button></div>
             </form>
@@ -1531,6 +1543,34 @@
     if (state.year) { await loadMonth(); }
   }
 
+  var ACCEPTED = /\.(xlsx|xlsm|csv|tsv|pdf|jpe?g|png)$/i;
+  function showChosenFile() {
+    var f = $('#fileInput').files[0], el = $('#dzFile');
+    el.textContent = f ? f.name + ' (' + (f.size > 1048576 ? (f.size / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(f.size / 1024)) + ' KB') + ')' : '';
+    el.classList.toggle('hidden', !f);
+  }
+  $('#fileInput').addEventListener('change', showChosenFile);
+  ['dragenter', 'dragover'].forEach(function (name) {
+    $('#dropZone').addEventListener(name, function (ev) { ev.preventDefault(); ev.stopPropagation(); $('#dropZone').classList.add('over'); });
+  });
+  ['dragleave', 'dragend'].forEach(function (name) {
+    $('#dropZone').addEventListener(name, function (ev) { ev.preventDefault(); $('#dropZone').classList.remove('over'); });
+  });
+  $('#dropZone').addEventListener('drop', function (ev) {
+    ev.preventDefault(); ev.stopPropagation();
+    $('#dropZone').classList.remove('over');
+    var files = ev.dataTransfer && ev.dataTransfer.files;
+    if (!files || !files.length) return;
+    if (files.length > 1) { toast('One statement at a time, please.', 'err'); return; }
+    if (!ACCEPTED.test(files[0].name)) { toast('That file type is not supported: use an .xlsx or .csv export, or a PDF or photo of the statement.', 'err'); return; }
+    try { $('#fileInput').files = files; } catch (e) { toast('Your browser did not hand the file over; click the box to choose it instead.', 'err'); return; }
+    showChosenFile();
+    $('#uploadBtn').focus();
+  });
+  // A file dropped anywhere else must not make the browser open it over the dashboard.
+  document.addEventListener('dragover', function (ev) { ev.preventDefault(); });
+  document.addEventListener('drop', function (ev) { ev.preventDefault(); });
+
   $('#uploadForm').addEventListener('submit', async function (ev) {
     ev.preventDefault();
     var file = $('#fileInput').files[0];
@@ -1559,6 +1599,7 @@
         (months.length ? ', for ' + months.map(function (ym) { return monthLabel(ym[0], ym[1]); }).join(' and ') : '');
       setStep('upload', warnings.length ? 'warn' : 'done', got + (warnings.length ? '. Some lines need a look, see Details.' : '.'));
       $('#fileInput').value = '';
+      showChosenFile();
       await loadMonths();
       var matched = [];
       try {

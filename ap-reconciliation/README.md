@@ -182,7 +182,8 @@ client, no sign-in button and no token in the page in either mode.
   is what the Chat card buttons open.
 - **Tiles** for the month (or the selected card): spend, purchases, invoices
   found, missing, possible, waived, charges without a cost centre.
-- **AP panel** (AP only): upload, *Re-run matching*, *Send reminders*,
+- **AP panel** (AP only): upload (drop the file on the box or click it),
+  *Re-run matching*, *Send reminders*,
   *Cards...* (label, holder, owner e-mail, Chat space name, active flag,
   and whether a webhook is configured for the card), plus the step list
   of the running job. Nothing is posted to Chat on its own: after matching
