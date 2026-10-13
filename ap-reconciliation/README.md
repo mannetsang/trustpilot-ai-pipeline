@@ -424,13 +424,15 @@ this repo.
    `gcloud secrets add-iam-policy-binding google-workspace-ap-refresh-token --member="serviceAccount:304363458561-compute@developer.gserviceaccount.com" --role="roles/secretmanager.secretAccessor" --project=shp-ai-bot-2026`
    The compute account normally carries Editor, which covers Vertex AI; if
    that was trimmed, add `roles/aiplatform.user` on the project.
-7. **First deploy.** Done 2026-10-12: the service answers at
-   `https://ap-reconciliation-onvg62bzra-uc.a.run.app` and
-   `/health?deep=1` reports Supabase and the Invoice folder reachable. Later
-   deploys happen on every push to `main` touching `cloud_run/`, or from the
-   Actions tab (*Deploy AP credit-card reconciliation service*). The URL is
-   also printed by
+7. **First deploy.** Done 2026-10-12: the dashboard answers at
+   `https://ap-reconciliation-onvg62bzra-uc.a.run.app` (behind IAP since
+   2026-10-13) and the sign-in page, the address to share, at
+   `https://ap-reconciliation-login-onvg62bzra-uc.a.run.app`. Later
+   deploys happen on every push to `main` touching `cloud_run/` or
+   `login/`, or from the Actions tab (*Deploy AP credit-card reconciliation
+   service*). The URLs are also printed by
    `gcloud run services describe ap-reconciliation --region us-central1 --project shp-ai-bot-2026 --format "value(status.url)"`
+   and the same with `ap-reconciliation-login`.
 8. **Weekly reminder.** The deploy also creates the Cloud Run job
    `ap-reconciliation-remind` (`python main.py remind` in the service's
    image, same secrets: for each card, the newest month that still has
