@@ -241,6 +241,8 @@ under *Cards...*) are never notified.
 | `POST /api/index?year&month[&limit]` | AP | read up to `limit` (max 100) new invoices for month-1..month+1 |
 | `POST /api/match?year&month[&card]` | AP | pair purchases with invoices |
 | `POST /api/notify?year&month[&card][&dry_run=1]` | AP | post the Chat cards (`dry_run` returns the payloads instead) |
+| `POST /api/jobs?kind=index\|match\|notify&year&month[&card][&limit=8]` | AP | the same step as a background job, answered at once with `202 {status: started, job}` (`409 busy` while another runs). What the dashboard uses: an invoice read or a match can run for minutes and office networks drop a silent response after a minute or so. `index` loops over batches of `limit` files until nothing new is left |
+| `GET /api/jobs/current` | signed in | the running or last job: `name`, `started`, `finished`, `running`, `progress` (`read`, `live`, `remaining`, `note`, `year`, `month`, …) and, once finished, `result` or `error` |
 
 Job endpoints answer `409 {"status": "busy"}` while another job runs and
 `500 {"status": "error"}` with the message when one fails.
@@ -446,7 +448,8 @@ call, because only IAP can add the assertion header; local runs use
 [`.github/workflows/deploy-ap-reconciliation.yml`](../.github/workflows/deploy-ap-reconciliation.yml)
 runs on every push to `main` touching `cloud_run/`, signs in to Google Cloud
 through Workload Identity Federation (`docs/credentials.md`), deploys with
-`--source` (one instance, 1 GiB, 30-minute request timeout), mounts the
+`--source` (one instance, 1 GiB, 30-minute request timeout, CPU always
+allocated so background jobs keep running between the page's polls), mounts the
 secrets above, then reads the service URL and sets `DASHBOARD_URL` to it so
 the Chat card buttons point at the right place. The service is deployed
 public and open (`--allow-unauthenticated --no-iap`, `AUTH_DISABLED=1`; step
@@ -463,6 +466,7 @@ next idle period, or at once with *Run workflow*.
 
 | Symptom | Cause and fix |
 |---|---|
+| *Network error: Failed to fetch* in the middle of a step | the network between the browser and Cloud Run dropped a long, silent request (office proxies do this after about a minute). Each step now runs as a background job that the page polls every two seconds, so this should not recur; *Re-run matching* resumes where the read stopped |
 | `409 {"status": "busy"}` from an upload, index, match or notify | one job at a time per instance; wait for it (`/health` shows `last_job`) and retry. The dashboard retries by itself |
 | Invoice listed in the picker with *unsupported file type* | Word, Excel, zip or e-mail files are not read; save as PDF into the same folder. Files over 15 MB likewise. Such files are not retried; any other extraction error is retried on the next index |
 | Index keeps reporting the same `remaining` count | the files that fail are listed in the job log (`errors`); fix or remove them. The dashboard stops after two stalled rounds |

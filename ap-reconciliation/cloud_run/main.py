@@ -34,6 +34,8 @@ Endpoints
   POST /api/index?year&month&limit (AP)     read new invoices for month-1..month+1, one batch
   POST /api/match?year&month[&card] (AP)    pair purchases with invoices
   POST /api/notify?year&month[&card] (AP)   post the "invoices needed" Chat cards
+  POST /api/jobs?kind=index|match|notify&year&month[&card] (AP)  the same steps in the background (202)
+  GET  /api/jobs/current                    the running or last background job: progress, then result
 The weekly reminder is a Cloud Run job running `python main.py remind` (see the deploy workflow).
 
 Env: SUPABASE_URL, SUPABASE_SERVICE_KEY, INVOICE_FOLDER_ID, STATEMENTS_FOLDER_ID (optional),
@@ -289,13 +291,13 @@ def may_edit(user, card_last4, cards=None):
 # Jobs (one at a time per instance, run inside the request like the review services)
 # ---------------------------------------------------------------------------
 _job_lock = threading.Lock()
-_last_job = {"name": None, "started": None, "finished": None, "result": None}
+_last_job = {"name": None, "started": None, "finished": None, "result": None, "error": None, "progress": {}}
 
 
 def run_locked(name, fn, *args, **kwargs):
     if not _job_lock.acquire(blocking=False):
         return 409, {"status": "busy", "last_job": _last_job}
-    _last_job.update({"name": name, "started": now_iso(), "finished": None})
+    _last_job.update({"name": name, "started": now_iso(), "finished": None, "error": None, "progress": {}})
     try:
         result = fn(*args, **kwargs)
         _last_job["result"] = result
@@ -307,6 +309,78 @@ def run_locked(name, fn, *args, **kwargs):
     finally:
         _last_job["finished"] = now_iso()
         _job_lock.release()
+
+
+# -- background jobs for the dashboard ------------------------------------------------------
+# An invoice read or a match with the Gemini judge can run for minutes, and office networks drop
+# a silent HTTP response after a minute or so (that cut the first real run). So the page starts
+# the step here, in a thread under the same lock, and polls /api/jobs/current every two seconds.
+# Cloud Run keeps the CPU allocated between requests for this (--no-cpu-throttling).
+JOB_INDEX_LIMIT = 8        # files per batch, so the progress moves every ten seconds or so
+
+
+def _job_log(line):
+    """Where a background job's log lines go: the last one is shown on the page, 'indexed' ones counted."""
+    line = str(line)
+    progress = _last_job["progress"]
+    progress["note"] = line[:200]
+    if line.startswith("indexed "):
+        progress["live"] = progress.get("live", 0) + 1
+    print(line)
+
+
+def start_job(name, fn, *args, **kwargs):
+    """Run fn in the background; 409 while another job (background or in-request) holds the lock."""
+    if not _job_lock.acquire(blocking=False):
+        return 409, {"status": "busy", "job": job_view()}
+    _last_job.update({"name": name, "started": now_iso(), "finished": None, "result": None, "error": None, "progress": {}})
+
+    def run():
+        try:
+            _last_job["result"] = fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001
+            _last_job["error"] = str(exc)
+            print(f"{name} error: {exc}")
+        finally:
+            _last_job["finished"] = now_iso()
+            _job_lock.release()
+
+    threading.Thread(target=run, name=f"job-{name}", daemon=True).start()
+    return 202, {"status": "started", "job": job_view()}
+
+
+def job_view():
+    view = {k: _last_job.get(k) for k in ("name", "started", "finished", "error")}
+    view["progress"] = dict(_last_job.get("progress") or {})
+    view["running"] = bool(view["name"]) and not view["finished"]
+    if view["finished"]:
+        view["result"] = _last_job.get("result")
+    return view
+
+
+def index_until_done(year, month, limit=JOB_INDEX_LIMIT):
+    """The read step: batch after batch until the month's folders hold nothing new (or nothing readable)."""
+    progress = _last_job["progress"]
+    read, errors, remaining, last_remaining, stalls = 0, [], 0, None, 0
+    stalled = True                      # until a round ends with nothing remaining
+    for rounds in range(1, MAX_INDEX_ROUNDS + 1):
+        result = index_month(year, month, limit=limit, log=_job_log)
+        if result.get("skipped"):
+            progress["skipped"] = result["skipped"]
+            return {"indexed": 0, "errors": [], "remaining": 0, "skipped": result["skipped"]}
+        read += int(result.get("indexed") or 0)
+        errors.extend(result.get("errors") or [])
+        remaining = int(result.get("remaining") or 0)
+        progress.update({"read": read, "live": 0, "remaining": remaining, "errors": len(errors), "rounds": rounds,
+                         "files_seen": result.get("files_seen"), "month_folders": result.get("month_folders")})
+        if not remaining:
+            stalled = False
+            break
+        stalls = stalls + 1 if last_remaining is not None and remaining >= last_remaining else 0
+        if stalls >= 2:                 # the same files keep failing; their errors are in the list
+            break
+        last_remaining = remaining
+    return {"indexed": read, "errors": errors, "remaining": remaining, "stalled": stalled}
 
 
 def dashboard_url():
@@ -398,14 +472,14 @@ def ingest_statement(file_name, data, mime_type, uploaded_by):
     }
 
 
-def index_month(year, month, limit=None):
+def index_month(year, month, limit=None, log=print):
     folders = [month_folder_name(y, m) for y, m in neighbouring_months(year, month)]
     gemini = get_gemini()
     if gemini is None:
         return {"files_seen": 0, "indexed": 0, "remaining": 0, "errors": [], "month_folders": folders,
                 "skipped": "AI_DISABLED=1: invoices are not read"}
     return invoice_index.index_invoices(get_store(), get_drive(), gemini, INVOICE_FOLDER_ID,
-                                        month_folders=folders, limit=limit or INDEX_BATCH, workers=INDEX_WORKERS)
+                                        month_folders=folders, limit=limit or INDEX_BATCH, workers=INDEX_WORKERS, log=log)
 
 
 def index_all(month_folders=None, limit=None):
@@ -416,8 +490,8 @@ def index_all(month_folders=None, limit=None):
                                         month_folders=month_folders, limit=limit or INDEX_BATCH, workers=INDEX_WORKERS)
 
 
-def match_month(year, month, card=None):
-    return matching.match_month(get_store(), get_gemini(), year, month, card, use_ai=not AI_DISABLED)
+def match_month(year, month, card=None, log=print):
+    return matching.match_month(get_store(), get_gemini(), year, month, card, use_ai=not AI_DISABLED, log=log)
 
 
 def notify_month(year, month, card=None, sent_by="", dry_run=False):
@@ -824,6 +898,37 @@ def api_notify():
     dry = request.args.get("dry_run") == "1"
     status, payload = run_locked("notify", notify_month, year, month, request.args.get("card") or None, user["email"], dry)
     return jsonify(payload), status
+
+
+@app.route("/api/jobs", methods=["POST"])
+def api_job_start():
+    """Start a long step in the background (kind=index|match|notify); the page polls /api/jobs/current."""
+    user = require_user(ap_only=True)
+    kind = (request.args.get("kind") or "").strip()
+    year, month = _year_month()
+    card = request.args.get("card") or None
+    if kind == "index":
+        try:
+            limit = min(max(int(request.args.get("limit", JOB_INDEX_LIMIT)), 1), 100)
+        except ValueError:
+            raise AuthError(400, "limit must be a number")
+        status, payload = start_job("index", index_until_done, year, month, limit)
+    elif kind == "match":
+        status, payload = start_job("match", match_month, year, month, card, log=_job_log)
+    elif kind == "notify":
+        status, payload = start_job("notify", notify_month, year, month, card, user["email"], request.args.get("dry_run") == "1")
+    else:
+        return jsonify({"error": "kind must be index, match or notify"}), 400
+    if status == 202:
+        _last_job["progress"].update({"year": year, "month": month})
+        payload["job"] = job_view()
+    return jsonify(payload), status
+
+
+@app.route("/api/jobs/current")
+def api_job_current():
+    require_user()
+    return jsonify(job_view())
 
 
 def remind_latest():

@@ -494,6 +494,7 @@
     $('#aiNote').classList.toggle('hidden', state.config.ai_enabled !== false);
     state.loaded = true;
     await applyRoute();
+    if (state.me.role === 'ap') resumeRunningJob();
   }
 
   async function loadMonths() {
@@ -1187,44 +1188,80 @@
   function onBusyWait(step, what) {
     return function () { setStep(step, 'running', what + ' is waiting for another job on the server to finish…'); setBar(-1); };
   }
+  // "indexed 2026 08/Anthropic/Invoice-0069.pdf: Anthropic 45.03 CAD …" -> "Anthropic/Invoice-0069.pdf"
+  function shortNote(note) {
+    note = String(note || '');
+    var m = note.match(/^indexed (.+?): /);
+    if (m) return m[1].split('/').slice(-2).join('/');
+    return note.replace(/\s+/g, ' ').slice(0, 90);
+  }
+
+  // Long steps run on the server as background jobs and the page polls every two seconds, so no
+  // single request stays open for long (office networks drop a silent response after a minute).
+  var STEP_OF = { index: 'read', match: 'match', notify: 'notify' };
+  async function pollJob(kind, job, onProgress) {
+    var misses = 0;
+    while (!job.finished) {
+      await sleep(2000);
+      try { job = await api('/api/jobs/current'); misses = 0; }
+      catch (e) { if (e.status === 0 && ++misses <= 30) continue; throw e; }   // a dropped poll is harmless; the job carries on
+      if (job.name !== kind) throw new ApiError(409, 'another job replaced this one on the server', job);
+      if (onProgress && job.running) onProgress(job.progress || {});
+    }
+    if (job.error) throw new ApiError(500, job.error, job);
+    return job.result || {};
+  }
+  async function runJob(kind, year, month, onProgress) {
+    var step = STEP_OF[kind];
+    var started = await apiRetryBusy('/api/jobs?kind=' + kind + '&year=' + year + '&month=' + month, { method: 'POST' }, onBusyWait(step, STEP_TITLES[step]));
+    return pollJob(kind, started.job || {}, onProgress);
+  }
+  function readProgress(label) {
+    return function (p) {
+      if (p.skipped) return;
+      var done = (p.read || 0) + (p.live || 0), known = (p.rounds || 0) > 0, total = known ? (p.read || 0) + (p.remaining || 0) : 0;
+      if (!known && !done) return;                                 // the first batch has not reported yet
+      var text = known
+        ? (total ? done + ' of ' + total + ' new invoices read for ' + label + '…' : 'No new invoices to read for ' + label)
+        : count(done, 'invoice', 'invoices') + ' read for ' + label + ' so far…';
+      if (p.note && /^indexed /.test(p.note)) text += ' Latest: ' + shortNote(p.note);
+      setStep('read', 'running', text);
+      setBar(total ? Math.round(100 * Math.min(done, total) / total) : -1);
+    };
+  }
 
   async function indexLoop(year, month) {
-    var read = 0, errors = 0, rounds = 0, lastRemaining = null, stalls = 0, stalled = false, label = monthLabel(year, month);
+    var label = monthLabel(year, month);
     setStep('read', 'running', 'Looking for new invoices for ' + label + ' in the Drive folder…');
     setBar(-1);
     log('Reading invoices for ' + label);
-    while (true) {
-      var r = await apiRetryBusy('/api/index?year=' + year + '&month=' + month, { method: 'POST' }, onBusyWait('read', 'Reading invoices'));
-      rounds++;
-      if (r.skipped) {
-        log('Invoices not read: ' + r.skipped, 'info');
-        setStep('read', 'warn', 'Invoice reading is switched off on this server; matching uses the invoices already read.');
-        return { read: read, errors: errors };
-      }
-      read += Number(r.indexed || 0);
-      (r.errors || []).forEach(function (e) { errors++; log('could not read ' + (e.file || '?') + ': ' + (e.error || ''), 'err'); });
-      var remaining = Number(r.remaining || 0), total = read + remaining;
-      log('batch ' + rounds + ': ' + read + ' read, ' + remaining + ' remaining, ' + (r.files_seen || 0) + ' files in ' + (r.month_folders || []).join(', '));
-      setStep('read', 'running', total ? read + ' of ' + total + ' new invoices read for ' + label + '… each one takes a few seconds' : 'No new invoices to read for ' + label);
-      setBar(total ? Math.round(100 * read / total) : -1);
-      if (!remaining) break;
-      if (lastRemaining !== null && remaining >= lastRemaining) stalls++; else stalls = 0;
-      if (stalls >= 2) { stalled = true; log('Stopping: the remaining files are not getting read (see the errors above).', 'err'); break; }
-      lastRemaining = remaining;
-      if (rounds > 200) { stalled = true; log('Stopping after 200 batches.', 'err'); break; }
+    var r = await runJob('index', year, month, readProgress(label));
+    if (r.skipped) {
+      log('Invoices not read: ' + r.skipped, 'info');
+      setStep('read', 'warn', 'Invoice reading is switched off on this server; matching uses the invoices already read.');
+      return { read: 0, errors: 0 };
     }
+    var read = Number(r.indexed || 0), errors = r.errors || [];
+    errors.forEach(function (e) { log('could not read ' + (e.file || '?') + ': ' + (e.error || ''), 'err'); });
+    log('Invoices: ' + read + ' read' + (errors.length ? ', ' + errors.length + ' errors' : '') + (r.stalled ? ', stopped with ' + (r.remaining || 0) + ' unread' : ''), 'ok');
     var summary = read ? count(read, 'new invoice', 'new invoices') + ' read for ' + label : 'No new invoices for ' + label;
-    if (errors) summary += '; ' + count(errors, 'file', 'files') + ' could not be read (see Details)';
-    if (stalled && !errors) summary += '; some files could not be read (see Details)';
-    setStep('read', errors || stalled ? 'warn' : 'done', summary + '.');
-    log('Invoices: ' + read + ' read' + (errors ? ', ' + errors + ' errors' : ''), 'ok');
-    return { read: read, errors: errors };
+    if (errors.length) summary += '; ' + count(errors.length, 'file', 'files') + ' could not be read (see Details)';
+    else if (r.stalled) summary += '; some files could not be read (see Details)';
+    setStep('read', errors.length || r.stalled ? 'warn' : 'done', summary + '.');
+    return { read: read, errors: errors.length };
   }
   async function matchStep(year, month) {
     var label = monthLabel(year, month);
-    setStep('match', 'running', 'Pairing each purchase in ' + label + ' with an invoice…');
+    var base = 'Pairing each purchase in ' + label + ' with an invoice…';
+    setStep('match', 'running', base);
     setBar(-1);
-    var r = await apiRetryBusy('/api/match?year=' + year + '&month=' + month, { method: 'POST' }, onBusyWait('match', 'Matching'));
+    var r = await runJob('match', year, month, function (p) {
+      if (!p.note) return;
+      var note = /^AI judge/.test(p.note)
+        ? ' The AI model is now looking at the purchases without an obvious invoice; this is the slow part, a few minutes for a full month.'
+        : ' Latest: ' + shortNote(p.note);
+      setStep('match', 'running', base + note);
+    });
     log('Matching: ' + (r.checked || 0) + ' purchases checked, ' + (r.matched || 0) + ' matched, ' + (r.possible || 0) + ' possible, ' + (r.missing || 0) + ' missing (' + (r.invoices_available || 0) + ' invoices available)', 'ok');
     var parts = [count(r.matched, 'purchase has', 'purchases have') + ' an invoice'];
     if (r.possible) parts.push(count(r.possible, 'possible match', 'possible matches') + ' to confirm');
@@ -1236,7 +1273,7 @@
     var label = monthLabel(year, month);
     setStep('notify', 'running', 'Posting the "invoices needed" card to each card\'s Chat space…');
     setBar(-1);
-    var r = await apiRetryBusy('/api/notify?year=' + year + '&month=' + month, { method: 'POST' }, onBusyWait('notify', 'Sending reminders'));
+    var r = await runJob('notify', year, month);
     var cards = r.cards || [], sent = [], failed = [];
     if (!cards.length) log('Reminders: no cards with transactions in this month.', 'info');
     cards.forEach(function (c) {
@@ -1248,6 +1285,27 @@
     if (failed.length) text += '. Not sent for ' + failed.join('; ');
     setStep('notify', failed.length ? 'warn' : 'done', text + '.');
     return r;
+  }
+  // A step started earlier (this tab, another tab, before a reload) may still be running: show and follow it.
+  async function resumeRunningJob() {
+    var j;
+    try { j = await api('/api/jobs/current'); } catch (e) { return; }
+    if (!j || !j.running || !STEP_OF[j.name] || state.jobRunning) return;
+    var step = STEP_OF[j.name], p = j.progress || {};
+    var label = p.year && p.month ? monthLabel(p.year, p.month) : 'this month';
+    setJobRunning(true);
+    startJob([step]);
+    setStep(step, 'running', 'Still running from earlier: ' + STEP_TITLES[step].toLowerCase() + ' for ' + label + '…');
+    setBar(-1);
+    try {
+      await pollJob(j.name, j, j.name === 'index' ? readProgress(label) : null);
+      setStep(step, 'done', 'Finished.');
+      await reloadAll();
+      renderSidebar();
+    } catch (e) {
+      failStep('This step failed: ' + (e.message || e) + '. Try again in a minute.');
+      report(e, 'Job failed');
+    } finally { setJobRunning(false); }
   }
   async function reloadAll() {
     await loadMonths();

@@ -61,16 +61,19 @@ jobs:
 
       # Public and open: anyone who reaches the URL gets the dashboard as AP
       # (AUTH_DISABLED=1), by decision. One instance, because jobs serialize
-      # on an in-process lock. 30 minutes because a synchronous upload reads
-      # every new invoice before it answers. The "^;^" prefix makes gcloud
-      # split the env-var list on semicolons instead of commas, because
-      # AP_EMAILS holds a comma-separated list itself.
+      # on an in-process lock. CPU stays allocated between requests because
+      # the dashboard's long steps (invoice reads, matching) run as
+      # background jobs that the page polls; throttled, they would stall.
+      # 30 minutes because a synchronous upload reads every new invoice
+      # before it answers. The "^;^" prefix makes gcloud split the env-var
+      # list on semicolons instead of commas, because AP_EMAILS holds a
+      # comma-separated list itself.
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy "$SERVICE" \
             --source ./ap-reconciliation/cloud_run \
             --region "$REGION" --project "$PROJECT" \
-            --allow-unauthenticated --no-iap \
+            --allow-unauthenticated --no-iap --no-cpu-throttling \
             --min-instances 0 --max-instances 1 --timeout 1800 --memory 1Gi \
             --set-env-vars "^;^INVOICE_FOLDER_ID=$INVOICE_FOLDER_ID;ALLOWED_DOMAINS=$ALLOWED_DOMAINS;AP_EMAILS=$AP_EMAILS;SUPABASE_URL=$SUPABASE_URL;AUTH_DISABLED=1" \
             --set-secrets "$SECRETS" \

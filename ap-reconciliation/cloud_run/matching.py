@@ -315,6 +315,7 @@ def match_month(store, gemini, year, month, card=None, use_ai=True, log=print):
     leftovers_i = [i for i in available if i["id"] not in {r[0] for r in results.values()}]
     ai_results = {}
     if use_ai and gemini is not None and leftovers_t and leftovers_i:
+        log(f"AI judge: {len(leftovers_t)} purchases without an obvious invoice, {len(leftovers_i)} invoices to consider")
         ai_results = ai_match(gemini, leftovers_t, leftovers_i)
     for tid, (iid, status, conf, note) in ai_results.items():
         results[tid] = (iid, status, conf, "ai:" + note)

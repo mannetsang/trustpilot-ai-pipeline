@@ -14,6 +14,7 @@ import os
 import re
 import sys
 import threading
+import time
 import unittest
 from unittest import mock
 
@@ -1489,6 +1490,74 @@ class OpenAccessTests(ApiTestCase):
         self.assertEqual(r.status_code, 200, r.get_json())
         self.assertEqual(r.get_json()["transaction"]["updated_by"], "Kelly")
         self.assertEqual(self.client.get("/health?deep=1").get_json()["checks"]["auth"]["mode"], "open")
+
+
+class JobTests(ApiTestCase):
+    """The dashboard's long steps run in a background thread and are polled through /api/jobs/current."""
+
+    def wait_for(self, kind):
+        for _ in range(200):
+            j = self.client.get("/api/jobs/current").get_json()
+            if j["name"] == kind and j["finished"]:
+                return j
+            time.sleep(0.02)
+        self.fail("the %s job did not finish" % kind)
+
+    def test_index_match_and_notify_run_in_the_background(self):
+        self.assertEqual(self.client.get("/api/jobs/current").get_json()["running"], False)
+        self.upload()
+        r = self.client.post("/api/jobs?kind=index&year=2026&month=9")
+        self.assertEqual(r.status_code, 202, r.get_json())
+        self.assertEqual((r.get_json()["status"], r.get_json()["job"]["name"], r.get_json()["job"]["progress"]["month"]), ("started", "index", 9))
+        j = self.wait_for("index")
+        self.assertEqual((j["running"], j["error"], j["result"]["skipped"]), (False, None, "AI_DISABLED=1: invoices are not read"))
+        self.inject_invoices()
+        self.assertEqual(self.client.post("/api/jobs?kind=match&year=2026&month=9").status_code, 202)
+        j = self.wait_for("match")
+        self.assertGreater(j["result"]["checked"], 0)
+        self.assertGreaterEqual(j["result"]["matched"], 1)
+        with mock.patch.object(chat, "post", return_value=(True, "sent")) as post:
+            self.assertEqual(self.client.post("/api/jobs?kind=notify&year=2026&month=9").status_code, 202)
+            j = self.wait_for("notify")
+        self.assertEqual(j["result"]["year"], 2026)
+        self.assertGreaterEqual(post.call_count, 1)
+        # Finished jobs are not "running"; the lock is free again.
+        self.assertTrue(main._job_lock.acquire(blocking=False))
+        main._job_lock.release()
+
+    def test_busy_bad_kind_and_member(self):
+        self.assertEqual(self.client.post("/api/jobs?kind=remind&year=2026&month=9").status_code, 400)
+        self.assertEqual(self.client.post("/api/jobs?kind=index").status_code, 400)
+        main._job_lock.acquire()
+        try:
+            r = self.client.post("/api/jobs?kind=index&year=2026&month=9")
+            self.assertEqual((r.status_code, r.get_json()["status"]), (409, "busy"))
+        finally:
+            main._job_lock.release()
+        with mock.patch.object(main, "current_user", return_value=dict(MEMBER)):
+            self.assertEqual(self.client.post("/api/jobs?kind=index&year=2026&month=9").status_code, 403)
+            self.assertEqual(self.client.get("/api/jobs/current").status_code, 200)
+
+    def test_a_failing_job_reports_its_error_and_frees_the_lock(self):
+        with mock.patch.object(main, "index_until_done", side_effect=RuntimeError("Drive is down")), mock.patch("builtins.print"):
+            self.assertEqual(self.client.post("/api/jobs?kind=index&year=2026&month=9").status_code, 202)
+            j = self.wait_for("index")
+        self.assertEqual((j["error"], j["running"]), ("Drive is down", False))
+        self.assertTrue(main._job_lock.acquire(blocking=False))
+        main._job_lock.release()
+
+    def test_index_until_done_loops_over_batches_and_reports_progress(self):
+        calls = []
+        def fake_index(year, month, limit=None, log=print):
+            calls.append(limit)
+            log("indexed 2026 09/Acme/inv%d.pdf: Acme 1.0 CAD 2026-09-01" % len(calls))
+            return {"indexed": 1, "remaining": 3 - len(calls), "errors": [] if len(calls) < 3 else [{"file": "x.docx", "error": "unsupported"}],
+                    "files_seen": 3, "month_folders": ["2026 09"]}
+        main._last_job.update({"progress": {}})
+        with mock.patch.object(main, "index_month", side_effect=fake_index), mock.patch("builtins.print"):
+            result = main.index_until_done(2026, 9, limit=1)
+        self.assertEqual((calls, result["indexed"], result["remaining"], result["stalled"], len(result["errors"])), ([1, 1, 1], 3, 0, False, 1))
+        self.assertEqual((main._last_job["progress"]["read"], main._last_job["progress"]["rounds"], main._last_job["progress"]["live"]), (3, 3, 0))
 
 
 class RemindTests(ApiTestCase):
