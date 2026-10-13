@@ -116,7 +116,21 @@ AUTH_DISABLED = os.environ.get("AUTH_DISABLED") == "1"
 DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "").strip()
 PASSWORD_MODE = AUTH_DISABLED and bool(DASHBOARD_PASSWORD)
 SESSION_COOKIE = "ap_recon_session"
-SESSION_DAYS = int(os.environ.get("DASHBOARD_SESSION_DAYS", "30"))
+
+
+def _session_days():
+    raw = os.environ.get("DASHBOARD_SESSION_DAYS", "30")
+    try:
+        days = int(raw)
+    except ValueError:
+        raise SystemExit(f"DASHBOARD_SESSION_DAYS must be a whole number of days, not {raw!r}") from None
+    if days < 1:
+        # 0 would sign the cookie and reject it on the next call: the page would loop on the gate.
+        raise SystemExit("DASHBOARD_SESSION_DAYS must be at least 1")
+    return days
+
+
+SESSION_DAYS = _session_days()
 LOGIN_WINDOW = 15 * 60          # wrong passwords are counted over this many seconds...
 LOGIN_MAX_FAILURES = 10         # ...per address, and
 LOGIN_MAX_FAILURES_TOTAL = 50   # ...across every address (one instance, so in-process counters hold)
@@ -136,18 +150,31 @@ def auth_mode():
     return ("password" if PASSWORD_MODE else "open") if AUTH_DISABLED else "iap"
 
 
-if PASSWORD_MODE:
-    # Since 2026-10-13: the page asks for the shared password and everyone who knows it is AP.
-    print("AUTH_DISABLED=1 with DASHBOARD_PASSWORD: the dashboard asks for the shared password; "
-          "every caller who knows it is AP")
-elif AUTH_DISABLED:
-    # Chosen for the live deployment on 2026-10-12: anyone who can reach the URL sees every card
-    # and may change anything, as AP. Unset it and deploy with --iap to put Google sign-in back.
-    print("AUTH_DISABLED=1 without DASHBOARD_PASSWORD: the dashboard is open to anyone who can reach it; "
-          "every caller is AP")
-elif os.environ.get("K_SERVICE") and not IAP_AUDIENCE:
-    # Without the audience no assertion can be checked, so nobody could get in anyway.
-    raise SystemExit("IAP_AUDIENCE is required on Cloud Run when AUTH_DISABLED is not set (Identity-Aware Proxy)")
+def access_banner():
+    """The start-up line that says who gets in, or SystemExit for a configuration that must not run."""
+    if PASSWORD_MODE:
+        # Since 2026-10-13: the page asks for the shared password and everyone who knows it is AP.
+        return ("AUTH_DISABLED=1 with DASHBOARD_PASSWORD: the dashboard asks for the shared password; "
+                "every caller who knows it is AP")
+    if AUTH_DISABLED and "DASHBOARD_PASSWORD" in os.environ:
+        # The secret is mounted but its version is blank (an `echo.`, an empty file): refusing to
+        # start beats quietly opening the dashboard to everyone.
+        raise SystemExit("DASHBOARD_PASSWORD is set but blank: add a non-empty secret version, "
+                         "or remove it from the deploy to run open on purpose")
+    if AUTH_DISABLED:
+        # Chosen for the live deployment on 2026-10-12: anyone who can reach the URL sees every card
+        # and may change anything, as AP. Unset it and deploy with --iap to put Google sign-in back.
+        return ("AUTH_DISABLED=1 without DASHBOARD_PASSWORD: the dashboard is open to anyone who can "
+                "reach it; every caller is AP")
+    if os.environ.get("K_SERVICE") and not IAP_AUDIENCE:
+        # Without the audience no assertion can be checked, so nobody could get in anyway.
+        raise SystemExit("IAP_AUDIENCE is required on Cloud Run when AUTH_DISABLED is not set (Identity-Aware Proxy)")
+    return ""
+
+
+_banner = access_banner()
+if _banner:
+    print(_banner)
 
 STATUS_LABELS = {"matched": "Invoice found", "possible": "Possible match", "missing": "Invoice missing",
                  "waived": "No invoice (waived)", "not_required": "No invoice needed"}
@@ -270,7 +297,10 @@ def session_token(issued=None):
 
 def session_ok(token):
     issued, _, sig = (token or "").partition(".")
-    if not issued.isdigit() or not sig:
+    # Shape first: str.isdigit accepts digits int() rejects, and compare_digest refuses non-ASCII,
+    # so a crafted cookie must answer 401, never raise.
+    if not (issued.isascii() and issued.isdigit() and len(issued) <= 12
+            and len(sig) == 64 and all(c in "0123456789abcdef" for c in sig)):
         return False
     age = time.time() - int(issued)
     if age > SESSION_DAYS * 86400 or age < -300:
@@ -797,7 +827,9 @@ def healthz():
             checks["drive"] = {"ok": True, "folder": folder.get("name"), "identity": get_drive().identity}
         except Exception as exc:  # noqa: BLE001
             checks["drive"] = {"ok": False, "error": str(exc)[:160]}
-        checks["chat_webhooks"] = sorted(k for k in CARD_WEBHOOKS if k != "default") + (["default"] if "default" in CARD_WEBHOOKS else [])
+        # Counts only: this answers without the password, and which cards exist is card data.
+        checks["chat_webhooks"] = {"cards": sum(1 for k in CARD_WEBHOOKS if k != "default"),
+                                   "default": "default" in CARD_WEBHOOKS}
         checks["auth"] = {"mode": auth_mode(), "audience": IAP_AUDIENCE}
         body["checks"] = checks
         body["ok"] = checks["store"]["ok"] and checks["drive"]["ok"]

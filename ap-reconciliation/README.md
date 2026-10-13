@@ -183,7 +183,7 @@ there, as it does in password mode, changing calls (POST, PATCH, DELETE) in
 both modes must also carry `X-Requested-With: XMLHttpRequest`, which the page
 sends on every call and a form on another site cannot; `curl` adds
 `-H "X-Requested-With: XMLHttpRequest"` (and, in password mode, the cookie
-from a `POST /api/login` with `-c`/`-b`).
+from a `POST /api/login` with `-c`/`-b`; the login call needs the header too).
 IAP's public keys are cached in the process for an hour. There is no OAuth
 client, no sign-in button and no token in the page in either mode.
 
@@ -251,10 +251,10 @@ under *Cards...*) are never notified.
 | Method and path | Auth | What it does |
 |---|---|---|
 | `GET /` | none | the dashboard page |
-| `GET /health` | none | `{"ok": true, "store": ..., "last_job": ...}`; `?deep=1` adds reachability checks for Supabase, the Invoice folder, the configured card webhooks and the auth mode. (`/healthz` is answered by Cloud Run's front end itself, not the container.) |
+| `GET /health` | none | `{"ok": true, "store": ..., "last_job": ...}`; `?deep=1` adds reachability checks for Supabase and the Invoice folder, how many card webhooks are configured (counts only: it answers without the password) and the auth mode. (`/healthz` is answered by Cloud Run's front end itself, not the container.) |
 | `GET /api/config` | none | `auth` (`password`, `open` or `iap`), `auth_disabled`, dashboard URL, Invoice folder URL, `ai_enabled` |
-| `POST /api/login` | none | password mode: `{"password": "..."}` sets the session cookie (401 wrong, 429 after too many wrong ones); a no-op in the other modes |
-| `POST /api/logout` | none | clears the session cookie (*Lock*) |
+| `POST /api/login` | none, but `X-Requested-With: XMLHttpRequest` in password mode (403 without) | password mode: `{"password": "..."}` sets the session cookie (401 wrong, 429 after too many wrong ones); a no-op in the other modes |
+| `POST /api/logout` | none, but `X-Requested-With: XMLHttpRequest` in every mode (403 without) | clears the session cookie (*Lock*) |
 | `GET /api/me` | signed in | e-mail, name, role, cards owned |
 | `GET /api/months` | signed in | month navigation with per-card counts, cards, cost centres |
 | `GET /api/transactions?year&month[&card]` | signed in | the month's transactions with their invoice, `editable` flag, uploads and recent notifications |
@@ -289,7 +289,7 @@ Job endpoints answer `409 {"status": "busy"}` while another job runs and
 | `ALLOWED_DOMAINS` | `superhairpieces.com` | comma-separated e-mail domains allowed in, on top of IAP's access list |
 | `AP_EMAILS` | `ap@superhairpieces.com,manne@superhairpieces.com` | addresses with the `ap` role |
 | `AUTH_DISABLED` | | `1` turns Google sign-in off and makes every caller `ap`: with `DASHBOARD_PASSWORD` the page asks for that password first (the live deployment), without it the dashboard is open to anyone who can reach it (the 2026-10-12 decision; local runs) |
-| `DASHBOARD_PASSWORD` | | the shared password (Secret Manager `ap-reconciliation-dashboard-password`); surrounding whitespace is ignored. Only read with `AUTH_DISABLED=1` |
+| `DASHBOARD_PASSWORD` | | the shared password (Secret Manager `ap-reconciliation-dashboard-password`); surrounding whitespace is ignored. Only takes effect with `AUTH_DISABLED=1` (the weekly job gets it through the shared `SECRETS` list and ignores it). Set but blank, the service refuses to start rather than open up |
 | `DASHBOARD_SESSION_DAYS` | `30` | how long the password cookie lasts |
 | `DASHBOARD_URL` | request origin | absolute URL for the Chat card buttons; the workflow sets it |
 | `GCP_PROJECT` / `VERTEX_LOCATION` | `shp-ai-bot-2026` / `us-central1` | where Gemini runs (ADC) |
@@ -370,7 +370,9 @@ this repo.
    redeploy, or wait for the next instance; everyone is signed out:
    `python -c "import getpass,sys; sys.stdout.write(getpass.getpass('New dashboard password: ').strip())" | gcloud secrets versions add ap-reconciliation-dashboard-password --data-file=- --project=shp-ai-bot-2026`
    Without the secret in the workflow's `SECRETS` the same deployment is
-   open: anyone with the URL is AP. To require a Google sign-in instead
+   open: anyone with the URL is AP. (Mounted but blank, say from an empty
+   secret version, the service refuses to start instead of opening up; the
+   revision's log says `DASHBOARD_PASSWORD is set but blank`.) To require a Google sign-in instead
    (Identity-Aware Proxy, no button or popup for people already signed in
    to Google), change the workflow to `--no-allow-unauthenticated --iap`
    and replace `AUTH_DISABLED=1` in its `--set-env-vars` with
@@ -385,9 +387,13 @@ this repo.
    `gcloud iap web add-iam-policy-binding --project=shp-ai-bot-2026 --resource-type=cloud-run --region=us-central1 --service=ap-reconciliation --member="domain:superhairpieces.com" --role="roles/iap.httpsResourceAccessor"`
    (the last one only after a deploy has enabled IAP on the service). The
    app then applies `ALLOWED_DOMAINS` and `AP_EMAILS` on top of IAP's list.
-6. **IAM grants.** One per secret. The webhooks and API token secrets
-   were granted when they were created; the Supabase key and the three AP
-   Drive secrets (which pre-date this service) still need it:
+6. **IAM grants.** One per secret, to the compute service account; all in
+   place (the webhooks, API token and dashboard-password secrets were
+   granted when they were created, the Supabase key and the three AP Drive
+   secrets before the first deploy on 2026-10-12). For a fresh project, one
+   line per secret:
+   `gcloud secrets add-iam-policy-binding ap-reconciliation-dashboard-password --member="serviceAccount:304363458561-compute@developer.gserviceaccount.com" --role="roles/secretmanager.secretAccessor" --project=shp-ai-bot-2026`
+   `gcloud secrets add-iam-policy-binding ap-reconciliation-card-webhooks --member="serviceAccount:304363458561-compute@developer.gserviceaccount.com" --role="roles/secretmanager.secretAccessor" --project=shp-ai-bot-2026`
    `gcloud secrets add-iam-policy-binding ap-reconciliation-supabase-service-key --member="serviceAccount:304363458561-compute@developer.gserviceaccount.com" --role="roles/secretmanager.secretAccessor" --project=shp-ai-bot-2026`
    `gcloud secrets add-iam-policy-binding google-workspace-ap-client-id --member="serviceAccount:304363458561-compute@developer.gserviceaccount.com" --role="roles/secretmanager.secretAccessor" --project=shp-ai-bot-2026`
    `gcloud secrets add-iam-policy-binding google-workspace-ap-client-secret --member="serviceAccount:304363458561-compute@developer.gserviceaccount.com" --role="roles/secretmanager.secretAccessor" --project=shp-ai-bot-2026`
@@ -515,6 +521,7 @@ next idle period, or at once with *Run workflow*.
 | `database error: ... 404 ... relation "..." does not exist` | the schema is not applied to this project: `setup_db.py --project-ref <ref>` |
 | `database error: ... 5xx` or connection errors for hours | the Supabase project is paused (free-tier projects pause after a week idle). Restore it from the dashboard; consider the paid tier |
 | Anyone can open the dashboard without a password | the service runs without `DASHBOARD_PASSWORD` (open mode; `/api/config` says `"auth": "open"`, the start-up log says so too): the secret is missing from the workflow's `SECRETS`, or its latest version is empty. Add it as step 5 says, or deploy behind IAP |
+| The deploy fails, the revision's log says `DASHBOARD_PASSWORD is set but blank` | the latest version of `ap-reconciliation-dashboard-password` is empty or whitespace: add a real one as step 5 says and deploy again |
 | The page asks for a password nobody has | it is Secret Manager `ap-reconciliation-dashboard-password` (an owner reads it with `gcloud secrets versions access latest --secret=ap-reconciliation-dashboard-password --project=shp-ai-bot-2026`); set a new one as step 5 says |
 | *Too many wrong passwords* | ten wrong tries from one address, or fifty overall, within 15 minutes: wait for the window to pass (a deploy restarts the counters too) |
 | Everyone was asked for the password again at once | the password or the Supabase key got a new version, or the sessions passed 30 days; enter it again |

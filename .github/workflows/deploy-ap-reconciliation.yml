@@ -8,7 +8,8 @@ name: Deploy AP credit-card reconciliation service
 #
 # Credentials reach the containers as Secret Manager references, never as
 # values in this file: the Supabase service-role key, the AP user's Drive
-# OAuth triple and the per-card Chat webhooks.
+# OAuth triple, the per-card Chat webhooks and the dashboard password (the
+# job gets that one too through the shared list and ignores it).
 #
 # Access: a shared password, since 2026-10-13. The service is public
 # (--allow-unauthenticated --no-iap), AUTH_DISABLED=1 tells the app to treat

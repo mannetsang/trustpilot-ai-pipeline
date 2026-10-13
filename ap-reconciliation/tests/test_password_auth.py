@@ -175,6 +175,49 @@ class PasswordAuthTests(ApiTestCase):
             self.assertEqual(main.auth_mode(), "iap")
             self.assertEqual(self.client.get("/api/me").status_code, 401)
 
+    def test_crafted_cookies_answer_401_not_500(self):
+        issued, _, sig = main.session_token().partition(".")
+        # str.isdigit accepts digits int() rejects; compare_digest refuses non-ASCII: neither may raise.
+        for bad in ("\u00b2.%s" % sig, "%s.\u00e9" % issued, "9" * 13 + ".%s" % sig,
+                    "%s.%s" % (issued, sig[:-1]), "%s.%sZ" % (issued, sig[:-1]), "%s.%s" % (issued, sig.upper())):
+            self.assertFalse(main.session_ok(bad), bad)
+        for raw in ("ap_recon_session=%s.\u00e9" % issued, "ap_recon_session=\u00b2.%s" % sig):
+            r = self.client.get("/api/me", headers={"Cookie": raw})
+            self.assertEqual(r.status_code, 401, raw)
+
+    def test_blank_mounted_password_refuses_to_start(self):
+        """An empty secret version must not quietly turn the gate off."""
+        with mock.patch.object(main, "PASSWORD_MODE", False), mock.patch.object(main, "DASHBOARD_PASSWORD", ""):
+            with mock.patch.dict(os.environ, {"DASHBOARD_PASSWORD": "  \n"}):
+                with self.assertRaises(SystemExit) as cm:
+                    main.access_banner()
+                self.assertIn("blank", str(cm.exception))
+            env = {k: v for k, v in os.environ.items() if k != "DASHBOARD_PASSWORD"}
+            with mock.patch.dict(os.environ, env, clear=True):
+                self.assertIn("open to anyone", main.access_banner())
+        self.assertIn("asks for the shared password", main.access_banner())
+        with mock.patch.object(main, "AUTH_DISABLED", False), mock.patch.object(main, "PASSWORD_MODE", False):
+            with mock.patch.dict(os.environ, {"K_SERVICE": "ap-reconciliation"}), mock.patch.object(main, "IAP_AUDIENCE", ""):
+                self.assertRaises(SystemExit, main.access_banner)
+            with mock.patch.object(main, "IAP_AUDIENCE", "/projects/x"):
+                self.assertEqual(main.access_banner(), "")
+
+    def test_session_days_must_be_a_positive_whole_number(self):
+        for bad in ("0", "-3", "abc", ""):
+            with mock.patch.dict(os.environ, {"DASHBOARD_SESSION_DAYS": bad}):
+                self.assertRaises(SystemExit, main._session_days)
+        with mock.patch.dict(os.environ, {"DASHBOARD_SESSION_DAYS": "7"}):
+            self.assertEqual(main._session_days(), 7)
+        env = {k: v for k, v in os.environ.items() if k != "DASHBOARD_SESSION_DAYS"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            self.assertEqual(main._session_days(), 30)
+
+    def test_health_names_no_card_without_the_password(self):
+        with mock.patch.object(main, "CARD_WEBHOOKS", {"1610": "https://x", "4421": "https://y", "default": "https://z"}):
+            deep = self.client.get("/health?deep=1").get_json()
+        self.assertEqual(deep["checks"]["chat_webhooks"], {"cards": 2, "default": True})
+        self.assertNotIn("1610", str(deep))
+
     def test_the_weekly_job_needs_no_password(self):
         """`python main.py remind` runs without a request, so nothing asks it for the cookie."""
         self.assertEqual(main.remind_latest(), {"reminded": []})

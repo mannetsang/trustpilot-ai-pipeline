@@ -488,15 +488,18 @@
   function passwordMode() { return !!(state.config && state.config.auth === 'password'); }
 
   function showGate(message, askPassword) {
+    // A background poll that gets its 401 after the gate is already up must not wipe what is being typed.
+    var typing = askPassword && !$('#gate').classList.contains('hidden') && !$('#gateForm').classList.contains('hidden');
     $('#app').classList.add('hidden');
     $('#gateMsg').textContent = message || '';
     $('#gateForm').classList.toggle('hidden', !askPassword);
     $('#gateReloadWrap').classList.toggle('hidden', !!askPassword);
-    $('#gateErr').classList.add('hidden');
     $('#gateNote').textContent = askPassword
       ? 'Ask accounts payable for the password. Everyone who has it can see and edit every card.'
       : (passwordMode() ? '' : 'Everyone at Superhairpieces can see every card; you can only edit the cards you own, and accounts payable can edit everything.');
     $('#gate').classList.remove('hidden');
+    if (typing) return;
+    $('#gateErr').classList.add('hidden');
     if (askPassword) { var box = $('#gatePassword'); box.value = ''; setTimeout(function () { box.focus(); }, 0); }
   }
 
