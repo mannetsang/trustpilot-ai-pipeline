@@ -15,7 +15,11 @@ company runs, reached from the server only with the service-role key. The
 Cloud Run service is `ap-reconciliation` in `us-central1`, live since
 2026-10-12 at <https://ap-reconciliation-onvg62bzra-uc.a.run.app> (the
 `DASHBOARD_URL` the Chat cards link to; the same service also answers at
-`https://ap-reconciliation-304363458561.us-central1.run.app`).
+`https://ap-reconciliation-304363458561.us-central1.run.app`). Its public
+sign-in page, the address to share, is the second service
+`ap-reconciliation-login` at
+<https://ap-reconciliation-login-onvg62bzra-uc.a.run.app> (see "Access and
+roles").
 
 ## The Invoice folder
 
@@ -153,29 +157,36 @@ domain to be in `ALLOWED_DOMAINS` and derives the role:
 | `ap` | the addresses in `AP_EMAILS` (`ap@`, `manne@`); everyone, in password and open mode | upload, index, match, notify, edit cards, edit every transaction |
 | `member` | anyone else in the domain (IAP mode only) | read everything; edit only the transactions of cards whose **owner e-mail** (set by AP under *Cards...*) is theirs. `/api/transactions` returns an `editable` flag per row and the page disables the rest |
 
-In IAP mode nothing is reachable without IAP: the service has no `allUsers`
-invoker, only IAP's service agent, and the app answers 401 to any `/api`
-call without a valid assertion. Because identity rides on a browser cookie
+In IAP mode nothing on the dashboard service is reachable without IAP: it
+has no `allUsers` invoker, only IAP's service agent, and the app answers 401
+to any `/api` call without a valid assertion (the sign-in page below is a
+separate service, public on purpose, and holds nothing: no data, no
+secrets). Because identity rides on a browser cookie
 there, as it does in password mode, changing calls (POST, PATCH, DELETE) in
 both modes must also carry `X-Requested-With: XMLHttpRequest`, which the page
 sends on every call and a form on another site cannot; `curl` adds
 `-H "X-Requested-With: XMLHttpRequest"` (and, in password mode, the cookie
 from a `POST /api/login` with `-c`/`-b`; the login call needs the header too).
 IAP's public keys are cached in the process for an hour. There is no OAuth
-client, no sign-in button and no token in the page in any mode.
+client and no token in either page in any mode: the dashboard has no
+sign-in button of its own, and the sign-in page's Google buttons are plain
+links to the dashboard.
 
 **The sign-in page.** IAP guards every path of the service, so a page that
 shows before sign-in cannot live on it: `login/` is a second, public Cloud
 Run service, `ap-reconciliation-login`, one static page served by nginx
-with the logo, *Continue with Google* (the dashboard URL: IAP signs the
-person in, silently when the browser is already signed in to Google) and
-*Use a different account* (the dashboard's `/_gcp_iap/clear_login_cookie`,
-which clears IAP's cookie and makes Google ask which account to use). The
+with the logo, a *Continue with Google* button (the dashboard URL: IAP signs
+the person in, silently when the browser is already signed in to Google)
+and *Use a different account* (the dashboard's
+`/_gcp_iap/clear_login_cookie`, which clears IAP's cookie and makes Google
+ask which account to use). The buttons follow Google's *Sign in with
+Google* branding (white, grey border, the four-colour G, Roboto Medium), so
+people recognise them; they are links, not Google's sign-in library. The
 dashboard's *Sign out* clears IAP's cookie the same way and lands on this
-page with `?signed_out=1`, which says the dashboard session is over, that
-the Google account itself stays signed in to the browser, offers *Sign in*
-through the account picker, and links Google's own sign-out for shared
-computers. That is the whole of what signing out can mean behind IAP: IAP
+page with `?signed_out=1`, which says the dashboard session is over and
+that the Google account itself stays signed in to the browser, offers *Sign
+in with Google* through the account picker, and links Google's own
+sign-out for shared computers. That is the whole of what signing out can mean behind IAP: IAP
 has no signed-out state beyond its cookie, and a visit straight to the
 dashboard URL from a browser still signed in to Google is signed in again
 without a prompt. The page learns the dashboard URL at container start
@@ -207,11 +218,15 @@ Two other modes exist, one edit of the deploy workflow away (step 5):
 ## Dashboard
 
 - **Google sign-in**: Identity-Aware Proxy signs people in before the
-  page loads (no button; anyone already signed in to Google goes straight
-  in), and the public sign-in page (above) is the front door. *Switch
-  account* in the header clears IAP's cookie for this site and shows
-  Google's account picker; *Sign out* clears it and lands on the sign-in
-  page, with the Google account still signed in to the browser. An ended
+  page loads (the dashboard has no button of its own; anyone already signed
+  in to Google goes straight in, which is also what the Chat card links
+  do). The public sign-in page (above) is the address to share and where
+  *Sign out* lands. *Switch account* in the header clears IAP's cookie for
+  this site and shows Google's account picker; *Sign out* clears it and
+  lands on the sign-in page, with the Google account still signed in to
+  the browser (the button only shows once the dashboard knows the page's
+  address, `LOGIN_URL`). Back after *Sign out* reloads the dashboard rather
+  than showing the previous person's cards from the browser's cache. An ended
   Google session shows a *Reload* gate. (In open and password
   mode a *Your name* box in the header, remembered by the browser, is what
   *Updated by* records; password mode asks for the password once per
@@ -312,7 +327,7 @@ Job endpoints answer `409 {"status": "busy"}` while another job runs and
 | `DASHBOARD_PASSWORD` | | the shared password (Secret Manager `ap-reconciliation-dashboard-password`); surrounding whitespace is ignored. Only takes effect with `AUTH_DISABLED=1` (the weekly job gets it through the shared `SECRETS` list and ignores it). Set but blank, the service refuses to start rather than open up |
 | `DASHBOARD_SESSION_DAYS` | `30` | how long the password cookie lasts |
 | `DASHBOARD_URL` | request origin | absolute URL for the Chat card buttons; the workflow sets it |
-| `LOGIN_URL` | | the public sign-in page, where *Sign out* lands (IAP mode); the workflow sets it |
+| `LOGIN_URL` | empty: *Sign out* is hidden, *Switch account* remains | the public sign-in page, where *Sign out* lands (IAP mode); the workflow sets it after each deploy |
 | `GCP_PROJECT` / `VERTEX_LOCATION` | `shp-ai-bot-2026` / `us-central1` | where Gemini runs (ADC) |
 | `GEMINI_EXTRACT_MODEL` / `GEMINI_MATCH_MODEL` | see `main.py` | the reading and judging models |
 | `AI_DISABLED` | | `1` skips every model call: no invoice reading, rules only, no PDF statements |
@@ -400,7 +415,11 @@ this repo.
    list. To open the dashboard instead (no sign-in; the setting from
    2026-10-12 to 2026-10-13), change the workflow to
    `--allow-unauthenticated --no-iap` and replace `IAP_AUDIENCE=...` in its
-   `--set-env-vars` with `AUTH_DISABLED=1`, then push; to put a shared
+   `--set-env-vars` with `AUTH_DISABLED=1`, then push (the sign-in page
+   then has no job: its buttons lead to IAP paths the dashboard no longer
+   has; delete it with
+   `gcloud run services delete ap-reconciliation-login --region us-central1 --project shp-ai-bot-2026`
+   and its deploy step, or leave it until IAP returns); to put a shared
    password in front of that, also add
    `DASHBOARD_PASSWORD=ap-reconciliation-dashboard-password:latest` to
    `SECRETS` (the secret exists, with step 6's grant). To change that
@@ -520,10 +539,13 @@ runs on every push to `main` touching `cloud_run/`, signs in to Google Cloud
 through Workload Identity Federation (`docs/credentials.md`), deploys with
 `--source` (one instance, 1 GiB, 30-minute request timeout, CPU always
 allocated so background jobs keep running between the page's polls), mounts the
-secrets above, then deploys the sign-in page (`login/`, public, with the
-dashboard URL as `DASHBOARD_URL`) as the service `ap-reconciliation-login`,
-then reads both URLs and sets `DASHBOARD_URL` (for the Chat card buttons)
-and `LOGIN_URL` (for *Sign out*) on the dashboard. The dashboard is deployed
+secrets above, then straight away reads both URLs and sets `DASHBOARD_URL`
+(for the Chat card buttons) and `LOGIN_URL` (for *Sign out*; read from the
+existing sign-in page service) on the dashboard, so a later failure cannot
+leave it without them. Then it deploys the sign-in page (`login/`, public,
+with the dashboard URL as `DASHBOARD_URL`) as the service
+`ap-reconciliation-login`; only on that page's very first deploy does a
+further step tell the dashboard its `LOGIN_URL`. The dashboard is deployed
 behind Identity-Aware Proxy (`--no-allow-unauthenticated --iap`,
 `IAP_AUDIENCE`; step 5 of the setup has the grants and the other two modes).
 A last step deploys the Cloud Run job `ap-reconciliation-remind` from the
@@ -556,9 +578,9 @@ next idle period, or at once with *Run workflow*.
 | (password mode) The password is right but the page keeps asking | the browser blocks cookies for the site (private mode with cookies off, a strict extension), or the service is reached over plain HTTP (the cookie is `Secure` on Cloud Run) |
 | (open and password modes) *Updated by* says `anonymous` | the person left the *Your name* box in the header empty; the name is remembered per browser |
 | (IAP mode) Google answers *You don't have access* | the account is not on IAP's access list: the domain grant in step 5, or a `user:` grant; a minute to take effect |
-| (IAP mode) Cloud Run answers 403 *Forbidden* without a Google sign-in page | IAP is not enabled on the service (`--no-iap`): deploy with `--iap` |
+| (IAP mode) Cloud Run answers 403 *Forbidden* without first sending the browser to Google's account prompt | IAP is not enabled on the service (`--no-iap`): deploy with `--iap` |
 | (IAP mode) 401 *sign in with your superhairpieces.com Google account* for a real colleague | the account got through IAP but is outside `ALLOWED_DOMAINS`; or `IAP_AUDIENCE` does not match the service (`/health?deep=1` shows it, the logs say *IAP assertion rejected*) |
-| (IAP mode) After *Sign out*, opening the dashboard URL signs the same person straight back in | expected: *Sign out* ends the dashboard session (IAP's cookie), not the Google session, and IAP has no other signed-out state. The sign-in page's *Sign in* and the header's *Switch account* make Google ask which account to use; on a shared computer the sign-in page links Google's own sign-out |
+| (IAP mode) After *Sign out*, opening the dashboard URL signs the same person straight back in | expected: *Sign out* ends the dashboard session (IAP's cookie), not the Google session, and IAP has no other signed-out state. The sign-in page's *Sign in with Google* and the header's *Switch account* make Google ask which account to use; on a shared computer the sign-in page links Google's own sign-out |
 | (IAP mode) The page shows *Your Google session has ended* | IAP's session expired (about an hour); *Reload* signs in again |
 | Notify says *no webhook configured for this card* | add the card's `last4` (or a `default`) to `CARD_WEBHOOKS_JSON`, new secret version, redeploy |
 | Notify says *chat webhook returned 404/403* | the webhook was deleted in the space or the space was archived; create a new one and update the secret |
@@ -567,4 +589,4 @@ next idle period, or at once with *Run workflow*.
 | The weekly reminder never runs, or the scheduler run fails with 403 | the scheduler job was not created, or the compute account may not start the Cloud Run job: step 8 |
 | Upload reports `new: 0` | the same lines are already stored (ids are deterministic); nothing is lost. Legacy `.xls` is refused: save as `.xlsx` |
 | Everything stays `missing` although invoices are filed | the invoices are not indexed yet (`AI_DISABLED`, or `remaining` > 0), are filed under a month folder outside month-1..month+1, or have no readable total (`extraction_error` in the picker) |
-| A Chat card's *Open dashboard* button opens the wrong host | `DASHBOARD_URL` was not set (the workflow's second step failed); set it with `gcloud run services update ap-reconciliation --region us-central1 --project shp-ai-bot-2026 --update-env-vars DASHBOARD_URL=<service url>` |
+| A Chat card's *Open dashboard* button opens the wrong host, or the header has no *Sign out* | `DASHBOARD_URL` or `LOGIN_URL` is not set on the dashboard: the workflow's *Point DASHBOARD_URL and LOGIN_URL at the services* step, which runs straight after the dashboard deploy, failed. Re-run the workflow, or set both by hand: `gcloud run services update ap-reconciliation --region us-central1 --project shp-ai-bot-2026 --update-env-vars DASHBOARD_URL=<dashboard url>,LOGIN_URL=<sign-in page url>` |

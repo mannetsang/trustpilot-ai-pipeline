@@ -549,7 +549,9 @@
     $('#gate').classList.add('hidden');
     $('#app').classList.remove('hidden');
     $('#switchAccount').classList.toggle('hidden', !!state.config.auth_disabled);
-    $('#signOutBtn').classList.toggle('hidden', !!state.config.auth_disabled);
+    // Without the sign-in page's address Sign out would only reach Google's account picker,
+    // which is what Switch account already does: show one control, not two that look different.
+    $('#signOutBtn').classList.toggle('hidden', !!state.config.auth_disabled || !safeUrl(state.config.login_url));
     $('#lockBtn').classList.toggle('hidden', !passwordMode());
     $('#whoAmI').classList.toggle('hidden', !state.config.auth_disabled);
     $('#whoAmI').value = currentName();
@@ -1205,6 +1207,9 @@
     var login = safeUrl(state.config && state.config.login_url);
     location.href = login ? login + (login.indexOf('?') < 0 ? '?' : '&') + 'signed_out=1' : '/_gcp_iap/clear_login_cookie';
   });
+  // Back after Sign out can bring this page back from the browser's back-forward cache with the
+  // previous person's cards on it; reload instead, so the server decides who is signed in.
+  window.addEventListener('pageshow', function (ev) { if (ev.persisted) location.reload(); });
   $('#whoAmI').addEventListener('change', async function () {
     try { localStorage.setItem(NAME_KEY, this.value.trim().slice(0, 80)); } catch (e) { /* private mode: the name lasts for this page only */ }
     try { state.me = await api('/api/me'); renderUser(); } catch (e) { report(e, 'Could not update your name'); }

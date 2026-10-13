@@ -12,14 +12,17 @@ name: Deploy AP credit-card reconciliation service
 # OAuth triple and the per-card Chat webhooks.
 #
 # Access: Google sign-in through Identity-Aware Proxy (IAP), decided
-# 2026-10-13. The service has no public invoker (--no-allow-unauthenticated
-# --iap): Google signs people in before any request reaches the container,
-# only the superhairpieces.com domain is on IAP's access list (README step
-# 5), and the app verifies IAP's signed header against IAP_AUDIENCE. The
+# 2026-10-13. The dashboard service has no public invoker
+# (--no-allow-unauthenticated --iap): Google signs people in before any
+# request reaches the container, only the superhairpieces.com domain is on
+# IAP's access list (README step 5), and the app verifies IAP's signed
+# header against IAP_AUDIENCE. The
 # other two modes stay one edit away: AUTH_DISABLED=1 with
 # --allow-unauthenticated --no-iap opens the dashboard to anyone with the
 # URL, and adding DASHBOARD_PASSWORD=ap-reconciliation-dashboard-password:latest
 # to SECRETS puts a shared password in front of that (README, "Access").
+# The sign-in page is public on purpose (one static page, nothing in it);
+# in the open and password modes it has no job, see README step 5.
 #
 # The Supabase project URL is set inline below: a public identifier, not a
 # secret.
@@ -88,11 +91,35 @@ jobs:
             --set-secrets "$SECRETS" \
             --quiet
 
-      # The sign-in page: one public static page (nginx) with "Continue with
-      # Google", where the dashboard's "Sign out" lands. It cannot live on the
-      # dashboard service, which IAP guards on every path. It bakes the
-      # dashboard's URL in at container start, so it deploys after the
-      # dashboard; the dashboard learns its URL in the next step.
+      # The Chat cards carry "Open dashboard" buttons, which need the absolute
+      # URL of the service; a request-less run (the weekly job) has nothing to
+      # derive it from. "Sign out" needs the sign-in page's URL the same way.
+      # --set-env-vars above replaces the whole set on every deploy, so both
+      # are put back straight away, before anything else can fail: the
+      # sign-in page's URL is read from the existing service (it never
+      # changes once the service exists).
+      - name: Point DASHBOARD_URL and LOGIN_URL at the services
+        id: urls
+        run: |
+          SERVICE_URL=$(gcloud run services describe "$SERVICE" \
+            --region "$REGION" --project "$PROJECT" --format 'value(status.url)')
+          LOGIN_URL=$(gcloud run services describe "$LOGIN_SERVICE" \
+            --region "$REGION" --project "$PROJECT" --format 'value(status.url)' 2>/dev/null || true)
+          echo "Service URL: $SERVICE_URL"
+          echo "Sign-in page: ${LOGIN_URL:-(not deployed yet)}"
+          ENV_VARS="DASHBOARD_URL=$SERVICE_URL"
+          if [ -n "$LOGIN_URL" ]; then ENV_VARS="$ENV_VARS,LOGIN_URL=$LOGIN_URL"; fi
+          gcloud run services update "$SERVICE" \
+            --region "$REGION" --project "$PROJECT" \
+            --update-env-vars "$ENV_VARS" \
+            --quiet
+          echo "login_url=$LOGIN_URL" >> "$GITHUB_OUTPUT"
+
+      # The sign-in page: one public static page (nginx) with the "Sign in
+      # with Google" button, where the dashboard's "Sign out" lands. It cannot
+      # live on the dashboard service, which IAP guards on every path. It is
+      # public on purpose and holds nothing: no data, no secrets. It bakes
+      # the dashboard's URL in at container start.
       - name: Deploy the sign-in page
         run: |
           SERVICE_URL=$(gcloud run services describe "$SERVICE" \
@@ -106,22 +133,17 @@ jobs:
             --set-env-vars "DASHBOARD_URL=$SERVICE_URL" \
             --quiet
 
-      # The Chat cards carry "Open dashboard" buttons, which need the absolute
-      # URL of the service; a request-less run (the weekly job) has nothing to
-      # derive it from. "Sign out" needs the sign-in page's URL the same way.
-      # Both are only known after a deploy, and --set-env-vars above replaces
-      # the whole set on every deploy, so this step runs each time.
-      - name: Point DASHBOARD_URL and LOGIN_URL at the services
+      # Only when the sign-in page did not exist before this run (its first
+      # deploy): tell the dashboard where it is.
+      - name: Point LOGIN_URL at a new sign-in page
+        if: steps.urls.outputs.login_url == ''
         run: |
-          SERVICE_URL=$(gcloud run services describe "$SERVICE" \
-            --region "$REGION" --project "$PROJECT" --format 'value(status.url)')
           LOGIN_URL=$(gcloud run services describe "$LOGIN_SERVICE" \
             --region "$REGION" --project "$PROJECT" --format 'value(status.url)')
-          echo "Service URL: $SERVICE_URL"
           echo "Sign-in page: $LOGIN_URL"
           gcloud run services update "$SERVICE" \
             --region "$REGION" --project "$PROJECT" \
-            --update-env-vars "DASHBOARD_URL=$SERVICE_URL,LOGIN_URL=$LOGIN_URL" \
+            --update-env-vars "LOGIN_URL=$LOGIN_URL" \
             --quiet
 
       # Weekly reminder: a Cloud Run job running `python main.py remind` in the

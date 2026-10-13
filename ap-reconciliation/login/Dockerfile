@@ -1,6 +1,7 @@
 # The AP reconciliation sign-in page: one static page served by nginx on Cloud Run,
 # public, in front of the IAP-guarded dashboard. See ../README.md, "Access and roles".
-FROM nginx:1.27-alpine
+# The maintained stable line (a numbered tag like 1.27 stops getting base-image fixes).
+FROM nginx:stable-alpine
 
 RUN rm /etc/nginx/conf.d/default.conf
 COPY nginx.conf /etc/nginx/templates/default.conf.template
