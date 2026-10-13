@@ -1583,6 +1583,17 @@ class JobTests(ApiTestCase):
         self.assertTrue(main._job_lock.acquire(blocking=False))
         main._job_lock.release()
 
+    def test_job_log_keeps_a_bounded_tail_and_a_running_count(self):
+        main._last_job["progress"] = {}
+        with mock.patch.object(main, "JOB_LOG_LINES", 3), mock.patch("builtins.print"):
+            for i in range(5):
+                main._job_log("indexed 2026 09/Acme/inv%d.pdf: Acme" % i)
+            main._job_log("AI judge batch 1 of 1: 2 purchases against 3 invoices")
+        p = main._last_job["progress"]
+        self.assertEqual((p["lines"], p["live"], len(p["log"])), (6, 5, 3))
+        self.assertEqual(p["log"][-1], "AI judge batch 1 of 1: 2 purchases against 3 invoices")
+        self.assertEqual(p["note"], p["log"][-1])
+
     def test_index_until_done_loops_over_batches_and_reports_progress(self):
         calls = []
         def fake_index(year, month, limit=None, log=print):

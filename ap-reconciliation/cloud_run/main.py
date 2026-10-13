@@ -323,16 +323,24 @@ def run_locked(name, fn, *args, **kwargs):
 # between requests for this (--no-cpu-throttling).
 JOB_INDEX_LIMIT = 8        # files per batch, so the progress moves every ten seconds or so
 JOB_HISTORY = 10
+JOB_LOG_LINES = 100        # the tail of a job's log that travels with each poll
 _jobs = OrderedDict()      # id -> job, newest last
 
 
 def _job_log(line):
-    """Where a background job's log lines go: the last one is shown on the page, 'indexed' ones counted."""
+    """Where a background job's log lines go: the page shows the last one under the step and copies
+    the tail into its details box (`log`, with `lines` counting everything so far); 'indexed' lines
+    are counted for the progress bar."""
     line = str(line)
     progress = _last_job["progress"]
     progress["note"] = line[:200]
     if line.startswith("indexed "):
         progress["live"] = progress.get("live", 0) + 1
+    tail = progress.setdefault("log", [])
+    tail.append(line[:300])
+    if len(tail) > JOB_LOG_LINES:
+        del tail[:len(tail) - JOB_LOG_LINES]
+    progress["lines"] = progress.get("lines", 0) + 1
     print(line)
 
 
@@ -371,6 +379,8 @@ def job_view(job=None):
         return {"id": None, "name": None, "started": None, "finished": None, "error": None, "progress": {}, "running": False}
     view = {k: job.get(k) for k in ("id", "name", "started", "finished", "error")}
     view["progress"] = dict(job.get("progress") or {})
+    if "log" in view["progress"]:
+        view["progress"]["log"] = list(view["progress"]["log"])    # the job thread keeps appending
     view["running"] = not job["finished"]
     if job["finished"]:
         view["result"] = job.get("result")

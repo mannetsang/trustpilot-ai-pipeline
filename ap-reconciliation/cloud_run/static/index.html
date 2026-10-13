@@ -1203,7 +1203,7 @@
   // Polls one job by its id until it has finished; the server keeps finished jobs readable for a
   // while, so another person starting the next job does not take ours away.
   async function pollJob(job, onProgress) {
-    var misses = 0, id = job && job.id;
+    var misses = 0, id = job && job.id, seen = 0;
     if (!id) throw new ApiError(500, 'the server did not start the job', job);
     while (!job.finished) {
       await sleep(2000);
@@ -1213,10 +1213,26 @@
         if (e.status === 404) throw new ApiError(404, 'the server restarted while this step was running; it may not have finished', null);
         throw e;
       }
+      seen = syncServerLog(job.progress || {}, seen);
       if (onProgress && job.running) onProgress(job.progress || {});
     }
     if (job.error) throw new ApiError(500, job.error, job);
     return job.result || {};
+  }
+  // The server sends the tail of the job's own log with every poll, plus a running count; the lines
+  // not shown yet go into the details box, so it tells what the server is doing right now.
+  function syncServerLog(p, seen) {
+    var total = p.lines || 0, tail = p.log || [];
+    if (total <= seen) return seen;
+    if (total - seen > tail.length) log('… ' + (total - seen - tail.length) + ' earlier lines not shown', 'info');
+    tail.slice(Math.max(0, tail.length - (total - seen))).forEach(function (line) { log(line, logKind(line)); });
+    return total;
+  }
+  function logKind(line) {
+    if (/failed|^could not|error/i.test(line)) return 'err';
+    if (/^(indexed|matched)/.test(line)) return 'ok';
+    if (/^(AI judge|possible)/.test(line)) return 'info';
+    return '';
   }
   async function runJob(kind, year, month, onProgress) {
     var started = await apiRetryBusy('/api/jobs?kind=' + kind + '&year=' + year + '&month=' + month, { method: 'POST' }, onBusyWait(STEP_OF[kind]));
@@ -1263,11 +1279,13 @@
     var base = 'Pairing each purchase in ' + label + ' with an invoice…';
     setStep('match', 'running', base);
     setBar(-1);
+    log('Matching ' + label);
     var r = await runJob('match', year, month, function (p) {
       if (!p.note) return;
-      var note = /^AI judge/.test(p.note)
-        ? ' The AI model is now looking at the purchases without an obvious invoice; this is the slow part, a few minutes for a full month.'
-        : ' Latest: ' + shortNote(p.note);
+      var m = p.note.match(/^AI judge batch (\d+) of (\d+)/);
+      var note = m
+        ? ' The AI model is looking at the purchases without an obvious invoice, batch ' + m[1] + ' of ' + m[2] + '; this is the slow part, about a minute per batch.'
+        : (/^AI judge/.test(p.note) ? ' The AI model is now looking at the purchases without an obvious invoice; this is the slow part.' : ' Latest: ' + shortNote(p.note));
       setStep('match', 'running', base + note);
     });
     log('Matching: ' + (r.checked || 0) + ' purchases checked, ' + (r.matched || 0) + ' matched, ' + (r.possible || 0) + ' possible, ' + (r.missing || 0) + ' missing (' + (r.invoices_available || 0) + ' invoices available)', 'ok');
@@ -1281,6 +1299,7 @@
     var label = monthLabel(year, month);
     setStep('notify', 'running', 'Posting the "invoices needed" card to each card\'s Chat space…');
     setBar(-1);
+    log('Sending reminders for ' + label);
     var r = await runJob('notify', year, month);
     var cards = r.cards || [], sent = [], failed = [];
     if (!cards.length) log('Reminders: no cards with transactions in this month.', 'info');

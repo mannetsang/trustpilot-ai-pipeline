@@ -238,11 +238,12 @@ def _inv_for_ai(inv):
             "currency": inv.get("currency"), "card_last4": inv.get("card_last4"), "summary": inv.get("summary")}
 
 
-def ai_match(gemini, transactions, invoices, txn_batch=40, inv_batch=120):
+def ai_match(gemini, transactions, invoices, txn_batch=40, inv_batch=120, log=print):
     """Gemini judge. Returns {txn_id: (inv_id, status, confidence, note)}."""
     out, used_inv = {}, set()
     if not transactions or not invoices:
         return out
+    batches = -(-len(transactions) // txn_batch)
     inv_lookup = {i["id"]: i for i in invoices}
     txn_lookup = {t["id"]: t for t in transactions}
     for start in range(0, len(transactions), txn_batch):
@@ -259,12 +260,15 @@ def ai_match(gemini, transactions, invoices, txn_batch=40, inv_batch=120):
             return best
         pool.sort(key=affinity, reverse=True)
         pool = pool[:inv_batch]
+        batch_no, before = start // txn_batch + 1, len(out)
+        log(f"AI judge batch {batch_no} of {batches}: {len(chunk)} purchases against {len(pool)} invoices, "
+            f"waiting for {gemini.match_model}")
         prompt = JUDGE_PROMPT.format(transactions=json.dumps([_txn_for_ai(t) for t in chunk], ensure_ascii=False),
                                      invoices=json.dumps([_inv_for_ai(i) for i in pool], ensure_ascii=False))
         try:
             data = gemini.generate_json([gemini.text(prompt)], model=gemini.match_model)
         except Exception as exc:  # noqa: BLE001
-            print(f"ai_match: judge failed: {exc}")
+            log(f"AI judge batch {batch_no} failed: {exc}")
             continue
         matches = data.get("matches") if isinstance(data, dict) else data
         proposals = []
@@ -293,6 +297,7 @@ def ai_match(gemini, transactions, invoices, txn_batch=40, inv_batch=120):
             status = "matched" if conf >= AI_MATCHED else "possible"
             out[tid] = (iid, status, round(conf, 2), f"AI: {reason}")
             used_inv.add(iid)
+        log(f"AI judge batch {batch_no} of {batches}: {len(out) - before} pairings kept of {len(proposals)} proposed")
     return out
 
 
@@ -316,7 +321,7 @@ def match_month(store, gemini, year, month, card=None, use_ai=True, log=print):
     ai_results = {}
     if use_ai and gemini is not None and leftovers_t and leftovers_i:
         log(f"AI judge: {len(leftovers_t)} purchases without an obvious invoice, {len(leftovers_i)} invoices to consider")
-        ai_results = ai_match(gemini, leftovers_t, leftovers_i)
+        ai_results = ai_match(gemini, leftovers_t, leftovers_i, log=log)
     for tid, (iid, status, conf, note) in ai_results.items():
         results[tid] = (iid, status, conf, "ai:" + note)
 
