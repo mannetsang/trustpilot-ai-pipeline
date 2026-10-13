@@ -6,7 +6,7 @@
      sign-out go through IAP's cookie-clearing path, which makes Google ask which account to use.
      The dashboard's address is filled in when the container starts (40-dashboard-url.sh).
      The buttons follow Google's "Sign in with Google" branding: white, a 1px #747775 border,
-     the four-colour G, Roboto Medium 14px in #1F1F1F, 40px tall. -->
+     the four-colour G, Google Sans Medium 14px in #1F1F1F, 40px tall. -->
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -15,7 +15,7 @@
   <title>AP Reconciliation: sign in</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@500&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@500&display=swap">
   <style>
     :root { --surface: #ffffff; --border: #e5e7ea; --text: #191919; --text-mid: #5b5b5b; --text-mute: #6b6f78; }
     * { box-sizing: border-box; }
@@ -32,7 +32,7 @@
     .gsi { position: relative; display: flex; align-items: center; justify-content: center; gap: 10px;
            width: 100%; height: 40px; margin-top: 20px; padding: 0 12px;
            background: #ffffff; border: 1px solid #747775; border-radius: 4px;
-           color: #1f1f1f; font-family: "Roboto", Arial, sans-serif; font-weight: 500; font-size: 14px; line-height: 20px; letter-spacing: 0.25px;
+           color: #1f1f1f; font-family: "Google Sans", Roboto, Arial, sans-serif; font-weight: 500; font-size: 14px; line-height: 20px;
            text-decoration: none; white-space: nowrap; overflow: hidden; cursor: pointer;
            transition: background-color .218s, border-color .218s, box-shadow .218s; }
     .gsi::after { content: ""; position: absolute; inset: 0; background: #303030; opacity: 0; transition: opacity .218s; pointer-events: none; }
@@ -42,6 +42,8 @@
     .gsi:focus-visible { outline: 2px solid #0b57d0; outline-offset: 2px; }
     .gsi svg { width: 20px; height: 20px; flex: 0 0 20px; }
     .gsi span { overflow: hidden; text-overflow: ellipsis; }
+    /* The hover and focus tint sits under the G and the label, so the G keeps Google's colours. */
+    .gsi svg, .gsi span { position: relative; z-index: 1; }
 
     .link { display: inline-block; margin-top: 14px; font-size: 13px; color: var(--text-mid); text-decoration: underline; }
     .note { margin-top: 24px; font-size: 11px; color: var(--text-mute); line-height: 1.5; }

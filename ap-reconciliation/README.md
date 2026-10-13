@@ -180,7 +180,7 @@ the person in, silently when the browser is already signed in to Google)
 and *Use a different account* (the dashboard's
 `/_gcp_iap/clear_login_cookie`, which clears IAP's cookie and makes Google
 ask which account to use). The buttons follow Google's *Sign in with
-Google* branding (white, grey border, the four-colour G, Roboto Medium), so
+Google* branding (white, grey border, the four-colour G, Google Sans Medium), so
 people recognise them; they are links, not Google's sign-in library. The
 dashboard's *Sign out* clears IAP's cookie the same way and lands on this
 page with `?signed_out=1`, which says the dashboard session is over and
@@ -419,7 +419,9 @@ this repo.
    then has no job: its buttons lead to IAP paths the dashboard no longer
    has; delete it with
    `gcloud run services delete ap-reconciliation-login --region us-central1 --project shp-ai-bot-2026`
-   and its deploy step, or leave it until IAP returns); to put a shared
+   and remove both of the workflow's sign-in page steps, *Deploy the sign-in
+   page* and *Point LOGIN_URL at a new sign-in page*, or leave the service
+   and both steps until IAP returns); to put a shared
    password in front of that, also add
    `DASHBOARD_PASSWORD=ap-reconciliation-dashboard-password:latest` to
    `SECRETS` (the secret exists, with step 6's grant). To change that
@@ -589,4 +591,4 @@ next idle period, or at once with *Run workflow*.
 | The weekly reminder never runs, or the scheduler run fails with 403 | the scheduler job was not created, or the compute account may not start the Cloud Run job: step 8 |
 | Upload reports `new: 0` | the same lines are already stored (ids are deterministic); nothing is lost. Legacy `.xls` is refused: save as `.xlsx` |
 | Everything stays `missing` although invoices are filed | the invoices are not indexed yet (`AI_DISABLED`, or `remaining` > 0), are filed under a month folder outside month-1..month+1, or have no readable total (`extraction_error` in the picker) |
-| A Chat card's *Open dashboard* button opens the wrong host, or the header has no *Sign out* | `DASHBOARD_URL` or `LOGIN_URL` is not set on the dashboard: the workflow's *Point DASHBOARD_URL and LOGIN_URL at the services* step, which runs straight after the dashboard deploy, failed. Re-run the workflow, or set both by hand: `gcloud run services update ap-reconciliation --region us-central1 --project shp-ai-bot-2026 --update-env-vars DASHBOARD_URL=<dashboard url>,LOGIN_URL=<sign-in page url>` |
+| A Chat card's *Open dashboard* button opens the wrong host, or the header has no *Sign out* | `DASHBOARD_URL` or `LOGIN_URL` is not set on the dashboard: the workflow's *Point DASHBOARD_URL and LOGIN_URL at the services* step, which runs straight after the dashboard deploy, failed; or, on the sign-in page's very first deploy, one of the two steps after it failed (if *Deploy the sign-in page* itself failed there is no page yet, and a hidden *Sign out* is expected). Re-run the workflow, or set both by hand: `gcloud run services update ap-reconciliation --region us-central1 --project shp-ai-bot-2026 --update-env-vars DASHBOARD_URL=<dashboard url>,LOGIN_URL=<sign-in page url>` |
