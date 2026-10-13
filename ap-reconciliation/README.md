@@ -138,14 +138,28 @@ dropped, and one that is off by more than 2% can only be `possible`. The
 
 ## Access and roles
 
-**The live dashboard has no sign-in**, by decision on 2026-10-12: the
-service is public (`--allow-unauthenticated --no-iap`) and runs with
-`AUTH_DISABLED=1`, so anyone who can reach the URL sees every card and may
-change anything. Every visitor acts as `ap`; the name typed into the
-*Your name* box in the header (remembered by that browser, sent as the
-`X-Dashboard-User` header) is what *Updated by*, *uploaded by* and the
-notification log record, `anonymous` when the box is empty. Treat the URL
-accordingly: it is the only thing between the internet and the card data.
+**The live dashboard asks for one shared password**, since 2026-10-13: the
+service is public (`--allow-unauthenticated --no-iap`), runs with
+`AUTH_DISABLED=1`, and `DASHBOARD_PASSWORD` (Secret Manager
+`ap-reconciliation-dashboard-password`) is the password the page asks for.
+`POST /api/login` checks it and answers with a signed cookie
+(`ap_recon_session`: HttpOnly, SameSite=Lax, Secure on Cloud Run, 30 days or
+`DASHBOARD_SESSION_DAYS`). The cookie is `<issued>.<hmac>`, signed with a key
+derived from the password and the Supabase service key: nothing is stored
+server side, a stolen cookie reveals neither secret, and a new version of
+either signs everyone out. Wrong passwords are counted per address (10 in 15
+minutes) and overall (50), after which `/api/login` answers 429 for the rest
+of the window; the counters live in the one instance. *Lock* in the header
+forgets the cookie on that browser. Anyone who has the password sees every
+card and may change anything, as `ap`; the name typed into the *Your name*
+box in the header (remembered by that browser, sent as the `X-Dashboard-User`
+header) is what *Updated by*, *uploaded by* and the notification log record,
+`anonymous` when the box is empty. A short password is a lock on the door,
+not a vault: step 5 says how to set a longer one.
+
+Without `DASHBOARD_PASSWORD` the same deployment is **open** (the 2026-10-12
+decision): anyone who can reach the URL is `ap`, and the URL is the only
+thing between the internet and the card data.
 
 The sign-in that was built, and can be switched back on in one deploy
 (step 5 of the setup), is **Identity-Aware Proxy** (IAP) on the Cloud Run
@@ -159,24 +173,29 @@ derives the role:
 
 | Role | Who | May |
 |---|---|---|
-| `ap` | the addresses in `AP_EMAILS` (`ap@`, `manne@`); everyone, in open mode | upload, index, match, notify, edit cards, edit every transaction |
+| `ap` | the addresses in `AP_EMAILS` (`ap@`, `manne@`); everyone, in password and open mode | upload, index, match, notify, edit cards, edit every transaction |
 | `member` | anyone else in the domain (IAP mode only) | read everything; edit only the transactions of cards whose **owner e-mail** (set by AP under *Cards...*) is theirs. `/api/transactions` returns an `editable` flag per row and the page disables the rest |
 
 In IAP mode nothing is reachable without IAP: the service has no `allUsers`
 invoker, only IAP's service agent, and the app answers 401 to any `/api`
-call without a valid assertion. Because identity then rides on IAP's browser
-cookie, changing calls (POST, PATCH, DELETE) must also carry
-`X-Requested-With: XMLHttpRequest`, which the page sends on every call and a
-form on another site cannot; `curl` adds `-H "X-Requested-With: XMLHttpRequest"`.
+call without a valid assertion. Because identity rides on a browser cookie
+there, as it does in password mode, changing calls (POST, PATCH, DELETE) in
+both modes must also carry `X-Requested-With: XMLHttpRequest`, which the page
+sends on every call and a form on another site cannot; `curl` adds
+`-H "X-Requested-With: XMLHttpRequest"` (and, in password mode, the cookie
+from a `POST /api/login` with `-c`/`-b`).
 IAP's public keys are cached in the process for an hour. There is no OAuth
 client, no sign-in button and no token in the page in either mode.
 
 ## Dashboard
 
-- **No sign-in**: the page opens for anyone with the link. A *Your name*
-  box in the header (remembered by the browser) is what *Updated by*
-  records. (Behind IAP the box is hidden, *Switch account* clears IAP's
-  cookie for this site, and an ended Google session shows a *Reload* gate.)
+- **One shared password**: the page asks for it once per browser (30
+  days); *Lock* in the header forgets it. There is no Google sign-in. A
+  *Your name* box in the header (remembered by the browser) is what
+  *Updated by* records. (Without `DASHBOARD_PASSWORD` the page opens for
+  anyone with the link. Behind IAP the box is hidden, *Switch account*
+  clears IAP's cookie for this site, and an ended Google session shows a
+  *Reload* gate.)
 - **Months** down the left (newest first), each with its spend and badges for
   missing and possible invoices; the URL hash is `#/YYYY/MM?card=1610`, which
   is what the Chat card buttons open.
@@ -227,13 +246,15 @@ under *Cards...*) are never notified.
 
 ## Endpoints
 
-*Auth* is what the app checks: in open mode (the live deployment) every caller is `ap`, so "signed in" means anyone; behind IAP it means a valid assertion.
+*Auth* is what the app checks: in password mode (the live deployment) "signed in" means the session cookie a `POST /api/login` set, and every caller is `ap`; in open mode it means anyone; behind IAP it means a valid assertion.
 
 | Method and path | Auth | What it does |
 |---|---|---|
 | `GET /` | none | the dashboard page |
 | `GET /health` | none | `{"ok": true, "store": ..., "last_job": ...}`; `?deep=1` adds reachability checks for Supabase, the Invoice folder, the configured card webhooks and the auth mode. (`/healthz` is answered by Cloud Run's front end itself, not the container.) |
-| `GET /api/config` | none | `auth` (`iap` or `disabled`), `auth_disabled`, dashboard URL, Invoice folder URL, `ai_enabled` |
+| `GET /api/config` | none | `auth` (`password`, `open` or `iap`), `auth_disabled`, dashboard URL, Invoice folder URL, `ai_enabled` |
+| `POST /api/login` | none | password mode: `{"password": "..."}` sets the session cookie (401 wrong, 429 after too many wrong ones); a no-op in the other modes |
+| `POST /api/logout` | none | clears the session cookie (*Lock*) |
 | `GET /api/me` | signed in | e-mail, name, role, cards owned |
 | `GET /api/months` | signed in | month navigation with per-card counts, cards, cost centres |
 | `GET /api/transactions?year&month[&card]` | signed in | the month's transactions with their invoice, `editable` flag, uploads and recent notifications |
@@ -267,7 +288,9 @@ Job endpoints answer `409 {"status": "busy"}` while another job runs and
 | `IAP_AUDIENCE` | | IAP mode only: what the assertion's audience must be, `/projects/304363458561/locations/us-central1/services/ap-reconciliation`; required on Cloud Run when `AUTH_DISABLED` is not set |
 | `ALLOWED_DOMAINS` | `superhairpieces.com` | comma-separated e-mail domains allowed in, on top of IAP's access list |
 | `AP_EMAILS` | `ap@superhairpieces.com,manne@superhairpieces.com` | addresses with the `ap` role |
-| `AUTH_DISABLED` | | `1` opens the dashboard to anyone who can reach it and makes every caller `ap`; the live deployment since 2026-10-12, by decision, and the setting for local runs |
+| `AUTH_DISABLED` | | `1` turns Google sign-in off and makes every caller `ap`: with `DASHBOARD_PASSWORD` the page asks for that password first (the live deployment), without it the dashboard is open to anyone who can reach it (the 2026-10-12 decision; local runs) |
+| `DASHBOARD_PASSWORD` | | the shared password (Secret Manager `ap-reconciliation-dashboard-password`); surrounding whitespace is ignored. Only read with `AUTH_DISABLED=1` |
+| `DASHBOARD_SESSION_DAYS` | `30` | how long the password cookie lasts |
 | `DASHBOARD_URL` | request origin | absolute URL for the Chat card buttons; the workflow sets it |
 | `GCP_PROJECT` / `VERTEX_LOCATION` | `shp-ai-bot-2026` / `us-central1` | where Gemini runs (ADC) |
 | `GEMINI_EXTRACT_MODEL` / `GEMINI_MATCH_MODEL` | see `main.py` | the reading and judging models |
@@ -289,6 +312,7 @@ secret* otherwise):
 | `google-workspace-ap-client-secret` | `GOOGLE_WORKSPACE_AP_CLIENT_SECRET` | already exists; the three stay together |
 | `google-workspace-ap-refresh-token` | `GOOGLE_WORKSPACE_AP_REFRESH_TOKEN` | already exists: `ap@superhairpieces.com`'s refresh token with the Drive scope |
 | `ap-reconciliation-card-webhooks` | `CARD_WEBHOOKS_JSON` | the JSON object of Chat webhooks |
+| `ap-reconciliation-dashboard-password` | `DASHBOARD_PASSWORD` | the shared password the dashboard asks for; a new version changes it on the next instance and signs everyone out |
 | `SUPABASE_ACCESS_TOKEN` | (not mounted) | Supabase personal access token for `setup_db.py` only; optional, a local `.env` entry does the same |
 
 Gemini (Vertex AI) runs as the compute service account through Application
@@ -337,9 +361,16 @@ this repo.
    a card is added, pasting the one-line JSON at the prompt:
    `python -c "import getpass,sys,json; sys.stdout.write(json.dumps(json.loads(getpass.getpass('Paste the webhook JSON, then Enter: '))))" | gcloud secrets versions add ap-reconciliation-card-webhooks --data-file=- --project=shp-ai-bot-2026`
    (the `json.loads` rejects a typo before anything is stored).
-5. **Access.** The live deployment is open: the workflow deploys with
-   `--allow-unauthenticated --no-iap` and `AUTH_DISABLED=1`, nothing to set
-   up, anyone with the URL is AP. To require a Google sign-in instead
+5. **Access.** The live deployment asks for a shared password: the workflow
+   deploys with `--allow-unauthenticated --no-iap`, `AUTH_DISABLED=1` and the
+   secret `ap-reconciliation-dashboard-password` as `DASHBOARD_PASSWORD`
+   (created 2026-10-13, with the `secretAccessor` grant of step 6); anyone
+   with the URL and the password is AP. To change the password, add a
+   version (typed at a hidden prompt, so it lands in no shell history) and
+   redeploy, or wait for the next instance; everyone is signed out:
+   `python -c "import getpass,sys; sys.stdout.write(getpass.getpass('New dashboard password: ').strip())" | gcloud secrets versions add ap-reconciliation-dashboard-password --data-file=- --project=shp-ai-bot-2026`
+   Without the secret in the workflow's `SECRETS` the same deployment is
+   open: anyone with the URL is AP. To require a Google sign-in instead
    (Identity-Aware Proxy, no button or popup for people already signed in
    to Google), change the workflow to `--no-allow-unauthenticated --iap`
    and replace `AUTH_DISABLED=1` in its `--set-env-vars` with
@@ -443,7 +474,9 @@ python main.py serve --port 8765
 
 `serve` without `AUTH_DISABLED` is IAP mode and answers 401 to every `/api`
 call, because only IAP can add the assertion header; local runs use
-`AUTH_DISABLED=1`, which is also how the live service runs.
+`AUTH_DISABLED=1`, as the live service does. Add `set DASHBOARD_PASSWORD=anything&&`
+(bash: `DASHBOARD_PASSWORD=anything`) to try the password gate the live
+service has; the cookie is not `Secure` off Cloud Run, so plain HTTP works.
 
 **Tests** (standard library, no network): from `ap-reconciliation`,
 `python -m unittest discover -s tests -v`.
@@ -457,8 +490,9 @@ through Workload Identity Federation (`docs/credentials.md`), deploys with
 allocated so background jobs keep running between the page's polls), mounts the
 secrets above, then reads the service URL and sets `DASHBOARD_URL` to it so
 the Chat card buttons point at the right place. The service is deployed
-public and open (`--allow-unauthenticated --no-iap`, `AUTH_DISABLED=1`; step
-5 of the setup says how to put sign-in back). A last step
+public, behind the shared password (`--allow-unauthenticated --no-iap`,
+`AUTH_DISABLED=1`, `DASHBOARD_PASSWORD` from Secret Manager; step 5 of the
+setup says how to change it or put Google sign-in back). A last step
 deploys the Cloud Run job `ap-reconciliation-remind` from the same image
 and only warns when `claude-sessions` may not manage jobs.
 
@@ -480,7 +514,11 @@ next idle period, or at once with *Run workflow*.
 | `database error: GET transactions -> 401` (PostgREST) | `SUPABASE_SERVICE_KEY` is wrong: the anon key instead of `service_role`, or the key was rotated in Supabase. Add the right one as a new secret version and redeploy |
 | `database error: ... 404 ... relation "..." does not exist` | the schema is not applied to this project: `setup_db.py --project-ref <ref>` |
 | `database error: ... 5xx` or connection errors for hours | the Supabase project is paused (free-tier projects pause after a week idle). Restore it from the dashboard; consider the paid tier |
-| Anyone can open the dashboard and change things | by decision (step 5): the live deployment has no sign-in. To require one, deploy behind IAP as step 5 describes |
+| Anyone can open the dashboard without a password | the service runs without `DASHBOARD_PASSWORD` (open mode; `/api/config` says `"auth": "open"`, the start-up log says so too): the secret is missing from the workflow's `SECRETS`, or its latest version is empty. Add it as step 5 says, or deploy behind IAP |
+| The page asks for a password nobody has | it is Secret Manager `ap-reconciliation-dashboard-password` (an owner reads it with `gcloud secrets versions access latest --secret=ap-reconciliation-dashboard-password --project=shp-ai-bot-2026`); set a new one as step 5 says |
+| *Too many wrong passwords* | ten wrong tries from one address, or fifty overall, within 15 minutes: wait for the window to pass (a deploy restarts the counters too) |
+| Everyone was asked for the password again at once | the password or the Supabase key got a new version, or the sessions passed 30 days; enter it again |
+| The password is right but the page keeps asking | the browser blocks cookies for the site (private mode with cookies off, a strict extension), or the service is reached over plain HTTP (the cookie is `Secure` on Cloud Run) |
 | *Updated by* says `anonymous` | the person left the *Your name* box in the header empty; the name is remembered per browser |
 | (IAP mode) Google answers *You don't have access* | the account is not on IAP's access list: the domain grant in step 5, or a `user:` grant; a minute to take effect |
 | (IAP mode) Cloud Run answers 403 *Forbidden* without a Google sign-in page | IAP is not enabled on the service (`--no-iap`): deploy with `--iap` |

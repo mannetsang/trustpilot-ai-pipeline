@@ -226,8 +226,9 @@
 </head>
 <body>
 
-<!-- Gate: Identity-Aware Proxy signs people in before this page is served, so this is only shown when
-     the page cannot load (the Google session ended, the server is unreachable). -->
+<!-- Gate. In password mode this asks for the shared dashboard password (the server keeps a signed
+     cookie for 30 days). Otherwise it is only shown when the page cannot load: the Google session
+     behind Identity-Aware Proxy ended, or the server is unreachable. -->
 <div id="gate" class="hidden fixed inset-0 z-[100] flex items-center justify-center p-6" style="background: linear-gradient(135deg, #f7f8f9 0%, #eef0f3 100%);">
   <div class="w-full max-w-[380px] bg-white rounded-2xl border p-7 sm:p-9" style="border-color: var(--border); box-shadow: 0 24px 48px rgba(0,0,0,0.08);">
     <div class="flex flex-col items-center text-center gap-2 mb-6">
@@ -235,8 +236,13 @@
       <h1 class="text-xl font-semibold mt-2">AP Reconciliation</h1>
       <p id="gateMsg" class="text-sm" style="color: var(--text-mute);"></p>
     </div>
-    <div class="flex justify-center"><button id="gateReload" class="btn btn-primary" type="button">Reload</button></div>
-    <div class="text-[11px] text-center mt-6" style="color: var(--text-mute);">Everyone at Superhairpieces can see every card; you can only edit the cards you own, and accounts payable can edit everything.</div>
+    <form id="gateForm" class="hidden flex flex-col gap-3" autocomplete="on">
+      <input id="gatePassword" class="inp" type="password" name="password" placeholder="Dashboard password" autocomplete="current-password" aria-label="Dashboard password" required style="height: 40px; text-align: center; letter-spacing: 0.15em;" />
+      <button id="gateSubmit" class="btn btn-primary" type="submit" style="height: 40px;">Open the dashboard</button>
+      <p id="gateErr" class="text-sm text-center hidden" style="color: var(--down);" role="alert"></p>
+    </form>
+    <div id="gateReloadWrap" class="flex justify-center"><button id="gateReload" class="btn btn-primary" type="button">Reload</button></div>
+    <div id="gateNote" class="text-[11px] text-center mt-6" style="color: var(--text-mute);"></div>
   </div>
 </div>
 
@@ -262,6 +268,7 @@
         <input id="whoAmI" class="inp hidden" type="text" placeholder="Your name" maxlength="80" autocomplete="name" aria-label="Your name, recorded with your changes" title="Recorded as 'Updated by' on anything you change; remembered by this browser" style="width: 150px; height: 30px;" />
         <div id="userChip" class="flex items-center gap-2 min-w-0"></div>
         <a id="switchAccount" class="btn btn-ghost btn-xs hidden" href="/_gcp_iap/clear_login_cookie" title="Sign out of this site to pick another Google account">Switch account</a>
+        <button id="lockBtn" class="btn btn-ghost btn-xs hidden" type="button" title="Forget the password on this browser; the next visit asks for it again">Lock</button>
       </div>
     </header>
 
@@ -447,7 +454,8 @@
     var data = null;
     try { data = await res.json(); } catch (e) { data = null; }
     if (res.status === 401) {
-      showGate(state.me ? 'Your Google session has ended. Reload the page to sign in again.' : ((data && data.error) || 'Sign in with your superhairpieces.com Google account.'));
+      if (passwordMode()) showGate(state.me ? 'Your session has ended. Enter the password to continue.' : 'Enter the dashboard password to continue.', true);
+      else showGate(state.me ? 'Your Google session has ended. Reload the page to sign in again.' : ((data && data.error) || 'Sign in with your superhairpieces.com Google account.'));
       throw new ApiError(401, (data && data.error) || 'sign in required', data);
     }
     if (!res.ok) throw new ApiError(res.status, (data && (data.error || data.message)) || (res.status + ' ' + res.statusText), data);
@@ -473,12 +481,39 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Gate: Identity-Aware Proxy did the sign-in before this page was served; this only reports failures.
+  // Gate. Password mode: the shared password goes to /api/login, which answers with a signed cookie
+  // that lasts 30 days on this browser. Behind IAP the sign-in happened before the page was served,
+  // so the gate only reports failures there.
   // ---------------------------------------------------------------------------
-  function showGate(message) {
+  function passwordMode() { return !!(state.config && state.config.auth === 'password'); }
+
+  function showGate(message, askPassword) {
     $('#app').classList.add('hidden');
     $('#gateMsg').textContent = message || '';
+    $('#gateForm').classList.toggle('hidden', !askPassword);
+    $('#gateReloadWrap').classList.toggle('hidden', !!askPassword);
+    $('#gateErr').classList.add('hidden');
+    $('#gateNote').textContent = askPassword
+      ? 'Ask accounts payable for the password. Everyone who has it can see and edit every card.'
+      : (passwordMode() ? '' : 'Everyone at Superhairpieces can see every card; you can only edit the cards you own, and accounts payable can edit everything.');
     $('#gate').classList.remove('hidden');
+    if (askPassword) { var box = $('#gatePassword'); box.value = ''; setTimeout(function () { box.focus(); }, 0); }
+  }
+
+  async function login(password) {
+    var res;
+    try {
+      res = await fetch('/api/login', { method: 'POST', cache: 'no-store', body: JSON.stringify({ password: password }),
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } });
+    } catch (e) {
+      throw new ApiError(0, 'Network error: ' + (e && e.message ? e.message : e), null);
+    }
+    var data = null;
+    try { data = await res.json(); } catch (e) { data = null; }
+    if (res.status === 401) throw new ApiError(401, 'Wrong password. Try again.', data);
+    if (res.status === 429) throw new ApiError(429, 'Too many wrong passwords. Wait 15 minutes and try again.', data);
+    if (!res.ok) throw new ApiError(res.status, (data && data.error) || (res.status + ' ' + res.statusText), data);
+    return data;
   }
 
   // ---------------------------------------------------------------------------
@@ -510,6 +545,7 @@
     $('#gate').classList.add('hidden');
     $('#app').classList.remove('hidden');
     $('#switchAccount').classList.toggle('hidden', !!state.config.auth_disabled);
+    $('#lockBtn').classList.toggle('hidden', !passwordMode());
     $('#whoAmI').classList.toggle('hidden', !state.config.auth_disabled);
     $('#whoAmI').value = currentName();
     var isAp = state.me.role === 'ap';
@@ -1132,6 +1168,26 @@
     var p = ev.target.value.split('-'); if (p.length === 2) navigate(Number(p[0]), Number(p[1]), '');
   });
   $('#gateReload').addEventListener('click', function () { location.reload(); });
+  $('#gateForm').addEventListener('submit', async function (ev) {
+    ev.preventDefault();
+    var box = $('#gatePassword'), btn = $('#gateSubmit'), err = $('#gateErr');
+    err.classList.add('hidden');
+    btn.disabled = true;
+    try {
+      await login(box.value);
+      box.value = '';
+      await loadApp();
+    } catch (e) {
+      err.textContent = e && e.message ? e.message : String(e);
+      err.classList.remove('hidden');
+      box.select();
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  $('#lockBtn').addEventListener('click', async function () {
+    try { await api('/api/logout', { method: 'POST' }); location.reload(); } catch (e) { report(e, 'Could not lock the dashboard'); }
+  });
   $('#whoAmI').addEventListener('change', async function () {
     try { localStorage.setItem(NAME_KEY, this.value.trim().slice(0, 80)); } catch (e) { /* private mode: the name lasts for this page only */ }
     try { state.me = await api('/api/me'); renderUser(); } catch (e) { report(e, 'Could not update your name'); }

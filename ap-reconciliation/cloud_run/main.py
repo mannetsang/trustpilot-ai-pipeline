@@ -13,15 +13,18 @@ Storage is a dedicated Supabase project (schema in ../schema.sql), reached
 with the service-role key from this server only. STORE=memory runs everything
 in-process for tests and demos.
 
-Access. With AUTH_DISABLED=1 (the live deployment, by decision on 2026-10-12) the dashboard is
-open to anyone who can reach it: every caller is "ap" and the name typed into the page
-(X-Dashboard-User header) is what gets recorded. Without it the service expects to sit behind
-Identity-Aware Proxy and verifies the X-Goog-IAP-JWT-Assertion header (see README).
+Access. With AUTH_DISABLED=1 every caller is "ap" and the name typed into the page
+(X-Dashboard-User header) is what gets recorded; with DASHBOARD_PASSWORD also set (the live
+deployment since 2026-10-13) the page first asks for that shared password and keeps a signed
+cookie (POST /api/login), without it the dashboard is open to anyone who can reach it (the
+2026-10-12 decision). Without AUTH_DISABLED the service expects to sit behind Identity-Aware
+Proxy and verifies the X-Goog-IAP-JWT-Assertion header (see README).
 
 Endpoints
   GET  /                         dashboard
   GET  /health[?deep=1]          liveness; deep=1 also checks Supabase and the Invoice folder
   GET  /api/config               auth mode, dashboard URL (public, no secrets)
+  POST /api/login  POST /api/logout  password mode: {"password"} sets the session cookie / clears it
   GET  /api/me                   who am I, role (ap | member), cards I own
   GET  /api/months               year/month navigation with per-card counts
   GET  /api/transactions?year&month[&card]
@@ -41,11 +44,14 @@ The weekly reminder is a Cloud Run job running `python main.py remind` (see the 
 Env: SUPABASE_URL, SUPABASE_SERVICE_KEY, INVOICE_FOLDER_ID, STATEMENTS_FOLDER_ID (optional),
 GOOGLE_WORKSPACE_AP_CLIENT_ID/_CLIENT_SECRET/_REFRESH_TOKEN (Drive as ap@; ADC when unset),
 CARD_WEBHOOKS_JSON, GCHAT_WEBHOOK_URL, IAP_AUDIENCE, ALLOWED_DOMAINS,
-AP_EMAILS, DASHBOARD_URL, GEMINI_EXTRACT_MODEL, GEMINI_MATCH_MODEL, AI_DISABLED, AUTH_DISABLED, STORE.
+AP_EMAILS, DASHBOARD_URL, GEMINI_EXTRACT_MODEL, GEMINI_MATCH_MODEL, AI_DISABLED, AUTH_DISABLED,
+DASHBOARD_PASSWORD, DASHBOARD_SESSION_DAYS, STORE.
 """
 
 import calendar
 import datetime as dt
+import hashlib
+import hmac
 import json
 import os
 import sys
@@ -104,6 +110,16 @@ DASHBOARD_USER_HEADER = "X-Dashboard-User"     # open mode: the name typed into 
 ALLOWED_DOMAINS = set(_csv("ALLOWED_DOMAINS", "superhairpieces.com"))
 AP_EMAILS = set(_csv("AP_EMAILS", "ap@superhairpieces.com,manne@superhairpieces.com"))
 AUTH_DISABLED = os.environ.get("AUTH_DISABLED") == "1"
+# Shared password (Secret Manager ap-reconciliation-dashboard-password). With AUTH_DISABLED=1 and
+# this set, the page asks for it once and keeps a signed cookie; whoever knows it is AP. Stripped
+# because a secret version made with `echo` carries the line break.
+DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "").strip()
+PASSWORD_MODE = AUTH_DISABLED and bool(DASHBOARD_PASSWORD)
+SESSION_COOKIE = "ap_recon_session"
+SESSION_DAYS = int(os.environ.get("DASHBOARD_SESSION_DAYS", "30"))
+LOGIN_WINDOW = 15 * 60          # wrong passwords are counted over this many seconds...
+LOGIN_MAX_FAILURES = 10         # ...per address, and
+LOGIN_MAX_FAILURES_TOTAL = 50   # ...across every address (one instance, so in-process counters hold)
 DASHBOARD_URL = os.environ.get("DASHBOARD_URL", "").rstrip("/")
 GCP_PROJECT = os.environ.get("GCP_PROJECT", "shp-ai-bot-2026")
 VERTEX_LOCATION = os.environ.get("VERTEX_LOCATION", "us-central1")
@@ -115,10 +131,20 @@ INDEX_WORKERS = int(os.environ.get("INDEX_WORKERS", "4"))
 MAX_INDEX_ROUNDS = 100
 SERVICE = "ap-reconciliation"
 
-if AUTH_DISABLED:
+def auth_mode():
+    """open: anyone who reaches the URL; password: the shared password first; iap: Google sign-in."""
+    return ("password" if PASSWORD_MODE else "open") if AUTH_DISABLED else "iap"
+
+
+if PASSWORD_MODE:
+    # Since 2026-10-13: the page asks for the shared password and everyone who knows it is AP.
+    print("AUTH_DISABLED=1 with DASHBOARD_PASSWORD: the dashboard asks for the shared password; "
+          "every caller who knows it is AP")
+elif AUTH_DISABLED:
     # Chosen for the live deployment on 2026-10-12: anyone who can reach the URL sees every card
     # and may change anything, as AP. Unset it and deploy with --iap to put Google sign-in back.
-    print("AUTH_DISABLED=1: the dashboard is open to anyone who can reach it; every caller is AP")
+    print("AUTH_DISABLED=1 without DASHBOARD_PASSWORD: the dashboard is open to anyone who can reach it; "
+          "every caller is AP")
 elif os.environ.get("K_SERVICE") and not IAP_AUDIENCE:
     # Without the audience no assertion can be checked, so nobody could get in anyway.
     raise SystemExit("IAP_AUDIENCE is required on Cloud Run when AUTH_DISABLED is not set (Identity-Aware Proxy)")
@@ -229,10 +255,71 @@ def declared_user():
     return name or "anonymous"
 
 
+# Password mode. The cookie holds "<issued>.<hmac>", signed with a key derived from the password
+# and the Supabase service key: a stolen cookie gives away neither, and changing either secret
+# signs everyone out. Nothing is stored server side, so sessions survive instance restarts.
+def _session_key():
+    return hashlib.sha256(f"{DASHBOARD_PASSWORD}\x00{SUPABASE_SERVICE_KEY}".encode()).digest()
+
+
+def session_token(issued=None):
+    issued = int(time.time() if issued is None else issued)
+    sig = hmac.new(_session_key(), str(issued).encode(), "sha256").hexdigest()
+    return f"{issued}.{sig}"
+
+
+def session_ok(token):
+    issued, _, sig = (token or "").partition(".")
+    if not issued.isdigit() or not sig:
+        return False
+    age = time.time() - int(issued)
+    if age > SESSION_DAYS * 86400 or age < -300:
+        return False
+    expected = hmac.new(_session_key(), issued.encode(), "sha256").hexdigest()
+    return hmac.compare_digest(sig, expected)
+
+
+def password_matches(given):
+    return bool(DASHBOARD_PASSWORD) and hmac.compare_digest((given or "").strip().encode(), DASHBOARD_PASSWORD.encode())
+
+
+_login_failures = {}        # client address -> [time of each wrong password in the window]
+_login_lock = threading.Lock()
+
+
+def client_ip():
+    """The address Cloud Run's front end appends to X-Forwarded-For (the last entry: anything
+    before it came from the client and could be made up), else the socket's."""
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    return (forwarded.rsplit(",", 1)[-1].strip() or request.remote_addr or "?")[:64]
+
+
+def login_throttled(ip):
+    """A short shared password has few guesses; counting wrong ones per address and overall keeps a
+    script from walking through them (the counters live in this process; one instance runs)."""
+    now = time.time()
+    with _login_lock:
+        for addr in [a for a, times in _login_failures.items() if not any(t > now - LOGIN_WINDOW for t in times)]:
+            _login_failures.pop(addr, None)
+        mine = [t for t in _login_failures.get(ip, []) if t > now - LOGIN_WINDOW]
+        total = sum(1 for times in _login_failures.values() for t in times if t > now - LOGIN_WINDOW)
+        return len(mine) >= LOGIN_MAX_FAILURES or total >= LOGIN_MAX_FAILURES_TOTAL
+
+
+def note_login(ip, ok):
+    with _login_lock:
+        if ok:
+            _login_failures.pop(ip, None)
+        else:
+            _login_failures.setdefault(ip, []).append(time.time())
+
+
 def current_user():
-    """Open mode: whoever says they are typing, as AP. Behind IAP: who its assertion header names,
-    or None when the request did not come through IAP."""
+    """Open mode: whoever says they are typing, as AP, after the shared password when one is set.
+    Behind IAP: who its assertion header names, or None when the request did not come through IAP."""
     if AUTH_DISABLED:
+        if PASSWORD_MODE and not session_ok(request.cookies.get(SESSION_COOKIE)):
+            return None
         who = declared_user()
         return {"email": who, "name": who, "role": "ap", "picture": ""}
     token = request.headers.get(IAP_HEADER, "").strip()
@@ -265,15 +352,21 @@ def current_user():
     return user
 
 
+def require_page_header():
+    """Behind IAP, and in password mode, identity rides on a browser cookie, so a form on another
+    site could post here with it; the page sends this header on every call and a cross-site form
+    cannot. (The cookie is also SameSite=Lax, which modern browsers enforce on their own.)"""
+    if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get("X-Requested-With") != "XMLHttpRequest":
+        raise AuthError(403, "changes must come from the dashboard page (X-Requested-With header)")
+
+
 def require_user(ap_only=False):
     user = current_user()
     if not user:
-        raise AuthError(401, "sign in with your superhairpieces.com Google account")
-    if (not AUTH_DISABLED and request.method not in ("GET", "HEAD", "OPTIONS")
-            and request.headers.get("X-Requested-With") != "XMLHttpRequest"):
-        # Behind IAP identity rides on a browser cookie, so a form on another site could post here
-        # with it; the page sends this header on every call and a cross-site form cannot.
-        raise AuthError(403, "changes must come from the dashboard page (X-Requested-With header)")
+        raise AuthError(401, "enter the dashboard password" if PASSWORD_MODE
+                        else "sign in with your superhairpieces.com Google account")
+    if not AUTH_DISABLED or PASSWORD_MODE:
+        require_page_header()
     if ap_only and user["role"] != "ap":
         raise AuthError(403, "only the accounts-payable team can do this")
     g.user = user
@@ -705,7 +798,7 @@ def healthz():
         except Exception as exc:  # noqa: BLE001
             checks["drive"] = {"ok": False, "error": str(exc)[:160]}
         checks["chat_webhooks"] = sorted(k for k in CARD_WEBHOOKS if k != "default") + (["default"] if "default" in CARD_WEBHOOKS else [])
-        checks["auth"] = {"mode": "open" if AUTH_DISABLED else "iap", "audience": IAP_AUDIENCE}
+        checks["auth"] = {"mode": auth_mode(), "audience": IAP_AUDIENCE}
         body["checks"] = checks
         body["ok"] = checks["store"]["ok"] and checks["drive"]["ok"]
     return jsonify(body)
@@ -713,9 +806,41 @@ def healthz():
 
 @app.route("/api/config")
 def api_config():
-    return jsonify({"auth": "open" if AUTH_DISABLED else "iap", "auth_disabled": AUTH_DISABLED,
+    return jsonify({"auth": auth_mode(), "auth_disabled": AUTH_DISABLED,
                     "dashboard_url": dashboard_url(), "invoice_folder_url": folder_url(INVOICE_FOLDER_ID),
                     "ai_enabled": not AI_DISABLED})
+
+
+@app.route("/api/login", methods=["POST"])
+def api_login():
+    """Password mode: {"password": ...} sets the session cookie. Wrong passwords are counted per
+    address and overall (429 once over the limit); nothing in the answer says which part failed."""
+    if not PASSWORD_MODE:
+        return jsonify({"ok": True, "auth": auth_mode()})
+    require_page_header()
+    ip = client_ip()
+    if login_throttled(ip):
+        print(f"auth: password attempts throttled for {ip}")
+        raise AuthError(429, "too many wrong passwords; wait 15 minutes and try again")
+    body = request.get_json(silent=True)
+    given = body.get("password") if isinstance(body, dict) else None
+    ok = isinstance(given, str) and password_matches(given)
+    note_login(ip, ok)
+    if not ok:
+        print(f"auth: wrong password from {ip}")
+        raise AuthError(401, "wrong password")
+    response = jsonify({"ok": True, "auth": auth_mode()})
+    response.set_cookie(SESSION_COOKIE, session_token(), max_age=SESSION_DAYS * 86400, httponly=True,
+                        secure=bool(os.environ.get("K_SERVICE")), samesite="Lax", path="/")
+    return response
+
+
+@app.route("/api/logout", methods=["POST"])
+def api_logout():
+    require_page_header()
+    response = jsonify({"ok": True})
+    response.delete_cookie(SESSION_COOKIE, path="/")
+    return response
 
 
 @app.route("/api/me")
