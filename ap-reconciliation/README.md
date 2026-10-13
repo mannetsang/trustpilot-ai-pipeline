@@ -190,8 +190,12 @@ Two other modes exist, one edit of the deploy workflow away (step 5):
 
 - **Google sign-in**: Identity-Aware Proxy signs people in before the
   page loads (no button; anyone already signed in to Google goes straight
-  in), *Switch account* in the header clears IAP's cookie for this site,
-  and an ended Google session shows a *Reload* gate. (In open and password
+  in). *Switch account* in the header clears IAP's cookie for this site and
+  shows Google's account picker; *Sign out* clears it and then signs the
+  browser out of Google altogether (after a confirmation that says so),
+  because the dashboard sign-in is the Google sign-in and a browser still
+  signed in to Google would walk straight back in. An ended Google session
+  shows a *Reload* gate. (In open and password
   mode a *Your name* box in the header, remembered by the browser, is what
   *Updated by* records; password mode asks for the password once per
   browser for 30 days, and *Lock* forgets it.)
@@ -531,6 +535,7 @@ next idle period, or at once with *Run workflow*.
 | (IAP mode) Google answers *You don't have access* | the account is not on IAP's access list: the domain grant in step 5, or a `user:` grant; a minute to take effect |
 | (IAP mode) Cloud Run answers 403 *Forbidden* without a Google sign-in page | IAP is not enabled on the service (`--no-iap`): deploy with `--iap` |
 | (IAP mode) 401 *sign in with your superhairpieces.com Google account* for a real colleague | the account got through IAP but is outside `ALLOWED_DOMAINS`; or `IAP_AUDIENCE` does not match the service (`/health?deep=1` shows it, the logs say *IAP assertion rejected*) |
+| (IAP mode) *Switch account* brings the same account straight back, nobody can "log out" | expected: *Switch account* only clears IAP's cookie and asks Google which account to use; a browser signed in to one Google account is signed in again without a prompt. *Sign out* in the header is the real sign-out: it also ends the Google session in that browser (Gmail and the rest included), which is the only sign-out IAP has |
 | (IAP mode) The page shows *Your Google session has ended* | IAP's session expired (about an hour); *Reload* signs in again |
 | Notify says *no webhook configured for this card* | add the card's `last4` (or a `default`) to `CARD_WEBHOOKS_JSON`, new secret version, redeploy |
 | Notify says *chat webhook returned 404/403* | the webhook was deleted in the space or the space was archived; create a new one and update the secret |
