@@ -159,6 +159,9 @@
     .step.done .step-icon { background: var(--up-soft); color: var(--up-ink); }
     .step.warn .step-icon { background: var(--warn); color: var(--warn-text); }
     .step.failed .step-icon { background: var(--down-soft); color: var(--down); }
+    .step.ask .step-icon { background: var(--brand-soft); color: var(--brand-ink); }
+    .step-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .step-actions:empty { display: none; }
     .step-title { font-weight: 600; color: var(--text); }
     .step-text { color: var(--text-mute); font-size: 12.5px; margin-top: 1px; }
     .step.failed .step-text { color: var(--down); }
@@ -274,7 +277,7 @@
             <form id="uploadForm" class="flex flex-col gap-2 flex-1 min-w-[260px]">
               <div class="label">Upload statement</div>
               <input type="file" id="fileInput" class="inp" accept=".xlsx,.csv,.pdf,.jpg,.jpeg,.png" />
-              <label class="flex items-center gap-2 text-xs" style="color: var(--text-mid);"><input type="checkbox" id="notifyAfter" checked /> Send Chat reminders after matching</label>
+              <div class="sub">After matching, the page shows which cards would get a Chat reminder and waits for you to send them.</div>
               <div><button type="submit" id="uploadBtn" class="btn btn-primary">Upload and process</button></div>
             </form>
             <div class="flex flex-col gap-2">
@@ -1129,7 +1132,7 @@
   // ---------------------------------------------------------------------------
   var STEP_TITLES = { upload: 'Upload the statement', read: 'Read invoices from the Drive folder', match: 'Match purchases with invoices', notify: 'Send Chat reminders' };
   var STEP_DOING = { upload: 'Uploading the statement', read: 'Reading invoices', match: 'Matching', notify: 'Sending reminders' };
-  var STEP_ICONS = { pending: '', running: '<span class="spinner dark"></span>', done: '✓', warn: '!', failed: '✕' };
+  var STEP_ICONS = { pending: '', running: '<span class="spinner dark"></span>', done: '✓', warn: '!', failed: '✕', ask: '?' };
   var logEl = $('#jobLog'), jobEl = $('#job'), stepsEl = $('#jobSteps'), barEl = $('#jobBar'), detailsEl = $('#jobDetails');
 
   function log(text, kind) {
@@ -1145,18 +1148,19 @@
     logEl.innerHTML = '';
     detailsEl.open = false;
     stepsEl.innerHTML = steps.map(function (key) {
-      return '<li class="step pending" data-step="' + key + '"><span class="step-icon"></span><div class="min-w-0"><div class="step-title">' + esc(STEP_TITLES[key]) + '</div><div class="step-text"></div></div></li>';
+      return '<li class="step pending" data-step="' + key + '"><span class="step-icon"></span><div class="min-w-0"><div class="step-title">' + esc(STEP_TITLES[key]) + '</div><div class="step-text"></div><div class="step-actions"></div></div></li>';
     }).join('');
     setBar(null);
     jobEl.classList.remove('hidden');
   }
   // status: pending | running | done | warn | failed. text: the plain-language line under the title.
-  function setStep(key, status, text) {
+  function setStep(key, status, text, actionsHtml) {
     var li = stepsEl.querySelector('li[data-step="' + key + '"]');
     if (!li) return;
     li.className = 'step ' + status;
     $('.step-icon', li).innerHTML = STEP_ICONS[status] || '';
     $('.step-text', li).textContent = text || '';
+    $('.step-actions', li).innerHTML = actionsHtml || '';
     if (status !== 'running') setBar(null);
   }
   // percent: null hides the bar, -1 shows the moving "working on it" bar, 0..100 fills it.
@@ -1234,8 +1238,8 @@
     if (/^(AI judge|possible)/.test(line)) return 'info';
     return '';
   }
-  async function runJob(kind, year, month, onProgress) {
-    var started = await apiRetryBusy('/api/jobs?kind=' + kind + '&year=' + year + '&month=' + month, { method: 'POST' }, onBusyWait(STEP_OF[kind]));
+  async function runJob(kind, year, month, onProgress, extra) {
+    var started = await apiRetryBusy('/api/jobs?kind=' + kind + '&year=' + year + '&month=' + month + (extra || ''), { method: 'POST' }, onBusyWait(STEP_OF[kind]));
     return pollJob(started.job, onProgress);
   }
   function readProgress(label) {
@@ -1313,6 +1317,66 @@
     setStep('notify', failed.length ? 'warn' : 'done', text + '.');
     return r;
   }
+  // Nothing is posted to Chat without a click: a dry run says which cards would get a reminder, the
+  // step shows that and waits. `months` is a list of [year, month] (an upload can span two).
+  async function notifyPreview(year, month) {
+    var r = await runJob('notify', year, month, null, '&dry_run=1');
+    var byCard = {};
+    state.cards.forEach(function (c) { byCard[c.last4] = c; });
+    var ready = [], blocked = [];
+    (r.cards || []).forEach(function (c) {
+      if (c.detail !== 'dry run') return;                       // nothing missing, or the card is inactive
+      var card = byCard[c.card] || {};
+      var line = cardLabel(c.card) + ': ' + count(c.missing, 'invoice', 'invoices') + ' missing' + (c.possible ? ', ' + count(c.possible, 'possible match', 'possible matches') + ' to confirm' : '');
+      if (card.webhook_configured || card.webhook_default) ready.push({ year: year, month: month, text: line + (card.chat_space ? ' → ' + card.chat_space : '') });
+      else blocked.push(line + ' (no Chat space set up for this card)');
+    });
+    return { ready: ready, blocked: blocked };
+  }
+  async function offerReminders(months) {
+    setJobRunning(true);
+    var ready = [], blocked = [], labels = months.map(function (ym) { return monthLabel(ym[0], ym[1]); }).join(' and ');
+    try {
+      setStep('notify', 'running', 'Checking which cards still need an invoice for ' + labels + '…');
+      setBar(-1);
+      for (var i = 0; i < months.length; i++) {
+        var p = await notifyPreview(months[i][0], months[i][1]);
+        var tag = months.length > 1 ? monthLabel(months[i][0], months[i][1]) + ': ' : '';
+        p.ready.forEach(function (r) { r.text = tag + r.text; ready.push(r); });
+        p.blocked.forEach(function (b) { blocked.push(tag + b); });
+      }
+    } catch (e) {
+      failStep('Could not check the reminders: ' + (e.message || e) + '. Use "Send reminders" to try again.');
+      report(e, 'Reminders');
+      setJobRunning(false);
+      return;
+    }
+    setJobRunning(false);
+    if (!ready.length && !blocked.length) { setStep('notify', 'done', 'Nothing to send: no card in ' + labels + ' is missing an invoice.'); return; }
+    var text = (ready.length ? 'Ready to post to ' + count(ready.length, 'Chat space', 'Chat spaces') + ': ' + ready.map(function (r) { return r.text; }).join('; ') + '.' : 'No reminder can go out yet.') +
+      (blocked.length ? ' Not possible for ' + blocked.join('; ') + '.' : '');
+    var actions = ready.length
+      ? '<button type="button" class="btn btn-primary btn-xs" data-remind="send">Send ' + (ready.length === 1 ? 'the reminder' : 'these reminders') + '</button><button type="button" class="btn btn-ghost btn-xs" data-remind="skip">Not now</button>'
+      : '<button type="button" class="btn btn-ghost btn-xs" data-remind="skip">OK</button>';
+    setStep('notify', 'ask', text, actions);
+    var li = stepsEl.querySelector('li[data-step="notify"]');
+    $('.step-actions', li).addEventListener('click', async function (ev) {
+      var b = ev.target.closest('button[data-remind]'); if (!b) return;
+      if (b.dataset.remind === 'skip') { setStep('notify', 'done', 'Not sent. Use "Send reminders" whenever you are ready.'); return; }
+      if (state.jobRunning) return;
+      setJobRunning(true);
+      try {
+        var sendFor = {};
+        ready.forEach(function (r) { sendFor[r.year + '-' + r.month] = [r.year, r.month]; });
+        var keys = Object.keys(sendFor);
+        for (var k = 0; k < keys.length; k++) await notifyStep(sendFor[keys[k]][0], sendFor[keys[k]][1]);
+        await loadMonth();
+      } catch (e) {
+        failStep('The reminders could not be sent: ' + (e.message || e) + '. Try again in a minute.');
+        report(e, 'Reminders failed');
+      } finally { setJobRunning(false); }
+    });
+  }
   // A step started earlier (this tab, another tab, before a reload) may still be running: show and follow it.
   async function resumeRunningJob() {
     var j;
@@ -1349,8 +1413,7 @@
     if (!file) { toast('Choose a statement file first.', 'err'); return; }
     if (state.jobRunning) return;
     setJobRunning(true);
-    var notify = $('#notifyAfter').checked;
-    startJob(notify ? ['upload', 'read', 'match', 'notify'] : ['upload', 'read', 'match']);
+    startJob(['upload', 'read', 'match', 'notify']);
     try {
       setStep('upload', 'running', 'Uploading ' + file.name + ' and reading its transactions…');
       setBar(-1);
@@ -1373,15 +1436,15 @@
       setStep('upload', warnings.length ? 'warn' : 'done', got + (warnings.length ? '. Some lines need a look, see Details.' : '.'));
       $('#fileInput').value = '';
       await loadMonths();
+      var matched = [];
       try {
         for (var i = 0; i < months.length; i++) {
           var y = months[i][0], m = months[i][1];
           await indexLoop(y, m);
           await matchStep(y, m);
-          if (notify) await notifyStep(y, m);
+          matched.push([y, m]);
         }
-        log('Done.', 'ok');
-        toast('All done', 'ok');
+        log('Matching done.', 'ok');
       } catch (e2) {
         failStep('The statement is saved, but this step failed: ' + (e2.message || e2) + '. Use "Re-run matching" to try again.');
         log('Statement stored, but the follow-up failed: ' + (e2.message || e2), 'err');
@@ -1396,6 +1459,8 @@
       } else {
         await reloadAll();
       }
+      if (matched.length) offerReminders(matched);            // asks before anything is posted; not awaited
+      else setStep('notify', 'done', 'Skipped: matching did not finish.');
     } catch (e) {
       failStep('The upload did not go through: ' + (e.message || e) + '. Check the file and try again.');
       log('Failed: ' + (e.message || e), 'err');
@@ -1408,13 +1473,14 @@
   $('#rematchBtn').addEventListener('click', async function () {
     if (state.jobRunning || !state.year) return;
     setJobRunning(true);
-    startJob(['read', 'match']);
+    startJob(['read', 'match', 'notify']);
+    var y = state.year, m = state.month;
     try {
-      await indexLoop(state.year, state.month);
-      await matchStep(state.year, state.month);
+      await indexLoop(y, m);
+      await matchStep(y, m);
       await reloadAll();
       renderSidebar();
-      toast('Matching finished', 'ok');
+      offerReminders([[y, m]]);                                // asks before anything is posted; not awaited
     } catch (e) {
       failStep('This step failed: ' + (e.message || e) + '. Try again in a minute.');
       log('Failed: ' + (e.message || e), 'err');
@@ -1422,20 +1488,10 @@
     } finally { setJobRunning(false); }
   });
 
-  $('#notifyBtn').addEventListener('click', async function () {
+  $('#notifyBtn').addEventListener('click', function () {
     if (state.jobRunning || !state.year) return;
-    if (!window.confirm('Post the "invoices needed" card to the Chat space of every card with missing or possible invoices in ' + monthLabel(state.year, state.month) + '?')) return;
-    setJobRunning(true);
     startJob(['notify']);
-    try {
-      await notifyStep(state.year, state.month);
-      await loadMonth();
-      toast('Reminders processed', 'ok');
-    } catch (e) {
-      failStep('The reminders could not be sent: ' + (e.message || e) + '. Try again in a minute.');
-      log('Failed: ' + (e.message || e), 'err');
-      report(e, 'Reminders failed');
-    } finally { setJobRunning(false); }
+    offerReminders([[state.year, state.month]]);
   });
 
   boot();

@@ -182,10 +182,12 @@ client, no sign-in button and no token in the page in either mode.
   is what the Chat card buttons open.
 - **Tiles** for the month (or the selected card): spend, purchases, invoices
   found, missing, possible, waived, charges without a cost centre.
-- **AP panel** (AP only): upload with a *Send Chat reminders after matching*
-  checkbox, *Re-run matching*, *Send reminders*, *Cards...* (label, holder,
-  owner e-mail, Chat space name, active flag, and whether a webhook is
-  configured for the card), plus a log of the running job.
+- **AP panel** (AP only): upload, *Re-run matching*, *Send reminders*,
+  *Cards...* (label, holder, owner e-mail, Chat space name, active flag,
+  and whether a webhook is configured for the card), plus the step list
+  of the running job. Nothing is posted to Chat on its own: after matching
+  (and on *Send reminders*) the page lists which cards would get a reminder,
+  with their counts and Chat spaces, and waits for *Send* or *Not now*.
 - **Card chips** and a status filter (all, missing, possible, matched,
   waived, no cost centre), a search box over description, amounts, cost
   centre and usage, and a card selector.
