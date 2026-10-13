@@ -1495,13 +1495,50 @@ class OpenAccessTests(ApiTestCase):
 class JobTests(ApiTestCase):
     """The dashboard's long steps run in a background thread and are polled through /api/jobs/current."""
 
-    def wait_for(self, kind):
+    def wait_for(self, kind, job_id=None):
+        url = "/api/jobs/current" + (f"?id={job_id}" if job_id else "")
         for _ in range(200):
-            j = self.client.get("/api/jobs/current").get_json()
+            j = self.client.get(url).get_json()
             if j["name"] == kind and j["finished"]:
                 return j
             time.sleep(0.02)
         self.fail("the %s job did not finish" % kind)
+
+    def test_jobs_have_ids_and_a_finished_job_stays_readable_after_the_next_one_starts(self):
+        main._jobs.clear()                       # as on a fresh instance
+        self.assertEqual(self.client.get("/api/jobs/current").get_json()["id"], None)
+        first = self.client.post("/api/jobs?kind=index&year=2026&month=9").get_json()["job"]
+        self.assertEqual(len(first["id"]), 32)
+        self.wait_for("index", first["id"])
+        second = self.client.post("/api/jobs?kind=index&year=2026&month=8").get_json()["job"]
+        self.assertNotEqual(first["id"], second["id"])
+        self.wait_for("index", second["id"])
+        old = self.client.get("/api/jobs/current?id=" + first["id"]).get_json()
+        self.assertEqual((old["id"], old["progress"]["month"], old["finished"] is not None, old["result"]["skipped"][:13]),
+                         (first["id"], 9, True, "AI_DISABLED=1"))
+        self.assertEqual(self.client.get("/api/jobs/current").get_json()["id"], second["id"])      # newest by default
+        self.assertEqual(self.client.get("/api/jobs/current?id=deadbeef").status_code, 404)        # a restart forgets jobs
+
+    def test_upload_runs_in_the_background_when_asked(self):
+        r = self.client.post("/api/statements?background=1", data={"file": (io.BytesIO(self.xlsx), "Transaction Export.xlsx")},
+                             content_type="multipart/form-data")
+        self.assertEqual(r.status_code, 202, r.get_json())
+        j = self.wait_for("upload", r.get_json()["job"]["id"])
+        self.assertEqual((j["error"], j["result"]["transactions"], j["result"]["new"]), (None, 10, 10))
+        self.assertEqual(len(self.store.transactions), 10)
+
+    def test_background_notify_keeps_the_dashboard_link_without_the_env_var(self):
+        self.upload()
+        with mock.patch.object(main, "DASHBOARD_URL", ""):
+            r = self.client.post("/api/jobs?kind=notify&year=2026&month=9&dry_run=1")
+            self.assertEqual(r.status_code, 202)
+            j = self.wait_for("notify", r.get_json()["job"]["id"])
+        self.assertIn("http://localhost/#/2026/09?card=1610", json.dumps(j["result"]))
+
+    def test_a_failing_synchronous_job_is_reported_as_an_error_too(self):
+        with mock.patch.object(main, "match_month", side_effect=RuntimeError("judge down")), mock.patch("builtins.print"):
+            self.assertEqual(self.client.post("/api/match?year=2026&month=9").status_code, 500)
+        self.assertEqual(main._last_job["error"], "judge down")
 
     def test_index_match_and_notify_run_in_the_background(self):
         self.assertEqual(self.client.get("/api/jobs/current").get_json()["running"], False)

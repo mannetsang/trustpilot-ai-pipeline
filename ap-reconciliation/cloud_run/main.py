@@ -51,6 +51,8 @@ import os
 import sys
 import threading
 import time
+import uuid
+from collections import OrderedDict
 
 from flask import Flask, g, jsonify, request, send_from_directory
 
@@ -304,6 +306,7 @@ def run_locked(name, fn, *args, **kwargs):
         return 200, {"status": "ok", **result}
     except Exception as exc:  # noqa: BLE001
         _last_job["result"] = {"error": str(exc)}
+        _last_job["error"] = str(exc)
         print(f"{name} error: {exc}")
         return 500, {"status": "error", "message": str(exc)}
     finally:
@@ -315,8 +318,12 @@ def run_locked(name, fn, *args, **kwargs):
 # An invoice read or a match with the Gemini judge can run for minutes, and office networks drop
 # a silent HTTP response after a minute or so (that cut the first real run). So the page starts
 # the step here, in a thread under the same lock, and polls /api/jobs/current every two seconds.
-# Cloud Run keeps the CPU allocated between requests for this (--no-cpu-throttling).
+# Every job has an id and the last few stay readable by id, so a tab polling a finished job still
+# gets its result after someone else has started the next one. Cloud Run keeps the CPU allocated
+# between requests for this (--no-cpu-throttling).
 JOB_INDEX_LIMIT = 8        # files per batch, so the progress moves every ten seconds or so
+JOB_HISTORY = 10
+_jobs = OrderedDict()      # id -> job, newest last
 
 
 def _job_log(line):
@@ -333,28 +340,40 @@ def start_job(name, fn, *args, **kwargs):
     """Run fn in the background; 409 while another job (background or in-request) holds the lock."""
     if not _job_lock.acquire(blocking=False):
         return 409, {"status": "busy", "job": job_view()}
-    _last_job.update({"name": name, "started": now_iso(), "finished": None, "result": None, "error": None, "progress": {}})
+    job = {"id": uuid.uuid4().hex, "name": name, "started": now_iso(), "finished": None, "result": None,
+           "error": None, "progress": {}}
+    _jobs[job["id"]] = job
+    while len(_jobs) > JOB_HISTORY:
+        _jobs.popitem(last=False)
+    # _last_job mirrors the running job (same progress dict) for /health and the log hook.
+    _last_job.update({k: job[k] for k in ("name", "started", "finished", "result", "error", "progress")})
 
     def run():
         try:
-            _last_job["result"] = fn(*args, **kwargs)
+            job["result"] = fn(*args, **kwargs)
         except Exception as exc:  # noqa: BLE001
-            _last_job["error"] = str(exc)
+            job["error"] = str(exc)
             print(f"{name} error: {exc}")
         finally:
-            _last_job["finished"] = now_iso()
+            job["finished"] = now_iso()
+            _last_job.update({k: job[k] for k in ("finished", "result", "error")})
             _job_lock.release()
 
     threading.Thread(target=run, name=f"job-{name}", daemon=True).start()
-    return 202, {"status": "started", "job": job_view()}
+    return 202, {"status": "started", "job": job_view(job)}
 
 
-def job_view():
-    view = {k: _last_job.get(k) for k in ("name", "started", "finished", "error")}
-    view["progress"] = dict(_last_job.get("progress") or {})
-    view["running"] = bool(view["name"]) and not view["finished"]
-    if view["finished"]:
-        view["result"] = _last_job.get("result")
+def job_view(job=None):
+    """A job as the page sees it: the given one, else the newest; an empty view before any job."""
+    if job is None:
+        job = next(reversed(_jobs.values()), None)
+    if job is None:
+        return {"id": None, "name": None, "started": None, "finished": None, "error": None, "progress": {}, "running": False}
+    view = {k: job.get(k) for k in ("id", "name", "started", "finished", "error")}
+    view["progress"] = dict(job.get("progress") or {})
+    view["running"] = not job["finished"]
+    if job["finished"]:
+        view["result"] = job.get("result")
     return view
 
 
@@ -494,8 +513,12 @@ def match_month(year, month, card=None, log=print):
     return matching.match_month(get_store(), get_gemini(), year, month, card, use_ai=not AI_DISABLED, log=log)
 
 
-def notify_month(year, month, card=None, sent_by="", dry_run=False):
-    """One Chat card per credit card that still has purchases without an invoice."""
+def notify_month(year, month, card=None, sent_by="", dry_run=False, dashboard=None):
+    """One Chat card per credit card that still has purchases without an invoice.
+
+    `dashboard` is the absolute dashboard URL for the card buttons; a background job passes the
+    one resolved in its request, because there is no request to derive it from in the thread."""
+    base = dashboard if dashboard is not None else dashboard_url()
     store = get_store()
     year, month = int(year), int(month)
     cards = {c["last4"]: c for c in store.list_cards()}
@@ -521,7 +544,7 @@ def notify_month(year, month, card=None, sent_by="", dry_run=False):
             results.append({"card": last4, "sent": False, "detail": "card inactive"})
             continue
         payload = chat.missing_invoices_card(card_info, year, month, bucket["missing"], bucket["possible"],
-                                             dashboard_url(), folder, bucket["uncoded"])
+                                             base, folder, bucket["uncoded"])
         if dry_run:
             results.append({"card": last4, "sent": False, "detail": "dry run", "missing": len(bucket["missing"]),
                             "possible": len(bucket["possible"]), "payload": payload})
@@ -865,6 +888,12 @@ def api_statement_upload():
         return jsonify({"error": "the file is empty"}), 400
     sync = request.args.get("sync") == "1"
     notify = request.args.get("notify", "1") != "0"
+    if request.args.get("background") == "1":
+        # The dashboard's way: a PDF or image statement is read by Gemini, which can take a while.
+        status, payload = start_job("upload", ingest_statement, upload.filename, data, upload.mimetype or "", user["email"])
+        if status == 202:
+            print(f"statement {upload.filename} by {user['email']}: reading in the background")
+        return jsonify(payload), status
     if sync:
         status, payload = run_locked("statement", process_statement_sync, upload.filename, data,
                                      upload.mimetype or "", user["email"], notify)
@@ -916,18 +945,26 @@ def api_job_start():
     elif kind == "match":
         status, payload = start_job("match", match_month, year, month, card, log=_job_log)
     elif kind == "notify":
-        status, payload = start_job("notify", notify_month, year, month, card, user["email"], request.args.get("dry_run") == "1")
+        status, payload = start_job("notify", notify_month, year, month, card, user["email"],
+                                    request.args.get("dry_run") == "1", dashboard=dashboard_url())
     else:
         return jsonify({"error": "kind must be index, match or notify"}), 400
     if status == 202:
         _last_job["progress"].update({"year": year, "month": month})
-        payload["job"] = job_view()
+        payload["job"] = job_view(_jobs[payload["job"]["id"]])
     return jsonify(payload), status
 
 
 @app.route("/api/jobs/current")
 def api_job_current():
+    """The job with ?id=..., else the newest one. 404 for an id this instance never saw (a restart)."""
     require_user()
+    jid = request.args.get("id")
+    if jid:
+        job = _jobs.get(jid)
+        if job is None:
+            return jsonify({"error": "no such job; the server may have restarted while it was running"}), 404
+        return jsonify(job_view(job))
     return jsonify(job_view())
 
 

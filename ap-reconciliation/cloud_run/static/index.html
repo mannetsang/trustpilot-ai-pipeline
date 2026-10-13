@@ -1128,6 +1128,7 @@
   // the technical lines go to the collapsed "Details" box, which opens by itself on a problem.
   // ---------------------------------------------------------------------------
   var STEP_TITLES = { upload: 'Upload the statement', read: 'Read invoices from the Drive folder', match: 'Match purchases with invoices', notify: 'Send Chat reminders' };
+  var STEP_DOING = { upload: 'Uploading the statement', read: 'Reading invoices', match: 'Matching', notify: 'Sending reminders' };
   var STEP_ICONS = { pending: '', running: '<span class="spinner dark"></span>', done: '✓', warn: '!', failed: '✕' };
   var logEl = $('#jobLog'), jobEl = $('#job'), stepsEl = $('#jobSteps'), barEl = $('#jobBar'), detailsEl = $('#jobDetails');
 
@@ -1185,8 +1186,8 @@
     ['#uploadBtn', '#rematchBtn', '#notifyBtn'].forEach(function (s) { $(s).disabled = on; });
   }
   function count(x, one, many) { x = Number(x) || 0; return x + ' ' + (x === 1 ? one : many); }
-  function onBusyWait(step, what) {
-    return function () { setStep(step, 'running', what + ' is waiting for another job on the server to finish…'); setBar(-1); };
+  function onBusyWait(step) {
+    return function () { setStep(step, 'running', 'Waiting for another job on the server to finish before ' + STEP_DOING[step].toLowerCase() + '…'); setBar(-1); };
   }
   // "indexed 2026 08/Anthropic/Invoice-0069.pdf: Anthropic 45.03 CAD …" -> "Anthropic/Invoice-0069.pdf"
   function shortNote(note) {
@@ -1198,31 +1199,38 @@
 
   // Long steps run on the server as background jobs and the page polls every two seconds, so no
   // single request stays open for long (office networks drop a silent response after a minute).
-  var STEP_OF = { index: 'read', match: 'match', notify: 'notify' };
-  async function pollJob(kind, job, onProgress) {
-    var misses = 0;
+  var STEP_OF = { upload: 'upload', index: 'read', match: 'match', notify: 'notify' };
+  // Polls one job by its id until it has finished; the server keeps finished jobs readable for a
+  // while, so another person starting the next job does not take ours away.
+  async function pollJob(job, onProgress) {
+    var misses = 0, id = job && job.id;
+    if (!id) throw new ApiError(500, 'the server did not start the job', job);
     while (!job.finished) {
       await sleep(2000);
-      try { job = await api('/api/jobs/current'); misses = 0; }
-      catch (e) { if (e.status === 0 && ++misses <= 30) continue; throw e; }   // a dropped poll is harmless; the job carries on
-      if (job.name !== kind) throw new ApiError(409, 'another job replaced this one on the server', job);
+      try { job = await api('/api/jobs/current?id=' + encodeURIComponent(id)); misses = 0; }
+      catch (e) {
+        if (e.status === 0 && ++misses <= 30) continue;   // a dropped poll is harmless; the job carries on
+        if (e.status === 404) throw new ApiError(404, 'the server restarted while this step was running; it may not have finished', null);
+        throw e;
+      }
       if (onProgress && job.running) onProgress(job.progress || {});
     }
     if (job.error) throw new ApiError(500, job.error, job);
     return job.result || {};
   }
   async function runJob(kind, year, month, onProgress) {
-    var step = STEP_OF[kind];
-    var started = await apiRetryBusy('/api/jobs?kind=' + kind + '&year=' + year + '&month=' + month, { method: 'POST' }, onBusyWait(step, STEP_TITLES[step]));
-    return pollJob(kind, started.job || {}, onProgress);
+    var started = await apiRetryBusy('/api/jobs?kind=' + kind + '&year=' + year + '&month=' + month, { method: 'POST' }, onBusyWait(STEP_OF[kind]));
+    return pollJob(started.job, onProgress);
   }
   function readProgress(label) {
     return function (p) {
       if (p.skipped) return;
       var done = (p.read || 0) + (p.live || 0), known = (p.rounds || 0) > 0, total = known ? (p.read || 0) + (p.remaining || 0) : 0;
       if (!known && !done) return;                                 // the first batch has not reported yet
+      // Files retried from an earlier failure are read but never counted as remaining, so cap the text.
       var text = known
-        ? (total ? done + ' of ' + total + ' new invoices read for ' + label + '…' : 'No new invoices to read for ' + label)
+        ? (total ? (done >= total ? count(done, 'invoice', 'invoices') + ' read for ' + label + ', finishing…' : done + ' of ' + total + ' new invoices read for ' + label + '…')
+                 : 'No new invoices to read for ' + label)
         : count(done, 'invoice', 'invoices') + ' read for ' + label + ' so far…';
       if (p.note && /^indexed /.test(p.note)) text += ' Latest: ' + shortNote(p.note);
       setStep('read', 'running', text);
@@ -1298,8 +1306,12 @@
     setStep(step, 'running', 'Still running from earlier: ' + STEP_TITLES[step].toLowerCase() + ' for ' + label + '…');
     setBar(-1);
     try {
-      await pollJob(j.name, j, j.name === 'index' ? readProgress(label) : null);
-      setStep(step, 'done', 'Finished.');
+      await pollJob(j, j.name === 'index' ? readProgress(label) : null);
+      var after = { upload: 'The statement is saved. Reading invoices and matching did not follow because the page was reloaded; click "Re-run matching".',
+                    index: 'Invoices read. Matching did not follow because the page was reloaded; click "Re-run matching".',
+                    match: 'Matching finished. Reminders were not sent because the page was reloaded; use "Send reminders" if you want them.',
+                    notify: 'Reminders processed.' };
+      setStep(step, 'done', after[j.name] || 'Finished.');
       await reloadAll();
       renderSidebar();
     } catch (e) {
@@ -1325,7 +1337,10 @@
       setBar(-1);
       var fd = new FormData();
       fd.append('file', file, file.name);
-      var s = await api('/api/statements', { method: 'POST', body: fd });
+      var started = await apiRetryBusy('/api/statements?background=1', { method: 'POST', body: fd }, onBusyWait('upload'));
+      var s = await pollJob(started.job, function (p) {
+        if (p.note) setStep('upload', 'running', 'Reading the transactions in ' + file.name + '… ' + shortNote(p.note));
+      });
       var cardBits = Object.keys(s.cards || {}).sort().map(function (l4) { return l4 + (s.cards[l4].holder_name ? ' (' + s.cards[l4].holder_name + ')' : '') + ' ×' + s.cards[l4].count; });
       log('Statement ' + s.file_name + ': ' + s.transactions + ' transactions, ' + s.new + ' new, ' + s.already_stored + ' already stored' + (s.period_start ? ' · ' + s.period_start + ' to ' + s.period_end : ''), 'ok');
       log('cards: ' + (cardBits.join(', ') || 'none') + ' · months: ' + (s.months || []).map(function (ym) { return monthLabel(ym[0], ym[1]); }).join(', '), 'info');

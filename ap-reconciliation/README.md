@@ -237,12 +237,12 @@ under *Cards...*) are never notified.
 | `GET /api/cards` | signed in | cards |
 | `POST /api/cards` | AP | `{"last4", "label", "holder_name", "owner_email", "chat_space", "active"}` |
 | `GET /api/statements?year&month` | signed in | uploads that touched the month |
-| `POST /api/statements` | AP | multipart `file`; `?sync=1` also indexes, matches and notifies (`&notify=0` to skip the cards) |
+| `POST /api/statements[?background=1]` | AP | multipart `file`; `?sync=1` also indexes, matches and notifies (`&notify=0` to skip the cards) |
 | `POST /api/index?year&month[&limit]` | AP | read up to `limit` (max 100) new invoices for month-1..month+1 |
 | `POST /api/match?year&month[&card]` | AP | pair purchases with invoices |
 | `POST /api/notify?year&month[&card][&dry_run=1]` | AP | post the Chat cards (`dry_run` returns the payloads instead) |
 | `POST /api/jobs?kind=index\|match\|notify&year&month[&card][&limit=8]` | AP | the same step as a background job, answered at once with `202 {status: started, job}` (`409 busy` while another runs). What the dashboard uses: an invoice read or a match can run for minutes and office networks drop a silent response after a minute or so. `index` loops over batches of `limit` files until nothing new is left |
-| `GET /api/jobs/current` | signed in | the running or last job: `name`, `started`, `finished`, `running`, `progress` (`read`, `live`, `remaining`, `note`, `year`, `month`, …) and, once finished, `result` or `error` |
+| `GET /api/jobs/current[?id=…]` | signed in | the job with that id (the last ten stay readable, so a tab keeps its own result when someone else starts the next job; 404 after a restart), else the newest: `id`, `name`, `started`, `finished`, `running`, `progress` (`read`, `live`, `remaining`, `note`, `year`, `month`, …) and, once finished, `result` or `error` |
 
 Job endpoints answer `409 {"status": "busy"}` while another job runs and
 `500 {"status": "error"}` with the message when one fails.
