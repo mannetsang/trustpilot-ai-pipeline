@@ -191,7 +191,9 @@ client, no sign-in button and no token in the page in either mode.
 - **Card chips** and a status filter (all, missing, possible, matched,
   waived, no cost centre), a search box over description, amounts, cost
   centre and usage, and a card selector.
-- **Transaction table**: date, card, description with city/country, amount
+- **Transaction table** (click a header to sort, drag its right edge to
+  resize, *Columns* to hide columns or reset; the browser remembers all
+  three): date, card, description with city/country, amount
   (with the original foreign amount), cost centre dropdown (the
   `cost_centers` table, with an *Other...* free text), usage, note, and the
   invoice column: the linked file with vendor, number and total, or the

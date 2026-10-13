@@ -132,21 +132,29 @@
 
     /* The table scrolls inside its card; the page itself never scrolls sideways. */
     .table-wrap { overflow-x: auto; overflow-y: visible; -webkit-overflow-scrolling: touch; border-radius: 0 0 12px 12px; }
-    table.txns { width: 100%; min-width: 1080px; border-collapse: separate; border-spacing: 0; font-size: 12.5px; }
-    table.txns th { position: sticky; top: 0; background: var(--bg); z-index: 1; text-align: left; font-size: 10.5px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--text-mute); padding: 9px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
-    table.txns td { padding: 8px 10px; border-bottom: 1px solid var(--border-subtle); vertical-align: top; }
+    table.txns { width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 0; font-size: 12px; }
+    table.txns th { position: sticky; top: 0; background: var(--bg); z-index: 1; text-align: left; font-size: 10.5px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--text-mute); padding: 7px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: none; }
+    table.txns th.sortable { cursor: pointer; }
+    table.txns th.sortable:hover { color: var(--text); }
+    table.txns th .sort-ind { font-size: 9px; margin-left: 4px; color: var(--brand-ink); }
+    table.txns th .col-resize { position: absolute; right: 0; top: 0; bottom: 0; width: 8px; cursor: col-resize; z-index: 2; }   /* inside the cell: th clips overflow */
+    table.txns th .col-resize:hover, table.txns th .col-resize.active { background: var(--brand-soft); }
+    table.txns td { padding: 6px 8px; border-bottom: 1px solid var(--border-subtle); vertical-align: top; overflow: hidden; }
+    table.txns td .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    table.txns .pill { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; line-height: 1.5; }
+    table.txns .inp { height: 28px; font-size: 12px; }
+    .col-menu { position: absolute; right: 12px; top: 46px; z-index: 30; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.12); display: grid; gap: 7px; font-size: 12.5px; min-width: 200px; }
     table.txns tr:last-child td { border-bottom: none; }
     table.txns tbody tr:hover td { background: #fbfcfc; }
     table.txns tr.row-muted td { color: var(--text-mute); }
     table.txns tr.row-muted .amt { color: var(--text-mute); font-weight: 400; }
     .amt { font-weight: 600; white-space: nowrap; text-align: right; }
     .td-right { text-align: right; }
-    .td-desc .desc { font-weight: 500; }
-    .td-desc, .td-inv { min-width: 220px; }
-    .btn-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+    .td-desc .desc { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .btn-row { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
     .conf { font-size: 10.5px; color: var(--text-mute); }
 
-    .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); }
+    .toolbar { position: relative; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); }
     .toolbar .inp { height: 34px; }
 
     /* Job progress: plain-language steps with a bar; the technical lines sit in a collapsed Details box. */
@@ -305,12 +313,13 @@
             <input id="search" class="inp" type="search" placeholder="Search description, amount, cost centre, usage" style="max-width: 320px; flex: 1; min-width: 180px;" />
             <select id="cardSelect" class="inp" style="width: auto; min-width: 150px;" aria-label="Card"></select>
             <div id="rowCount" class="sub ml-auto"></div>
+            <button id="colsBtn" class="btn btn-secondary btn-xs" type="button" title="Show or hide columns; reset widths and sorting">Columns</button>
+            <div id="colMenu" class="col-menu hidden"></div>
           </div>
           <div class="table-wrap">
             <table class="txns">
-              <thead><tr>
-                <th>Date</th><th>Card</th><th>Supplier / description</th><th class="td-right">Amount</th><th>Invoice</th><th>Cost centre</th><th>Usage</th><th>Updated by</th>
-              </tr></thead>
+              <colgroup id="txnCols"></colgroup>
+              <thead><tr id="txnHead"></tr></thead>
               <tbody id="txnBody"></tbody>
             </table>
           </div>
@@ -626,8 +635,113 @@
   }
   function visibleTxns() {
     var q = state.q.trim().toLowerCase();
-    return scopeTxns().filter(function (t) { return matchesStatus(t, state.status) && matchesSearch(t, q); });
+    return sortRows(scopeTxns().filter(function (t) { return matchesStatus(t, state.status) && matchesSearch(t, q); }));
   }
+
+  // ---------------------------------------------------------------------------
+  // Table columns: click a header to sort, drag its right edge to resize, hide columns with the
+  // Columns button; this browser remembers all three.
+  // ---------------------------------------------------------------------------
+  var COLUMNS = [
+    { key: 'date', label: 'Date', width: 92 },
+    { key: 'card', label: 'Card', width: 150 },
+    { key: 'desc', label: 'Supplier / description', width: 260 },
+    { key: 'amount', label: 'Amount', width: 110, right: true },
+    { key: 'invoice', label: 'Invoice', width: 240 },
+    { key: 'cost', label: 'Cost centre', width: 150 },
+    { key: 'usage', label: 'Usage', width: 180 },
+    { key: 'by', label: 'Updated by', width: 130 },
+  ];
+  var COLS_KEY = 'ap_recon_columns';
+  var cols = { widths: {}, hidden: [], sort: null };          // sort: { key, dir: 1 | -1 }
+  try { cols = Object.assign(cols, JSON.parse(localStorage.getItem(COLS_KEY) || '{}')); } catch (e) { /* defaults */ }
+  function saveCols() { try { localStorage.setItem(COLS_KEY, JSON.stringify(cols)); } catch (e) { /* private mode */ } }
+  function visibleColumns() { return COLUMNS.filter(function (c) { return cols.hidden.indexOf(c.key) < 0; }); }
+  function colWidth(c) { return Math.max(60, Number(cols.widths[c.key]) || c.width); }
+  // Exact pixel widths; whatever room is left in the card goes to the description column.
+  function renderCols() {
+    var vis = visibleColumns(), table = $('table.txns'), wrap = $('.table-wrap');
+    var sum = vis.reduce(function (n, c) { return n + colWidth(c); }, 0);
+    var flex = vis.filter(function (c) { return c.key === 'desc'; })[0] || vis[vis.length - 1];
+    var extra = Math.max(0, (wrap ? wrap.clientWidth : 0) - sum);
+    $('#txnCols').innerHTML = vis.map(function (c) { return '<col style="width:' + (colWidth(c) + (c === flex ? extra : 0)) + 'px">'; }).join('');
+    table.style.width = (sum + extra) + 'px';
+  }
+  function renderHead() {
+    $('#txnHead').innerHTML = visibleColumns().map(function (c) {
+      var sorted = cols.sort && cols.sort.key === c.key;
+      return '<th class="sortable' + (c.right ? ' td-right' : '') + '" data-col="' + c.key + '" title="Click to sort; drag the right edge to resize">' + esc(c.label) +
+        (sorted ? '<span class="sort-ind">' + (cols.sort.dir > 0 ? '▲' : '▼') + '</span>' : '') + '<span class="col-resize" data-resize="' + c.key + '"></span></th>';
+    }).join('');
+    renderCols();
+  }
+  var STATUS_RANK = { missing: 0, possible: 1, matched: 2, waived: 3, not_required: 4 };
+  var SORT_KEYS = {
+    date: function (t) { return (t.txn_date || '') + ' ' + (t.post_date || ''); },
+    card: function (t) { return cardLabel(t.card_last4).toLowerCase(); },
+    desc: function (t) { return (t.description || '').toLowerCase(); },
+    amount: function (t) { return Number(t.amount) || 0; },
+    invoice: function (t) { var inv = t.invoice; return (STATUS_RANK[t.invoice_status] === undefined ? 9 : STATUS_RANK[t.invoice_status]) + '|' + ((inv && (inv.vendor || inv.file_name)) || '').toLowerCase(); },
+    cost: function (t) { return (t.cost_center || '\uffff').toLowerCase(); },      // empty ones last
+    usage: function (t) { return (t.usage || '\uffff').toLowerCase(); },
+    by: function (t) { return (t.updated_at || '') + ' ' + (t.updated_by || ''); },
+  };
+  function sortRows(rows) {
+    var key = cols.sort && SORT_KEYS[cols.sort.key];
+    if (!key) return rows;
+    var dir = cols.sort.dir;
+    return rows.map(function (t, i) { return { t: t, i: i, k: key(t) }; })
+      .sort(function (a, b) { var c = a.k < b.k ? -1 : a.k > b.k ? 1 : 0; return c ? c * dir : a.i - b.i; })
+      .map(function (r) { return r.t; });
+  }
+  $('#txnHead').addEventListener('click', function (ev) {
+    if (ev.target.closest('.col-resize')) return;
+    var th = ev.target.closest('th[data-col]'); if (!th) return;
+    var key = th.dataset.col;
+    cols.sort = cols.sort && cols.sort.key === key ? (cols.sort.dir > 0 ? { key: key, dir: -1 } : null) : { key: key, dir: 1 };
+    saveCols(); renderHead(); renderTable();
+  });
+  var resizing = null;
+  $('#txnHead').addEventListener('mousedown', function (ev) {
+    var h = ev.target.closest('.col-resize'); if (!h) return;
+    ev.preventDefault();
+    resizing = { key: h.dataset.resize, startX: ev.clientX, startW: h.closest('th').getBoundingClientRect().width, handle: h };
+    h.classList.add('active');
+    document.body.style.cursor = 'col-resize';
+  });
+  document.addEventListener('mousemove', function (ev) {
+    if (!resizing) return;
+    cols.widths[resizing.key] = Math.max(60, Math.round(resizing.startW + ev.clientX - resizing.startX));
+    renderCols();
+  });
+  document.addEventListener('mouseup', function () {
+    if (!resizing) return;
+    resizing.handle.classList.remove('active');
+    resizing = null;
+    document.body.style.cursor = '';
+    saveCols();
+  });
+  window.addEventListener('resize', function () { if (state.loaded) renderCols(); });
+  function renderColMenu() {
+    $('#colMenu').innerHTML = COLUMNS.map(function (c) {
+      var on = cols.hidden.indexOf(c.key) < 0;
+      return '<label class="flex items-center gap-2' + (c.key === 'desc' ? ' opacity-60' : '') + '"><input type="checkbox" data-colkey="' + c.key + '"' + (on ? ' checked' : '') + (c.key === 'desc' ? ' disabled' : '') + ' /> ' + esc(c.label) + '</label>';
+    }).join('') + '<button type="button" class="btn btn-ghost btn-xs" data-colreset="1" style="justify-self: start;">Reset widths, sorting and columns</button>';
+  }
+  $('#colsBtn').addEventListener('click', function (ev) { ev.stopPropagation(); renderColMenu(); $('#colMenu').classList.toggle('hidden'); });
+  $('#colMenu').addEventListener('click', function (ev) {
+    ev.stopPropagation();
+    if (!ev.target.closest('[data-colreset]')) return;
+    cols = { widths: {}, hidden: [], sort: null };
+    saveCols(); renderColMenu(); renderHead(); renderTable();
+  });
+  $('#colMenu').addEventListener('change', function (ev) {
+    var cb = ev.target.closest('input[data-colkey]'); if (!cb) return;
+    cols.hidden = cols.hidden.filter(function (k) { return k !== cb.dataset.colkey; });
+    if (!cb.checked) cols.hidden.push(cb.dataset.colkey);
+    saveCols(); renderHead(); renderTable();
+  });
+  document.addEventListener('click', function () { $('#colMenu').classList.add('hidden'); });
   function kpisOf(txns) {
     var k = { spend: {}, purchases: 0, matched: 0, possible: 0, missing: 0, waived: 0, uncoded: 0 };
     txns.forEach(function (t) {
@@ -781,32 +895,42 @@
     return '<select class="inp" data-field="cost_center" aria-label="Cost centre"' + (t.editable ? '' : ' disabled') + '>' + opts + '</select>';
   }
 
+  var CELLS = {
+    date: function (t) {
+      var post = t.post_date && t.post_date !== t.txn_date ? '<div class="sub">posted ' + esc(fmtDay(t.post_date)) + '</div>' : '';
+      return '<td style="white-space:nowrap;">' + esc(fmtDay(t.txn_date)) + post + '</td>';
+    },
+    card: function (t) { return '<td><span class="pill pill-grey" title="' + esc(cardLabel(t.card_last4) + (t.holder_name ? ' · ' + t.holder_name : '')) + '">' + esc(cardLabel(t.card_last4)) + '</span></td>'; },
+    desc: function (t) {
+      var subBits = [[t.city, t.country].filter(Boolean).join(', '), t.merchant_category].filter(Boolean);
+      if (t.type !== 'purchase') subBits.unshift(t.type);
+      return '<td class="td-desc"><div class="desc" title="' + esc(t.description) + '">' + esc(t.description) + '</div>' +
+        (subBits.length ? '<div class="sub" title="' + esc(subBits.join(' · ')) + '">' + esc(subBits.join(' · ')) + '</div>' : '') + '</td>';
+    },
+    amount: function (t) {
+      var src = t.source_amount !== null && t.source_amount !== undefined && t.source_currency ? '<div class="sub">' + esc(money(t.source_amount, t.source_currency)) + '</div>' : '';
+      return '<td class="td-right"><div class="amt">' + esc(money(t.amount, t.currency)) + '</div>' + src + '</td>';
+    },
+    invoice: function (t) { return '<td class="td-inv">' + invoiceCell(t) + '</td>'; },
+    cost: function (t) { return '<td>' + costCenterCell(t) + '</td>'; },
+    usage: function (t) {
+      return '<td><input class="inp" data-field="usage" aria-label="Usage" placeholder="' + (t.type !== 'purchase' ? '' : 'What was this for?') + '" value="' + esc(t.usage || '') + '" data-original="' + esc(t.usage || '') + '"' + (t.editable ? '' : ' disabled') + ' /></td>';
+    },
+    by: function (t) {
+      return '<td>' + (t.updated_by ? '<div class="truncate" title="' + esc(t.updated_by) + '">' + esc(t.updated_by) + '</div><div class="sub">' + esc(fmtStamp(t.updated_at)) + '</div>' : '<span class="sub">—</span>') + '</td>';
+    },
+  };
   function rowHtml(t) {
-    var nonPurchase = t.type !== 'purchase';
-    var where = [t.city, t.country].filter(Boolean).join(', ');
-    var subBits = [where, t.merchant_category].filter(Boolean);
-    if (nonPurchase) subBits.unshift(t.type);
-    var post = t.post_date && t.post_date !== t.txn_date ? '<div class="sub">posted ' + esc(fmtDay(t.post_date)) + '</div>' : '';
-    var src = t.source_amount !== null && t.source_amount !== undefined && t.source_currency
-      ? '<div class="sub">' + esc(money(t.source_amount, t.source_currency)) + '</div>' : '';
-    var by = t.updated_by ? '<div class="truncate" style="max-width: 150px;" title="' + esc(t.updated_by) + '">' + esc(t.updated_by) + '</div><div class="sub">' + esc(fmtStamp(t.updated_at)) + '</div>' : '<span class="sub">—</span>';
-    return '<tr data-id="' + esc(t.id) + '" class="' + (nonPurchase ? 'row-muted' : '') + '">' +
-      '<td style="white-space:nowrap;">' + esc(fmtDay(t.txn_date)) + post + '</td>' +
-      '<td><span class="pill pill-grey" title="' + esc(t.holder_name || '') + '">' + esc(cardLabel(t.card_last4)) + '</span></td>' +
-      '<td class="td-desc"><div class="desc">' + esc(t.description) + '</div>' + (subBits.length ? '<div class="sub">' + esc(subBits.join(' · ')) + '</div>' : '') + '</td>' +
-      '<td class="td-right"><div class="amt">' + esc(money(t.amount, t.currency)) + '</div>' + src + '</td>' +
-      '<td class="td-inv">' + invoiceCell(t) + '</td>' +
-      '<td style="min-width:170px;">' + costCenterCell(t) + '</td>' +
-      '<td style="min-width:200px;"><input class="inp" data-field="usage" aria-label="Usage" placeholder="' + (nonPurchase ? '' : 'What was this for?') + '" value="' + esc(t.usage || '') + '" data-original="' + esc(t.usage || '') + '"' + (t.editable ? '' : ' disabled') + ' /></td>' +
-      '<td>' + by + '</td>' +
-      '</tr>';
+    return '<tr data-id="' + esc(t.id) + '" class="' + (t.type !== 'purchase' ? 'row-muted' : '') + '">' +
+      visibleColumns().map(function (c) { return CELLS[c.key](t); }).join('') + '</tr>';
   }
 
   function renderTable() {
+    renderHead();
     var rows = visibleTxns();
     var body = $('#txnBody');
     if (!rows.length) {
-      body.innerHTML = '<tr><td colspan="8"><div class="empty" style="padding: 32px;">' + (state.txns.length ? 'No transactions match the current filter.' : 'No transactions in this month.') + '</div></td></tr>';
+      body.innerHTML = '<tr><td colspan="' + visibleColumns().length + '"><div class="empty" style="padding: 32px;">' + (state.txns.length ? 'No transactions match the current filter.' : 'No transactions in this month.') + '</div></td></tr>';
     } else {
       body.innerHTML = rows.map(rowHtml).join('');
     }
