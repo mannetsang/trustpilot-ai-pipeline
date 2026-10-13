@@ -8,18 +8,17 @@ name: Deploy AP credit-card reconciliation service
 #
 # Credentials reach the containers as Secret Manager references, never as
 # values in this file: the Supabase service-role key, the AP user's Drive
-# OAuth triple, the per-card Chat webhooks and the dashboard password (the
-# job gets that one too through the shared list and ignores it).
+# OAuth triple and the per-card Chat webhooks.
 #
-# Access: a shared password, since 2026-10-13. The service is public
-# (--allow-unauthenticated --no-iap), AUTH_DISABLED=1 tells the app to treat
-# every visitor as AP, recording the name typed into the page, and the
-# password the page asks for first is the secret
-# ap-reconciliation-dashboard-password (DASHBOARD_PASSWORD; a new version
-# changes it on the next deploy or instance). To put Google sign-in back,
-# switch to --no-allow-unauthenticated --iap, replace AUTH_DISABLED with
-# IAP_AUDIENCE=/projects/304363458561/locations/us-central1/services/ap-reconciliation
-# and follow README step 5 (the IAP grants are already in place).
+# Access: Google sign-in through Identity-Aware Proxy (IAP), decided
+# 2026-10-13. The service has no public invoker (--no-allow-unauthenticated
+# --iap): Google signs people in before any request reaches the container,
+# only the superhairpieces.com domain is on IAP's access list (README step
+# 5), and the app verifies IAP's signed header against IAP_AUDIENCE. The
+# other two modes stay one edit away: AUTH_DISABLED=1 with
+# --allow-unauthenticated --no-iap opens the dashboard to anyone with the
+# URL, and adding DASHBOARD_PASSWORD=ap-reconciliation-dashboard-password:latest
+# to SECRETS puts a shared password in front of that (README, "Access").
 #
 # The Supabase project URL is set inline below: a public identifier, not a
 # secret.
@@ -48,7 +47,9 @@ env:
   SUPABASE_URL: https://bkkifrwfgtcnmfynbbdd.supabase.co
   ALLOWED_DOMAINS: superhairpieces.com
   AP_EMAILS: ap@superhairpieces.com,manne@superhairpieces.com
-  SECRETS: SUPABASE_SERVICE_KEY=ap-reconciliation-supabase-service-key:latest,GOOGLE_WORKSPACE_AP_CLIENT_ID=google-workspace-ap-client-id:latest,GOOGLE_WORKSPACE_AP_CLIENT_SECRET=google-workspace-ap-client-secret:latest,GOOGLE_WORKSPACE_AP_REFRESH_TOKEN=google-workspace-ap-refresh-token:latest,CARD_WEBHOOKS_JSON=ap-reconciliation-card-webhooks:latest,DASHBOARD_PASSWORD=ap-reconciliation-dashboard-password:latest
+  # What the IAP assertion's audience must be: this service, by project number.
+  IAP_AUDIENCE: /projects/304363458561/locations/us-central1/services/ap-reconciliation
+  SECRETS: SUPABASE_SERVICE_KEY=ap-reconciliation-supabase-service-key:latest,GOOGLE_WORKSPACE_AP_CLIENT_ID=google-workspace-ap-client-id:latest,GOOGLE_WORKSPACE_AP_CLIENT_SECRET=google-workspace-ap-client-secret:latest,GOOGLE_WORKSPACE_AP_REFRESH_TOKEN=google-workspace-ap-refresh-token:latest,CARD_WEBHOOKS_JSON=ap-reconciliation-card-webhooks:latest
 
 jobs:
   deploy:
@@ -63,9 +64,9 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
-      # Public, behind the shared password: anyone who reaches the URL and
-      # knows it gets the dashboard as AP (AUTH_DISABLED=1 plus the
-      # DASHBOARD_PASSWORD secret). One instance, because jobs serialize
+      # Behind IAP: no public invoker, Google signs people in first, the app
+      # checks the assertion against IAP_AUDIENCE and applies ALLOWED_DOMAINS
+      # and AP_EMAILS on top. One instance, because jobs serialize
       # on an in-process lock. CPU stays allocated between requests because
       # the dashboard's long steps (invoice reads, matching) run as
       # background jobs that the page polls; throttled, they would stall.
@@ -78,9 +79,9 @@ jobs:
           gcloud run deploy "$SERVICE" \
             --source ./ap-reconciliation/cloud_run \
             --region "$REGION" --project "$PROJECT" \
-            --allow-unauthenticated --no-iap --no-cpu-throttling \
+            --no-allow-unauthenticated --iap --no-cpu-throttling \
             --min-instances 0 --max-instances 1 --timeout 1800 --memory 1Gi \
-            --set-env-vars "^;^INVOICE_FOLDER_ID=$INVOICE_FOLDER_ID;ALLOWED_DOMAINS=$ALLOWED_DOMAINS;AP_EMAILS=$AP_EMAILS;SUPABASE_URL=$SUPABASE_URL;AUTH_DISABLED=1" \
+            --set-env-vars "^;^INVOICE_FOLDER_ID=$INVOICE_FOLDER_ID;ALLOWED_DOMAINS=$ALLOWED_DOMAINS;AP_EMAILS=$AP_EMAILS;SUPABASE_URL=$SUPABASE_URL;IAP_AUDIENCE=$IAP_AUDIENCE" \
             --set-secrets "$SECRETS" \
             --quiet
 

@@ -13,12 +13,13 @@ Storage is a dedicated Supabase project (schema in ../schema.sql), reached
 with the service-role key from this server only. STORE=memory runs everything
 in-process for tests and demos.
 
-Access. With AUTH_DISABLED=1 every caller is "ap" and the name typed into the page
-(X-Dashboard-User header) is what gets recorded; with DASHBOARD_PASSWORD also set (the live
-deployment since 2026-10-13) the page first asks for that shared password and keeps a signed
-cookie (POST /api/login), without it the dashboard is open to anyone who can reach it (the
-2026-10-12 decision). Without AUTH_DISABLED the service expects to sit behind Identity-Aware
-Proxy and verifies the X-Goog-IAP-JWT-Assertion header (see README).
+Access. The live deployment (decided 2026-10-13) sits behind Identity-Aware Proxy: Google signs
+people in, the app verifies the X-Goog-IAP-JWT-Assertion header against IAP_AUDIENCE, allows the
+ALLOWED_DOMAINS and makes AP_EMAILS "ap" and everyone else "member" (see README). With
+AUTH_DISABLED=1 instead, every caller is "ap" and the name typed into the page (X-Dashboard-User
+header) is what gets recorded: with DASHBOARD_PASSWORD also set the page first asks for that shared
+password and keeps a signed cookie (POST /api/login), without it the dashboard is open to anyone
+who can reach it.
 
 Endpoints
   GET  /                         dashboard
@@ -153,7 +154,7 @@ def auth_mode():
 def access_banner():
     """The start-up line that says who gets in, or SystemExit for a configuration that must not run."""
     if PASSWORD_MODE:
-        # Since 2026-10-13: the page asks for the shared password and everyone who knows it is AP.
+        # Password mode: the page asks for the shared password and everyone who knows it is AP.
         return ("AUTH_DISABLED=1 with DASHBOARD_PASSWORD: the dashboard asks for the shared password; "
                 "every caller who knows it is AP")
     if AUTH_DISABLED and "DASHBOARD_PASSWORD" in os.environ:
@@ -162,8 +163,8 @@ def access_banner():
         raise SystemExit("DASHBOARD_PASSWORD is set but blank: add a non-empty secret version, "
                          "or remove it from the deploy to run open on purpose")
     if AUTH_DISABLED:
-        # Chosen for the live deployment on 2026-10-12: anyone who can reach the URL sees every card
-        # and may change anything, as AP. Unset it and deploy with --iap to put Google sign-in back.
+        # Open mode (the live setting from 2026-10-12 to 2026-10-13): anyone who can reach the URL
+        # sees every card and may change anything, as AP.
         return ("AUTH_DISABLED=1 without DASHBOARD_PASSWORD: the dashboard is open to anyone who can "
                 "reach it; every caller is AP")
     if os.environ.get("K_SERVICE") and not IAP_AUDIENCE:
