@@ -268,7 +268,7 @@
         <input id="whoAmI" class="inp hidden" type="text" placeholder="Your name" maxlength="80" autocomplete="name" aria-label="Your name, recorded with your changes" title="Recorded as 'Updated by' on anything you change; remembered by this browser" style="width: 150px; height: 30px;" />
         <div id="userChip" class="flex items-center gap-2 min-w-0"></div>
         <a id="switchAccount" class="btn btn-ghost btn-xs hidden" href="/_gcp_iap/clear_login_cookie" title="Pick another Google account for this site">Switch account</a>
-        <button id="signOutBtn" class="btn btn-ghost btn-xs hidden" type="button" title="Sign out of the dashboard and of Google in this browser">Sign out</button>
+        <button id="signOutBtn" class="btn btn-ghost btn-xs hidden" type="button" title="Sign out of the dashboard; your Google account stays signed in">Sign out</button>
         <button id="lockBtn" class="btn btn-ghost btn-xs hidden" type="button" title="Forget the password on this browser; the next visit asks for it again">Lock</button>
       </div>
     </header>
@@ -1193,17 +1193,17 @@
   $('#lockBtn').addEventListener('click', async function () {
     try { await api('/api/logout', { method: 'POST' }); location.reload(); } catch (e) { report(e, 'Could not lock the dashboard'); }
   });
-  // Behind IAP the dashboard sign-in is the Google sign-in: clearing IAP's cookie alone (what
-  // "Switch account" does) brings a browser that is still signed in to Google straight back in,
-  // so a real sign-out has to end the Google session in this browser as well.
+  // Behind IAP, "Sign out" ends the dashboard session only: it clears IAP's cookie for this site
+  // (the redirect that path answers with is not followed) and lands on the public sign-in page,
+  // whose Sign in goes back through that same path so Google asks which account to use. The
+  // Google account itself stays signed in; the sign-in page says so and offers the Google
+  // sign-out for shared computers.
   $('#signOutBtn').addEventListener('click', async function () {
-    var ok = confirm('Sign out of the dashboard?\n\nThis also signs this browser out of Google (Gmail, Drive and any other Google tab), because the dashboard uses your Google sign-in. To use a different account instead, choose "Switch account".');
-    if (!ok) return;
     try {
-      // Clears IAP's cookie for this site; the redirect it answers with is not followed.
       await fetch('/_gcp_iap/clear_login_cookie', { credentials: 'same-origin', redirect: 'manual', cache: 'no-store' });
-    } catch (e) { /* best effort: Google's sign-out below ends the session IAP re-checks within the hour */ }
-    location.href = 'https://accounts.google.com/Logout';
+    } catch (e) { /* the sign-in page's Sign in clears it again before Google asks */ }
+    var login = safeUrl(state.config && state.config.login_url);
+    location.href = login ? login + (login.indexOf('?') < 0 ? '?' : '&') + 'signed_out=1' : '/_gcp_iap/clear_login_cookie';
   });
   $('#whoAmI').addEventListener('change', async function () {
     try { localStorage.setItem(NAME_KEY, this.value.trim().slice(0, 80)); } catch (e) { /* private mode: the name lasts for this page only */ }

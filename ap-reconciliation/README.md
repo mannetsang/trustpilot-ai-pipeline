@@ -164,6 +164,24 @@ from a `POST /api/login` with `-c`/`-b`; the login call needs the header too).
 IAP's public keys are cached in the process for an hour. There is no OAuth
 client, no sign-in button and no token in the page in any mode.
 
+**The sign-in page.** IAP guards every path of the service, so a page that
+shows before sign-in cannot live on it: `login/` is a second, public Cloud
+Run service, `ap-reconciliation-login`, one static page served by nginx
+with the logo, *Continue with Google* (the dashboard URL: IAP signs the
+person in, silently when the browser is already signed in to Google) and
+*Use a different account* (the dashboard's `/_gcp_iap/clear_login_cookie`,
+which clears IAP's cookie and makes Google ask which account to use). The
+dashboard's *Sign out* clears IAP's cookie the same way and lands on this
+page with `?signed_out=1`, which says the dashboard session is over, that
+the Google account itself stays signed in to the browser, offers *Sign in*
+through the account picker, and links Google's own sign-out for shared
+computers. That is the whole of what signing out can mean behind IAP: IAP
+has no signed-out state beyond its cookie, and a visit straight to the
+dashboard URL from a browser still signed in to Google is signed in again
+without a prompt. The page learns the dashboard URL at container start
+(`DASHBOARD_URL`, see `login/40-dashboard-url.sh`) and the dashboard learns
+the page's URL as `LOGIN_URL`; the deploy workflow sets both.
+
 Two other modes exist, one edit of the deploy workflow away (step 5):
 
 - **Open** (`--allow-unauthenticated --no-iap`, `AUTH_DISABLED=1`; the live
@@ -190,12 +208,11 @@ Two other modes exist, one edit of the deploy workflow away (step 5):
 
 - **Google sign-in**: Identity-Aware Proxy signs people in before the
   page loads (no button; anyone already signed in to Google goes straight
-  in). *Switch account* in the header clears IAP's cookie for this site and
-  shows Google's account picker; *Sign out* clears it and then signs the
-  browser out of Google altogether (after a confirmation that says so),
-  because the dashboard sign-in is the Google sign-in and a browser still
-  signed in to Google would walk straight back in. An ended Google session
-  shows a *Reload* gate. (In open and password
+  in), and the public sign-in page (above) is the front door. *Switch
+  account* in the header clears IAP's cookie for this site and shows
+  Google's account picker; *Sign out* clears it and lands on the sign-in
+  page, with the Google account still signed in to the browser. An ended
+  Google session shows a *Reload* gate. (In open and password
   mode a *Your name* box in the header, remembered by the browser, is what
   *Updated by* records; password mode asks for the password once per
   browser for 30 days, and *Lock* forgets it.)
@@ -255,7 +272,7 @@ under *Cards...*) are never notified.
 |---|---|---|
 | `GET /` | none | the dashboard page |
 | `GET /health` | none | `{"ok": true, "store": ..., "last_job": ...}`; `?deep=1` adds reachability checks for Supabase and the Invoice folder, how many card webhooks are configured (counts only: it answers without the password) and the auth mode. (`/healthz` is answered by Cloud Run's front end itself, not the container.) |
-| `GET /api/config` | none | `auth` (`password`, `open` or `iap`), `auth_disabled`, dashboard URL, Invoice folder URL, `ai_enabled` |
+| `GET /api/config` | none | `auth` (`password`, `open` or `iap`), `auth_disabled`, dashboard URL, sign-in page URL (`login_url`), Invoice folder URL, `ai_enabled` |
 | `POST /api/login` | none, but `X-Requested-With: XMLHttpRequest` in password mode (403 without) | password mode: `{"password": "..."}` sets the session cookie (401 wrong, 429 after too many wrong ones); a no-op in the other modes |
 | `POST /api/logout` | none, but `X-Requested-With: XMLHttpRequest` in every mode (403 without) | clears the session cookie (*Lock*) |
 | `GET /api/me` | signed in | e-mail, name, role, cards owned |
@@ -295,6 +312,7 @@ Job endpoints answer `409 {"status": "busy"}` while another job runs and
 | `DASHBOARD_PASSWORD` | | the shared password (Secret Manager `ap-reconciliation-dashboard-password`); surrounding whitespace is ignored. Only takes effect with `AUTH_DISABLED=1` (the weekly job gets it through the shared `SECRETS` list and ignores it). Set but blank, the service refuses to start rather than open up |
 | `DASHBOARD_SESSION_DAYS` | `30` | how long the password cookie lasts |
 | `DASHBOARD_URL` | request origin | absolute URL for the Chat card buttons; the workflow sets it |
+| `LOGIN_URL` | | the public sign-in page, where *Sign out* lands (IAP mode); the workflow sets it |
 | `GCP_PROJECT` / `VERTEX_LOCATION` | `shp-ai-bot-2026` / `us-central1` | where Gemini runs (ADC) |
 | `GEMINI_EXTRACT_MODEL` / `GEMINI_MATCH_MODEL` | see `main.py` | the reading and judging models |
 | `AI_DISABLED` | | `1` skips every model call: no invoice reading, rules only, no PDF statements |
@@ -500,12 +518,15 @@ runs on every push to `main` touching `cloud_run/`, signs in to Google Cloud
 through Workload Identity Federation (`docs/credentials.md`), deploys with
 `--source` (one instance, 1 GiB, 30-minute request timeout, CPU always
 allocated so background jobs keep running between the page's polls), mounts the
-secrets above, then reads the service URL and sets `DASHBOARD_URL` to it so
-the Chat card buttons point at the right place. The service is deployed
+secrets above, then deploys the sign-in page (`login/`, public, with the
+dashboard URL as `DASHBOARD_URL`) as the service `ap-reconciliation-login`,
+then reads both URLs and sets `DASHBOARD_URL` (for the Chat card buttons)
+and `LOGIN_URL` (for *Sign out*) on the dashboard. The dashboard is deployed
 behind Identity-Aware Proxy (`--no-allow-unauthenticated --iap`,
-`IAP_AUDIENCE`; step 5 of the setup has the grants and the other two modes). A last step
-deploys the Cloud Run job `ap-reconciliation-remind` from the same image
-and only warns when `claude-sessions` may not manage jobs.
+`IAP_AUDIENCE`; step 5 of the setup has the grants and the other two modes).
+A last step deploys the Cloud Run job `ap-reconciliation-remind` from the
+same image and only warns when `claude-sessions` may not manage jobs. A
+push touching `login/` deploys too.
 
 Secrets mounted as environment variables are read when an instance starts,
 so a new secret version (a rotated key, an added card webhook) reaches the
@@ -535,7 +556,7 @@ next idle period, or at once with *Run workflow*.
 | (IAP mode) Google answers *You don't have access* | the account is not on IAP's access list: the domain grant in step 5, or a `user:` grant; a minute to take effect |
 | (IAP mode) Cloud Run answers 403 *Forbidden* without a Google sign-in page | IAP is not enabled on the service (`--no-iap`): deploy with `--iap` |
 | (IAP mode) 401 *sign in with your superhairpieces.com Google account* for a real colleague | the account got through IAP but is outside `ALLOWED_DOMAINS`; or `IAP_AUDIENCE` does not match the service (`/health?deep=1` shows it, the logs say *IAP assertion rejected*) |
-| (IAP mode) *Switch account* brings the same account straight back, nobody can "log out" | expected: *Switch account* only clears IAP's cookie and asks Google which account to use; a browser signed in to one Google account is signed in again without a prompt. *Sign out* in the header is the real sign-out: it also ends the Google session in that browser (Gmail and the rest included), which is the only sign-out IAP has |
+| (IAP mode) After *Sign out*, opening the dashboard URL signs the same person straight back in | expected: *Sign out* ends the dashboard session (IAP's cookie), not the Google session, and IAP has no other signed-out state. The sign-in page's *Sign in* and the header's *Switch account* make Google ask which account to use; on a shared computer the sign-in page links Google's own sign-out |
 | (IAP mode) The page shows *Your Google session has ended* | IAP's session expired (about an hour); *Reload* signs in again |
 | Notify says *no webhook configured for this card* | add the card's `last4` (or a `default`) to `CARD_WEBHOOKS_JSON`, new secret version, redeploy |
 | Notify says *chat webhook returned 404/403* | the webhook was deleted in the space or the space was archived; create a new one and update the secret |

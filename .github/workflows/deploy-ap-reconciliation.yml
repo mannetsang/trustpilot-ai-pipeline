@@ -2,9 +2,10 @@ name: Deploy AP credit-card reconciliation service
 
 # Deploys ap-reconciliation/cloud_run to the Cloud Run service
 # `ap-reconciliation` (statement upload, invoice matching, Chat reminders and
-# the reconciliation dashboard; see ap-reconciliation/README.md) and, from
-# the same image, the Cloud Run job `ap-reconciliation-remind` that Cloud
-# Scheduler runs every Monday.
+# the reconciliation dashboard; see ap-reconciliation/README.md), the public
+# sign-in page ap-reconciliation/login as the service
+# `ap-reconciliation-login`, and, from the dashboard's image, the Cloud Run
+# job `ap-reconciliation-remind` that Cloud Scheduler runs every Monday.
 #
 # Credentials reach the containers as Secret Manager references, never as
 # values in this file: the Supabase service-role key, the AP user's Drive
@@ -28,6 +29,7 @@ on:
     branches: [main]
     paths:
       - 'ap-reconciliation/cloud_run/**'
+      - 'ap-reconciliation/login/**'
       - '.github/workflows/deploy-ap-reconciliation.yml'
   workflow_dispatch:
 
@@ -42,6 +44,7 @@ env:
   PROJECT: shp-ai-bot-2026
   REGION: us-central1
   SERVICE: ap-reconciliation
+  LOGIN_SERVICE: ap-reconciliation-login
   JOB: ap-reconciliation-remind
   INVOICE_FOLDER_ID: 18YkGTNDIrxdQgHRgquvQizI8fLsFOpPk
   SUPABASE_URL: https://bkkifrwfgtcnmfynbbdd.supabase.co
@@ -85,19 +88,40 @@ jobs:
             --set-secrets "$SECRETS" \
             --quiet
 
-      # The Chat cards carry "Open dashboard" buttons, which need the absolute
-      # URL of the service; a request-less run (the weekly job) has nothing to
-      # derive it from. The URL is only known after the first deploy, and
-      # --set-env-vars above replaces the whole set on every deploy, so this
-      # step runs each time.
-      - name: Point DASHBOARD_URL at the service
+      # The sign-in page: one public static page (nginx) with "Continue with
+      # Google", where the dashboard's "Sign out" lands. It cannot live on the
+      # dashboard service, which IAP guards on every path. It bakes the
+      # dashboard's URL in at container start, so it deploys after the
+      # dashboard; the dashboard learns its URL in the next step.
+      - name: Deploy the sign-in page
         run: |
           SERVICE_URL=$(gcloud run services describe "$SERVICE" \
             --region "$REGION" --project "$PROJECT" --format 'value(status.url)')
+          gcloud run deploy "$LOGIN_SERVICE" \
+            --source ./ap-reconciliation/login \
+            --region "$REGION" --project "$PROJECT" \
+            --allow-unauthenticated --no-iap \
+            --port 8080 --cpu 1 --memory 256Mi \
+            --min-instances 0 --max-instances 2 \
+            --set-env-vars "DASHBOARD_URL=$SERVICE_URL" \
+            --quiet
+
+      # The Chat cards carry "Open dashboard" buttons, which need the absolute
+      # URL of the service; a request-less run (the weekly job) has nothing to
+      # derive it from. "Sign out" needs the sign-in page's URL the same way.
+      # Both are only known after a deploy, and --set-env-vars above replaces
+      # the whole set on every deploy, so this step runs each time.
+      - name: Point DASHBOARD_URL and LOGIN_URL at the services
+        run: |
+          SERVICE_URL=$(gcloud run services describe "$SERVICE" \
+            --region "$REGION" --project "$PROJECT" --format 'value(status.url)')
+          LOGIN_URL=$(gcloud run services describe "$LOGIN_SERVICE" \
+            --region "$REGION" --project "$PROJECT" --format 'value(status.url)')
           echo "Service URL: $SERVICE_URL"
+          echo "Sign-in page: $LOGIN_URL"
           gcloud run services update "$SERVICE" \
             --region "$REGION" --project "$PROJECT" \
-            --update-env-vars "DASHBOARD_URL=$SERVICE_URL" \
+            --update-env-vars "DASHBOARD_URL=$SERVICE_URL,LOGIN_URL=$LOGIN_URL" \
             --quiet
 
       # Weekly reminder: a Cloud Run job running `python main.py remind` in the

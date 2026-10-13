@@ -102,8 +102,10 @@ card's own Chat space gets an "invoices needed" card, and card owners code
 the cost centre and usage on the dashboard (Google sign-in through
 Identity-Aware Proxy for the `superhairpieces.com` domain, decided
 2026-10-13; `ap@` and `manne@` are AP, everyone else in the domain edits
-only the cards they own. The README's "Access" section has the open and
-shared-password modes too). Storage is a **separate Supabase project** (ref
+only the cards they own; the public sign-in page is the second Cloud Run
+service `ap-reconciliation-login`, source `ap-reconciliation/login/`. The
+README's "Access" section has the open and shared-password modes too).
+Storage is a **separate Supabase project** (ref
 `bkkifrwfgtcnmfynbbdd`; schema in `ap-reconciliation/schema.sql`, applied
 with `setup_db.py`), not shared with anything else. Secrets are `ap-reconciliation-*` plus the AP user's Drive
 OAuth triple `google-workspace-ap-*`; see `ap-reconciliation/README.md`.

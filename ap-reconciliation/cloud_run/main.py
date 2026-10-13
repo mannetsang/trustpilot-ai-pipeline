@@ -24,7 +24,7 @@ who can reach it.
 Endpoints
   GET  /                         dashboard
   GET  /health[?deep=1]          liveness; deep=1 also checks Supabase and the Invoice folder
-  GET  /api/config               auth mode, dashboard URL (public, no secrets)
+  GET  /api/config               auth mode, dashboard and sign-in page URLs (public, no secrets)
   POST /api/login  POST /api/logout  password mode: {"password"} sets the session cookie / clears it
   GET  /api/me                   who am I, role (ap | member), cards I own
   GET  /api/months               year/month navigation with per-card counts
@@ -45,7 +45,7 @@ The weekly reminder is a Cloud Run job running `python main.py remind` (see the 
 Env: SUPABASE_URL, SUPABASE_SERVICE_KEY, INVOICE_FOLDER_ID, STATEMENTS_FOLDER_ID (optional),
 GOOGLE_WORKSPACE_AP_CLIENT_ID/_CLIENT_SECRET/_REFRESH_TOKEN (Drive as ap@; ADC when unset),
 CARD_WEBHOOKS_JSON, GCHAT_WEBHOOK_URL, IAP_AUDIENCE, ALLOWED_DOMAINS,
-AP_EMAILS, DASHBOARD_URL, GEMINI_EXTRACT_MODEL, GEMINI_MATCH_MODEL, AI_DISABLED, AUTH_DISABLED,
+AP_EMAILS, DASHBOARD_URL, LOGIN_URL, GEMINI_EXTRACT_MODEL, GEMINI_MATCH_MODEL, AI_DISABLED, AUTH_DISABLED,
 DASHBOARD_PASSWORD, DASHBOARD_SESSION_DAYS, STORE.
 """
 
@@ -136,6 +136,7 @@ LOGIN_WINDOW = 15 * 60          # wrong passwords are counted over this many sec
 LOGIN_MAX_FAILURES = 10         # ...per address, and
 LOGIN_MAX_FAILURES_TOTAL = 50   # ...across every address (one instance, so in-process counters hold)
 DASHBOARD_URL = os.environ.get("DASHBOARD_URL", "").rstrip("/")
+LOGIN_URL = os.environ.get("LOGIN_URL", "").rstrip("/")      # the public sign-in page (IAP mode)
 GCP_PROJECT = os.environ.get("GCP_PROJECT", "shp-ai-bot-2026")
 VERTEX_LOCATION = os.environ.get("VERTEX_LOCATION", "us-central1")
 GEMINI_EXTRACT_MODEL = os.environ.get("GEMINI_EXTRACT_MODEL", "gemini-2.5-flash")
@@ -840,8 +841,8 @@ def healthz():
 @app.route("/api/config")
 def api_config():
     return jsonify({"auth": auth_mode(), "auth_disabled": AUTH_DISABLED,
-                    "dashboard_url": dashboard_url(), "invoice_folder_url": folder_url(INVOICE_FOLDER_ID),
-                    "ai_enabled": not AI_DISABLED})
+                    "dashboard_url": dashboard_url(), "login_url": LOGIN_URL,
+                    "invoice_folder_url": folder_url(INVOICE_FOLDER_ID), "ai_enabled": not AI_DISABLED})
 
 
 @app.route("/api/login", methods=["POST"])

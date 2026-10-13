@@ -142,5 +142,12 @@ class IapAuthTests(ApiTestCase):
         self.assertEqual(self.client.get("/api/months", headers=member).status_code, 200)
 
 
+    def test_config_names_the_sign_in_page(self):
+        """The dashboard's Sign out lands on the public sign-in page, which the deploy names."""
+        with mock.patch.object(main, "LOGIN_URL", "https://ap-reconciliation-login.example.run.app"):
+            config = self.client.get("/api/config").get_json()
+        self.assertEqual((config["auth"], config["login_url"]), ("iap", "https://ap-reconciliation-login.example.run.app"))
+        self.assertEqual(self.client.get("/api/config").get_json()["login_url"], "")
+
 if __name__ == "__main__":
     unittest.main()

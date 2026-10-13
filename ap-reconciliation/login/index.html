@@ -1,0 +1,58 @@
+<!doctype html>
+<!-- The AP reconciliation sign-in page: a public static page in front of the dashboard, which
+     Identity-Aware Proxy guards on every path (so this page cannot live there). "Continue with
+     Google" simply opens the dashboard; IAP signs the person in, silently when the browser is
+     already signed in to Google. "Use a different account" and the Sign in after a sign-out go
+     through IAP's cookie-clearing path, which makes Google ask which account to use.
+     ${DASHBOARD_URL} is substituted when the container starts (40-dashboard-url.sh). -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>AP Reconciliation: sign in</title>
+  <style>
+    :root { --surface: #ffffff; --border: #e5e7ea; --text: #191919; --text-mid: #5b5b5b; --text-mute: #6b6f78; --brand: #00b67a; --brand-ink: #00754d; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: var(--text);
+           background: linear-gradient(135deg, #f7f8f9 0%, #eef0f3 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px 16px; }
+    .card { width: 100%; max-width: 380px; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 36px 28px; box-shadow: 0 24px 48px rgba(0,0,0,0.08); text-align: center; }
+    .logo { height: 40px; width: auto; }
+    h1 { font-size: 20px; font-weight: 600; margin: 12px 0 6px; }
+    p { margin: 0 0 8px; font-size: 14px; color: var(--text-mute); line-height: 1.5; }
+    p.lead { color: var(--text); font-weight: 600; }
+    .btn { display: block; width: 100%; margin-top: 20px; padding: 11px 16px; border-radius: 10px; background: var(--brand); color: #fff; font-size: 15px; font-weight: 600; text-decoration: none; }
+    .btn:hover { background: var(--brand-ink); }
+    .link { display: inline-block; margin-top: 14px; font-size: 13px; color: var(--text-mid); text-decoration: underline; }
+    .note { margin-top: 24px; font-size: 11px; color: var(--text-mute); line-height: 1.5; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <img class="logo" src="https://superhairpieces.ca/content/images/common/shp-main-logo.svg" alt="Superhairpieces">
+    <h1>AP Reconciliation</h1>
+    <div id="signin">
+      <p>Sign in with your superhairpieces.com Google account.</p>
+      <a class="btn" id="continueBtn" href="${DASHBOARD_URL}/">Continue with Google</a>
+      <a class="link" id="otherAccount" href="${DASHBOARD_URL}/_gcp_iap/clear_login_cookie">Use a different account</a>
+    </div>
+    <div id="signedout" class="hidden">
+      <p class="lead">You're signed out of the dashboard.</p>
+      <p>Your Google account stays signed in to this browser; the next sign-in asks which account to use.</p>
+      <a class="btn" id="signinBtn" href="${DASHBOARD_URL}/_gcp_iap/clear_login_cookie">Sign in</a>
+      <a class="link" id="googleLogout" href="https://accounts.google.com/Logout">On a shared computer? Sign out of Google as well</a>
+    </div>
+    <div class="note">Everyone at Superhairpieces can see every card; you can only edit the cards you own, and accounts payable can edit everything.</div>
+  </main>
+  <script>
+    // ?signed_out=1 is where the dashboard's "Sign out" lands.
+    if (/[?&]signed_out=1(&|$)/.test(location.search)) {
+      document.getElementById('signin').classList.add('hidden');
+      document.getElementById('signedout').classList.remove('hidden');
+      if (history.replaceState) history.replaceState(null, '', location.pathname);
+    }
+  </script>
+</body>
+</html>
