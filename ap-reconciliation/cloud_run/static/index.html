@@ -90,12 +90,22 @@
     .dropzone .dz-text { font-size: 13px; color: var(--text-mid); }
     .dropzone .dz-text b { color: var(--text); }
     .dropzone .dz-file { margin-top: 8px; font-size: 12.5px; font-weight: 600; color: var(--brand-ink); }
+    .ap-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+    .ap-upload { display: flex; align-items: center; gap: 8px; flex: 1 1 420px; min-width: 0; }
+    .ap-upload .dropzone { flex: 1; min-width: 0; padding: 7px 12px; border-radius: 10px; text-align: left; display: flex; align-items: center; gap: 10px; }
+    .ap-upload .dz-text { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    .ap-upload .dz-text .sub { display: inline; }
+    .ap-upload .dz-file { margin: 0 0 0 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
+    .ap-upload .btn, .ap-actions .btn { white-space: nowrap; }
+    .ap-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+    .ap-sep { width: 1px; align-self: stretch; background: var(--border); margin: 2px 4px; }
+    @media (max-width: 1099px) { .ap-sep { display: none; } }
     input[type="checkbox"] { accent-color: var(--brand); width: 15px; height: 15px; }
 
     /* Layout: dark sidebar on the left, scrolling main area on the right. Under 900px the sidebar
        goes away and the month list becomes a dropdown in the top bar. */
     #app { display: flex; min-height: 100vh; }
-    #sidebar { width: 264px; flex-shrink: 0; background: var(--sidebar); color: var(--sidebar-text); position: sticky; top: 0; height: 100vh; overflow-y: auto; padding: 20px 12px; display: flex; flex-direction: column; }
+    #sidebar { width: 232px; flex-shrink: 0; background: var(--sidebar); color: var(--sidebar-text); position: sticky; top: 0; height: 100vh; overflow-y: auto; padding: 20px 12px; display: flex; flex-direction: column; }
     #main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
     #topbar { background: var(--surface); border-bottom: 1px solid var(--border-subtle); min-height: 56px; display: flex; align-items: center; gap: 12px; padding: 8px 16px; position: sticky; top: 0; z-index: 20; }
     #content { padding: 16px; max-width: 1480px; width: 100%; }
@@ -105,7 +115,8 @@
       #mobileNav { display: flex; }
       #topTitle { display: none; }
     }
-    @media (min-width: 1100px) { #content { padding: 24px 28px; } }
+    @media (min-width: 1100px) { #content { padding: 16px 24px; } }
+    @media (min-width: 1700px) { #sidebar { width: 264px; } #content { padding: 20px 28px; } }
 
     .nav-year { font-size: 11px; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-mute); padding: 14px 12px 6px; }
     .nav-row { position: relative; display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-radius: 10px; font-size: 13.5px; color: var(--sidebar-text); cursor: pointer; min-height: 40px; transition: background .12s ease; text-decoration: none; }
@@ -114,17 +125,22 @@
     .nav-row.active::before { content: ""; position: absolute; left: -12px; top: 50%; transform: translateY(-50%); width: 4px; height: 22px; border-radius: 0 4px 4px 0; background: var(--brand); }
     .nav-row .badges { margin-left: auto; display: flex; gap: 4px; }
 
-    .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; min-width: 0; }
-    .kpi .label { font-size: 10.5px; }
-    .kpi .value { font-size: 20px; font-weight: 600; line-height: 1.2; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .kpi .value.small { font-size: 15px; }
-    .kpi.kpi-spend .value { font-size: 17px; }
+    .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 7px 12px; min-width: 0; }
+    .kpi .label { font-size: 10px; letter-spacing: 0.6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .kpi .value { font-size: 18px; font-weight: 600; line-height: 1.2; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .kpi .value.small { font-size: 14px; }
+    .kpi.kpi-spend .value { font-size: 16px; }
     .kpi.kpi-missing .value { color: var(--down); }
     .kpi.kpi-possible .value { color: var(--warn-text); }
     .kpi.kpi-matched .value { color: var(--up-ink); }
     .kpi.kpi-uncoded .value { color: var(--info-text); }
     /* Tiles take as many columns as fit at 140px each: 2 on a phone, 7 on a wide desktop. */
-    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
+    .kpi-grid { display: grid; grid-template-columns: minmax(150px, 1.3fr) repeat(auto-fit, minmax(118px, 1fr)); gap: 8px; }
+    /* The card tabs stay on one line and scroll sideways when there are more than fit. */
+    #cardStrip { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; }
+    #cardStrip .chip { flex-shrink: 0; }
+    /* The tabs pick the card on a wide screen; the drop-down is for phones, where they scroll away. */
+    @media (min-width: 900px) { #cardSelect { display: none; } }
 
     .chip { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: var(--r-pill); border: 1px solid var(--border); background: var(--surface); font-size: 12.5px; font-weight: 500; color: var(--text-mid); cursor: pointer; white-space: nowrap; }
     .chip:hover { background: var(--hover-wash); color: var(--text); }
@@ -140,6 +156,8 @@
 
     /* The table scrolls inside its card; the page itself never scrolls sideways. */
     .table-wrap { overflow-x: auto; overflow-y: visible; -webkit-overflow-scrolling: touch; border-radius: 0 0 12px 12px; }
+    .table-wrap.fits { overflow: visible; }
+    .table-wrap.fits table.txns th { top: var(--sticky-top, 0px); }
     table.txns { width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 0; font-size: 12px; }
     table.txns th { position: sticky; top: 0; background: var(--bg); z-index: 1; text-align: left; font-size: 10.5px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--text-mute); padding: 7px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: none; }
     table.txns th.sortable { cursor: pointer; }
@@ -287,13 +305,13 @@
       </div>
 
       <div id="monthView" class="hidden">
-        <div class="flex flex-wrap items-end justify-between gap-3 mb-3">
+        <div class="flex flex-wrap items-end justify-between gap-3 mb-2">
           <div>
-            <h1 id="monthTitle" class="text-2xl font-semibold leading-tight"></h1>
+            <h1 id="monthTitle" class="text-xl font-semibold leading-tight"></h1>
             <div id="monthSub" class="sub mt-0.5"></div>
           </div>
         </div>
-        <div class="kpi-grid mb-4" id="kpis">
+        <div class="kpi-grid mb-3" id="kpis">
           <div class="kpi kpi-spend"><div class="label">Spend</div><div class="value" data-kpi="spend">—</div></div>
           <div class="kpi"><div class="label">Purchases</div><div class="value" data-kpi="purchases">—</div></div>
           <div class="kpi kpi-matched"><div class="label">Invoices found</div><div class="value" data-kpi="matched">—</div></div>
@@ -303,28 +321,24 @@
           <div class="kpi kpi-uncoded"><div class="label">No cost centre</div><div class="value" data-kpi="uncoded">—</div></div>
         </div>
 
-        <section id="apPanel" class="card p-4 mb-4 hidden">
-          <div class="flex flex-wrap gap-6">
-            <form id="uploadForm" class="flex flex-col gap-2 flex-1 min-w-[260px]">
-              <div class="label">Upload statement</div>
-              <label id="dropZone" class="dropzone" for="fileInput">
+        <section id="apPanel" class="card px-3 py-2.5 mb-3 hidden">
+          <div class="ap-row">
+            <form id="uploadForm" class="ap-upload">
+              <label id="dropZone" class="dropzone" for="fileInput" title="RBC transaction export (.xlsx, .csv), or a statement as PDF or photo. After matching, the page shows which cards would get a Chat reminder and waits for you to send them.">
                 <input type="file" id="fileInput" accept=".xlsx,.xlsm,.csv,.tsv,.pdf,.jpg,.jpeg,.png" />
-                <div class="dz-text"><b>Drop the statement here</b> or click to choose a file<div class="sub mt-1">RBC transaction export (.xlsx, .csv), or a statement as PDF or photo</div></div>
+                <div class="dz-text"><b>Drop a statement here</b> or click to choose <span class="sub">· RBC export, PDF or photo</span></div>
                 <div id="dzFile" class="dz-file hidden"></div>
               </label>
-              <div class="sub">After matching, the page shows which cards would get a Chat reminder and waits for you to send them.</div>
-              <div><button type="submit" id="uploadBtn" class="btn btn-primary">Upload and process</button></div>
+              <button type="submit" id="uploadBtn" class="btn btn-primary">Upload and process</button>
             </form>
-            <div class="flex flex-col gap-2">
-              <div class="label">This month</div>
-              <div class="flex flex-wrap gap-2">
-                <button id="rematchBtn" class="btn btn-secondary">Re-run matching</button>
-                <button id="notifyBtn" class="btn btn-secondary">Send reminders</button>
-                <button id="cardsBtn" class="btn btn-secondary">Cards…</button>
-              </div>
-              <div id="aiNote" class="sub hidden">Invoice reading is switched off on this server (AI_DISABLED): matching uses invoices already indexed.</div>
+            <div class="ap-sep" aria-hidden="true"></div>
+            <div class="ap-actions" role="group" aria-label="This month">
+              <button id="rematchBtn" class="btn btn-secondary">Re-run matching</button>
+              <button id="notifyBtn" class="btn btn-secondary">Send reminders</button>
+              <button id="cardsBtn" class="btn btn-secondary">Cards…</button>
             </div>
           </div>
+          <div id="aiNote" class="sub hidden mt-1.5">Invoice reading is switched off on this server (AI_DISABLED): matching uses invoices already indexed.</div>
           <div id="job" class="job hidden" aria-live="polite">
             <ol id="jobSteps"></ol>
             <div id="jobBar" class="bar hidden"><i></i></div>
@@ -332,7 +346,7 @@
           </div>
         </section>
 
-        <div id="cardStrip" class="flex flex-wrap gap-2 mb-3"></div>
+        <div id="cardStrip" class="flex gap-2 mb-2"></div>
 
         <div class="card">
           <div class="toolbar">
@@ -679,6 +693,10 @@
   // ---------------------------------------------------------------------------
   // Derived data
   // ---------------------------------------------------------------------------
+  function shortCardLabel(last4) {
+    var full = cardLabel(last4), short = full.replace(/^card ending\s*/i, '');
+    return short || last4;
+  }
   function cardLabel(last4) {
     for (var i = 0; i < state.cards.length; i++) if (state.cards[i].last4 === last4) return state.cards[i].label || ('Card ending ' + last4);
     return 'Card ending ' + last4;
@@ -720,18 +738,45 @@
   try { cols = Object.assign(cols, JSON.parse(localStorage.getItem(COLS_KEY) || '{}')); } catch (e) { /* defaults */ }
   function saveCols() { try { localStorage.setItem(COLS_KEY, JSON.stringify(cols)); } catch (e) { /* private mode */ } }
   function visibleColumns() { return COLUMNS.filter(function (c) { return cols.hidden.indexOf(c.key) < 0; }); }
+  // What the table shows: the chosen columns, minus Card while one card is picked (every row is that card).
+  function shownColumns() { return visibleColumns().filter(function (c) { return !(c.key === 'card' && state.card); }); }
+  // How far each column may give way when the window is narrow, before the table scrolls sideways.
+  // The invoice column keeps room for its three buttons on one line (Link…, No invoice, Rematch).
+  var MIN_WIDTH = { date: 80, card: 84, desc: 140, amount: 92, invoice: 226, cost: 112, usage: 100, by: 76 };
   function colWidth(c) { return Math.max(60, Number(cols.widths[c.key]) || c.width); }
   // Exact pixel widths; whatever room is left in the card goes to the description column.
   function renderCols() {
-    var vis = visibleColumns(), table = $('table.txns'), wrap = $('.table-wrap');
-    var sum = vis.reduce(function (n, c) { return n + colWidth(c); }, 0);
-    var flex = vis.filter(function (c) { return c.key === 'desc'; })[0] || vis[vis.length - 1];
-    var extra = Math.max(0, (wrap ? wrap.clientWidth : 0) - sum);
-    $('#txnCols').innerHTML = vis.map(function (c) { return '<col style="width:' + (colWidth(c) + (c === flex ? extra : 0)) + 'px">'; }).join('');
+    var vis = shownColumns(), table = $('table.txns'), wrap = $('.table-wrap');
+    var avail = wrap ? wrap.clientWidth : 0;
+    var widths = vis.map(colWidth);
+    var sum = widths.reduce(function (n, w) { return n + w; }, 0);
+    // Too wide for the window: columns give way in proportion to what they can spare, first the
+    // ones nobody has sized by hand, then (only if that is not enough) the hand-sized ones too.
+    [false, true].forEach(function (includeSized) {
+      if (!avail || sum <= avail) return;
+      var spare = vis.map(function (c, i) {
+        if (!includeSized && cols.widths[c.key]) return 0;
+        return Math.max(0, widths[i] - (MIN_WIDTH[c.key] || widths[i]));
+      });
+      var room = spare.reduce(function (n, w) { return n + w; }, 0);
+      if (room <= 0) return;
+      var take = Math.min(sum - avail, room);
+      widths = widths.map(function (w, i) { return Math.round(w - take * spare[i] / room); });
+      sum = widths.reduce(function (n, w) { return n + w; }, 0);
+    });
+    var flexAt = vis.findIndex(function (c) { return c.key === 'desc'; });
+    if (flexAt < 0) flexAt = vis.length - 1;
+    var extra = Math.max(0, avail - sum);
+    $('#txnCols').innerHTML = vis.map(function (c, i) { return '<col style="width:' + (widths[i] + (i === flexAt ? extra : 0)) + 'px">'; }).join('');
     table.style.width = (sum + extra) + 'px';
+    // Fits: no sideways scrolling, so the header row can stick under the top bar while the page scrolls.
+    var fits = sum <= avail + 1;
+    if (wrap) wrap.classList.toggle('fits', fits);
+    var bar = $('#topbar');
+    document.documentElement.style.setProperty('--sticky-top', (bar ? bar.offsetHeight : 0) + 'px');
   }
   function renderHead() {
-    $('#txnHead').innerHTML = visibleColumns().map(function (c) {
+    $('#txnHead').innerHTML = shownColumns().map(function (c) {
       var sorted = cols.sort && cols.sort.key === c.key;
       return '<th class="sortable' + (c.right ? ' td-right' : '') + '" data-col="' + c.key + '" title="Click to sort; drag the right edge to resize">' + esc(c.label) +
         (sorted ? '<span class="sort-ind">' + (cols.sort.dir > 0 ? '▲' : '▼') + '</span>' : '') + '<span class="col-resize" data-resize="' + c.key + '"></span></th>';
@@ -902,7 +947,7 @@
     var html = '<button class="chip' + (!state.card ? ' active' : '') + '" data-card="">All cards' + (all.missing ? '<span class="badge badge-red">' + all.missing + '</span>' : '') + '</button>';
     Object.keys(per).sort().forEach(function (l4) {
       var b = per[l4];
-      html += '<button class="chip' + (state.card === l4 ? ' active' : '') + '" data-card="' + esc(l4) + '" title="' + esc('Card ending ' + l4) + '">' + esc(cardLabel(l4)) +
+      html += '<button class="chip' + (state.card === l4 ? ' active' : '') + '" data-card="' + esc(l4) + '" title="' + esc(cardLabel(l4)) + '">' + esc(shortCardLabel(l4)) +
         (b.missing ? '<span class="badge badge-red" title="missing">' + b.missing + '</span>' : '') +
         (b.possible ? '<span class="badge badge-amber" title="possible">' + b.possible + '</span>' : '') + '</button>';
     });
@@ -982,7 +1027,7 @@
       var post = t.post_date && t.post_date !== t.txn_date ? '<div class="sub">posted ' + esc(fmtDay(t.post_date)) + '</div>' : '';
       return '<td style="white-space:nowrap;">' + esc(fmtDay(t.txn_date)) + post + '</td>';
     },
-    card: function (t) { return '<td><span class="pill pill-grey" title="' + esc(cardLabel(t.card_last4) + (t.holder_name ? ' · ' + t.holder_name : '')) + '">' + esc(cardLabel(t.card_last4)) + '</span></td>'; },
+    card: function (t) { return '<td><span class="pill pill-grey" title="' + esc(cardLabel(t.card_last4) + (t.holder_name ? ' · ' + t.holder_name : '')) + '">' + esc(shortCardLabel(t.card_last4)) + '</span></td>'; },
     desc: function (t) {
       var subBits = [[t.city, t.country].filter(Boolean).join(', '), t.merchant_category].filter(Boolean);
       if (t.type !== 'purchase') subBits.unshift(t.type);
@@ -1004,7 +1049,7 @@
   };
   function rowHtml(t) {
     return '<tr data-id="' + esc(t.id) + '" class="' + (t.type !== 'purchase' ? 'row-muted' : '') + '">' +
-      visibleColumns().map(function (c) { return CELLS[c.key](t); }).join('') + '</tr>';
+      shownColumns().map(function (c) { return CELLS[c.key](t); }).join('') + '</tr>';
   }
 
   function renderTable() {
@@ -1012,7 +1057,7 @@
     var rows = visibleTxns();
     var body = $('#txnBody');
     if (!rows.length) {
-      body.innerHTML = '<tr><td colspan="' + visibleColumns().length + '"><div class="empty" style="padding: 32px;">' + (state.txns.length ? 'No transactions match the current filter.' : 'No transactions in this month.') + '</div></td></tr>';
+      body.innerHTML = '<tr><td colspan="' + shownColumns().length + '"><div class="empty" style="padding: 32px;">' + (state.txns.length ? 'No transactions match the current filter.' : 'No transactions in this month.') + '</div></td></tr>';
     } else {
       body.innerHTML = rows.map(rowHtml).join('');
     }

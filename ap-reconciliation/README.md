@@ -236,19 +236,28 @@ Two other modes exist, one edit of the deploy workflow away (step 5):
   is what the Chat card buttons open.
 - **Tiles** for the month (or the selected card): spend, purchases, invoices
   found, missing, possible, waived, charges without a cost centre.
-- **AP panel** (AP only): upload (drop the file on the box or click it),
+- **AP panel** (AP only), one row: a slim drop zone for the statement
+  (drop the file on it or click it), *Upload and process*, then
   *Re-run matching*, *Send reminders*,
   *Cards...* (label, holder, owner e-mail, Chat space name, active flag,
   and whether a webhook is configured for the card), plus the step list
   of the running job. Nothing is posted to Chat on its own: after matching
   (and on *Send reminders*) the page lists which cards would get a reminder,
   with their counts and Chat spaces, and waits for *Send* or *Not now*.
-- **Card chips** and a status filter (all, missing, possible, matched,
-  waived, no cost centre), a search box over description, amounts, cost
-  centre and usage, and a card selector.
+- **Card chips** ("1610 - Yin Wei", the full label on hover; one line that
+  scrolls sideways when there are more cards than fit) and a status filter
+  (all, missing, possible, matched, waived, no cost centre), a search box
+  over description, amounts, cost centre and usage, and on phones a card
+  drop-down instead of the chips.
 - **Transaction table** (click a header to sort, drag its right edge to
   resize, *Columns* to hide columns or reset; the browser remembers all
-  three): date, card, description with city/country, amount
+  three). It fits the window: on a narrow screen the columns give way in
+  proportion to what they can spare (a column sized by hand keeps its
+  width while the others can still shrink), down to a minimum that keeps
+  the invoice buttons on one line; only below that does the table scroll
+  sideways. While it fits, the header row stays pinned under the top bar
+  as the page scrolls. The Card column is left out while one card is
+  picked. Columns: date, card, description with city/country, amount
   (with the original foreign amount), cost centre dropdown (the
   `cost_centers` table, with an *Other...* free text), usage, note, and the
   invoice column: the linked file with vendor, number and total, or the
