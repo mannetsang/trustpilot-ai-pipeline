@@ -161,6 +161,14 @@ class LiveViewTests(unittest.TestCase):
         self.assertEqual(sent[-1]["text"], "x")
         self.assertNotIn("person", sent[-1])  # Man AI never types as a person
 
+    def test_closing_the_tab_forgets_it(self):
+        self.toolset.call("browser", {"action": "open", "url": "app.wiz.io"})
+        with mock.patch.object(tools, "_browser_call", return_value={"session": "s1", "closed": True}):
+            out = tools.user_browser(self.store, "close")
+        self.assertNotIn("session_id", out["view"])
+        self.assertEqual(out["view"]["steps"][-1]["action"], "close")
+        self.assertIn("Type an address", tools.user_browser(self.store, "click", x=1, y=1)["error"])
+
     def test_control_runs_out_by_itself(self):
         view = tools.set_control(self.store, True)
         self.assertTrue(tools._user_in_control(view))
@@ -184,7 +192,7 @@ class LiveViewTests(unittest.TestCase):
             r = client.post("/api/browser/act", json={"action": "goto", "url": "superhairpieces.com"}, headers=headers)
             self.assertEqual(r.status_code, 200)
             self.assertEqual(r.get_json()["view"]["steps"][-1]["caller"], "you")
-            self.assertEqual(client.post("/api/browser/act", json={"action": "close"}, headers=headers).status_code, 400)
+            self.assertEqual(client.post("/api/browser/act", json={"action": "open"}, headers=headers).status_code, 400)
             self.assertEqual(client.post("/api/browser/act", json={"action": "goto"}).status_code, 403)  # no CSRF header
             off = client.post("/api/browser/control", json={"on": False}, headers=headers).get_json()
             self.assertNotIn("control_until", off["view"])

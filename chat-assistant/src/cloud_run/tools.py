@@ -491,7 +491,8 @@ class Toolset:
             step["error"] = str(result["error"])[:200]
         _show_browser(self.store, step, frame={"image": image, "url": result.get("url", ""), "title": result.get("title", ""),
                                                "device": result.get("device", device)} if image else None,
-                      session=None if result.get("closed") else result.get("session") or body.get("session"))
+                      session=None if result.get("closed") else result.get("session") or body.get("session"),
+                      closed=bool(result.get("closed")))
         if theirs and action != "open":
             result.setdefault("notes", [])
             result["notes"] = list(result["notes"]) + [
@@ -552,7 +553,8 @@ def _step_detail(action, url, target, x, y, text, key, direction, device):
         return f"“{str(text)[:80]}”" + (f" into {target}" if target else "")
     if action == "select":
         return f"“{str(text)[:80]}” in {where}"
-    return {"click": where, "press": key, "scroll": direction}.get(action, "") or ""
+    return {"click": where, "press": key, "scroll": direction, "close": "(signed out of anything signed in there)"
+            }.get(action, "") or ""
 
 
 USER = "you"                 # the caller name of a person driving the browser from the page
@@ -599,7 +601,7 @@ def set_control(store, on):
     return view
 
 
-USER_ACTIONS = {"goto", "click", "type", "press", "scroll", "back", "forward", "reload", "screenshot"}
+USER_ACTIONS = {"goto", "click", "type", "press", "scroll", "back", "forward", "reload", "screenshot", "close"}
 
 
 def user_browser(store, action, url="", x=None, y=None, text="", key="", direction="down", hidden=False):
@@ -636,12 +638,12 @@ def user_browser(store, action, url="", x=None, y=None, text="", key="", directi
             action, "", "", None, None, text, "", "", "desktop")
     _show_browser(store, step, frame={"image": image, "url": result.get("url", ""), "title": result.get("title", ""),
                                       "device": result.get("device", "desktop")} if image else None,
-                  session=result.get("session") or session)
+                  session=result.get("session") or session, closed=bool(result.get("closed")))
     view = _browser_view(store)
     return {"view": view, "frame": store.get_browser_frame(), **({"error": step["error"]} if step.get("error") else {})}
 
 
-def _show_browser(store, step, frame=None, session=None):
+def _show_browser(store, step, frame=None, session=None, closed=False):
     """Record a step (and the screenshot it ended on) for the page's live browser view. Never breaks browsing."""
     from datetime import datetime, timezone
 
@@ -657,6 +659,9 @@ def _show_browser(store, step, frame=None, session=None):
         view.update(steps=steps[-BROWSER_STEPS_SHOWN:], updated_at=utcnow_iso())
         if session:
             view.update(session_id=session, session_used_at=utcnow_iso())
+        if closed:  # the tab is gone, and everything signed in there with it
+            view.pop("session_id", None)
+            view.update(url="", title="")
         view.setdefault("session_started_at", step["at"])
         if frame:
             frame = {**frame, "at": utcnow_iso()}

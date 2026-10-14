@@ -1059,6 +1059,9 @@ $("browserType").onsubmit = (e) => {
   $("browserText").value = "";
   browserAct({ action: "type", text, hidden: $("browserText").type === "password" }, "Typing");
 };
+$("browserClose").onclick = () => {
+  if (confirm("Close Man AI's browser tab? Anything you signed in to there is signed out.")) browserAct({ action: "close" }, "Closing the tab");
+};
 // Passwords: hide what's typed here (the browser panel never shows it either way for password fields).
 $("browserHide").onclick = () => {
   const hide = $("browserText").type !== "password";

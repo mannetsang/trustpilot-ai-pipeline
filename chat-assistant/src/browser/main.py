@@ -123,6 +123,16 @@ class Session:
         except Exception:  # noqa: BLE001 - already handled
             pass
 
+    def current(self):
+        """The window actions go to: the one in use or, once it has closed (a sign-in popup closes itself when the
+        sign-in is done), the newest window still open."""
+        if self.page.is_closed():
+            still_open = [p for p in self.context.pages if not p.is_closed()]
+            self.page = still_open[-1] if still_open else self.context.new_page()
+            self.notes.append("The window in use closed (a sign-in popup does that when it's done); now on "
+                              f"{self.page.url if still_open else 'a new empty tab'}.")
+        return self.page
+
     def close(self):
         try:
             self.context.close()
@@ -222,7 +232,7 @@ def _settle(page):
 
 
 def _snapshot(sid, session, notes=()):
-    page = session.page
+    page = session.current()
     notes = list(notes) + _settle(page)
     shot = page.screenshot(type="jpeg", quality=JPEG_QUALITY, scale="css", timeout=15000)
     try:
@@ -306,7 +316,22 @@ def act(body):
             if session is None:
                 return {"error": "That browser session has ended (closed or idle too long). Use action=open again."}
     session.used = time.time()
-    page = session.page
+    try:
+        return _perform(action, body, sid, session)
+    except Exception as exc:  # noqa: BLE001 - re-raised unless it's the window closing under us
+        if not _window_closed(exc) or not session.page.is_closed():
+            raise
+        # The click finished something that closes its own window (Google's sign-in popup): show where we are now.
+        session.current()
+        return _snapshot(sid, session)
+
+
+def _window_closed(exc):
+    return type(exc).__name__ == "TargetClosedError" or "has been closed" in str(exc)
+
+
+def _perform(action, body, sid, session):
+    page = session.current()
     notes = []
 
     if action == "close":
