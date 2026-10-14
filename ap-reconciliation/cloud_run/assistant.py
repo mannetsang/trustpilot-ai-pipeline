@@ -17,6 +17,7 @@ import json
 
 MAX_ATTENTION = 150          # purchases listed one by one; the counts always cover all of them
 MAX_QUESTION = 500
+TIMEOUT = 20                 # one try, so the spoken summary still arrives well inside the office proxy's minute
 
 PROMPT = """You are the voice of the accounts-payable credit-card reconciliation dashboard at Superhairpieces.
 A colleague asked a question out loud; your answer will be read aloud to them by the browser.
@@ -29,6 +30,8 @@ Answer from DATA only. Two or three short spoken sentences, plain words: no list
 - "Missing" means a purchase still needs an invoice; "possible" means a suggested invoice waits for someone to
   confirm it; "waived" means marked as needing no invoice.
 - If the job in DATA is running, say what it is doing and how far along it is when that answers the question.
+  A job's for_month (and for_card) says what it works on: when that is not the month asked about, say so and
+  never give its numbers as this month's.
 - If DATA does not hold the answer, say so in one sentence and say where on the dashboard to look. Never guess.
 - Name only what is really on the dashboard, never the field names in DATA: the month list on the left; the card
   tabs above the table; the status filters All, Missing, Possible, Matched, Waived and No cost centre; the search
@@ -127,12 +130,16 @@ def build_context(store, year, month, card=None, job=None, user=None, today=None
         for k in ("stage", "percent", "files_done", "files_total", "read", "remaining"):
             if p.get(k) is not None:
                 j[k] = p[k]
+        if p.get("year") and p.get("month"):
+            j["for_month"] = f"{calendar.month_name[int(p['month'])]} {int(p['year'])}"
+        if p.get("card"):
+            j["for_card"] = card_name(p["card"])
         if p.get("note"):
             j["latest"] = _short(p["note"], 160)
         if job.get("error"):
             j["error"] = _short(job["error"], 200)
         result = job.get("result")
-        if isinstance(result, dict):
+        if isinstance(result, dict) and j.get("for_month", data["month"]) == data["month"]:   # not another month's counts
             j["result"] = {k: v for k, v in result.items()
                            if k in ("checked", "matched", "possible", "missing", "indexed", "errors", "remaining",
                                     "status", "outcome", "invoices_read", "new", "transactions")
@@ -158,7 +165,8 @@ def summary_answer(data):
         what = {"upload": "saving the statement", "index": "reading invoices from Drive", "match": "matching purchases with invoices",
                 "notify": "sending Chat reminders", "rematch": "looking for one purchase's invoice"}.get(job.get("step"), "working")
         pct = f", {job['percent']}% done" if isinstance(job.get("percent"), (int, float)) else ""
-        parts.append(f"The server is {what}{pct}.")
+        scope = f" for {job['for_month']}" if job.get("for_month") and job["for_month"] != data.get("month") else ""
+        parts.append(f"The server is {what}{scope}{pct}.")
     t = data["totals"]
     scope = "" if data.get("showing") == "all cards" else f" on {data['showing']}"
     if not t["purchases"]:
@@ -177,7 +185,7 @@ def answer(gemini, question, data, model=None, log=print):
     prompt = PROMPT.format(question=json.dumps(question, ensure_ascii=False),
                            data=json.dumps(data, ensure_ascii=False, default=str))
     try:
-        out = gemini.generate_json([gemini.text(prompt)], model=model, temperature=0.2, timeout=60)
+        out = gemini.generate_json([gemini.text(prompt)], model=model, temperature=0.2, timeout=TIMEOUT, attempts=1)
         text = out.get("answer") if isinstance(out, dict) else None
         if isinstance(text, str) and text.strip():
             return {"answer": _short(text, 700), "source": "gemini"}

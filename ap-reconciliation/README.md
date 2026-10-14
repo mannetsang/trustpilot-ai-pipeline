@@ -275,8 +275,12 @@ Two other modes exist, one edit of the deploy workflow away (step 5):
   possible, the running or last job, uploads, reminders sent) and Gemini
   (`GEMINI_EXTRACT_MODEL`) answers in two or three sentences, which the
   browser reads aloud with its own voice (Windows' natural voices when
-  there). Without Gemini, or if it fails, a plain summary of the month is
-  the answer. Read only: a question cannot change anything, and text from
+  there). Gemini gets one try of up to 20 seconds and at most two questions
+  wait on it at once (one per browser; another is turned away until the
+  answer arrives); without Gemini, if it fails or is busy, a plain summary
+  of the month is the answer. A background job is named with the month and
+  card it works on, so another month's numbers are never read out as this
+  month's. Read only: a question cannot change anything, and text from
   bank files and invoices goes to the model as data. Listening uses the
   browser's speech recognition: Chrome and Edge (which send the audio to
   their speech service); other browsers type the question. Anyone signed
@@ -346,7 +350,7 @@ under *Cards...*) are never notified.
 | `GET /api/months` | signed in | month navigation with per-card counts, cards, cost centres |
 | `GET /api/transactions?year&month[&card]` | signed in | the month's transactions with their invoice, `editable` flag, uploads and recent notifications |
 | `PATCH /api/transactions/<id>` | signed in, AP or the card's owner | body: `cost_center`, `usage`, `note`, and/or `action` (`waive` with `reason`, `unwaive`, `confirm`, `link` with `invoice_id`, `unlink`) |
-| `POST /api/ask?year&month[&card]` | signed in | voice mode: `{"question": "..."}` (up to 500 characters) answered as `{"answer", "source": "gemini" \| "summary"}` for the browser to read aloud; read only |
+| `POST /api/ask?year&month[&card]` | signed in | voice mode: `{"question": "..."}` (up to 500 characters; `card` is four digits) answered as `{"answer", "source": "gemini" \| "summary"}` for the browser to read aloud; read only |
 | `POST /api/transactions/<id>/rematch` | signed in, AP or the card's owner | *Rematch*: reads new invoices for the purchase's months, then looks for its invoice again, as a background job (202 with the job, polled through `/api/jobs/current?id=`; 409 while another job runs; 400 for a waived, non-purchase or hand-linked row). The job's result has `outcome` (`found`, `same`, `kept`, `none` or `conflict`), the status and invoice the row now has, `changed`, `invoices_read`, `read_errors` with `read_error_files`, and the updated row; its progress has `stage` and `percent` |
 | `GET /api/invoices?year&month` | signed in | invoices of month-1..month+1 with a `linked` flag (the picker) |
 | `GET /api/cards` | signed in | cards |
@@ -639,7 +643,7 @@ next idle period, or at once with *Run workflow*.
 | (IAP mode) Google answers *You don't have access* | the account is not on IAP's access list: the domain grant in step 5, or a `user:` grant; a minute to take effect |
 | (IAP mode) Cloud Run answers 403 *Forbidden* without first sending the browser to Google's account prompt | IAP is not enabled on the service (`--no-iap`): deploy with `--iap` |
 | (IAP mode) 401 *sign in with your superhairpieces.com Google account* for a real colleague | the account got through IAP but is outside `ALLOWED_DOMAINS`; or `IAP_AUDIENCE` does not match the service (`/health?deep=1` shows it, the logs say *IAP assertion rejected*) |
-| The right side of the dashboard is cut off (the last tile, *Send reminders*, the last column) | something hides part of the browser window. A touchpad pinch (it magnifies the page without laying it out again; Chrome keeps it across reloads) is handled: while pinched in, the page lays itself out for the visible area (`visualViewport`), and toasts, dialogs, the top bar, the sidebar and the table header follow that area. A window that runs past the edge of the screen gets a notice (maximize it: double-click its title bar, or Windows key + Up); hovering it shows the sizes the browser reports. A window covering the browser's right side cannot be detected |
+| The right side of the dashboard is cut off (the last tile, *Send reminders*, the last column) | something hides part of the browser window. A touchpad pinch (it magnifies the page without laying it out again; Chrome keeps it across reloads) is handled: while pinched in, the page lays itself out for the visible area (`visualViewport`), and toasts, dialogs (a tall one scrolls inside the visible area), the top bar, the sidebar and the table header follow that area (they can trail a fast scroll or pan by a frame). Phones and tablets keep the browser's own pinch-and-pan. A window that runs past the edge of the screen gets a notice (maximize it: double-click its title bar, or Windows key + Up); hovering it shows the sizes the browser reports. A window covering the browser's right side cannot be detected |
 | (IAP mode) After *Sign out*, opening the dashboard URL signs the same person straight back in | expected: *Sign out* ends the dashboard session (IAP's cookie), not the Google session, and IAP has no other signed-out state. The sign-in page's *Sign in with Google* and the header's *Switch account* make Google ask which account to use; on a shared computer the sign-in page links Google's own sign-out |
 | (IAP mode) The page shows *Your Google session has ended* | IAP's session expired (about an hour); *Reload* signs in again |
 | Notify says *no webhook configured for this card* | add the card's `last4` (or a `default`) to `CARD_WEBHOOKS_JSON`, new secret version, redeploy |

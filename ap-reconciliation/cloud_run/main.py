@@ -679,7 +679,8 @@ def rematch_transaction(txn_id, user_email=""):
     progress = _last_job["progress"]
     # percent: 0-5 listing the Drive folders, 5-75 reading new invoices (files finished of files to
     # read), 78 the rules, 85 waiting for Gemini's judgement, 100 done.
-    progress.update({"year": year, "month": month, "transaction_id": txn_id, "stage": "read", "percent": 2})
+    progress.update({"year": year, "month": month, "card": txn.get("card_last4"), "transaction_id": txn_id,
+                     "stage": "read", "percent": 2})
     _job_log(f"Rematch: reading new invoices for {month_folder_name(year, month)} and the months either side")
 
     def on_read(done, total):
@@ -1063,6 +1064,10 @@ def api_transaction_rematch(txn_id):
     return jsonify(payload), status
 
 
+ASK_SLOTS = 2
+_ask_slots = threading.BoundedSemaphore(ASK_SLOTS)
+
+
 @app.route("/api/ask", methods=["POST"])
 def api_ask():
     """Voice mode: {"question": "..."} about the month the page shows (?year&month[&card]); answers in two
@@ -1071,13 +1076,23 @@ def api_ask():
     user = require_user()
     year, month = _year_month()
     card = (request.args.get("card") or "").strip() or None
+    if card and not (len(card) == 4 and card.isdigit()):
+        return jsonify({"error": "card must be the card's last four digits"}), 400
     body = request.get_json(silent=True)
     question = body.get("question") if isinstance(body, dict) else None
     if not isinstance(question, str) or not question.strip():
         return jsonify({"error": "ask a question"}), 400
     question = question.strip()[:assistant.MAX_QUESTION]
     data = assistant.build_context(get_store(), year, month, card, job=job_view(), user=user)
-    result = assistant.answer(get_gemini(), question, data, model=GEMINI_EXTRACT_MODEL)
+    # At most ASK_SLOTS questions wait on Gemini at once, so voice never ties up the server's threads; the
+    # rest get the plain summary straight away.
+    if _ask_slots.acquire(blocking=False):
+        try:
+            result = assistant.answer(get_gemini(), question, data, model=GEMINI_EXTRACT_MODEL)
+        finally:
+            _ask_slots.release()
+    else:
+        result = {"answer": assistant.summary_answer(data), "source": "summary"}
     print(f"voice: {user['email']} asked about {year}-{month:02d}: {question[:80]!r} ({result['source']})")
     return jsonify(result)
 
@@ -1219,7 +1234,7 @@ def api_job_start():
     else:
         return jsonify({"error": "kind must be index, match or notify"}), 400
     if status == 202:
-        _last_job["progress"].update({"year": year, "month": month})
+        _last_job["progress"].update({"year": year, "month": month, "card": card})
         payload["job"] = job_view(_jobs[payload["job"]["id"]])
     return jsonify(payload), status
 

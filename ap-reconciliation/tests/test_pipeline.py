@@ -80,9 +80,9 @@ class FakeGemini:
     def inline(data, mime_type):
         return {"inlineData": {"mimeType": mime_type, "data": data}}
 
-    def generate_json(self, parts, model=None, temperature=0.0, timeout=300):
+    def generate_json(self, parts, model=None, temperature=0.0, timeout=300, attempts=4):
         with self._lock:
-            self.calls.append({"parts": parts, "model": model})
+            self.calls.append({"parts": parts, "model": model, "timeout": timeout, "attempts": attempts})
         if self.handler is not None:
             return self.handler(parts, model)
         if self.responses:

@@ -260,11 +260,12 @@
     /* Pinched in (a touchpad pinch magnifies the page without laying it out again): the app takes the
        width of the visible area and follows it, and what is pinned to the window is pinned to the
        visible area instead (--vv-* are set from window.visualViewport). */
-    html.vv-fit #app { width: var(--vv-width); margin-left: var(--vv-left); }
+    html.vv-fit #app { width: var(--vv-width); margin-left: var(--vv-left); overflow-x: clip; }   /* clip, not hidden: sticky still works, and a deep pinch's spill never widens the page */
     html.vv-fit #sidebar { height: var(--vv-height); top: var(--vv-top); }
     html.vv-fit #topbar { top: var(--vv-top); }
     html.vv-fit #toast { right: calc(var(--vv-right) + 16px); bottom: calc(var(--vv-bottom) + 16px); max-width: calc(var(--vv-width) - 32px); }
     html.vv-fit .modal-backdrop, html.vv-fit #gate { inset: auto; left: var(--vv-left); top: var(--vv-top); width: var(--vv-width); height: var(--vv-height); }
+    html.vv-fit .modal { max-height: 100%; }   /* a tall dialog fits the visible area and scrolls inside */
     .toast { background: #1d2128; color: #fff; padding: 10px 14px; border-radius: 10px; font-size: 13px; box-shadow: 0 10px 30px rgba(0,0,0,0.25); max-width: 420px; animation: toast-in .18s ease; }
     .toast.err { background: var(--down); }
     .toast.ok { background: var(--brand-ink); }
@@ -635,7 +636,7 @@
   // ---------------------------------------------------------------------------
   var VOICE_KEY = 'ap_recon_voice';
   var SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-  var voice = { on: false, pick: null, rec: null, listening: false, last: '' };
+  var voice = { on: false, pick: null, rec: null, listening: false, asking: false, last: '' };
   function pickVoice() {
     if (!window.speechSynthesis) return null;
     var all = speechSynthesis.getVoices() || [];
@@ -721,9 +722,12 @@
     voiceShow('Listening…', '');
     try { rec.start(); } catch (e) { voice.listening = false; voice.rec = null; updateMic(); voiceShow('Could not start listening. Type the question instead.', ''); }
   }
+  // One question at a time: while an answer is on its way a new one is turned away (a typed one stays in the box).
   async function askVoice(question) {
     question = String(question || '').trim().slice(0, 500);
-    if (!question) return;
+    if (!question) return true;
+    if (voice.asking) { toast('Still answering your last question.', '', 2500); return false; }
+    voice.asking = true;
     var now = new Date(), year = state.year || now.getFullYear(), month = state.month || (now.getMonth() + 1);
     voiceShow('“' + question + '”', 'Looking at ' + monthLabel(year, month) + '…');
     try {
@@ -736,13 +740,17 @@
       if (e && e.status === 401) return;
       voiceShow(undefined, 'I could not get an answer: ' + (e && e.message ? e.message : e));
       say('Sorry, I could not get an answer.', true);
+    } finally {
+      voice.asking = false;
     }
+    return true;
   }
   $('#voiceBtn').addEventListener('click', function () { setVoice(!voice.on); });
   $('#voiceMic').addEventListener('click', listen);
   $('#voiceForm').addEventListener('submit', function (ev) {
     ev.preventDefault();
     var box = $('#voiceInput'), q = box.value;
+    if (voice.asking) { askVoice(q); return; }
     box.value = '';
     askVoice(q);
   });
@@ -751,24 +759,28 @@
   $('#voicePanelClose').addEventListener('click', function () { if (window.speechSynthesis) speechSynthesis.cancel(); voiceShow('', ''); });
   try { if (localStorage.getItem(VOICE_KEY) === '1') setVoice(true, true); } catch (e) { /* private mode */ }
 
-  // Pinched in: lay the page out for the visible area rather than the whole window, so nothing is out
-  // of view on the right (the page is just larger). Undone as soon as the pinch is.
+  // Pinched in with a touchpad or mouse: lay the page out for the visible area rather than the whole window,
+  // so nothing is out of view on the right (the page is just larger). Undone as soon as the pinch is. Phones
+  // and tablets (no fine pointer) keep the browser's own pinch-and-pan, which already reaches everything.
   var vvFrame = 0, vvLastWidth = -1;
   function fitToVisible() {
     vvFrame = 0;
     var vv = window.visualViewport, root = document.documentElement;
-    var on = !!(vv && vv.scale > 1.02);
+    var on = !!(vv && vv.scale > 1.02 && window.matchMedia && window.matchMedia('(pointer: fine)').matches);
     root.classList.toggle('vv-fit', on);
     if (on) {
       var cw = root.clientWidth, ch = root.clientHeight;
-      root.style.setProperty('--vv-width', Math.floor(vv.width) + 'px');
+      // Never past the window's right edge: panned fully right, the visible area can reach a few pixels into
+      // a classic scrollbar's strip, and an app that wide would make the page scroll sideways.
+      var left = Math.max(0, Math.round(vv.offsetLeft)), visW = Math.max(0, Math.min(Math.floor(vv.width), cw - left));
+      root.style.setProperty('--vv-width', visW + 'px');
       root.style.setProperty('--vv-height', Math.floor(vv.height) + 'px');
-      root.style.setProperty('--vv-left', Math.max(0, Math.round(vv.offsetLeft)) + 'px');
+      root.style.setProperty('--vv-left', left + 'px');
       root.style.setProperty('--vv-top', Math.max(0, Math.round(vv.offsetTop)) + 'px');
       root.style.setProperty('--vv-right', Math.max(0, Math.round(cw - vv.offsetLeft - vv.width)) + 'px');
       root.style.setProperty('--vv-bottom', Math.max(0, Math.round(ch - vv.offsetTop - vv.height)) + 'px');
     }
-    var width = on ? Math.floor(vv.width) : 0;
+    var width = on ? visW : 0;
     if (state.loaded && width !== vvLastWidth) renderCols();        // the table fits the new width
     else if (state.loaded) setStickyTop();
     vvLastWidth = width;

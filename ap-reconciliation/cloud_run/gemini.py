@@ -46,8 +46,9 @@ class Gemini:
         return {"inlineData": {"mimeType": mime_type, "data": base64.b64encode(data).decode("ascii")}}
 
     # -- calls --------------------------------------------------------------
-    def generate(self, parts, model=None, temperature=0.0, json_mode=True, timeout=300):
-        """Return the model's text for a single-turn prompt made of `parts`."""
+    def generate(self, parts, model=None, temperature=0.0, json_mode=True, timeout=300, attempts=4):
+        """Return the model's text for a single-turn prompt made of `parts`. `timeout` is per attempt; busy
+        or failed calls are retried up to `attempts` times in all (3, 8 and 15 seconds apart)."""
         model = model or self.extract_model
         url = (f"https://{self.location}-aiplatform.googleapis.com/v1/projects/{self.project}"
                f"/locations/{self.location}/publishers/google/models/{model}:generateContent")
@@ -55,7 +56,7 @@ class Gemini:
         if json_mode:
             config["responseMimeType"] = "application/json"
         body = {"contents": [{"role": "user", "parts": parts}], "generationConfig": config}
-        delays = (0, 3, 8, 15)
+        delays = (0, 3, 8, 15)[:max(1, attempts)]
         last = None
         for attempt, delay in enumerate(delays):
             if delay:
@@ -81,8 +82,9 @@ class Gemini:
             return text
         raise GeminiError(f"Vertex {model}: gave up after {len(delays)} attempts: {last}")
 
-    def generate_json(self, parts, model=None, temperature=0.0, timeout=300):
-        return parse_json(self.generate(parts, model=model, temperature=temperature, json_mode=True, timeout=timeout))
+    def generate_json(self, parts, model=None, temperature=0.0, timeout=300, attempts=4):
+        return parse_json(self.generate(parts, model=model, temperature=temperature, json_mode=True, timeout=timeout,
+                                        attempts=attempts))
 
 
 def parse_json(text):
