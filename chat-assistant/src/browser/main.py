@@ -1,6 +1,7 @@
 """The web browser Man AI operates: a real Chromium on Cloud Run, driven one action at a time.
 
-POST /act  {"session"?, "action", "url"?, "device"?, "target"?, "x"?, "y"?, "text"?, "key"?, "direction"?, "submit"?}
+POST /act  {"session"?, "action", "url"?, "device"?, "target"?, "x"?, "y"?, "text"?, "key"?, "direction"?, "submit"?,
+            "person"?}  (person: a person typing from Man AI's page, who may fill password fields; Man AI never may)
   -> {"session", "url", "title", "image" (base64 JPEG of what's on screen), "elements" (what can be clicked or
       typed into, with its position), "text" (the page's visible text, trimmed), "notes"} or {"error"}
 
@@ -172,7 +173,9 @@ ELEMENTS_JS = """(max) => {
     if (st.visibility === 'hidden' || st.display === 'none' || Number(st.opacity) === 0) continue;
     if (el.tagName === 'INPUT' && el.type === 'hidden') continue;
     const tag = el.tagName.toLowerCase();
-    let label = (el.getAttribute('aria-label') || el.innerText || el.value || el.getAttribute('placeholder') ||
+    // What's typed in a field is never its label: it may be a password someone just entered.
+    const typed = tag === 'textarea' || (tag === 'input' && !['button', 'submit', 'reset'].includes(el.type));
+    let label = (el.getAttribute('aria-label') || (typed ? '' : el.innerText) || (typed ? '' : el.value) || el.getAttribute('placeholder') ||
                  el.getAttribute('title') || el.getAttribute('alt') || el.getAttribute('name') || '').trim().replace(/\\s+/g, ' ');
     if (!label && el.querySelector('img[alt]')) label = el.querySelector('img[alt]').getAttribute('alt');
     const kind = tag === 'input' ? 'input:' + (el.type || 'text') : (el.getAttribute('role') || tag);
@@ -261,10 +264,14 @@ def _locate(page, target):
     return None
 
 
-def _check_field(handle_or_locator):
+def _check_field(handle_or_locator, person=False):
+    """True for a password or payment field. Only a person (who took control on Man AI's page) may type there."""
     what = handle_or_locator.evaluate(FIELD_JS)
     if SECRET_FIELD.search(what):
-        raise PermissionError("That field looks like a password or payment detail; the browser won't type into it.")
+        if not person:
+            raise PermissionError("That field looks like a password or payment detail; the browser won't type into it.")
+        return True
+    return False
 
 
 def _goto(page, url):
@@ -331,12 +338,14 @@ def act(body):
             element = _locate(page, str(body["target"]))
             if element is None:
                 return {"error": f"No field matches '{body['target']}'.", **_snapshot(sid, session)}
-            _check_field(element)
+            secret = _check_field(element, person=bool(body.get("person")))
             element.fill(text)
         else:
             focused = page.evaluate_handle("() => document.activeElement")
-            _check_field(focused)
+            secret = _check_field(focused, person=bool(body.get("person")))
             page.keyboard.type(text, delay=20)
+        if secret:
+            notes.append("secret field")  # the caller keeps the text out of anything it shows or stores
         if body.get("submit"):
             page.keyboard.press("Enter")
             page.wait_for_timeout(800)

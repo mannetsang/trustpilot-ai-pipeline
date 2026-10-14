@@ -1057,7 +1057,15 @@ $("browserType").onsubmit = (e) => {
   const text = $("browserText").value;
   if (!text) return;
   $("browserText").value = "";
-  browserAct({ action: "type", text }, "Typing");
+  browserAct({ action: "type", text, hidden: $("browserText").type === "password" }, "Typing");
+};
+// Passwords: hide what's typed here (the browser panel never shows it either way for password fields).
+$("browserHide").onclick = () => {
+  const hide = $("browserText").type !== "password";
+  $("browserText").type = hide ? "password" : "text";
+  $("browserHide").setAttribute("aria-pressed", String(hide));
+  $("browserHide").textContent = hide ? "🔒" : "🔓";
+  $("browserText").focus();
 };
 for (const b of document.querySelectorAll("#browserCtl [data-act]")) {
   b.onclick = () => browserAct({ action: b.dataset.act, key: b.dataset.key, direction: b.dataset.dir }, b.title || b.textContent);

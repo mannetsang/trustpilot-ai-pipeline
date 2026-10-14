@@ -602,8 +602,11 @@ def set_control(store, on):
 USER_ACTIONS = {"goto", "click", "type", "press", "scroll", "back", "forward", "reload", "screenshot"}
 
 
-def user_browser(store, action, url="", x=None, y=None, text="", key="", direction="down"):
-    """One step by a person from the page, on the tab everyone watches. Returns {"view", "frame"} for the page."""
+def user_browser(store, action, url="", x=None, y=None, text="", key="", direction="down", hidden=False):
+    """One step by a person from the page, on the tab everyone watches. Returns {"view", "frame"} for the page.
+
+    A person may type into password fields (Man AI never may). What they type is shown in the step list only when
+    it isn't a password or payment field and they didn't ask to hide it; it's never stored otherwise."""
     if not BROWSER_URL:
         return {"error": "There's no browser service (BROWSER_URL)."}
     if action not in USER_ACTIONS:
@@ -614,9 +617,10 @@ def user_browser(store, action, url="", x=None, y=None, text="", key="", directi
         return {"error": "Man AI's browser isn't open. Type an address to open a page."}
     set_control(store, True)  # each step keeps the controls in the person's hands a while longer
     body = {"action": action, "session": session, "url": url, "x": x, "y": y, "text": text, "key": key,
-            "direction": direction}
+            "direction": direction, "person": True}
+    shown = "" if action == "type" else text  # typing: decided once the browser says what kind of field it was
     step = {"id": uuid.uuid4().hex[:10], "at": utcnow_iso(), "caller": USER, "action": action,
-            "detail": _step_detail(action, url, "", x, y, text, key, direction, "desktop"), "status": "working"}
+            "detail": _step_detail(action, url, "", x, y, shown, key, direction, "desktop"), "status": "working"}
     _show_browser(store, step)
     try:
         result = _browser_call({k: v for k, v in body.items() if v not in (None, "")})
@@ -626,6 +630,10 @@ def user_browser(store, action, url="", x=None, y=None, text="", key="", directi
     step["status"] = "error" if result.get("error") else "done"
     if result.get("error"):
         step["error"] = str(result["error"])[:200]
+    if action == "type":
+        secret = hidden or "secret field" in (result.get("notes") or [])
+        step["detail"] = f"{'•' * min(len(text), 12)} (hidden)" if secret else _step_detail(
+            action, "", "", None, None, text, "", "", "desktop")
     _show_browser(store, step, frame={"image": image, "url": result.get("url", ""), "title": result.get("title", ""),
                                       "device": result.get("device", "desktop")} if image else None,
                   session=result.get("session") or session)

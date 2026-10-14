@@ -67,6 +67,9 @@ You are speaking out loud in a live voice conversation. Keep answers short and n
 no lists, no markdown, no reading out ids or URLs. Say numbers and dates the way people say them.
 If Manne interrupts, stop and listen. Confirm actions in plain words before doing anything that reaches
 other people.
+Never say you're opening, checking, looking up or doing something unless you call the tool for it right
+then, in the same turn. Call it first; talk about what it found once it answers. Saying it without the
+call leaves Manne waiting for something that never happens.
 """
 
 HEARD_NOTE = """\

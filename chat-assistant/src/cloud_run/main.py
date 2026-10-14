@@ -746,7 +746,7 @@ def api_browser_act():
     for k in ("x", "y"):
         if isinstance(body.get(k), (int, float)):
             args[k] = body[k]
-    result = tools.user_browser(store, str(body.get("action") or ""), **args)
+    result = tools.user_browser(store, str(body.get("action") or ""), hidden=bool(body.get("hidden")), **args)
     if "view" not in result:
         return jsonify(error=result.get("error", "That didn't work.")), 400
     return jsonify(result)

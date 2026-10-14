@@ -1,6 +1,7 @@
 """Man AI's browser tool: calls to the browser service, and screenshots reaching each model."""
 
 import copy
+import json
 import os
 import sys
 import unittest
@@ -123,7 +124,8 @@ class LiveViewTests(unittest.TestCase):
             self.sent = []
             out = tools.user_browser(self.store, "click", x=640, y=120)
             tools.user_browser(self.store, "type", text="lace front")
-        self.assertEqual(self.sent[0], {"action": "click", "session": "s1", "x": 640, "y": 120, "direction": "down"})
+        self.assertEqual(self.sent[0], {"action": "click", "session": "s1", "x": 640, "y": 120, "direction": "down",
+                                        "person": True})
         self.assertEqual(out["view"]["steps"][-1]["caller"], "you")
         self.assertEqual(out["frame"]["image"], PAGE["image"])
         tools.set_control(self.store, False)
@@ -131,6 +133,33 @@ class LiveViewTests(unittest.TestCase):
         self.assertNotIn("error", after)
         self.assertIn("Manne used the browser directly", after["notes"][-1])
         self.assertIn("type “lace front”", after["notes"][-1])
+
+    def test_a_person_may_type_a_password_and_it_is_never_shown(self):
+        self.toolset.call("browser", {"action": "open", "url": "app.wiz.io"})
+        sent = []
+
+        def fake(body):
+            sent.append(body)
+            page = copy.deepcopy(PAGE)
+            if body["action"] == "type" and body["text"] == "hunter2-secret":
+                page["notes"] = ["secret field"]
+            return page
+        with mock.patch.object(tools, "_browser_call", side_effect=fake):
+            tools.user_browser(self.store, "type", text="manne@superhairpieces.com")
+            tools.user_browser(self.store, "type", text="hunter2-secret")
+            tools.user_browser(self.store, "type", text="also-private", hidden=True)
+        self.assertTrue(all(b["person"] for b in sent))  # only the page's person path says so
+        stored = json.dumps([self.store.get_browser_view(), self.store.get_browser_frame()])
+        self.assertIn("manne@superhairpieces.com", stored)
+        self.assertNotIn("hunter2-secret", stored)
+        self.assertNotIn("also-private", stored)
+        details = [s["detail"] for s in self.store.get_browser_view()["steps"] if s["caller"] == "you"]
+        self.assertEqual(details[1:], ["•••••••••••• (hidden)", "•••••••••••• (hidden)"])
+        tools.set_control(self.store, False)
+        with mock.patch.object(tools, "_browser_call", side_effect=fake):
+            self.toolset.call("browser", {"action": "type", "text": "x", "target": "Email"})
+        self.assertEqual(sent[-1]["text"], "x")
+        self.assertNotIn("person", sent[-1])  # Man AI never types as a person
 
     def test_control_runs_out_by_itself(self):
         view = tools.set_control(self.store, True)
