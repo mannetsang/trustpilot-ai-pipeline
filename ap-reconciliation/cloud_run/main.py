@@ -693,10 +693,14 @@ def rematch_transaction(txn_id, user_email=""):
     result = matching.match_transaction(store, get_gemini(), txn_id, use_ai=not AI_DISABLED, log=_job_log,
                                         updated_by=user_email or None, on_stage=on_stage)
     result["invoices_read"] = int(read.get("indexed") or 0)
-    result["read_errors"] = len(read.get("errors") or [])
+    errors = read.get("errors") or []
+    result["read_errors"] = len(errors)
+    result["read_error_files"] = [str(e.get("file") or "")[:120] for e in errors[:5]]
     if read.get("skipped"):
         result["read_skipped"] = read["skipped"]
     updated = store.get_transaction(txn_id)
+    if updated is None:
+        raise matching.RematchError("the transaction was removed while Rematch was running")
     row = with_invoices(store, [updated])[0]
     row["editable"] = True              # the job only starts for someone allowed to edit the row
     result["transaction"] = row

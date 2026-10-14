@@ -370,7 +370,7 @@
     <div class="modal-body" id="modalBody"></div>
   </div>
 </div>
-<div id="toast"></div>
+<div id="toast" role="status" aria-live="polite"></div>
 
 <script>
 (function () {
@@ -1147,9 +1147,33 @@
   function rematchMessage(r) {
     var inv = r.invoice, what = inv ? (inv.vendor || inv.file_name || 'an invoice') + (inv.total !== null && inv.total !== undefined ? ' ' + money(inv.total, inv.currency || '') : '') : '';
     var read = r.invoices_read ? ' ' + count(r.invoices_read, 'new invoice was', 'new invoices were') + ' read first.' : '';
-    if (r.status === 'matched') return (r.changed ? 'Invoice found: ' : 'Still the same invoice: ') + what + '.' + read;
-    if (r.status === 'possible') return (r.changed ? 'Possible match: ' : 'Still a possible match: ') + what + '. Confirm it or click Not this.' + read;
+    var possible = r.status === 'possible' ? ' Confirm it or click Not this.' : '';
+    switch (r.outcome) {
+      case 'conflict': return 'Someone changed this row while Rematch was running, so nothing was overwritten.';
+      case 'found': return (r.status === 'possible' ? 'Possible match: ' : 'Invoice found: ') + what + '.' + possible + read;
+      case 'same': return (r.status === 'possible' ? 'Still a possible match: ' : 'Still the same invoice: ') + what + '.' + possible + read;
+      case 'kept': return 'Nothing better found, so the current invoice stays: ' + what + '.' + possible + read;
+    }
+    // Nothing found. Say why when a new file in Drive could not be read, rather than asking to file it again.
+    if (r.read_errors) {
+      var names = (r.read_error_files || []).filter(Boolean).join(', ');
+      return 'No invoice found. ' + count(r.read_errors, 'new file', 'new files') + ' in Drive could not be read' +
+        (names ? ' (' + names + ')' : '') + '. Check the file, or use Link… to pick the invoice by hand.' + read;
+    }
+    if (r.read_skipped) return 'No invoice found. New files in Drive were not read (invoice reading is switched off); use Link… to pick the invoice by hand.';
     return 'No invoice found yet.' + read + ' File it in the Invoice folder on Drive, then click Rematch again.';
+  }
+  // The job's row is a snapshot from its end; take only the invoice fields from it, so a cost
+  // centre or usage saved on this row in the meantime is not shown as undone.
+  var REMATCH_FIELDS = ['invoice_status', 'invoice_id', 'invoice', 'status_label', 'match_confidence', 'match_method',
+                        'match_note', 'rejected_invoice_ids'];
+  function mergeRematchedRow(fresh) {
+    var local = txnById(fresh.id);
+    if (!local) return fresh;
+    var row = Object.assign({}, local);
+    REMATCH_FIELDS.forEach(function (k) { if (k in fresh) row[k] = fresh[k]; });
+    if (String(fresh.updated_at || '') > String(local.updated_at || '')) { row.updated_at = fresh.updated_at; row.updated_by = fresh.updated_by; }
+    return row;
   }
   async function rematchRow(id) {
     if (rematching[id] !== undefined) return;
@@ -1167,12 +1191,18 @@
       setRematchState(id, 'Done', 100);
       await sleep(250);                                  // let the bar reach the end before the row changes
       delete rematching[id];
-      if (result.transaction) replaceTxn(result.transaction, at); else restoreRow(id);
-      toast(rematchMessage(result), result.status === 'missing' ? '' : 'ok', 7000);
+      if (result.transaction) replaceTxn(mergeRematchedRow(result.transaction), at); else restoreRow(id);
+      toast(rematchMessage(result), result.status === 'missing' || result.outcome === 'conflict' ? '' : 'ok', 7000);
     } catch (e) {
       delete rematching[id];
       restoreRow(id);
       report(e, 'Rematch failed');
+    }
+    // The clicked button went away with the progress state; give the keyboard focus back to the row
+    // unless the person has moved on to something else.
+    if (document.activeElement === document.body) {
+      var back = rowEl(id), btn = back && (back.querySelector('button[data-action="rematch"]') || back.querySelector('.td-inv button:not([disabled])'));
+      if (btn) btn.focus();
     }
   }
 

@@ -214,8 +214,13 @@ class SupabaseStore:
         rows = self.select("transactions", {"id": f"eq.{txn_id}"})
         return rows[0] if rows else None
 
-    def update_transaction(self, txn_id, patch):
-        rows = self.patch("transactions", {"id": f"eq.{txn_id}"}, patch)
+    def update_transaction(self, txn_id, patch, expect=None):
+        """The updated row, or None when there is no such row or, with `expect` ({column: value}),
+        when the row no longer holds those values (someone changed it meanwhile): compare and set."""
+        filters = {"id": f"eq.{txn_id}"}
+        for column, value in (expect or {}).items():
+            filters[column] = "is.null" if value is None else f"eq.{value}"
+        rows = self.patch("transactions", filters, patch)
         return rows[0] if rows else None
 
     def used_invoice_ids(self):
@@ -354,11 +359,13 @@ class MemoryStore:
         t = self.transactions.get(txn_id)
         return dict(t) if t else None
 
-    def update_transaction(self, txn_id, patch):
+    def update_transaction(self, txn_id, patch, expect=None):
         with self.lock:
             t = self.transactions.get(txn_id)
             if not t:
                 return None
+            if expect and any(t.get(k) != v for k, v in expect.items()):
+                return None                 # changed meanwhile: the caller's compare-and-set fails
             wanted = patch.get("invoice_id")
             if wanted and any(o["id"] != txn_id and o.get("invoice_id") == wanted for o in self.transactions.values()):
                 # Same rule as the unique index transactions_invoice_unique in schema.sql.

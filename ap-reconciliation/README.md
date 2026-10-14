@@ -260,9 +260,19 @@ Two other modes exist, one edit of the deploy workflow away (step 5):
   usual case of an invoice filed in Drive after the reminder: the server
   first reads any invoices newly filed in the purchase's month folder and
   the months either side, then runs the same rules and Gemini judge for
-  that one purchase, against the invoices no other purchase holds (its own
-  current invoice stays in the running, so a right match survives;
-  invoices refused with *Not this* are never proposed again). It runs as a
+  that one purchase, against the invoices no other purchase holds;
+  invoices refused with *Not this* are never proposed again. When the
+  rules find only a weak possible match, Gemini is asked too and the
+  better of the two wins. A rematch never loses a good link: the current
+  invoice stays unless something better turns up (a match beats a
+  possible match, then the higher confidence), so a row Gemini matched
+  keeps its invoice when Gemini is down; only an invoice that is no
+  longer a candidate (removed from Drive, moved away) is let go when
+  nothing replaces it. The row is written only if nobody changed its
+  invoice meanwhile (compare and set): a *Confirm*, *Link*, *Not this*
+  or *No invoice* made while it runs always wins, and the message says
+  so. The message also names new files in Drive that could not be read,
+  instead of asking for the invoice to be filed again. It runs as a
   background job the row polls every second: the row shows what the
   server is doing with a percentage and a thin bar (listing the Drive
   folders 0-5%, reading new invoices 5-75% by files read of files to
@@ -309,7 +319,7 @@ under *Cards...*) are never notified.
 | `GET /api/months` | signed in | month navigation with per-card counts, cards, cost centres |
 | `GET /api/transactions?year&month[&card]` | signed in | the month's transactions with their invoice, `editable` flag, uploads and recent notifications |
 | `PATCH /api/transactions/<id>` | signed in, AP or the card's owner | body: `cost_center`, `usage`, `note`, and/or `action` (`waive` with `reason`, `unwaive`, `confirm`, `link` with `invoice_id`, `unlink`) |
-| `POST /api/transactions/<id>/rematch` | signed in, AP or the card's owner | *Rematch*: reads new invoices for the purchase's months, then looks for its invoice again, as a background job (202 with the job, polled through `/api/jobs/current?id=`; 409 while another job runs; 400 for a waived, non-purchase or hand-linked row). The job's result has the status found, the invoice, `changed`, `invoices_read` and the updated row |
+| `POST /api/transactions/<id>/rematch` | signed in, AP or the card's owner | *Rematch*: reads new invoices for the purchase's months, then looks for its invoice again, as a background job (202 with the job, polled through `/api/jobs/current?id=`; 409 while another job runs; 400 for a waived, non-purchase or hand-linked row). The job's result has `outcome` (`found`, `same`, `kept`, `none` or `conflict`), the status and invoice the row now has, `changed`, `invoices_read`, `read_errors` with `read_error_files`, and the updated row; its progress has `stage` and `percent` |
 | `GET /api/invoices?year&month` | signed in | invoices of month-1..month+1 with a `linked` flag (the picker) |
 | `GET /api/cards` | signed in | cards |
 | `POST /api/cards` | AP | `{"last4", "label", "holder_name", "owner_email", "chat_space", "active"}` |

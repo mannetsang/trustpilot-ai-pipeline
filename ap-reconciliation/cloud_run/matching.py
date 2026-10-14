@@ -333,19 +333,36 @@ def rematchable(txn):
     return None
 
 
+STATUS_RANK = {"missing": 0, "possible": 1, "matched": 2}
+
+
+def _better(a, b):
+    """Is result a = (status, confidence) better than b?"""
+    return (STATUS_RANK[a[0]], a[1] or 0) > (STATUS_RANK[b[0]], b[1] or 0)
+
+
 def match_transaction(store, gemini, txn_id, use_ai=True, log=print, updated_by=None, on_stage=None):
     """Look for the invoice of one purchase again: rules first, then the Gemini judge, against the
-    invoices of its month and the months either side that no other transaction holds. The purchase's
-    own current invoice stays in the pool, so a correct match survives. Invoices refused with
-    "Not this" are never proposed again. on_stage("rules" | "ai"), when given, says which pass
-    is running. Returns what was found and what changed."""
+    invoices of its month and the months either side that no other transaction holds. Invoices
+    refused with "Not this" are never proposed again.
+
+    A rematch never loses a good link: the purchase's current invoice stays unless something better
+    turns up (a match beats a possible match, then the higher confidence wins). Only when the current
+    invoice is no longer a candidate at all (removed from Drive, moved far away, not an invoice) does
+    finding nothing clear it. The row is written only if its invoice status, invoice and method are
+    still what they were when the search began, so a Confirm, Link, Not this or No invoice made
+    meanwhile is never overwritten.
+
+    on_stage("rules" | "ai"), when given, says which pass is running. Returns the outcome:
+    found (a new or upgraded invoice), same, kept (nothing better, current invoice kept), none
+    (nothing found) or conflict (the row changed meanwhile; nothing written)."""
     txn = store.get_transaction(txn_id)
     if not txn:
         raise RematchError("transaction not found")
     why_not = rematchable(txn)
     if why_not:
         raise RematchError(why_not)
-    own = txn.get("invoice_id")
+    own, own_status = txn.get("invoice_id"), txn.get("invoice_status") or "missing"
     used = store.used_invoice_ids() - ({own} if own else set())
     pool = [i for i in candidate_invoices(store, txn["year"], txn["month"]) if i["id"] not in used]
     inv_by_id = {i["id"]: i for i in pool}
@@ -354,34 +371,59 @@ def match_transaction(store, gemini, txn_id, use_ai=True, log=print, updated_by=
 
     if on_stage:
         on_stage("rules")
-    found = rule_match([txn], pool).get(txn["id"])
-    method = "rule" if found else None
-    if not found and use_ai and gemini is not None and pool:
-        log(f"Rematch {label}: no rule match, asking {gemini.match_model}")
+    found, method = rule_match([txn], pool).get(txn["id"]), "rule"
+    if (not found or found[1] != "matched") and use_ai and gemini is not None and pool:
+        # Nothing, or only a weak possible match, by the rules: ask the judge too, keep the better.
+        log(f"Rematch {label}: no clear rule match, asking {gemini.match_model}")
         if on_stage:
             on_stage("ai")
-        found = ai_match(gemini, [txn], pool, log=log).get(txn["id"])
-        method = "ai" if found else None
+        judged = ai_match(gemini, [txn], pool, log=log).get(txn["id"])
+        if judged and (not found or _better((judged[1], judged[2]), (found[1], found[2]))):
+            found, method = judged, "ai"
+    if not found:
+        method = None
 
-    if found:
+    current_valid = bool(own) and own in inv_by_id and own_status in ("matched", "possible")
+    current = (own_status, txn.get("match_confidence"))
+    if found and found[0] == own and current_valid:
+        # The same invoice again: keep the stronger of the two judgements.
+        outcome = "found" if _better((found[1], found[2]), current) else "same"
+    elif found and (not current_valid or _better((found[1], found[2]), current)):
+        outcome = "found"
+    elif current_valid:
+        outcome = "kept"                    # nothing better than the invoice it already has
+    else:
+        outcome = "none"
+
+    if outcome == "found":
         iid, status, conf, note = found
         patch = {"invoice_status": status, "invoice_id": iid, "match_confidence": conf,
                  "match_method": method, "match_note": note[:500]}
-    else:
-        iid, status = None, "missing"
+    elif outcome == "none":
         patch = {"invoice_status": "missing", "invoice_id": None, "match_confidence": None,
                  "match_method": None, "match_note": None}
+    else:                                   # same or kept: the row stays as it is
+        patch = {}
     changed = any(txn.get(k) != v for k, v in patch.items())
     if changed:
         patch["updated_at"] = now_iso()
         if updated_by:
             patch["updated_by"] = updated_by
-        store.update_transaction(txn["id"], patch)
-    inv = inv_by_id.get(iid) or {}
-    log(f"Rematch {label}: {status}" + (f" -> {inv.get('vendor')} {inv.get('total')} ({method} {patch['match_confidence']})" if iid else ""))
-    return {"transaction_id": txn["id"], "status": status, "invoice_id": iid, "method": method,
-            "confidence": patch["match_confidence"], "note": patch["match_note"],
-            "previous_status": txn.get("invoice_status"), "previous_invoice_id": own,
+        expect = {"invoice_status": txn.get("invoice_status"), "invoice_id": own, "match_method": txn.get("match_method")}
+        try:
+            written = store.update_transaction(txn["id"], patch, expect=expect)
+        except Exception as exc:  # noqa: BLE001  (the unique index: someone linked that invoice meanwhile)
+            log(f"Rematch {label}: not written: {exc}")
+            written = None
+        if written is None:
+            outcome, changed = "conflict", False
+    final = store.get_transaction(txn["id"]) or txn
+    iid, status = final.get("invoice_id"), final.get("invoice_status") or "missing"
+    inv = inv_by_id.get(iid) or (store.get_invoice(iid) if iid else None) or {}
+    log(f"Rematch {label}: {outcome}, {status}" + (f" -> {inv.get('vendor')} {inv.get('total')}" if iid else ""))
+    return {"transaction_id": txn["id"], "outcome": outcome, "status": status, "invoice_id": iid,
+            "method": final.get("match_method"), "confidence": final.get("match_confidence"),
+            "note": final.get("match_note"), "previous_status": own_status, "previous_invoice_id": own,
             "changed": changed, "invoices_considered": len(pool),
             "invoice": {k: inv.get(k) for k in ("vendor", "total", "currency", "invoice_date", "file_name")} if iid else None}
 

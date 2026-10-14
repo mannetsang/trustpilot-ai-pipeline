@@ -15,7 +15,7 @@ from test_pipeline import (MEMBER, ApiTestCase, FakeDrive, FakeGemini, facts_han
 import invoices  # noqa: E402
 import main  # noqa: E402
 import matching  # noqa: E402
-from store import MemoryStore  # noqa: E402
+from store import MemoryStore, SupabaseStore  # noqa: E402
 
 PAGE = {"X-Requested-With": "XMLHttpRequest"}
 
@@ -323,6 +323,158 @@ class RematchProgressTests(ApiTestCase):
         p = j["progress"]
         self.assertEqual((p["stage"], p["percent"], p["files_done"], p["files_total"]), ("done", 100, 1, 1))
         self.assertEqual(j["result"]["status"], "matched")
+
+
+def ai_matched(tid, invoice_id, confidence=0.92):
+    """A purchase the Gemini judge matched earlier: its invoice is 8% below the charge (tax shown
+    separately), which the rules never accept on their own."""
+    t = txn(tid, "2026-09-12", "Sp Digital Goods", 50.00, status="matched", invoice_id=invoice_id, method="ai")
+    t.update({"match_confidence": confidence, "match_note": "AI: same vendor, tax shown separately"})
+    return t
+
+
+def patreon(iid="i_p"):
+    return inv(iid, "Patreon Inc", 46.00, "2026-09-11")
+
+
+def judge_says(invoice_id, confidence=0.95, reason="same vendor"):
+    return {"matches": [{"transaction_id": "t1", "invoice_id": invoice_id, "confidence": confidence, "reason": reason}]}
+
+
+class RematchSafetyTests(unittest.TestCase):
+    """Review fixes: a rematch never loses a good link and never overwrites a change made meanwhile."""
+
+    def rematch(self, store, tid, gemini=None, **kwargs):
+        return matching.match_transaction(store, gemini, tid, use_ai=gemini is not None, log=quiet, **kwargs)
+
+    def test_the_fixture_is_out_of_the_rules_reach(self):
+        store = store_with([txn("t1", "2026-09-12", "Sp Digital Goods", 50.00)], [patreon()])
+        self.assertEqual(matching.rule_match([store.get_transaction("t1")], store.list_invoices()), {})
+
+    def test_an_ai_match_is_kept_when_gemini_fails_or_is_off(self):
+        def boom(parts, model):
+            raise RuntimeError("Gemini unavailable")
+        for gemini in (None, FakeGemini(handler=boom), FakeGemini(responses=[{"matches": []}])):
+            store = store_with([ai_matched("t1", "i_p")], [patreon()])
+            r = self.rematch(store, "t1", gemini=gemini)
+            self.assertEqual((r["outcome"], r["status"], r["invoice_id"], r["changed"]), ("kept", "matched", "i_p", False))
+            t = store.get_transaction("t1")
+            self.assertEqual((t["invoice_status"], t["invoice_id"], t["match_method"], t["updated_at"]), ("matched", "i_p", "ai", None))
+
+    def test_a_weak_rule_match_does_not_replace_a_good_ai_match(self):
+        # The same amount from an unrelated vendor two days later: the rules call that "possible".
+        store = store_with([ai_matched("t1", "i_p")], [patreon(), inv("i_other", "Unrelated Ltd", 50.00, "2026-09-14")])
+        self.assertEqual(matching.rule_match([store.get_transaction("t1")], [store.get_invoice("i_other")])["t1"][1], "possible")
+        r = self.rematch(store, "t1")
+        self.assertEqual((r["outcome"], r["invoice_id"]), ("kept", "i_p"))
+
+    def test_gemini_beats_a_weak_rule_match(self):
+        store = store_with([txn("t1", "2026-09-12", "Sp Digital Goods", 50.00)],
+                           [patreon(), inv("i_other", "Unrelated Ltd", 50.00, "2026-09-14")])
+        r = self.rematch(store, "t1", gemini=FakeGemini(responses=[judge_says("i_p")]))
+        # An inexact amount stays "possible" (a person confirms it), but it beats the rules' 0.6.
+        self.assertEqual((r["outcome"], r["status"], r["invoice_id"], r["method"]), ("found", "possible", "i_p", "ai"))
+        self.assertGreater(r["confidence"], 0.6)
+
+    def test_a_change_made_while_gemini_thinks_is_never_overwritten(self):
+        for change in ({"invoice_status": "waived", "match_method": "manual", "match_note": "waived: lost"},
+                       {"invoice_status": "matched", "invoice_id": "i_other", "match_method": "manual"}):
+            store = store_with([txn("t1", "2026-09-12", "Sp Digital Goods", 50.00)],
+                               [patreon(), inv("i_other", "Someone Else", 1.00, "2026-09-11")])
+
+            def meanwhile(parts, model, change=change):
+                store.update_transaction("t1", change)           # a person clicks while the model runs
+                return judge_says("i_p")
+
+            r = self.rematch(store, "t1", gemini=FakeGemini(handler=meanwhile))
+            self.assertEqual((r["outcome"], r["changed"]), ("conflict", False))
+            t = store.get_transaction("t1")
+            self.assertEqual((t["invoice_status"], t["invoice_id"]), (change["invoice_status"], change.get("invoice_id")))
+            self.assertEqual((r["status"], r["invoice_id"]), (t["invoice_status"], t["invoice_id"]))   # reports the row as it is
+
+    def test_an_invoice_linked_elsewhere_meanwhile_is_a_conflict_not_a_crash(self):
+        store = store_with([txn("t1", "2026-09-12", "Sp Digital Goods", 50.00), txn("t2", "2026-09-20", "Other", 5.00)],
+                           [patreon()])
+
+        def meanwhile(parts, model):
+            store.update_transaction("t2", {"invoice_status": "matched", "invoice_id": "i_p", "match_method": "manual"})
+            return judge_says("i_p")
+
+        r = self.rematch(store, "t1", gemini=FakeGemini(handler=meanwhile))
+        self.assertEqual((r["outcome"], r["status"]), ("conflict", "missing"))
+        self.assertEqual(store.get_transaction("t2")["invoice_id"], "i_p")
+
+    def test_the_same_invoice_again_is_not_a_change(self):
+        store = store_with([ai_matched("t1", "i_p")], [patreon()])
+        gemini = FakeGemini(responses=[judge_says("i_p", 0.9, "worded differently this time")])
+        r = self.rematch(store, "t1", gemini=gemini, updated_by="kelly@superhairpieces.com")
+        self.assertEqual((r["outcome"], r["changed"], r["invoice_id"]), ("same", False, "i_p"))
+        t = store.get_transaction("t1")
+        self.assertEqual((t["match_note"], t["updated_by"], t["updated_at"]), ("AI: same vendor, tax shown separately", None, None))
+
+    def test_a_possible_match_confirmed_by_the_rules_is_upgraded(self):
+        store = store_with([txn("t1", "2026-09-04", "Anthropic* Claude Team", 150.00, status="possible", invoice_id="i1", method="rule")],
+                           [inv("i1", "Anthropic", 150.00, "2026-09-03")])
+        store.update_transaction("t1", {"match_confidence": 0.6})
+        r = self.rematch(store, "t1")
+        self.assertEqual((r["outcome"], r["status"], r["invoice_id"], r["changed"]), ("found", "matched", "i1", True))
+
+    def test_an_invoice_removed_from_drive_is_let_go_when_nothing_replaces_it(self):
+        store = store_with([ai_matched("t1", "i_p")], [patreon()])
+        store.upsert_invoices([{"id": "i_p", "removed_at": "2026-10-13T00:00:00Z"}])
+        r = self.rematch(store, "t1")
+        self.assertEqual((r["outcome"], r["status"], r["invoice_id"], r["changed"]), ("none", "missing", None, True))
+
+    def test_compare_and_set_in_both_stores(self):
+        store = store_with([txn("t1", "2026-09-04", "A", 1.0)], [])
+        self.assertIsNone(store.update_transaction("t1", {"note": "x"}, expect={"invoice_status": "matched"}))
+        self.assertIsNone(store.get_transaction("t1")["note"])
+        self.assertEqual(store.update_transaction("t1", {"note": "x"}, expect={"invoice_status": "missing", "invoice_id": None})["note"], "x")
+        supa = SupabaseStore("https://example.supabase.co", "key")
+        with mock.patch.object(supa, "patch", return_value=[]) as patch:
+            self.assertIsNone(supa.update_transaction("t1", {"note": "x"}, expect={"invoice_status": "possible", "invoice_id": None,
+                                                                                  "match_method": "rule"}))
+        self.assertEqual(patch.call_args[0][1], {"id": "eq.t1", "invoice_status": "eq.possible", "invoice_id": "is.null",
+                                                 "match_method": "eq.rule"})
+        with mock.patch.object(supa, "patch", return_value=[{"id": "t1"}]) as patch:
+            supa.update_transaction("t1", {"note": "x"})
+        self.assertEqual(patch.call_args[0][1], {"id": "eq.t1"})         # no expect: exactly as before
+
+
+class RematchJobEdgeTests(ApiTestCase):
+    def wait(self, job_id):
+        for _ in range(300):
+            j = self.client.get(f"/api/jobs/current?id={job_id}").get_json()
+            if j["finished"]:
+                return j
+            time.sleep(0.02)
+        self.fail("the rematch job did not finish")
+
+    def test_a_row_deleted_while_rematch_runs_fails_cleanly(self):
+        self.upload()
+        ids = self.ids()
+        real = matching.match_transaction
+
+        def delete_then_match(store, *args, **kwargs):
+            out = real(store, *args, **kwargs)
+            store.transactions.pop(ids["anth"])
+            return out
+
+        with mock.patch.object(matching, "match_transaction", delete_then_match):
+            j = self.wait(self.client.post(f"/api/transactions/{ids['anth']}/rematch").get_json()["job"]["id"])
+        self.assertEqual(j["error"], "the transaction was removed while Rematch was running")
+
+    def test_files_that_could_not_be_read_are_named(self):
+        self.upload()
+        ids = self.ids()
+        tree = {"root": [folder("m09", "2026 09")], "m09": [folder("v", "Anthropic")],
+                "v": [file_("f_big", "big scan.pdf", size=20 * 1024 * 1024)]}
+        main.set_clients(drive=FakeDrive(tree), gemini=FakeGemini(handler=facts_handler))
+        self.addCleanup(lambda: main._clients.pop("gemini", None))
+        with mock.patch.object(main, "AI_DISABLED", False), mock.patch.object(main, "INVOICE_FOLDER_ID", "root"):
+            j = self.wait(self.client.post(f"/api/transactions/{ids['anth']}/rematch").get_json()["job"]["id"])
+        r = j["result"]
+        self.assertEqual((r["outcome"], r["read_errors"], r["read_error_files"]), ("none", 1, ["big scan.pdf"]))
 
 if __name__ == "__main__":
     unittest.main()
