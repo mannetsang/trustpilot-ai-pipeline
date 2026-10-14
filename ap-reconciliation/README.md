@@ -247,15 +247,16 @@ Two other modes exist, one edit of the deploy workflow away (step 5):
 - **Card chips** ("1610 - Yin Wei", the full label on hover; one line that
   scrolls sideways when there are more cards than fit) and a status filter
   (all, missing, possible, matched, waived, no cost centre), a search box
-  over description, amounts, cost centre and usage, and on phones a card
-  drop-down instead of the chips.
+  over description, amounts, cost centre and usage, and on phones also a
+  card drop-down (the chips, with their counts, still show above it).
 - **Transaction table** (click a header to sort, drag its right edge to
   resize, *Columns* to hide columns or reset; the browser remembers all
   three). It fits the window: on a narrow screen the columns give way in
   proportion to what they can spare (a column sized by hand keeps its
   width while the others can still shrink), down to a minimum that keeps
   the invoice buttons on one line; only below that does the table scroll
-  sideways. While it fits, the header row stays pinned under the top bar
+  sideways. While you drag an edge the other columns hold still, so the
+  edge follows the mouse; the table is fitted again when you let go. While it fits, the header row stays pinned under the top bar
   as the page scrolls. The Card column is left out while one card is
   picked. Columns: date, card, description with city/country, amount
   (with the original foreign amount), cost centre dropdown (the

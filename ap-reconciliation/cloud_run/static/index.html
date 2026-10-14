@@ -95,6 +95,8 @@
     .ap-upload .dz-text { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
     .ap-upload .dz-text .sub { display: inline; }
     .ap-upload .dz-file { margin: 0 0 0 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
+    .ap-upload .dropzone.has-file .dz-text { display: none; }
+    .ap-upload .dropzone.has-file .dz-file { margin: 0; max-width: 100%; }
     .ap-upload .btn, .ap-actions .btn { white-space: nowrap; }
     .ap-actions { display: flex; flex-wrap: wrap; gap: 6px; }
     .ap-sep { width: 1px; align-self: stretch; background: var(--border); margin: 2px 4px; }
@@ -149,7 +151,7 @@
     .nav-row .badges { margin-left: auto; display: flex; gap: 4px; }
 
     .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 7px 12px; min-width: 0; }
-    .kpi .label { font-size: 10px; letter-spacing: 0.6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .kpi .label { font-size: 10px; letter-spacing: 0.6px; }
     .kpi .value { font-size: 18px; font-weight: 600; line-height: 1.2; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .kpi .value.small { font-size: 14px; }
     .kpi.kpi-spend .value { font-size: 16px; }
@@ -157,8 +159,8 @@
     .kpi.kpi-possible .value { color: var(--warn-text); }
     .kpi.kpi-matched .value { color: var(--up-ink); }
     .kpi.kpi-uncoded .value { color: var(--info-text); }
-    /* Tiles take as many columns as fit at 140px each: 2 on a phone, 7 on a wide desktop. */
-    .kpi-grid { display: grid; grid-template-columns: minmax(150px, 1.3fr) repeat(auto-fit, minmax(118px, 1fr)); gap: 8px; }
+    /* Tiles take as many columns as fit at about 120px each: 2 on a phone, 7 on a laptop. A label wraps rather than being cut. */
+    .kpi-grid { display: grid; grid-template-columns: minmax(160px, 1.3fr) repeat(auto-fit, minmax(118px, 1fr)); gap: 8px; }
     /* The card tabs stay on one line and scroll sideways when there are more than fit. */
     #cardStrip { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; }
     #cardStrip .chip { flex-shrink: 0; }
@@ -973,35 +975,43 @@
   function shownColumns() { return visibleColumns().filter(function (c) { return !(c.key === 'card' && state.card); }); }
   // How far each column may give way when the window is narrow, before the table scrolls sideways.
   // The invoice column keeps room for its three buttons on one line (Link…, No invoice, Rematch).
-  var MIN_WIDTH = { date: 80, card: 84, desc: 140, amount: 92, invoice: 226, cost: 112, usage: 100, by: 76 };
+  // Date and Updated by keep room for "posted May 10" and "May 10, 00:00"; Amount for "-CAD 12,345.67".
+  var MIN_WIDTH = { date: 98, card: 84, desc: 140, amount: 116, invoice: 232, cost: 112, usage: 100, by: 98 };
   function colWidth(c) { return Math.max(60, Number(cols.widths[c.key]) || c.width); }
   // Exact pixel widths; whatever room is left in the card goes to the description column.
   function renderCols() {
     var vis = shownColumns(), table = $('table.txns'), wrap = $('.table-wrap');
     var avail = wrap ? wrap.clientWidth : 0;
-    var widths = vis.map(colWidth);
-    var sum = widths.reduce(function (n, w) { return n + w; }, 0);
-    // Too wide for the window: columns give way in proportion to what they can spare, first the
-    // ones nobody has sized by hand, then (only if that is not enough) the hand-sized ones too.
-    [false, true].forEach(function (includeSized) {
-      if (!avail || sum <= avail) return;
-      var spare = vis.map(function (c, i) {
-        if (!includeSized && cols.widths[c.key]) return 0;
-        return Math.max(0, widths[i] - (MIN_WIDTH[c.key] || widths[i]));
-      });
-      var room = spare.reduce(function (n, w) { return n + w; }, 0);
-      if (room <= 0) return;
-      var take = Math.min(sum - avail, room);
-      widths = widths.map(function (w, i) { return Math.round(w - take * spare[i] / room); });
-      sum = widths.reduce(function (n, w) { return n + w; }, 0);
-    });
     var flexAt = vis.findIndex(function (c) { return c.key === 'desc'; });
     if (flexAt < 0) flexAt = vis.length - 1;
-    var extra = Math.max(0, avail - sum);
+    var widths, sum, extra = 0;
+    if (resizing) {
+      // While a column border is dragged the other columns hold the widths they had at mousedown, so the
+      // border follows the mouse exactly (the table may scroll sideways for a moment). The table is fitted
+      // again when the mouse is released.
+      widths = vis.map(function (c) { return c.key !== resizing.key && resizing.snap[c.key] ? resizing.snap[c.key] : colWidth(c); });
+      sum = widths.reduce(function (n, w) { return n + w; }, 0);
+    } else {
+      widths = vis.map(colWidth);
+      sum = widths.reduce(function (n, w) { return n + w; }, 0);
+      // Too wide for the window: the columns nobody has sized by hand give way in proportion to what they
+      // can spare, down to MIN_WIDTH. A hand-sized column keeps its width (the table scrolls sideways if it
+      // must).
+      if (avail && sum > avail) {
+        var spare = vis.map(function (c, i) { return cols.widths[c.key] ? 0 : Math.max(0, widths[i] - (MIN_WIDTH[c.key] || widths[i])); });
+        var room = spare.reduce(function (n, w) { return n + w; }, 0);
+        if (room > 0) {
+          var take = Math.min(sum - avail, room);
+          widths = widths.map(function (w, i) { return Math.floor(w - take * spare[i] / room); });
+          sum = widths.reduce(function (n, w) { return n + w; }, 0);
+        }
+      }
+      extra = Math.max(0, avail - sum);
+    }
     $('#txnCols').innerHTML = vis.map(function (c, i) { return '<col style="width:' + (widths[i] + (i === flexAt ? extra : 0)) + 'px">'; }).join('');
     table.style.width = (sum + extra) + 'px';
     // Fits: no sideways scrolling, so the header row can stick under the top bar while the page scrolls.
-    var fits = sum <= avail + 1;
+    var fits = avail > 0 && sum <= avail;
     if (wrap) wrap.classList.toggle('fits', fits);
     setStickyTop();
   }
@@ -1048,7 +1058,9 @@
   $('#txnHead').addEventListener('mousedown', function (ev) {
     var h = ev.target.closest('.col-resize'); if (!h) return;
     ev.preventDefault();
-    resizing = { key: h.dataset.resize, startX: ev.clientX, startW: h.closest('th').getBoundingClientRect().width, handle: h };
+    var snap = {}, colEls = $('#txnCols').children;
+    shownColumns().forEach(function (c, i) { if (colEls[i]) snap[c.key] = parseFloat(colEls[i].style.width) || 0; });
+    resizing = { key: h.dataset.resize, startX: ev.clientX, startW: h.closest('th').getBoundingClientRect().width, handle: h, snap: snap };
     h.classList.add('active');
     document.body.style.cursor = 'col-resize';
   });
@@ -1062,13 +1074,25 @@
     resizing.handle.classList.remove('active');
     resizing = null;
     document.body.style.cursor = '';
+    renderCols();
     saveCols();
   });
   window.addEventListener('resize', function () { if (state.loaded) renderCols(); });
+  var wrapWidth = -1, colsFrame = 0;
+  if (window.ResizeObserver) {
+    new ResizeObserver(function (entries) {
+      var w = Math.round(entries[0].contentRect.width);
+      if (w === wrapWidth) return;                  // height changes (rows, filters) need nothing
+      wrapWidth = w;
+      if (!colsFrame) colsFrame = requestAnimationFrame(function () { colsFrame = 0; if (state.loaded) renderCols(); });
+    }).observe($('.table-wrap'));
+  }
   function renderColMenu() {
     $('#colMenu').innerHTML = COLUMNS.map(function (c) {
       var on = cols.hidden.indexOf(c.key) < 0;
-      return '<label class="flex items-center gap-2' + (c.key === 'desc' ? ' opacity-60' : '') + '"><input type="checkbox" data-colkey="' + c.key + '"' + (on ? ' checked' : '') + (c.key === 'desc' ? ' disabled' : '') + ' /> ' + esc(c.label) + '</label>';
+      var fixed = c.key === 'desc' || (c.key === 'card' && state.card);
+      return '<label class="flex items-center gap-2' + (fixed ? ' opacity-60' : '') + '"><input type="checkbox" data-colkey="' + c.key + '"' + (on ? ' checked' : '') + (fixed ? ' disabled' : '') + ' /> ' + esc(c.label) +
+        (c.key === 'card' && state.card ? ' <span class="sub">(hidden while one card is picked)</span>' : '') + '</label>';
     }).join('') + '<button type="button" class="btn btn-ghost btn-xs" data-colreset="1" style="justify-self: start;">Reset widths, sorting and columns</button>';
   }
   $('#colsBtn').addEventListener('click', function (ev) { ev.stopPropagation(); renderColMenu(); $('#colMenu').classList.toggle('hidden'); });
@@ -1259,7 +1283,7 @@
 
   var CELLS = {
     date: function (t) {
-      var post = t.post_date && t.post_date !== t.txn_date ? '<div class="sub">posted ' + esc(fmtDay(t.post_date)) + '</div>' : '';
+      var post = t.post_date && t.post_date !== t.txn_date ? '<div class="sub" title="posted ' + esc(fmtDay(t.post_date)) + '">posted ' + esc(fmtDay(t.post_date)) + '</div>' : '';
       return '<td style="white-space:nowrap;">' + esc(fmtDay(t.txn_date)) + post + '</td>';
     },
     card: function (t) { return '<td><span class="pill pill-grey" title="' + esc(cardLabel(t.card_last4) + (t.holder_name ? ' · ' + t.holder_name : '')) + '">' + esc(shortCardLabel(t.card_last4)) + '</span></td>'; },
@@ -1271,7 +1295,7 @@
     },
     amount: function (t) {
       var src = t.source_amount !== null && t.source_amount !== undefined && t.source_currency ? '<div class="sub">' + esc(money(t.source_amount, t.source_currency)) + '</div>' : '';
-      return '<td class="td-right"><div class="amt">' + esc(money(t.amount, t.currency)) + '</div>' + src + '</td>';
+      return '<td class="td-right"><div class="amt" title="' + esc(money(t.amount, t.currency)) + '">' + esc(money(t.amount, t.currency)) + '</div>' + src + '</td>';
     },
     invoice: function (t) { return '<td class="td-inv">' + invoiceCell(t) + '</td>'; },
     cost: function (t) { return '<td>' + costCenterCell(t) + '</td>'; },
@@ -1279,7 +1303,7 @@
       return '<td><input class="inp" data-field="usage" aria-label="Usage" placeholder="' + (t.type !== 'purchase' ? '' : 'What was this for?') + '" value="' + esc(t.usage || '') + '" data-original="' + esc(t.usage || '') + '"' + (t.editable ? '' : ' disabled') + ' /></td>';
     },
     by: function (t) {
-      return '<td>' + (t.updated_by ? '<div class="truncate" title="' + esc(t.updated_by) + '">' + esc(t.updated_by) + '</div><div class="sub">' + esc(fmtStamp(t.updated_at)) + '</div>' : '<span class="sub">—</span>') + '</td>';
+      return '<td>' + (t.updated_by ? '<div class="truncate" title="' + esc(t.updated_by) + '">' + esc(t.updated_by) + '</div><div class="sub" title="' + esc(fmtStamp(t.updated_at)) + '">' + esc(fmtStamp(t.updated_at)) + '</div>' : '<span class="sub">—</span>') + '</td>';
     },
   };
   function rowHtml(t) {
@@ -2037,6 +2061,8 @@
     var f = $('#fileInput').files[0], el = $('#dzFile');
     el.textContent = f ? f.name + ' (' + (f.size > 1048576 ? (f.size / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(f.size / 1024)) + ' KB') + ')' : '';
     el.classList.toggle('hidden', !f);
+    el.title = f ? f.name : '';
+    $('#dropZone').classList.toggle('has-file', !!f);
   }
   $('#fileInput').addEventListener('change', showChosenFile);
   ['dragenter', 'dragover'].forEach(function (name) {
