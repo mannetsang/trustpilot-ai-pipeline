@@ -30,6 +30,7 @@ Endpoints
   GET  /api/months               year/month navigation with per-card counts
   GET  /api/transactions?year&month[&card]
   PATCH /api/transactions/<id>   cost_center, usage, note, action=waive|unwaive|confirm|link|unlink
+  POST /api/transactions/<id>/rematch  read new invoices, then look for this purchase's invoice again (202, a job)
   GET  /api/invoices?year&month[&all=1]  invoices of the surrounding month folders (link picker)
   GET  /api/cards  POST /api/cards (AP)     card labels, owners, Chat space names
   GET  /api/statements?year&month           uploads
@@ -648,6 +649,33 @@ def match_month(year, month, card=None, log=print):
     return matching.match_month(get_store(), get_gemini(), year, month, card, use_ai=not AI_DISABLED, log=log)
 
 
+def rematch_transaction(txn_id, user_email=""):
+    """The dashboard's per-row Rematch, as a background job: read the invoices newly filed in Drive
+    for the purchase's month and the months either side (the usual reason to rematch is an invoice
+    just added after a reminder), then look for this purchase's invoice again."""
+    store = get_store()
+    txn = store.get_transaction(txn_id)
+    if not txn:
+        raise matching.RematchError("transaction not found")
+    year, month = int(txn["year"]), int(txn["month"])
+    progress = _last_job["progress"]
+    progress.update({"year": year, "month": month, "transaction_id": txn_id, "stage": "read"})
+    _job_log(f"Rematch: reading new invoices for {month_folder_name(year, month)} and the months either side")
+    read = index_until_done(year, month)
+    progress["stage"] = "match"
+    result = matching.match_transaction(store, get_gemini(), txn_id, use_ai=not AI_DISABLED, log=_job_log,
+                                        updated_by=user_email or None)
+    result["invoices_read"] = int(read.get("indexed") or 0)
+    result["read_errors"] = len(read.get("errors") or [])
+    if read.get("skipped"):
+        result["read_skipped"] = read["skipped"]
+    updated = store.get_transaction(txn_id)
+    row = with_invoices(store, [updated])[0]
+    row["editable"] = True              # the job only starts for someone allowed to edit the row
+    result["transaction"] = row
+    return result
+
+
 def notify_month(year, month, card=None, sent_by="", dry_run=False, dashboard=None):
     """One Chat card per credit card that still has purchases without an invoice.
 
@@ -980,6 +1008,25 @@ def api_transaction_update(txn_id):
     row = with_invoices(store, [updated])[0]
     row["editable"] = True  # may_edit passed above; the dashboard re-renders the row from this
     return jsonify({"transaction": row})
+
+
+@app.route("/api/transactions/<txn_id>/rematch", methods=["POST"])
+def api_transaction_rematch(txn_id):
+    """Per-row Rematch: read new invoices for the purchase's months, then match it again, as a
+    background job (202 with the job; 409 while another job runs). AP or the card's owner."""
+    user = require_user()
+    txn = get_store().get_transaction(txn_id)
+    if not txn:
+        return jsonify({"error": "transaction not found"}), 404
+    if not may_edit(user, txn["card_last4"]):
+        return jsonify({"error": "you can only rematch transactions of cards you own"}), 403
+    why_not = matching.rematchable(txn)
+    if why_not:
+        return jsonify({"error": why_not}), 400
+    status, payload = start_job("rematch", rematch_transaction, txn_id, user["email"])
+    if status == 202:
+        payload["job"] = job_view(_jobs[payload["job"]["id"]])
+    return jsonify(payload), status
 
 
 @app.route("/api/invoices")

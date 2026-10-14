@@ -160,6 +160,10 @@
     .td-right { text-align: right; }
     .td-desc .desc { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .btn-row { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
+    .rematch-status { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 11.5px; color: var(--text-mid); }
+    .rematch-status .spin { width: 11px; height: 11px; flex: 0 0 11px; border: 2px solid var(--border); border-top-color: var(--text-mid); border-radius: 50%; animation: rematch-spin .8s linear infinite; }
+    @keyframes rematch-spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .rematch-status .spin { animation: none; } }
     .conf { font-size: 10.5px; color: var(--text-mute); }
 
     .toolbar { position: relative; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); }
@@ -428,13 +432,14 @@
   function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   function nearly(a, b) { return a !== null && a !== undefined && b !== null && b !== undefined && Math.abs(Math.abs(Number(a)) - Math.abs(Number(b))) <= 0.011; }
 
-  function toast(msg, kind) {
+  function toast(msg, kind, ms) {
     var el = document.createElement('div');
     el.className = 'toast' + (kind ? ' ' + kind : '');
     el.textContent = msg;
     $('#toast').appendChild(el);
-    setTimeout(function () { el.style.opacity = '0'; el.style.transition = 'opacity .3s'; }, kind === 'err' ? 6000 : 2600);
-    setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, kind === 'err' ? 6400 : 3000);
+    ms = ms || (kind === 'err' ? 6000 : 2600);
+    setTimeout(function () { el.style.opacity = '0'; el.style.transition = 'opacity .3s'; }, ms);
+    setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, ms + 400);
   }
 
   function ApiError(status, message, data) { this.status = status; this.message = message; this.data = data; }
@@ -928,16 +933,30 @@
         ? '<a class="link" href="' + esc(safeUrl(inv.web_view_link)) + '" target="_blank" rel="noopener noreferrer" title="' + esc(inv.file_name || '') + '">' + esc(text) + ' ↗</a>'
         : '<span title="' + esc(inv.file_name || '') + '">' + esc(text) + '</span>') + totalBit + '</div>';
     }
+    if (rematching[t.id] !== undefined) {
+      return html + '<div class="rematch-status" role="status"><span class="spin" aria-hidden="true"></span><span class="rematch-text">' + esc(rematching[t.id]) + '</span></div>';
+    }
+    var again = canRematch(t)
+      ? '<button class="btn btn-ghost btn-xs" data-action="rematch"' + (ed ? ' title="Read any invoices newly filed in Drive and look for this purchase\'s invoice again"' : dis) + '>Rematch</button>'
+      : '';
     if (st === 'possible') {
-      html += '<div class="btn-row"><button class="btn btn-primary btn-xs" data-action="confirm"' + dis + '>Confirm</button><button class="btn btn-secondary btn-xs" data-action="unlink"' + dis + '>Not this</button></div>';
+      html += '<div class="btn-row"><button class="btn btn-primary btn-xs" data-action="confirm"' + dis + '>Confirm</button><button class="btn btn-secondary btn-xs" data-action="unlink"' + dis + '>Not this</button>' + again + '</div>';
     } else if (st === 'missing') {
-      html += '<div class="btn-row"><button class="btn btn-secondary btn-xs" data-action="pick"' + dis + '>Link…</button><button class="btn btn-ghost btn-xs" data-action="waive"' + dis + '>No invoice</button></div>';
+      html += '<div class="btn-row"><button class="btn btn-secondary btn-xs" data-action="pick"' + dis + '>Link…</button><button class="btn btn-ghost btn-xs" data-action="waive"' + dis + '>No invoice</button>' + again + '</div>';
     } else if (st === 'waived') {
       html += '<div class="btn-row"><button class="btn btn-secondary btn-xs" data-action="unwaive"' + dis + '>Undo</button></div>';
     } else if (st === 'matched') {
-      html += '<div class="btn-row"><button class="btn btn-ghost btn-xs" data-action="unlink"' + dis + '>Unlink</button></div>';
+      html += '<div class="btn-row"><button class="btn btn-ghost btn-xs" data-action="unlink"' + dis + '>Unlink</button>' + again + '</div>';
     }
     return html;
+  }
+  // Mirrors the server's rule (matching.rematchable): purchases that are missing, possible, or matched
+  // by the matcher; not waived, and not an invoice somebody linked or confirmed by hand.
+  function canRematch(t) {
+    var st = t.invoice_status || 'missing';
+    if (t.type && t.type !== 'purchase') return false;
+    if (st === 'missing' || st === 'possible') return true;
+    return st === 'matched' && t.match_method !== 'manual';
   }
 
   function costCenterCell(t) {
@@ -1084,6 +1103,49 @@
     }
   }
 
+  // Per-row Rematch: the server reads invoices newly filed in Drive for the purchase's months, then
+  // looks for its invoice again, as a background job this row polls. While it runs the row shows what
+  // the server is doing, and keeps showing it through re-sorting, filtering and re-rendering.
+  var rematching = {};          // transaction id -> the progress text shown in its row
+  function setRematchText(id, text) {
+    rematching[id] = text;
+    var row = rowEl(id), el = row && row.querySelector('.rematch-text');
+    if (el) el.textContent = text;
+  }
+  function rematchProgress(p) {
+    if (p.stage === 'match') return 'Looking for the invoice…';
+    var done = (p.read || 0) + (p.live || 0);
+    return done ? 'Reading new invoices from Drive (' + count(done, 'read', 'read') + ')…' : 'Checking Drive for new invoices…';
+  }
+  function rematchMessage(r) {
+    var inv = r.invoice, what = inv ? (inv.vendor || inv.file_name || 'an invoice') + (inv.total !== null && inv.total !== undefined ? ' ' + money(inv.total, inv.currency || '') : '') : '';
+    var read = r.invoices_read ? ' ' + count(r.invoices_read, 'new invoice was', 'new invoices were') + ' read first.' : '';
+    if (r.status === 'matched') return (r.changed ? 'Invoice found: ' : 'Still the same invoice: ') + what + '.' + read;
+    if (r.status === 'possible') return (r.changed ? 'Possible match: ' : 'Still a possible match: ') + what + '. Confirm it or click Not this.' + read;
+    return 'No invoice found yet.' + read + ' File it in the Invoice folder on Drive, then click Rematch again.';
+  }
+  async function rematchRow(id) {
+    if (rematching[id] !== undefined) return;
+    var at = { year: state.year, month: state.month };
+    rematching[id] = 'Starting…';
+    // The row renderer keeps a cell that holds the focus as it is; let go of the clicked button first.
+    var row = rowEl(id);
+    if (row && row.contains(document.activeElement)) document.activeElement.blur();
+    restoreRow(id);
+    try {
+      var started = await apiRetryBusy('/api/transactions/' + encodeURIComponent(id) + '/rematch', { method: 'POST' },
+        function () { setRematchText(id, 'Waiting for another job to finish…'); });
+      var result = await pollJob(started.job, function (p) { setRematchText(id, rematchProgress(p)); }, true);
+      delete rematching[id];
+      if (result.transaction) replaceTxn(result.transaction, at); else restoreRow(id);
+      toast(rematchMessage(result), result.status === 'missing' ? '' : 'ok', 7000);
+    } catch (e) {
+      delete rematching[id];
+      restoreRow(id);
+      report(e, 'Rematch failed');
+    }
+  }
+
   async function saveField(input, field) {
     var tr = input.closest('tr');
     var id = tr.dataset.id;
@@ -1126,6 +1188,7 @@
     var tr = btn.closest('tr');
     var action = btn.dataset.action;
     if (action === 'pick') { openLinkModal(txnById(tr.dataset.id)); return; }
+    if (action === 'rematch') { rematchRow(tr.dataset.id); return; }
     rowAction(tr, action);
   });
   $('#txnBody').addEventListener('change', function (ev) {
@@ -1420,7 +1483,7 @@
   var STEP_OF = { upload: 'upload', index: 'read', match: 'match', notify: 'notify' };
   // Polls one job by its id until it has finished; the server keeps finished jobs readable for a
   // while, so another person starting the next job does not take ours away.
-  async function pollJob(job, onProgress) {
+  async function pollJob(job, onProgress, quiet) {
     var misses = 0, id = job && job.id, seen = 0;
     if (!id) throw new ApiError(500, 'the server did not start the job', job);
     while (!job.finished) {
@@ -1431,7 +1494,7 @@
         if (e.status === 404) throw new ApiError(404, 'the server restarted while this step was running; it may not have finished', null);
         throw e;
       }
-      seen = syncServerLog(job.progress || {}, seen);
+      if (!quiet) seen = syncServerLog(job.progress || {}, seen);
       if (onProgress && job.running) onProgress(job.progress || {});
     }
     if (job.error) throw new ApiError(500, job.error, job);

@@ -15,6 +15,9 @@ Two passes per month:
 
 An invoice is linked to at most one transaction. Manually matched or waived
 transactions are never touched.
+
+match_transaction runs the same two passes for one purchase (the dashboard's
+per-row Rematch), against the same pool of invoices.
 """
 
 import datetime as dt
@@ -301,15 +304,89 @@ def ai_match(gemini, transactions, invoices, txn_batch=40, inv_batch=120, log=pr
     return out
 
 
+def candidate_invoices(store, year, month):
+    """Invoices a purchase of (year, month) may be matched with: the month's folder and its
+    neighbours, real invoices with a total, not removed, not credit notes."""
+    folders = [month_folder_name(y, m) for y, m in neighbouring_months(int(year), int(month))]
+    return [i for i in store.list_invoices(month_folders=folders)
+            if i.get("is_invoice", True) is not False and i.get("total") is not None
+            and not i.get("removed_at") and (i.get("document_type") or "") != "credit_note"]
+
+
+REMATCHABLE = ("missing", "possible", "matched")
+
+
+class RematchError(ValueError):
+    """The purchase cannot be rematched (not a purchase, waived, linked by hand)."""
+
+
+def rematchable(txn):
+    """None when the dashboard may offer Rematch on this row, else the reason it may not."""
+    if txn.get("type") != "purchase":
+        return "only purchases need an invoice"
+    status = txn.get("invoice_status")
+    if status not in REMATCHABLE:
+        return "this purchase is marked as needing no invoice; undo that first" if status == "waived" \
+            else "this purchase needs no invoice"
+    if status == "matched" and txn.get("match_method") == "manual":
+        return "this invoice was linked or confirmed by hand; unlink it first"
+    return None
+
+
+def match_transaction(store, gemini, txn_id, use_ai=True, log=print, updated_by=None):
+    """Look for the invoice of one purchase again: rules first, then the Gemini judge, against the
+    invoices of its month and the months either side that no other transaction holds. The purchase's
+    own current invoice stays in the pool, so a correct match survives. Invoices refused with
+    "Not this" are never proposed again. Returns what was found and what changed."""
+    txn = store.get_transaction(txn_id)
+    if not txn:
+        raise RematchError("transaction not found")
+    why_not = rematchable(txn)
+    if why_not:
+        raise RematchError(why_not)
+    own = txn.get("invoice_id")
+    used = store.used_invoice_ids() - ({own} if own else set())
+    pool = [i for i in candidate_invoices(store, txn["year"], txn["month"]) if i["id"] not in used]
+    inv_by_id = {i["id"]: i for i in pool}
+    label = f"{txn.get('txn_date')} {str(txn.get('description') or '')[:40]} {float(txn['amount']):.2f}"
+    log(f"Rematch {label}: {len(pool)} invoices to consider")
+
+    found = rule_match([txn], pool).get(txn["id"])
+    method = "rule" if found else None
+    if not found and use_ai and gemini is not None and pool:
+        log(f"Rematch {label}: no rule match, asking {gemini.match_model}")
+        found = ai_match(gemini, [txn], pool, log=log).get(txn["id"])
+        method = "ai" if found else None
+
+    if found:
+        iid, status, conf, note = found
+        patch = {"invoice_status": status, "invoice_id": iid, "match_confidence": conf,
+                 "match_method": method, "match_note": note[:500]}
+    else:
+        iid, status = None, "missing"
+        patch = {"invoice_status": "missing", "invoice_id": None, "match_confidence": None,
+                 "match_method": None, "match_note": None}
+    changed = any(txn.get(k) != v for k, v in patch.items())
+    if changed:
+        patch["updated_at"] = now_iso()
+        if updated_by:
+            patch["updated_by"] = updated_by
+        store.update_transaction(txn["id"], patch)
+    inv = inv_by_id.get(iid) or {}
+    log(f"Rematch {label}: {status}" + (f" -> {inv.get('vendor')} {inv.get('total')} ({method} {patch['match_confidence']})" if iid else ""))
+    return {"transaction_id": txn["id"], "status": status, "invoice_id": iid, "method": method,
+            "confidence": patch["match_confidence"], "note": patch["match_note"],
+            "previous_status": txn.get("invoice_status"), "previous_invoice_id": own,
+            "changed": changed, "invoices_considered": len(pool),
+            "invoice": {k: inv.get(k) for k in ("vendor", "total", "currency", "invoice_date", "file_name")} if iid else None}
+
+
 def match_month(store, gemini, year, month, card=None, use_ai=True, log=print):
     """Run both passes for one month (optionally one card). Returns counts."""
     year, month = int(year), int(month)
     txns = store.list_transactions(year, month, card)
     pending = [t for t in txns if t.get("type") == "purchase" and t.get("invoice_status") in ("missing", "possible")]
-    folders = [month_folder_name(y, m) for y, m in neighbouring_months(year, month)]
-    invoices = [i for i in store.list_invoices(month_folders=folders)
-                if i.get("is_invoice", True) is not False and i.get("total") is not None
-                and not i.get("removed_at") and (i.get("document_type") or "") != "credit_note"]
+    invoices = candidate_invoices(store, year, month)
     held_by_pending = {t["invoice_id"] for t in pending if t.get("invoice_id")}
     used = store.used_invoice_ids() - held_by_pending
     available = [i for i in invoices if i["id"] not in used]

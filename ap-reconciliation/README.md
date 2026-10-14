@@ -254,6 +254,18 @@ Two other modes exist, one edit of the deploy workflow away (step 5):
   invoice column: the linked file with vendor, number and total, or the
   buttons *Confirm* / *Not this* on a possible match, *Link...* / *No
   invoice* on a missing one, *Undo* on a waived one. Edits save on change.
+- **Rematch** on each purchase that is missing an invoice, has a possible
+  match, or was matched automatically (not on waived rows or on invoices
+  someone linked or confirmed by hand; *Unlink* those first). It is for the
+  usual case of an invoice filed in Drive after the reminder: the server
+  first reads any invoices newly filed in the purchase's month folder and
+  the months either side, then runs the same rules and Gemini judge for
+  that one purchase, against the invoices no other purchase holds (its own
+  current invoice stays in the running, so a right match survives;
+  invoices refused with *Not this* are never proposed again). It runs as a
+  background job the row polls: the row shows what the server is doing,
+  a second row waits for the first, and a message says what was found.
+  AP or the card's owner may use it.
 - **Invoice picker** (from *Link...*): every invoice of the surrounding
   month folders, searchable by vendor, file, folder and amount; ones already
   linked elsewhere are greyed out.
@@ -294,6 +306,7 @@ under *Cards...*) are never notified.
 | `GET /api/months` | signed in | month navigation with per-card counts, cards, cost centres |
 | `GET /api/transactions?year&month[&card]` | signed in | the month's transactions with their invoice, `editable` flag, uploads and recent notifications |
 | `PATCH /api/transactions/<id>` | signed in, AP or the card's owner | body: `cost_center`, `usage`, `note`, and/or `action` (`waive` with `reason`, `unwaive`, `confirm`, `link` with `invoice_id`, `unlink`) |
+| `POST /api/transactions/<id>/rematch` | signed in, AP or the card's owner | *Rematch*: reads new invoices for the purchase's months, then looks for its invoice again, as a background job (202 with the job, polled through `/api/jobs/current?id=`; 409 while another job runs; 400 for a waived, non-purchase or hand-linked row). The job's result has the status found, the invoice, `changed`, `invoices_read` and the updated row |
 | `GET /api/invoices?year&month` | signed in | invoices of month-1..month+1 with a `linked` flag (the picker) |
 | `GET /api/cards` | signed in | cards |
 | `POST /api/cards` | AP | `{"last4", "label", "holder_name", "owner_email", "chat_space", "active"}` |
@@ -563,6 +576,7 @@ next idle period, or at once with *Run workflow*.
 
 | Symptom | Cause and fix |
 |---|---|
+| *Rematch* says *No invoice found yet* although the invoice is in Drive | the file is filed outside the purchase's month folder and the months either side, or Gemini could not read it (the job's read errors; files over 15 MB are skipped), or its total differs from the charge by more than the matcher allows, or another purchase already holds it. *Link...* picks it by hand |
 | *Network error: Failed to fetch* in the middle of a step | the network between the browser and Cloud Run dropped a long, silent request (office proxies do this after about a minute). Each step now runs as a background job that the page polls every two seconds, so this should not recur; *Re-run matching* resumes where the read stopped |
 | `409 {"status": "busy"}` from an upload, index, match or notify | one job at a time per instance; wait for it (`/health` shows `last_job`) and retry. The dashboard retries by itself |
 | Invoice listed in the picker with *unsupported file type* | Word, Excel, zip or e-mail files are not read; save as PDF into the same folder. Files over 15 MB likewise. Such files are not retried; any other extraction error is retried on the next index |
