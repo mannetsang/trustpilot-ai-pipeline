@@ -441,6 +441,43 @@ class RematchSafetyTests(unittest.TestCase):
         self.assertEqual(patch.call_args[0][1], {"id": "eq.t1"})         # no expect: exactly as before
 
 
+class RematchRankingTests(unittest.TestCase):
+    """Review fixes: for one row, a vendor-confirmed match outranks a coincidental same-amount invoice."""
+
+    def rematch(self, store, tid, gemini=None):
+        return matching.match_transaction(store, gemini, tid, use_ai=gemini is not None, log=quiet)
+
+    def invoices(self):
+        # i1: the right vendor, three weeks earlier. i2: another vendor, same amount, same day.
+        return [inv("i1", "Anthropic", 150.00, "2026-09-01"), inv("i2", "Costco", 150.00, "2026-09-20")]
+
+    def test_a_missing_row_gets_the_vendor_confirmed_invoice(self):
+        store = store_with([txn("t1", "2026-09-20", "Anthropic* Claude Team", 150.00)], self.invoices())
+        month = matching.rule_match([store.get_transaction("t1")], store.list_invoices())["t1"]
+        self.assertEqual(month[:2], ("i2", "possible"))                 # the month-wide ranking, unchanged
+        r = self.rematch(store, "t1")
+        self.assertEqual((r["outcome"], r["status"], r["invoice_id"]), ("found", "matched", "i1"))
+
+    def test_a_correct_match_is_not_swapped_for_a_coincidence(self):
+        store = store_with([txn("t1", "2026-09-20", "Anthropic* Claude Team", 150.00, status="matched", invoice_id="i1", method="rule")],
+                           self.invoices())
+        store.update_transaction("t1", {"match_confidence": 0.9})
+        r = self.rematch(store, "t1")
+        self.assertEqual((r["outcome"], r["invoice_id"], r["changed"]), ("same", "i1", False))
+
+    def test_an_ai_match_the_rules_only_call_possible_is_not_downgraded(self):
+        # Exact amount, same day, vendor text the rules cannot connect: the rules say "possible".
+        store = store_with([ai_matched("t1", "i_j")], [inv("i_j", "Joe's Coffee", 50.00, "2026-09-12")])
+        self.assertEqual(matching.rule_match([store.get_transaction("t1")], store.list_invoices())["t1"][1], "possible")
+        def boom(parts, model):
+            raise RuntimeError("503 overloaded")
+        for gemini in (None, FakeGemini(handler=boom), FakeGemini(responses=[judge_says("i_j", 0.97)])):
+            store.update_transaction("t1", {"invoice_status": "matched", "invoice_id": "i_j", "match_method": "ai",
+                                            "match_confidence": 0.92})
+            r = self.rematch(store, "t1", gemini=gemini)
+            self.assertEqual((r["outcome"], r["status"], r["invoice_id"], r["changed"]), ("same", "matched", "i_j", False))
+
+
 class RematchJobEdgeTests(ApiTestCase):
     def wait(self, job_id):
         for _ in range(300):

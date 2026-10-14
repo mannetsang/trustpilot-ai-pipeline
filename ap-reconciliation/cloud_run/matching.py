@@ -163,8 +163,12 @@ def score_pair(txn, inv):
     return round(total, 4), a_score, v_score, days, note
 
 
-def rule_match(transactions, invoices):
-    """Greedy best-first pairing. Returns {txn_id: (inv_id, status, confidence, note)}."""
+def rule_match(transactions, invoices, status_first=False):
+    """Greedy best-first pairing. Returns {txn_id: (inv_id, status, confidence, note)}.
+
+    status_first (the per-row Rematch only) ranks a full match above any possible match before the
+    score, so a vendor-confirmed invoice is not beaten by a same-amount invoice from another vendor
+    dated closer to the charge. The month-wide run keeps ranking by score alone."""
     pairs = []
     for t in transactions:
         for inv in invoices:
@@ -187,7 +191,10 @@ def rule_match(transactions, invoices):
             else:
                 continue
             pairs.append((total, conf, t["id"], inv["id"], status, note))
-    pairs.sort(key=lambda p: (-p[0], -p[1]))
+    if status_first:
+        pairs.sort(key=lambda p: (p[4] != "matched", -p[0], -p[1]))
+    else:
+        pairs.sort(key=lambda p: (-p[0], -p[1]))
     out, used_inv = {}, set()
     for total, conf, tid, iid, status, note in pairs:
         if tid in out or iid in used_inv:
@@ -371,7 +378,7 @@ def match_transaction(store, gemini, txn_id, use_ai=True, log=print, updated_by=
 
     if on_stage:
         on_stage("rules")
-    found, method = rule_match([txn], pool).get(txn["id"]), "rule"
+    found, method = rule_match([txn], pool, status_first=True).get(txn["id"]), "rule"
     if (not found or found[1] != "matched") and use_ai and gemini is not None and pool:
         # Nothing, or only a weak possible match, by the rules: ask the judge too, keep the better.
         log(f"Rematch {label}: no clear rule match, asking {gemini.match_model}")
@@ -386,8 +393,9 @@ def match_transaction(store, gemini, txn_id, use_ai=True, log=print, updated_by=
     current_valid = bool(own) and own in inv_by_id and own_status in ("matched", "possible")
     current = (own_status, txn.get("match_confidence"))
     if found and found[0] == own and current_valid:
-        # The same invoice again: keep the stronger of the two judgements.
-        outcome = "found" if _better((found[1], found[2]), current) else "same"
+        # The same invoice again: only a better status (possible -> matched) is worth writing; a
+        # reworded note or a slightly different confidence is not news.
+        outcome = "found" if STATUS_RANK[found[1]] > STATUS_RANK[own_status] else "same"
     elif found and (not current_valid or _better((found[1], found[2]), current)):
         outcome = "found"
     elif current_valid:
