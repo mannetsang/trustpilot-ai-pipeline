@@ -108,7 +108,8 @@
     #app { display: flex; min-height: 100vh; }
     #sidebar { width: 232px; flex-shrink: 0; background: var(--sidebar); color: var(--sidebar-text); position: sticky; top: 0; height: 100vh; overflow-y: auto; padding: 20px 12px; display: flex; flex-direction: column; }
     #main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-    #topbar { background: var(--surface); border-bottom: 1px solid var(--border-subtle); min-height: 56px; display: flex; align-items: center; gap: 12px; padding: 8px 16px; position: sticky; top: 0; z-index: 20; }
+    #topbar { background: var(--surface); border-bottom: 1px solid var(--border-subtle); min-height: 56px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 16px; position: sticky; top: 0; z-index: 20; }
+    #topTitle { flex: 1 1 0; min-width: 0; }   /* truncates; never forces a wrap by itself */
     #content { padding: 16px; max-width: 1480px; width: 100%; }
     /* Voice mode: a switch in the top bar; when on, a microphone and a question box, and an answer panel
        under the top bar (which stays in view while scrolling and when pinched in). */
@@ -129,7 +130,8 @@
     #voiceAnswer { margin-top: 4px; color: var(--text); line-height: 1.5; }
     #voiceAnswer:empty, #voiceHeard:empty { display: none; }
     .vp-actions { display: flex; gap: 4px; margin-top: 8px; justify-content: flex-end; }
-    @media (max-width: 899px) { #voiceBar { flex: 0 0 auto; } #voiceBar form { display: none; } }
+    /* Narrow: the month list keeps a readable width, Voice is an icon, and the question box gets its own row. */
+    @media (max-width: 899px) { #voiceBtn span { display: none; } #voiceBar { order: 10; flex: 1 0 100%; margin-left: 0; } }
     #offscreen { display: flex; align-items: center; gap: 10px; max-width: 980px; margin: 0 0 10px; padding: 8px 12px; border-radius: 10px;
                  background: var(--warn); color: var(--warn-text); font-size: 12.5px; border: 1px solid #f3dca8; }
     #offscreen b { color: #6b4500; }
@@ -137,7 +139,7 @@
     #mobileNav { display: none; flex: 1; min-width: 0; }
     @media (max-width: 899px) {
       #sidebar { display: none; }
-      #mobileNav { display: flex; }
+      #mobileNav { display: flex; flex: 1 1 120px; }
       #topTitle { display: none; }
     }
     @media (min-width: 1100px) { #content { padding: 16px 24px; } }
@@ -549,11 +551,12 @@
     }
     throw new ApiError(409, 'the server stayed busy for too long; try again later', null);
   }
-  function report(e, prefix) {
+  // quiet: the failure was already said (failStep), in words a person can act on.
+  function report(e, prefix, quiet) {
     if (e && e.status === 401) return;
     console.error(e);
     toast((prefix ? prefix + ': ' : '') + (e && e.message ? e.message : String(e)), 'err');
-    say((prefix ? prefix + '. ' : 'Something went wrong. ') + (e && e.message ? e.message : String(e)));
+    if (!quiet) say((prefix ? prefix + '. ' : 'Something went wrong. ') + (e && e.message ? e.message : String(e)));
   }
 
   // ---------------------------------------------------------------------------
@@ -636,7 +639,12 @@
   // ---------------------------------------------------------------------------
   var VOICE_KEY = 'ap_recon_voice';
   var SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-  var voice = { on: false, pick: null, rec: null, listening: false, asking: false, last: '' };
+  // cur: the line being spoken, never cut by later news; queue: the lines waiting behind it (outcomes in
+  // order, at most three; a "running" line only while no outcome waits); held: the newest line kept back
+  // while the browser may not speak yet (no click or key press on the page since it loaded) or while the
+  // microphone is open; askSeq: drops a stale answer.
+  var voice = { on: false, pick: null, rec: null, listening: false, asking: false, last: '', cur: null, queue: [], held: null, askSeq: 0 };
+  var VOICE_QUEUE = 3;
   function pickVoice() {
     if (!window.speechSynthesis) return null;
     var all = speechSynthesis.getVoices() || [];
@@ -653,19 +661,64 @@
   if (window.speechSynthesis && 'onvoiceschanged' in speechSynthesis) {
     speechSynthesis.onvoiceschanged = function () { voice.pick = pickVoice(); };
   }
-  function say(text, interrupt) {
-    if (!voice || !voice.on || !window.speechSynthesis || !text) return;   // also safe before this block has run
-    // Read the way it is meant: "Link…" is a button name, " - " separates a card from its holder.
-    text = String(text).replace(/\s+/g, ' ').replace(/…/g, '').replace(/\s+-\s+/g, ', ').trim().slice(0, 700);
-    if (!text) return;
-    if (interrupt) speechSynthesis.cancel();
-    else if (speechSynthesis.pending) speechSynthesis.cancel();   // never fall behind: newest news wins
+  function speakNow(text) {
     var u = new SpeechSynthesisUtterance(text);
     if (!voice.pick) voice.pick = pickVoice();
     if (voice.pick) { u.voice = voice.pick; u.lang = voice.pick.lang; }
     u.rate = 1.04;
+    u.onend = u.onerror = function () {
+      if (voice.cur !== u) return;                 // cancelled: a stale end event
+      voice.cur = null;
+      var next = voice.queue.shift();
+      if (next && voice.on) speakNow(next.text);
+    };
+    voice.cur = u;                                 // also keeps the utterance alive until it ends
     speechSynthesis.speak(u);
+    watchSpeech(u);
   }
+  // Chrome sometimes never sends the end event (a long line with some voices): once the browser has
+  // gone quiet, carry on with the next line anyway.
+  function watchSpeech(u) {
+    setTimeout(function () {
+      if (voice.cur !== u) return;
+      if (speechSynthesis.speaking || speechSynthesis.pending) { watchSpeech(u); return; }
+      u.onend();
+    }, 2000);
+  }
+  // Stop talking and forget anything queued.
+  function hush() {
+    if (!voice) return;
+    voice.queue = []; voice.held = null; voice.cur = null;
+    if (window.speechSynthesis) speechSynthesis.cancel();
+  }
+  // interrupt: cut whatever is being said (an answer, a failure, voice switched on). minor: a step's
+  // "running" line, said only when nothing more important waits.
+  function say(text, interrupt, minor) {
+    if (!voice || !voice.on || !window.speechSynthesis || !text) return;   // also safe before this block has run
+    // Read the way it is meant: "Link…" is a button name, " - " separates a card from its holder.
+    text = String(text).replace(/\s+/g, ' ').replace(/…/g, '').replace(/\s+-\s+/g, ', ').trim().slice(0, 700);
+    if (!text) return;
+    // The browser will not speak before the first click or key press on the page, nor should the page
+    // talk into the open microphone: keep the newest line for later.
+    if (voice.listening || (navigator.userActivation && !navigator.userActivation.hasBeenActive)) { voice.held = text; return; }
+    if (interrupt) { hush(); speakNow(text); return; }
+    if (!voice.cur && !speechSynthesis.speaking && !speechSynthesis.pending) { speakNow(text); return; }
+    if (minor) {
+      if (voice.queue.some(function (q) { return !q.minor; })) return;
+      voice.queue = [{ text: text, minor: true }];         // only the newest progress line
+      return;
+    }
+    voice.queue = voice.queue.filter(function (q) { return !q.minor; });
+    voice.queue.push({ text: text });
+    if (voice.queue.length > VOICE_QUEUE) voice.queue.shift();   // never fall far behind
+  }
+  ['pointerdown', 'keydown'].forEach(function (type) {
+    document.addEventListener(type, function () {
+      if (!voice.held || voice.listening) return;
+      var held = voice.held; voice.held = null;
+      say(held, true);                             // inside the click or key press, so the browser allows it
+    }, true);
+  });
   function voiceShow(heard, answer) {
     if (heard !== undefined) $('#voiceHeard').textContent = heard || '';
     if (answer !== undefined) $('#voiceAnswer').textContent = answer || '';
@@ -677,14 +730,18 @@
     $('#voiceBtn').setAttribute('aria-pressed', voice.on ? 'true' : 'false');
     $('#voiceBar').classList.toggle('hidden', !voice.on);
     if (!voice.on) {
-      if (window.speechSynthesis) speechSynthesis.cancel();
+      hush();
+      voice.askSeq++;                              // an answer still on its way is dropped
       if (voice.rec) { try { voice.rec.abort(); } catch (e) { /* already stopped */ } }
       voiceShow('', '');
+      setStickyTop();
       return;
     }
+    setStickyTop();                                // on a narrow screen the question box adds a row to the top bar
+    if (quiet) return;                             // restored on load: no hint panel over the page
     voiceShow(SpeechRec ? 'Click the microphone and ask, for example: how many invoices are still missing?'
                         : 'Type a question, for example: how many invoices are still missing? (This browser cannot listen; Chrome and Edge can.)', '');
-    if (!quiet) say('Voice mode is on. I will tell you what is happening. Click the microphone to ask about this month.', true);
+    say('Voice mode is on. I will tell you what is happening. Click the microphone to ask about this month.', true);
   }
   function updateMic() {
     $('#voiceMic').setAttribute('aria-pressed', voice.listening ? 'true' : 'false');
@@ -693,8 +750,8 @@
   function listen() {
     if (!SpeechRec) { $('#voiceInput').focus(); voiceShow('This browser cannot listen; type the question instead (Chrome and Edge can listen).'); return; }
     if (voice.listening && voice.rec) { voice.rec.stop(); return; }
-    if (window.speechSynthesis) speechSynthesis.cancel();      // stop talking when the person starts
-    var rec = new SpeechRec(), heard = '';
+    hush();                                                    // stop talking when the person starts
+    var rec = new SpeechRec(), heard = '', failed = false;
     rec.lang = navigator.language || 'en-US';
     rec.interimResults = true;
     rec.continuous = false;
@@ -712,11 +769,15 @@
                   'no-speech': 'I did not hear anything. Click the microphone and ask again.',
                   'audio-capture': 'No microphone was found. Type the question instead.',
                   'network': 'Speech recognition needs the internet and could not reach it. Type the question instead.' }[ev.error];
+      failed = true;
       if (ev.error !== 'aborted') voiceShow(why || ('Could not listen (' + ev.error + '). Type the question instead.'), '');
     };
     rec.onend = function () {
       voice.listening = false; voice.rec = null; updateMic();
-      if (heard.trim()) askVoice(heard);
+      var held = voice.held; voice.held = null;
+      if (heard.trim()) { askVoice(heard); return; }             // its answer replaces any news held meanwhile
+      if (!failed && voice.on) voiceShow('I did not catch a question. Click the microphone and ask again.', '');
+      if (held) say(held);
     };
     voice.rec = rec; voice.listening = true; updateMic();
     voiceShow('Listening…', '');
@@ -728,16 +789,18 @@
     if (!question) return true;
     if (voice.asking) { toast('Still answering your last question.', '', 2500); return false; }
     voice.asking = true;
+    var mine = ++voice.askSeq;
     var now = new Date(), year = state.year || now.getFullYear(), month = state.month || (now.getMonth() + 1);
     voiceShow('“' + question + '”', 'Looking at ' + monthLabel(year, month) + '…');
     try {
       var data = await api('/api/ask?year=' + year + '&month=' + month + (state.card ? '&card=' + encodeURIComponent(state.card) : ''),
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: question }) });
+      if (mine !== voice.askSeq) return;           // closed, or voice switched off, while it was on its way
       voice.last = data.answer || '';
       voiceShow(undefined, voice.last);
       say(voice.last, true);
     } catch (e) {
-      if (e && e.status === 401) return;
+      if (mine !== voice.askSeq || (e && e.status === 401)) return;
       voiceShow(undefined, 'I could not get an answer: ' + (e && e.message ? e.message : e));
       say('Sorry, I could not get an answer.', true);
     } finally {
@@ -755,8 +818,8 @@
     askVoice(q);
   });
   $('#voiceReplay').addEventListener('click', function () { var t = $('#voiceAnswer').textContent; if (t) say(t, true); });
-  $('#voiceStop').addEventListener('click', function () { if (window.speechSynthesis) speechSynthesis.cancel(); });
-  $('#voicePanelClose').addEventListener('click', function () { if (window.speechSynthesis) speechSynthesis.cancel(); voiceShow('', ''); });
+  $('#voiceStop').addEventListener('click', hush);
+  $('#voicePanelClose').addEventListener('click', function () { hush(); voice.askSeq++; voiceShow('', ''); });
   try { if (localStorage.getItem(VOICE_KEY) === '1') setVoice(true, true); } catch (e) { /* private mode */ }
 
   // Pinched in with a touchpad or mouse: lay the page out for the visible area rather than the whole window,
@@ -1816,7 +1879,8 @@
   function setStep(key, status, text, actionsHtml) {
     var li = stepsEl.querySelector('li[data-step="' + key + '"]');
     if (!li) return;
-    if (status === 'done' || status === 'failed' || status === 'ask' || (status === 'running' && stepSaid[key] !== 'running')) say(text);
+    if (status === 'done' || status === 'warn' || status === 'failed' || status === 'ask') say(text, status === 'failed');
+    else if (status === 'running' && stepSaid[key] !== 'running') say(text, false, true);
     stepSaid[key] = status;
     li.className = 'step ' + status;
     $('.step-icon', li).innerHTML = STEP_ICONS[status] || '';
@@ -1852,7 +1916,10 @@
   }
   function count(x, one, many) { x = Number(x) || 0; return x + ' ' + (x === 1 ? one : many); }
   function onBusyWait(step) {
-    return function () { setStep(step, 'running', 'Waiting for another job on the server to finish before ' + STEP_DOING[step].toLowerCase() + '…'); setBar(-1); };
+    return function (attempt) {
+      if (!attempt) delete stepSaid[step];          // said once (a change of state), not on every retry
+      setStep(step, 'running', 'Waiting for another job on the server to finish before ' + STEP_DOING[step].toLowerCase() + '…'); setBar(-1);
+    };
   }
   // "indexed 2026 08/Anthropic/Invoice-0069.pdf: Anthropic 45.03 CAD …" -> "Anthropic/Invoice-0069.pdf"
   function shortNote(note) {
@@ -2008,7 +2075,7 @@
       }
     } catch (e) {
       failStep('Could not check the reminders: ' + (e.message || e) + '. Use "Send reminders" to try again.');
-      report(e, 'Reminders');
+      report(e, 'Reminders', true);
       setJobRunning(false);
       return;
     }
@@ -2034,7 +2101,7 @@
         await loadMonth();
       } catch (e) {
         failStep('The reminders could not be sent: ' + (e.message || e) + '. Try again in a minute.');
-        report(e, 'Reminders failed');
+        report(e, 'Reminders failed', true);
       } finally { setJobRunning(false); }
     });
   }
@@ -2060,7 +2127,7 @@
       renderSidebar();
     } catch (e) {
       failStep('This step failed: ' + (e.message || e) + '. Try again in a minute.');
-      report(e, 'Job failed');
+      report(e, 'Job failed', true);
     } finally { setJobRunning(false); }
   }
   async function reloadAll() {
@@ -2140,7 +2207,7 @@
       } catch (e2) {
         failStep('The statement is saved, but this step failed: ' + (e2.message || e2) + '. Use "Re-run matching" to try again.');
         log('Statement stored, but the follow-up failed: ' + (e2.message || e2), 'err');
-        report(e2, 'Invoice matching failed');
+        report(e2, 'Invoice matching failed', true);
       }
       await loadMonths();
       if (months.length) {
@@ -2156,7 +2223,7 @@
     } catch (e) {
       failStep('The upload did not go through: ' + (e.message || e) + '. Check the file and try again.');
       log('Failed: ' + (e.message || e), 'err');
-      report(e, 'Upload failed');
+      report(e, 'Upload failed', true);
     } finally {
       setJobRunning(false);
     }
@@ -2176,7 +2243,7 @@
     } catch (e) {
       failStep('This step failed: ' + (e.message || e) + '. Try again in a minute.');
       log('Failed: ' + (e.message || e), 'err');
-      report(e, 'Matching failed');
+      report(e, 'Matching failed', true);
     } finally { setJobRunning(false); }
   });
 

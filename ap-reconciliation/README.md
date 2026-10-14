@@ -267,7 +267,13 @@ Two other modes exist, one edit of the deploy workflow away (step 5):
 - **Voice mode** (*Voice* in the top bar, remembered per browser). The page
   says what is happening: a step of an upload, *Re-run matching* or *Send
   reminders* starting, finishing or failing, a *Rematch* result, an error
-  (progress ticks stay quiet). And it answers questions about the month on
+  (progress ticks stay quiet). A line being spoken is never cut by later
+  news: outcomes wait their turn (at most three), and a "running" line is
+  said only when nothing more important waits; an answer or a failure
+  speaks at once. Nothing is said into the open microphone (the news
+  follows once it closes), and after a reload the browser stays quiet until
+  the first click or key press on the page, which then says the latest
+  news. On a narrow screen the question box has its own row. And it answers questions about the month on
   screen (and the card tab picked): click the microphone and ask ("how many
   invoices are still missing?", "what does Bo Li still need to send?", "is
   anything running?"), or type the question. `POST /api/ask` condenses the
