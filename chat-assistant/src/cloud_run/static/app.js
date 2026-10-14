@@ -227,6 +227,7 @@ async function sendMessage() {
   const text = $("message").value.trim();
   if (!text || talkBusy) return;
   talkBusy = true; $("send").disabled = true;
+  pollBrowser();  // watch closely while Man AI works on it
   $("message").value = "";
   const pending = { role: "user", text, at: new Date().toISOString() };
   talkTurns.push(pending);
@@ -276,6 +277,7 @@ function setChat(open, focus = true) {
     if (focus) $("message").focus();
   } else if (focus) $("chatLauncher").focus();
   renderLauncher();
+  layoutBrowser();
 }
 
 function renderLauncher() {
@@ -302,7 +304,7 @@ document.addEventListener("keydown", (e) => {
   if (!$("chat").contains(document.activeElement) && document.activeElement !== document.body) return;
   e.preventDefault(); setChat(false);
 });
-new MutationObserver(renderLauncher).observe($("voicebar"), { attributes: true, attributeFilter: ["hidden"] });
+new MutationObserver(() => { renderLauncher(); pollBrowser(); }).observe($("voicebar"), { attributes: true, attributeFilter: ["hidden"] });
 {
   // Remembered per browser; the first time it starts open on a computer, minimized on a phone.
   let saved = null;
@@ -913,6 +915,79 @@ function switchTab(name) {
 }
 for (const tab of document.querySelectorAll(".tab")) tab.onclick = () => switchTab(tab.dataset.tab);
 
+// -- Man AI's browser, live --------------------------------------------------------------
+// Each browser step is recorded as it starts and with the screenshot it ends on (tools.py). The page polls for them:
+// every 1.5 s while Man AI is answering, on a call or browsing, else every 15 s (to catch hourly runs and tasks).
+const BROWSER_LIVE_MS = 60000;
+const BROWSER_VERB = { open: "Opening", goto: "Going to", click: "Clicking", type: "Typing", press: "Pressing",
+  select: "Choosing", scroll: "Scrolling", back: "Going back", forward: "Going forward", reload: "Reloading",
+  screenshot: "Looking at the page", close: "Closing the browser" };
+const BROWSER_WHO = { assistant: "Man AI", claude: "Claude", chatgpt: "ChatGPT" };
+let browserFrameAt = "";
+let browserSession = null;   // the browsing session on screen
+let browserDismissed = "";   // the session the user hid; a new one shows the view again
+let browserTimer = null;
+
+const browserLive = (v) => !!(v && v.updated_at && Date.now() - new Date(v.updated_at).getTime() < BROWSER_LIVE_MS);
+
+function browserStepText(s) {
+  const who = (s.caller || "assistant").split(" ");
+  const name = BROWSER_WHO[who[0]] || who[0];
+  const tag = name !== "Man AI" || who.length > 1 ? `${name}${who.length > 1 ? " " + who.slice(1).join(" ") : ""}: ` : "";
+  return `${tag}${BROWSER_VERB[s.action] || s.action}${s.detail ? " " + s.detail : ""}`;
+}
+
+function renderBrowser({ view, frame }) {
+  if (!view || !(view.steps || []).length) return;
+  if (frame && frame.image) {
+    $("browserImg").src = `data:image/jpeg;base64,${frame.image}`;
+    $("browserImg").alt = `What Man AI sees: ${frame.title || frame.url || "a web page"}`;
+    browserFrameAt = view.frame_at || "";
+  }
+  const live = browserLive(view);
+  const working = live ? [...view.steps].reverse().find((s) => s.status === "working") : null;
+  $("browserLive").textContent = live ? "● Live" : `Last browsed ${ago(view.updated_at)}`;
+  $("browserLive").classList.toggle("idle", !live);
+  $("browserUrl").textContent = view.url || "";
+  $("browserUrl").title = view.url || "";
+  $("browserNow").hidden = !working;
+  if (working) $("browserNow").replaceChildren(el("span", { class: "spinner", "aria-hidden": "true" }), `${browserStepText(working)}…`);
+  $("browserSteps").replaceChildren(...view.steps.map((s) => el("li", { class: s.status },
+    el("span", { class: "mark", "aria-hidden": "true" }, s.status === "error" ? "⚠" : s.status === "done" ? "✓" : "…"),
+    el("span", {}, browserStepText(s) + (s.error ? ` (${s.error})` : "")))));
+  $("browserSteps").scrollTop = $("browserSteps").scrollHeight;
+  $("browserToggle").hidden = false;
+  const session = view.session_started_at || "";
+  if (session !== browserSession) {  // a new browsing session: show it, unless it's an old one from before this visit
+    const first = browserSession === null;
+    browserSession = session;
+    if (live && session !== browserDismissed) setBrowser(true);
+    else if (first) setBrowser(false);
+  }
+}
+
+async function pollBrowser() {
+  clearTimeout(browserTimer);
+  let data = null;
+  try { data = await api("GET", `/api/browser?since=${encodeURIComponent(browserFrameAt)}`); } catch { /* next time */ }
+  if (data) renderBrowser(data);
+  const close = talkBusy || !$("voicebar").hidden || ownRun || (data && browserLive(data.view));
+  browserTimer = setTimeout(pollBrowser, close ? 1500 : 15000);
+}
+
+function setBrowser(open) {
+  $("browserWin").hidden = !open;
+  $("browserToggle").setAttribute("aria-pressed", String(open));
+  $("browserToggle").title = open ? "Hide Man AI's browser" : "Show Man AI's browser";
+  layoutBrowser();
+}
+function layoutBrowser() {  // also runs as the chat sets itself up, before this section's variables exist
+  $("browserWin").classList.toggle("solo", !chatOpen);
+}
+$("browserMin").onclick = () => { browserDismissed = browserSession || ""; setBrowser(false); };
+$("browserToggle").onclick = () => setBrowser($("browserWin").hidden);
+$("browserShot").onclick = () => $("browserWin").classList.toggle("big");
+
 // Exposed for voice.js
 window.companyAssistant = { el, toast, api, renderThread, turnNode, loadTalk, refreshKnowledge, partnerInfo, get partner() { return partner; } };
 
@@ -920,7 +995,7 @@ window.companyAssistant = { el, toast, api, renderThread, turnNode, loadTalk, re
   let tab = "board";
   try { tab = localStorage.getItem("tab") || "board"; } catch { /* storage unavailable */ }
   switchTab(tab);
-  try { await load(); afterConnectRedirect(); await loadTalk(); await pollProgress(); } catch (e) { $("lastrun").textContent = e.message; }
+  try { await load(); afterConnectRedirect(); await loadTalk(); await pollProgress(); pollBrowser(); } catch (e) { $("lastrun").textContent = e.message; }
 })();
 // Every minute: notice an hourly run starting, and refresh unless a dialog is open or a reply is pending.
 setInterval(() => {

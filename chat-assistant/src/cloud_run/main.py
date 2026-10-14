@@ -725,6 +725,15 @@ def do_run(trigger):
         store.release_run_lock()
 
 
+@app.get("/api/browser")
+def api_browser():
+    """What Man AI's browser is doing, for the page's live view: the steps, and the latest screenshot when it's
+    newer than ?since= (the frame_at the page already shows), so polling stays small."""
+    view = store.get_browser_view()
+    fresh = view.get("frame_at") and view["frame_at"] != request.args.get("since", "")
+    return jsonify(view=view, frame=store.get_browser_frame() if fresh else None)
+
+
 @app.get("/api/progress")
 def api_progress():
     """Small and cheap, so the page can poll it every couple of seconds during a run."""

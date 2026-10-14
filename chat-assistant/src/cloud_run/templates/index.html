@@ -112,6 +112,34 @@
     .launcher:hover { filter: brightness(1.06); }
     .launcher:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
     .launcher .badge { width: 9px; height: 9px; border-radius: 50%; background: var(--bad); box-shadow: 0 0 0 2px var(--accent); }
+    /* Man AI's browser, live: beside the chat on a computer, across the top on smaller screens */
+    .browserwin { position: fixed; bottom: 20px; right: calc(min(420px, 100vw - 40px) + 32px); z-index: 14;
+      width: min(600px, calc(100vw - 492px)); max-height: calc(100vh - 40px); display: flex; flex-direction: column; gap: 6px;
+      padding: 8px 10px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+      box-shadow: 0 12px 40px rgba(16, 24, 40, .22); }
+    .browserwin.solo { right: 20px; width: min(600px, calc(100vw - 40px)); }
+    .browserwin.big { right: 20px; width: min(1100px, calc(100vw - 40px)); z-index: 17; }
+    .bhead { display: flex; align-items: center; gap: 8px; }
+    .bhead .live { font-size: 12px; font-weight: 500; color: var(--bad); white-space: nowrap; }
+    .bhead .live.idle { color: var(--muted); font-weight: 400; }
+    .burl { flex: 1; min-width: 0; font-size: 12px; color: var(--muted); background: var(--panel-2); border-radius: 999px;
+      padding: 4px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bshot { position: relative; background: var(--panel-2); border-radius: 10px; overflow: hidden; min-height: 80px;
+      display: grid; place-items: center; cursor: zoom-in; }
+    .browserwin.big .bshot { cursor: zoom-out; }
+    .bshot img { display: block; width: 100%; max-height: 52vh; object-fit: contain; }
+    .browserwin.big .bshot img { max-height: calc(100vh - 220px); }
+    .bnow { position: absolute; left: 8px; right: 8px; bottom: 8px; display: flex; gap: 8px; align-items: center;
+      padding: 6px 10px; border-radius: 8px; background: rgba(0, 0, 0, .7); color: #fff; font-size: 13px; overflow-wrap: anywhere; }
+    .bsteps { list-style: none; margin: 0; padding: 0; max-height: 132px; overflow-y: auto; font-size: 12px; color: var(--muted); }
+    .bsteps li { display: flex; gap: 6px; padding: 3px 2px; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+    .bsteps li .mark { flex: none; width: 14px; text-align: center; }
+    .bsteps li.error { color: var(--bad); }
+    @media (max-width: 1000px) {
+      .browserwin, .browserwin.solo, .browserwin.big { left: 16px; right: 16px; top: 16px; bottom: auto; width: auto;
+        max-height: 55vh; z-index: 16; }
+      .bshot img, .browserwin.big .bshot img { max-height: 30vh; }
+    }
     .partners { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
     .partner { border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 5px 12px; cursor: pointer;
       display: inline-flex; gap: 6px; align-items: center; font-size: 13px; }
@@ -270,6 +298,7 @@
 <aside class="chatwin" id="chat" aria-label="Man AI chat">
   <div class="chathead">
     <h2>Man AI</h2>
+    <button class="hbtn" id="browserToggle" aria-pressed="false" aria-controls="browserWin" title="Show Man AI's browser" hidden>🌐 Browser</button>
     <button class="hbtn" id="readAloud" aria-pressed="false" title="Read new replies aloud">🔊 Read aloud</button>
     <button class="hbtn" id="clearTalk" title="Start a new conversation">Clear</button>
     <button class="hbtn min" id="minimizeChat" title="Minimize" aria-label="Minimize chat">–</button>
@@ -291,6 +320,16 @@
     </div>
   </div>
 </aside>
+<section class="browserwin" id="browserWin" aria-label="Man AI's browser" hidden>
+  <div class="bhead">
+    <span class="live" id="browserLive" aria-live="polite"></span>
+    <span class="burl" id="browserUrl"></span>
+    <button class="hbtn min" id="browserMin" title="Hide" aria-label="Hide Man AI's browser">–</button>
+  </div>
+  <div class="bshot" id="browserShot" title="Click to enlarge"><img id="browserImg" alt="">
+    <div class="bnow" id="browserNow" hidden></div></div>
+  <ol class="bsteps" id="browserSteps" aria-label="What Man AI did in the browser"></ol>
+</section>
 <button class="launcher" id="chatLauncher" aria-controls="chat" aria-expanded="true" hidden>💬 Man AI</button>
 
 <dialog id="taskDialog">

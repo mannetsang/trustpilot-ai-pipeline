@@ -174,6 +174,20 @@ class MemoryStore:
         """The running (or last) pass's live progress; replaced wholesale on every update."""
         self._set("chat_assistant", "progress", state)
 
+    def get_browser_view(self):
+        """Man AI's browser as the page shows it: the steps of this browsing session, the page it's on."""
+        return self._get("chat_assistant", "browser") or {}
+
+    def set_browser_view(self, view):
+        self._set("chat_assistant", "browser", view)
+
+    def get_browser_frame(self):
+        """The latest screenshot (base64 JPEG), kept apart so polling the steps stays small."""
+        return self._get("chat_assistant", "browser_frame") or {}
+
+    def set_browser_frame(self, frame):
+        self._set("chat_assistant", "browser_frame", frame)
+
     def get_progress(self):
         return self._get("chat_assistant", "progress") or {}
 

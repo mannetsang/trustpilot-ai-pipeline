@@ -7,6 +7,7 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
+os.environ["STORE_BACKEND"] = "memory"  # never the real database, even when this file runs alone
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src", "cloud_run"))
 import tools  # noqa: E402
 from store import MemorySecrets, MemoryStore  # noqa: E402
@@ -66,6 +67,70 @@ class BrowserToolTests(unittest.TestCase):
     def test_not_offered_without_the_service(self):
         with mock.patch.object(tools, "BROWSER_URL", ""):
             self.assertNotIn("browser", [s["name"] for s in self.toolset().specs()])
+
+
+class LiveViewTests(unittest.TestCase):
+    """People can watch: each step shows as it starts, then with the screenshot it ended on."""
+
+    def setUp(self):
+        self.store = MemoryStore()
+        self.seen_during_call = []
+
+        def fake_call(body):
+            self.seen_during_call.append(copy.deepcopy(self.store.get_browser_view()))
+            if body["action"] == "type":
+                return {"error": "no field called Search"}
+            return copy.deepcopy(PAGE)
+
+        for patch in (mock.patch.object(tools, "BROWSER_URL", "https://web-browser.example"),
+                      mock.patch.object(tools, "_browser_call", side_effect=fake_call),
+                      mock.patch.dict(tools._browser_sessions, clear=True)):
+            patch.start()
+            self.addCleanup(patch.stop)
+        self.toolset = Toolset(self.store, None, caller="assistant")
+
+    def test_steps_and_the_latest_screenshot_are_recorded(self):
+        self.toolset.call("browser", {"action": "open", "url": "superhairpieces.com"})
+        working = self.seen_during_call[0]["steps"][-1]
+        self.assertEqual((working["action"], working["status"], working["detail"]), ("open", "working", "superhairpieces.com"))
+        view = self.store.get_browser_view()
+        self.assertEqual(view["steps"][-1]["status"], "done")
+        self.assertEqual((view["url"], view["title"]), (PAGE["url"], PAGE["title"]))
+        frame = self.store.get_browser_frame()
+        self.assertEqual((frame["image"], frame["at"]), (PAGE["image"], view["frame_at"]))
+        self.toolset.call("browser", {"action": "click", "target": "Toupees"})
+        self.toolset.call("browser", {"action": "type", "target": "Search", "text": "wig"})
+        view = self.store.get_browser_view()
+        self.assertEqual([(s["action"], s["status"]) for s in view["steps"]],
+                         [("open", "done"), ("click", "done"), ("type", "error")])
+        self.assertEqual(view["steps"][1]["detail"], "Toupees")
+        self.assertIn("no field", view["steps"][2]["error"])
+        session = view["session_started_at"]
+        self.toolset.call("browser", {"action": "open", "url": "https://example.com"})  # a new page: a new session
+        view = self.store.get_browser_view()
+        self.assertNotEqual(view["session_started_at"], session)
+        self.assertEqual([s["action"] for s in view["steps"]], ["open"])
+
+    def test_a_store_failure_never_stops_the_browsing(self):
+        with mock.patch.object(self.store, "set_browser_view", side_effect=RuntimeError("firestore down")):
+            result = self.toolset.call("browser", {"action": "open", "url": "https://example.com"})
+        self.assertNotIn("error", result)
+        self.assertEqual(result["title"], PAGE["title"])
+
+    def test_the_page_gets_the_screenshot_only_when_it_changed(self):
+        import main
+
+        self.toolset.call("browser", {"action": "open", "url": "https://example.com"})
+        client = main.app.test_client()
+        with mock.patch.object(main, "store", self.store):
+            with client.session_transaction() as s:
+                s["email"] = main.OWNER_EMAIL
+            first = client.get("/api/browser").get_json()
+            self.assertEqual(first["frame"]["image"], PAGE["image"])
+            again = client.get("/api/browser", query_string={"since": first["view"]["frame_at"]}).get_json()
+            self.assertIsNone(again["frame"])
+            self.assertEqual(again["view"]["steps"][-1]["status"], "done")
+            self.assertEqual(main.app.test_client().get("/api/browser").status_code, 401)  # signed out
 
 
 class ImagesReachEachModelTests(unittest.TestCase):

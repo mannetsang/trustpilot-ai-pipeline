@@ -15,6 +15,7 @@ import json
 import os
 import threading
 import time
+import uuid
 
 import integrations
 from google_apis import GOOGLE_CHAT
@@ -468,12 +469,21 @@ class Toolset:
         sessions = _browser_sessions.setdefault(self.caller, {})
         if action != "open" and sessions.get("id") and time.time() - sessions.get("at", 0) < 600:
             body["session"] = sessions["id"]
+        # The page shows each step as it starts and the screenshot it ends on, so people can watch.
+        step = {"id": uuid.uuid4().hex[:10], "at": utcnow_iso(), "caller": self.caller, "action": action,
+                "detail": _step_detail(action, url, target, x, y, text, key, direction, device), "status": "working"}
+        _show_browser(self.store, step)
         result = _browser_call({k: v for k, v in body.items() if v not in (None, "")})
         if result.get("session"):
             sessions.update(id=result["session"], at=time.time())
         if result.get("closed"):
             sessions.clear()
         image = result.pop("image", None)
+        step["status"] = "error" if result.get("error") else "done"
+        if result.get("error"):
+            step["error"] = str(result["error"])[:200]
+        _show_browser(self.store, step, frame={"image": image, "url": result.get("url", ""), "title": result.get("title", ""),
+                                               "device": result.get("device", device)} if image else None)
         out = {k: result[k] for k in ("error", "url", "title", "device", "viewport", "scroll", "notes", "closed")
                if result.get(k) not in (None, "", [])}
         if result.get("elements"):
@@ -516,6 +526,43 @@ _directory_cache = {"at": 0, "value": None}
 
 
 _browser_sessions = {}  # caller -> {"id", "at"}: one browser tab per conversation partner, kept 10 minutes
+BROWSER_STEPS_SHOWN = 25
+BROWSER_NEW_SESSION_SECONDS = 120  # a pause this long, or opening a page, starts a new browsing session on the page
+
+
+def _step_detail(action, url, target, x, y, text, key, direction, device):
+    """One line for the page's step list: what this action is about."""
+    where = target or (f"{x},{y}" if x is not None and y is not None else "")
+    if action in ("open", "goto"):
+        return str(url) + (" (as a phone)" if action == "open" and device == "mobile" else "")
+    if action == "type":
+        return f"“{str(text)[:80]}”" + (f" into {target}" if target else "")
+    if action == "select":
+        return f"“{str(text)[:80]}” in {where}"
+    return {"click": where, "press": key, "scroll": direction}.get(action, "") or ""
+
+
+def _show_browser(store, step, frame=None):
+    """Record a step (and the screenshot it ended on) for the page's live browser view. Never breaks browsing."""
+    from datetime import datetime, timezone
+
+    try:
+        view = store.get_browser_view()
+        last = view.get("updated_at")
+        idle = (not last or (datetime.now(timezone.utc) - datetime.fromisoformat(last)).total_seconds()
+                > BROWSER_NEW_SESSION_SECONDS)
+        if step["status"] == "working" and (step["action"] == "open" or idle):
+            view = {"session_started_at": step["at"], "steps": []}
+        steps = [s for s in view.get("steps", []) if s.get("id") != step["id"]] + [dict(step)]
+        view.update(steps=steps[-BROWSER_STEPS_SHOWN:], updated_at=utcnow_iso())
+        view.setdefault("session_started_at", step["at"])
+        if frame:
+            frame = {**frame, "at": utcnow_iso()}
+            store.set_browser_frame(frame)
+            view.update(frame_at=frame["at"], url=frame["url"], title=frame["title"], device=frame["device"])
+        store.set_browser_view(view)
+    except Exception as exc:  # noqa: BLE001 - watching is a nicety; the browsing itself must go on
+        print(f"browser view not saved: {exc!r}")
 _browser_token = {"value": "", "at": 0}
 _browser_token_lock = threading.Lock()
 
