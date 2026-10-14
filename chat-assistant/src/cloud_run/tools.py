@@ -464,11 +464,18 @@ class Toolset:
         if not self.may_change and action not in LOOK_ONLY:
             return {"error": "Working alone you can open pages, look, scroll and click, but not type or pick "
                              "options. Write down the steps you'd take and ask Manne."}
+        view = _browser_view(self.store)
+        if _user_in_control(view):
+            return {"error": "Manne has taken over the browser from the browser panel on the page. Don't use it until "
+                             "Manne hands it back; meanwhile say what you'd do next."}
         body = {"action": action, "url": url, "device": device, "target": target, "x": x, "y": y, "text": text,
                 "submit": bool(submit), "key": key, "direction": direction}
         sessions = _browser_sessions.setdefault(self.caller, {})
-        if action != "open" and sessions.get("id") and time.time() - sessions.get("at", 0) < 600:
-            body["session"] = sessions["id"]
+        shared = view.get("session_id") if _fresh(view.get("session_used_at")) else None  # the tab on the page
+        if action != "open" and (shared or (sessions.get("id") and time.time() - sessions.get("at", 0) < 600)):
+            body["session"] = shared or sessions["id"]
+        mine = [s["at"] for s in view.get("steps", []) if s.get("caller") == self.caller]
+        theirs = [s for s in view.get("steps", []) if s.get("caller") == USER and s.get("at", "") > max(mine, default="")]
         # The page shows each step as it starts and the screenshot it ends on, so people can watch.
         step = {"id": uuid.uuid4().hex[:10], "at": utcnow_iso(), "caller": self.caller, "action": action,
                 "detail": _step_detail(action, url, target, x, y, text, key, direction, device), "status": "working"}
@@ -483,7 +490,13 @@ class Toolset:
         if result.get("error"):
             step["error"] = str(result["error"])[:200]
         _show_browser(self.store, step, frame={"image": image, "url": result.get("url", ""), "title": result.get("title", ""),
-                                               "device": result.get("device", device)} if image else None)
+                                               "device": result.get("device", device)} if image else None,
+                      session=None if result.get("closed") else result.get("session") or body.get("session"))
+        if theirs and action != "open":
+            result.setdefault("notes", [])
+            result["notes"] = list(result["notes"]) + [
+                "Before this, Manne used the browser directly: " + "; ".join(
+                    f"{s['action']} {s.get('detail', '')}".strip() for s in theirs[-8:]) + ". You're continuing from there."]
         out = {k: result[k] for k in ("error", "url", "title", "device", "viewport", "scroll", "notes", "closed")
                if result.get(k) not in (None, "", [])}
         if result.get("elements"):
@@ -542,7 +555,85 @@ def _step_detail(action, url, target, x, y, text, key, direction, device):
     return {"click": where, "press": key, "scroll": direction}.get(action, "") or ""
 
 
-def _show_browser(store, step, frame=None):
+USER = "you"                 # the caller name of a person driving the browser from the page
+CONTROL_SECONDS = 300        # someone who took over and went quiet hands back on their own after this long
+
+
+def _age_seconds(iso):
+    from datetime import datetime, timezone
+
+    try:
+        return (datetime.now(timezone.utc) - datetime.fromisoformat(iso)).total_seconds()
+    except (TypeError, ValueError):
+        return float("inf")
+
+
+def _fresh(iso, seconds=570):  # the browser service closes a tab after 600 s idle
+    return _age_seconds(iso) < seconds
+
+
+def _browser_view(store):
+    try:
+        return store.get_browser_view()
+    except Exception:  # noqa: BLE001 - no view: browse as before
+        return {}
+
+
+def _user_in_control(view):
+    return bool(view.get("control_until")) and _age_seconds(view["control_until"]) < 0
+
+
+def set_control(store, on):
+    """Someone takes over the browser from the page (Man AI's browser calls wait), or hands it back."""
+    from datetime import datetime, timedelta, timezone
+
+    view = _browser_view(store)
+    if on:
+        view["control_until"] = (datetime.now(timezone.utc) + timedelta(seconds=CONTROL_SECONDS)).isoformat()
+    else:
+        view.pop("control_until", None)
+        view["handed_back_at"] = utcnow_iso()
+    view["updated_at"] = utcnow_iso()
+    view.setdefault("steps", [])
+    store.set_browser_view(view)
+    return view
+
+
+USER_ACTIONS = {"goto", "click", "type", "press", "scroll", "back", "forward", "reload", "screenshot"}
+
+
+def user_browser(store, action, url="", x=None, y=None, text="", key="", direction="down"):
+    """One step by a person from the page, on the tab everyone watches. Returns {"view", "frame"} for the page."""
+    if not BROWSER_URL:
+        return {"error": "There's no browser service (BROWSER_URL)."}
+    if action not in USER_ACTIONS:
+        return {"error": f"unknown action '{action}'"}
+    view = _browser_view(store)
+    session = view.get("session_id") if _fresh(view.get("session_used_at")) else None
+    if not session and action != "goto":
+        return {"error": "Man AI's browser isn't open. Type an address to open a page."}
+    set_control(store, True)  # each step keeps the controls in the person's hands a while longer
+    body = {"action": action, "session": session, "url": url, "x": x, "y": y, "text": text, "key": key,
+            "direction": direction}
+    step = {"id": uuid.uuid4().hex[:10], "at": utcnow_iso(), "caller": USER, "action": action,
+            "detail": _step_detail(action, url, "", x, y, text, key, direction, "desktop"), "status": "working"}
+    _show_browser(store, step)
+    try:
+        result = _browser_call({k: v for k, v in body.items() if v not in (None, "")})
+    except Exception as exc:  # noqa: BLE001 - shown on the page
+        result = {"error": f"the browser service didn't answer: {exc}"[:300]}
+    image = result.pop("image", None)
+    step["status"] = "error" if result.get("error") else "done"
+    if result.get("error"):
+        step["error"] = str(result["error"])[:200]
+    _show_browser(store, step, frame={"image": image, "url": result.get("url", ""), "title": result.get("title", ""),
+                                      "device": result.get("device", "desktop")} if image else None,
+                  session=result.get("session") or session)
+    view = _browser_view(store)
+    return {"view": view, "frame": store.get_browser_frame(), **({"error": step["error"]} if step.get("error") else {})}
+
+
+def _show_browser(store, step, frame=None, session=None):
     """Record a step (and the screenshot it ended on) for the page's live browser view. Never breaks browsing."""
     from datetime import datetime, timezone
 
@@ -552,9 +643,12 @@ def _show_browser(store, step, frame=None):
         idle = (not last or (datetime.now(timezone.utc) - datetime.fromisoformat(last)).total_seconds()
                 > BROWSER_NEW_SESSION_SECONDS)
         if step["status"] == "working" and (step["action"] == "open" or idle):
-            view = {"session_started_at": step["at"], "steps": []}
+            view = {"session_started_at": step["at"], "steps": [],
+                    **{k: view[k] for k in ("session_id", "session_used_at", "control_until") if k in view}}
         steps = [s for s in view.get("steps", []) if s.get("id") != step["id"]] + [dict(step)]
         view.update(steps=steps[-BROWSER_STEPS_SHOWN:], updated_at=utcnow_iso())
+        if session:
+            view.update(session_id=session, session_used_at=utcnow_iso())
         view.setdefault("session_started_at", step["at"])
         if frame:
             frame = {**frame, "at": utcnow_iso()}

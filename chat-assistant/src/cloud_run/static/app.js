@@ -922,11 +922,13 @@ const BROWSER_LIVE_MS = 60000;
 const BROWSER_VERB = { open: "Opening", goto: "Going to", click: "Clicking", type: "Typing", press: "Pressing",
   select: "Choosing", scroll: "Scrolling", back: "Going back", forward: "Going forward", reload: "Reloading",
   screenshot: "Looking at the page", close: "Closing the browser" };
-const BROWSER_WHO = { assistant: "Man AI", claude: "Claude", chatgpt: "ChatGPT" };
+const BROWSER_WHO = { assistant: "Man AI", claude: "Claude", chatgpt: "ChatGPT", you: "You" };
 let browserFrameAt = "";
 let browserSession = null;   // the browsing session on screen
 let browserDismissed = "";   // the session the user hid; a new one shows the view again
 let browserTimer = null;
+let browserControl = false;  // the person on this page is driving the browser
+let browserActing = false;   // one step at a time
 
 const browserLive = (v) => !!(v && v.updated_at && Date.now() - new Date(v.updated_at).getTime() < BROWSER_LIVE_MS);
 
@@ -934,11 +936,26 @@ function browserStepText(s) {
   const who = (s.caller || "assistant").split(" ");
   const name = BROWSER_WHO[who[0]] || who[0];
   const tag = name !== "Man AI" || who.length > 1 ? `${name}${who.length > 1 ? " " + who.slice(1).join(" ") : ""}: ` : "";
+  if (who[0] === "you") return `You: ${(BROWSER_VERB[s.action] || s.action).toLowerCase()}${s.detail ? " " + s.detail : ""}`;
   return `${tag}${BROWSER_VERB[s.action] || s.action}${s.detail ? " " + s.detail : ""}`;
 }
 
-function renderBrowser({ view, frame }) {
-  if (!view || !(view.steps || []).length) return;
+function renderBrowser({ view, frame, available }) {
+  if (available === false) { $("browserToggle").hidden = true; return; }
+  $("browserToggle").hidden = false;  // Man AI has a browser: anyone can open the panel and take control
+  if (!view) return;
+  browserControl = !!(view.control_until && new Date(view.control_until).getTime() > Date.now());
+  $("browserWin").classList.toggle("control", browserControl);
+  $("browserTake").hidden = browserControl;
+  $("browserHandBack").hidden = !browserControl;
+  $("browserCtl").hidden = !browserControl;
+  if (document.activeElement !== $("browserUrl")) $("browserUrl").readOnly = !browserControl;
+  $("browserShot").title = browserControl ? "Click to click there on the page" : "Click to enlarge";
+  $("browserEmpty").hidden = !!(view.frame_at || browserFrameAt);
+  if (!(view.steps || []).length) {
+    if (browserControl) $("browserLive").textContent = "🖐 You're in control";
+    return;
+  }
   if (frame && frame.image) {
     $("browserImg").src = `data:image/jpeg;base64,${frame.image}`;
     $("browserImg").alt = `What Man AI sees: ${frame.title || frame.url || "a web page"}`;
@@ -946,12 +963,15 @@ function renderBrowser({ view, frame }) {
   }
   const live = browserLive(view);
   const working = live ? [...view.steps].reverse().find((s) => s.status === "working") : null;
-  $("browserLive").textContent = live ? "● Live" : `Last browsed ${ago(view.updated_at)}`;
-  $("browserLive").classList.toggle("idle", !live);
-  $("browserUrl").textContent = view.url || "";
+  $("browserLive").textContent = browserControl ? "🖐 You're in control" : live ? "● Live" : `Last browsed ${ago(view.updated_at)}`;
+  $("browserLive").classList.toggle("idle", !live && !browserControl);
+  $("browserLive").classList.toggle("mine", browserControl);
+  if (document.activeElement !== $("browserUrl")) $("browserUrl").value = view.url || "";
   $("browserUrl").title = view.url || "";
-  $("browserNow").hidden = !working;
-  if (working) $("browserNow").replaceChildren(el("span", { class: "spinner", "aria-hidden": "true" }), `${browserStepText(working)}…`);
+  if (!browserActing) {
+    $("browserNow").hidden = !working;
+    if (working) $("browserNow").replaceChildren(el("span", { class: "spinner", "aria-hidden": "true" }), `${browserStepText(working)}…`);
+  }
   $("browserSteps").replaceChildren(...view.steps.map((s) => el("li", { class: s.status },
     el("span", { class: "mark", "aria-hidden": "true" }, s.status === "error" ? "⚠" : s.status === "done" ? "✓" : "…"),
     el("span", {}, browserStepText(s) + (s.error ? ` (${s.error})` : "")))));
@@ -971,7 +991,7 @@ async function pollBrowser() {
   let data = null;
   try { data = await api("GET", `/api/browser?since=${encodeURIComponent(browserFrameAt)}`); } catch { /* next time */ }
   if (data) renderBrowser(data);
-  const close = talkBusy || !$("voicebar").hidden || ownRun || (data && browserLive(data.view));
+  const close = talkBusy || !$("voicebar").hidden || ownRun || browserControl || (data && browserLive(data.view));
   browserTimer = setTimeout(pollBrowser, close ? 1500 : 15000);
 }
 
@@ -986,7 +1006,62 @@ function layoutBrowser() {  // also runs as the chat sets itself up, before this
 }
 $("browserMin").onclick = () => { browserDismissed = browserSession || ""; setBrowser(false); };
 $("browserToggle").onclick = () => setBrowser($("browserWin").hidden);
-$("browserShot").onclick = () => $("browserWin").classList.toggle("big");
+// Taking control: clicks on the screenshot become clicks on the page; the bar types, presses keys and moves around.
+async function browserAct(body, label) {
+  if (browserActing) return;
+  browserActing = true;
+  $("browserNow").hidden = false;
+  $("browserNow").replaceChildren(el("span", { class: "spinner", "aria-hidden": "true" }), `${label}…`);
+  try {
+    const data = await api("POST", "/api/browser/act", body);
+    browserActing = false;
+    renderBrowser({ ...data, available: true });
+    if (data.error) toast(data.error);
+  } catch (e) { toast(e.message); }
+  finally { browserActing = false; $("browserNow").hidden = true; }
+}
+
+async function setControl(on) {
+  try {
+    renderBrowser({ ...(await api("POST", "/api/browser/control", { on })), available: true });
+    toast(on ? "You're in control. Man AI waits until you hand it back." : "Handed back to Man AI.");
+    if (on && $("browserEmpty").hidden === false) $("browserUrl").focus();
+    pollBrowser();
+  } catch (e) { toast(e.message); }
+}
+
+// Where a click on the screenshot lands on the page (the image is the page's viewport, letterboxed to fit).
+function pagePoint(e) {
+  const img = $("browserImg"), r = img.getBoundingClientRect();
+  if (!img.naturalWidth || !r.width) return null;
+  const scale = Math.min(r.width / img.naturalWidth, r.height / img.naturalHeight);
+  const x = (e.clientX - r.left - (r.width - img.naturalWidth * scale) / 2) / scale;
+  const y = (e.clientY - r.top - (r.height - img.naturalHeight * scale) / 2) / scale;
+  return x < 0 || y < 0 || x > img.naturalWidth || y > img.naturalHeight ? null : { x: Math.round(x), y: Math.round(y) };
+}
+
+$("browserShot").onclick = (e) => {
+  if (!browserControl) { $("browserWin").classList.toggle("big"); return; }
+  const at = pagePoint(e);
+  if (at) browserAct({ action: "click", ...at }, "Clicking");
+};
+$("browserTake").onclick = () => { setBrowser(true); setControl(true); };
+$("browserHandBack").onclick = () => setControl(false);
+$("browserGo").onsubmit = (e) => {
+  e.preventDefault();
+  const url = $("browserUrl").value.trim();
+  if (browserControl && url) { $("browserUrl").blur(); browserAct({ action: "goto", url }, `Opening ${url}`); }
+};
+$("browserType").onsubmit = (e) => {
+  e.preventDefault();
+  const text = $("browserText").value;
+  if (!text) return;
+  $("browserText").value = "";
+  browserAct({ action: "type", text }, "Typing");
+};
+for (const b of document.querySelectorAll("#browserCtl [data-act]")) {
+  b.onclick = () => browserAct({ action: b.dataset.act, key: b.dataset.key, direction: b.dataset.dir }, b.title || b.textContent);
+}
 
 // Exposed for voice.js
 window.companyAssistant = { el, toast, api, renderThread, turnNode, loadTalk, refreshKnowledge, partnerInfo, get partner() { return partner; } };

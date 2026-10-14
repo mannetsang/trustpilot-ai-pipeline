@@ -111,6 +111,56 @@ class LiveViewTests(unittest.TestCase):
         self.assertNotEqual(view["session_started_at"], session)
         self.assertEqual([s["action"] for s in view["steps"]], ["open"])
 
+    def test_a_person_can_take_control_and_hand_back(self):
+        self.toolset.call("browser", {"action": "open", "url": "superhairpieces.com"})
+        self.assertEqual(self.store.get_browser_view()["session_id"], "s1")
+        tools.set_control(self.store, True)
+        calls = len(self.seen_during_call)
+        refused = self.toolset.call("browser", {"action": "click", "target": "Toupees"})
+        self.assertIn("taken over the browser", refused["error"])
+        self.assertEqual(len(self.seen_during_call), calls)  # Man AI didn't touch the browser
+        with mock.patch.object(tools, "_browser_call", side_effect=lambda body: (self.sent.append(body), copy.deepcopy(PAGE))[1]):
+            self.sent = []
+            out = tools.user_browser(self.store, "click", x=640, y=120)
+            tools.user_browser(self.store, "type", text="lace front")
+        self.assertEqual(self.sent[0], {"action": "click", "session": "s1", "x": 640, "y": 120, "direction": "down"})
+        self.assertEqual(out["view"]["steps"][-1]["caller"], "you")
+        self.assertEqual(out["frame"]["image"], PAGE["image"])
+        tools.set_control(self.store, False)
+        after = self.toolset.call("browser", {"action": "scroll", "direction": "down"})
+        self.assertNotIn("error", after)
+        self.assertIn("Manne used the browser directly", after["notes"][-1])
+        self.assertIn("type “lace front”", after["notes"][-1])
+
+    def test_control_runs_out_by_itself(self):
+        view = tools.set_control(self.store, True)
+        self.assertTrue(tools._user_in_control(view))
+        view["control_until"] = "2020-01-01T00:00:00+00:00"
+        self.assertFalse(tools._user_in_control(view))
+
+    def test_a_person_needs_an_address_when_no_page_is_open(self):
+        self.assertIn("Type an address", tools.user_browser(self.store, "click", x=1, y=1)["error"])
+        self.assertIn("unknown action", tools.user_browser(self.store, "open", url="x.com")["error"])
+
+    def test_the_page_endpoints_for_control(self):
+        import main
+
+        client = main.app.test_client()
+        with mock.patch.object(main, "store", self.store):
+            with client.session_transaction() as s:
+                s["email"] = main.OWNER_EMAIL
+            headers = {"X-Chat-Assistant": "1"}
+            on = client.post("/api/browser/control", json={"on": True}, headers=headers).get_json()
+            self.assertIn("control_until", on["view"])
+            r = client.post("/api/browser/act", json={"action": "goto", "url": "superhairpieces.com"}, headers=headers)
+            self.assertEqual(r.status_code, 200)
+            self.assertEqual(r.get_json()["view"]["steps"][-1]["caller"], "you")
+            self.assertEqual(client.post("/api/browser/act", json={"action": "close"}, headers=headers).status_code, 400)
+            self.assertEqual(client.post("/api/browser/act", json={"action": "goto"}).status_code, 403)  # no CSRF header
+            off = client.post("/api/browser/control", json={"on": False}, headers=headers).get_json()
+            self.assertNotIn("control_until", off["view"])
+            self.assertTrue(client.get("/api/browser").get_json()["available"])
+
     def test_a_store_failure_never_stops_the_browsing(self):
         with mock.patch.object(self.store, "set_browser_view", side_effect=RuntimeError("firestore down")):
             result = self.toolset.call("browser", {"action": "open", "url": "https://example.com"})

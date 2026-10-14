@@ -729,9 +729,36 @@ def do_run(trigger):
 def api_browser():
     """What Man AI's browser is doing, for the page's live view: the steps, and the latest screenshot when it's
     newer than ?since= (the frame_at the page already shows), so polling stays small."""
+    import tools
+
     view = store.get_browser_view()
     fresh = view.get("frame_at") and view["frame_at"] != request.args.get("since", "")
-    return jsonify(view=view, frame=store.get_browser_frame() if fresh else None)
+    return jsonify(view=view, frame=store.get_browser_frame() if fresh else None, available=bool(tools.BROWSER_URL))
+
+
+@app.post("/api/browser/act")
+def api_browser_act():
+    """A step by the person on the page, in Man AI's browser (taking control of it while they do)."""
+    import tools
+
+    body = request.get_json(force=True) or {}
+    args = {k: body[k] for k in ("url", "text", "key", "direction") if isinstance(body.get(k), str)}
+    for k in ("x", "y"):
+        if isinstance(body.get(k), (int, float)):
+            args[k] = body[k]
+    result = tools.user_browser(store, str(body.get("action") or ""), **args)
+    if "view" not in result:
+        return jsonify(error=result.get("error", "That didn't work.")), 400
+    return jsonify(result)
+
+
+@app.post("/api/browser/control")
+def api_browser_control():
+    """Take control of Man AI's browser ({"on": true}) or hand it back ({"on": false})."""
+    import tools
+
+    on = bool((request.get_json(force=True) or {}).get("on"))
+    return jsonify(view=tools.set_control(store, on), frame=None)
 
 
 @app.get("/api/progress")

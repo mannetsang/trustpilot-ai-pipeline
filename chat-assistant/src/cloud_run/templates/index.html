@@ -122,8 +122,19 @@
     .bhead { display: flex; align-items: center; gap: 8px; }
     .bhead .live { font-size: 12px; font-weight: 500; color: var(--bad); white-space: nowrap; }
     .bhead .live.idle { color: var(--muted); font-weight: 400; }
-    .burl { flex: 1; min-width: 0; font-size: 12px; color: var(--muted); background: var(--panel-2); border-radius: 999px;
-      padding: 4px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .burlform { flex: 1; min-width: 0; display: flex; }
+    .burl { flex: 1; min-width: 0; font: inherit; font-size: 12px; color: var(--muted); background: var(--panel-2);
+      border: 1px solid transparent; border-radius: 999px; padding: 4px 10px; text-overflow: ellipsis; }
+    .burl:not([readonly]) { color: var(--text); background: var(--panel); border-color: var(--line); }
+    .bhead .btn { padding: 4px 10px; font-size: 12px; }
+    .bctl { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+    .btype { display: flex; gap: 4px; flex: 1; min-width: 180px; }
+    .btype input { flex: 1; min-width: 0; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px;
+      background: var(--panel); color: var(--text); font: inherit; font-size: 13px; }
+    .browserwin.control { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-weak), 0 12px 40px rgba(16, 24, 40, .22); }
+    .browserwin.control .bshot { cursor: pointer; }
+    .bhead .live.mine { color: var(--accent); }
+    .bempty { padding: 24px; color: var(--muted); font-size: 13px; text-align: center; }
     .bshot { position: relative; background: var(--panel-2); border-radius: 10px; overflow: hidden; min-height: 80px;
       display: grid; place-items: center; cursor: zoom-in; }
     .browserwin.big .bshot { cursor: zoom-out; }
@@ -323,10 +334,26 @@
 <section class="browserwin" id="browserWin" aria-label="Man AI's browser" hidden>
   <div class="bhead">
     <span class="live" id="browserLive" aria-live="polite"></span>
-    <span class="burl" id="browserUrl"></span>
+    <form class="burlform" id="browserGo"><input class="burl" id="browserUrl" readonly aria-label="Address"
+      autocomplete="off" spellcheck="false" placeholder="Take control to type an address"></form>
+    <button class="btn" id="browserTake" title="Use the browser yourself; Man AI waits until you hand it back">🖐 Take control</button>
+    <button class="btn primary" id="browserHandBack" hidden>Hand back to Man AI</button>
     <button class="hbtn min" id="browserMin" title="Hide" aria-label="Hide Man AI's browser">–</button>
   </div>
+  <div class="bctl" id="browserCtl" hidden>
+    <button class="hbtn" data-act="back" title="Back" aria-label="Back">◀</button>
+    <button class="hbtn" data-act="forward" title="Forward" aria-label="Forward">▶</button>
+    <button class="hbtn" data-act="reload" title="Reload" aria-label="Reload">⟳</button>
+    <button class="hbtn" data-act="scroll" data-dir="up" title="Scroll up" aria-label="Scroll up">▲</button>
+    <button class="hbtn" data-act="scroll" data-dir="down" title="Scroll down" aria-label="Scroll down">▼</button>
+    <form class="btype" id="browserType"><input id="browserText" placeholder="Click a field, then type here"
+      aria-label="Text to type into the page" autocomplete="off"><button class="hbtn" type="submit">Type</button></form>
+    <button class="hbtn" data-act="press" data-key="Enter" title="Press Enter">Enter ↵</button>
+    <button class="hbtn" data-act="press" data-key="Tab" title="Press Tab">Tab</button>
+    <button class="hbtn" data-act="press" data-key="Escape" title="Press Escape">Esc</button>
+  </div>
   <div class="bshot" id="browserShot" title="Click to enlarge"><img id="browserImg" alt="">
+    <div class="bempty" id="browserEmpty" hidden>Man AI hasn't opened a page yet. Take control and type an address to start one.</div>
     <div class="bnow" id="browserNow" hidden></div></div>
   <ol class="bsteps" id="browserSteps" aria-label="What Man AI did in the browser"></ol>
 </section>
