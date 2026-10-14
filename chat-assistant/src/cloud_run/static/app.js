@@ -1007,9 +1007,11 @@ function layoutBrowser() {  // also runs as the chat sets itself up, before this
 $("browserMin").onclick = () => { browserDismissed = browserSession || ""; setBrowser(false); };
 $("browserToggle").onclick = () => setBrowser($("browserWin").hidden);
 // Taking control: clicks on the screenshot become clicks on the page; the bar types, presses keys and moves around.
+let browserLastAct = 0;
 async function browserAct(body, label) {
   if (browserActing) return;
   browserActing = true;
+  browserLastAct = Date.now();
   $("browserNow").hidden = false;
   $("browserNow").replaceChildren(el("span", { class: "spinner", "aria-hidden": "true" }), `${label}…`);
   try {
@@ -1021,6 +1023,20 @@ async function browserAct(body, label) {
   } catch (e) { toast(e.message); }
   finally { browserActing = false; $("browserNow").hidden = true; }
 }
+
+// While someone is in control, look again every few seconds: a page can change by itself (a sign-in approved on a
+// phone, a redirect) and the screenshot would otherwise only change after the next click.
+let browserLooking = false;  // a refresh never blocks a click: the browser service takes them in turn
+setInterval(async () => {
+  if (!browserControl || browserActing || browserLooking || $("browserWin").hidden || document.hidden
+      || Date.now() - browserLastAct < 2500) return;
+  browserLooking = true;
+  try {
+    const data = await api("POST", "/api/browser/act", { action: "screenshot" });
+    if (!browserActing) renderBrowser({ ...data, available: true });  // a click since then shows its own, newer result
+  } catch { /* the next look */ }
+  finally { browserLooking = false; }
+}, 3000);
 
 async function setControl(on) {
   try {

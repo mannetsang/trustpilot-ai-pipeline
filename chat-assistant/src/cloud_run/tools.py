@@ -647,6 +647,8 @@ def user_browser(store, action, url="", x=None, y=None, text="", key="", directi
         return {"error": f"unknown action '{action}'"}
     view = _browser_view(store)
     session = view.get("session_id") if _fresh(view.get("session_used_at")) else None
+    if action == "screenshot":
+        return _look(store, view, session)
     if not session and action == "close":
         return {"error": "Man AI's browser isn't open."}
     if not session and action != "goto" and not _pages_visited(view):
@@ -684,6 +686,26 @@ def user_browser(store, action, url="", x=None, y=None, text="", key="", directi
         if reopened else ""
     return {"view": view, "frame": store.get_browser_frame(), **({"error": step["error"]} if step.get("error") else {}),
             **({"note": note} if note else {})}
+
+
+def _look(store, view, session):
+    """The page's own refresh while someone is in control: a new screenshot of the tab as it is now (a phone
+    approval or a redirect changes it with no step). Not a step, and it doesn't extend anyone's control."""
+    if not session:
+        return {"view": view, "frame": None}
+    result = _browser_call({"action": "screenshot", "session": session})
+    if result.get("error") or not result.get("image"):
+        return {"view": view, "frame": None}
+    frame = {"image": result["image"], "url": result.get("url", ""), "title": result.get("title", ""),
+             "device": result.get("device", "desktop"), "at": utcnow_iso()}
+    try:
+        store.set_browser_frame(frame)
+        view = _browser_view(store)
+        view.update(frame_at=frame["at"], url=frame["url"], title=frame["title"], device=frame["device"])
+        store.set_browser_view(view)
+    except Exception as exc:  # noqa: BLE001 - a missed refresh is fine
+        print(f"browser look not saved: {exc!r}")
+    return {"view": view, "frame": frame}
 
 
 def _show_browser(store, step, frame=None, session=None, closed=False):

@@ -208,6 +208,17 @@ class LiveViewTests(unittest.TestCase):
         self.assertIn("reopened https://app.wiz.io/login", out["note"])
         self.assertEqual(out["view"]["session_id"], "s3")
 
+    def test_a_look_refreshes_the_screenshot_without_a_step(self):
+        self.toolset.call("browser", {"action": "open", "url": "app.wiz.io"})
+        before = self.store.get_browser_view()
+        after_phone = {**copy.deepcopy(PAGE), "url": "https://app.wiz.io/dashboard", "image": "TkVX"}
+        with mock.patch.object(tools, "_browser_call", return_value=after_phone) as call:
+            out = tools.user_browser(self.store, "screenshot")
+        self.assertEqual(call.call_args[0][0], {"action": "screenshot", "session": "s1"})
+        self.assertEqual((out["frame"]["image"], out["view"]["url"]), ("TkVX", "https://app.wiz.io/dashboard"))
+        self.assertEqual(len(out["view"]["steps"]), len(before["steps"]))  # not a step
+        self.assertNotIn("control_until", out["view"])                     # and nobody took control by looking
+
     def test_control_runs_out_by_itself(self):
         view = tools.set_control(self.store, True)
         self.assertTrue(tools._user_in_control(view))
