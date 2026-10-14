@@ -31,6 +31,7 @@ Endpoints
   GET  /api/transactions?year&month[&card]
   PATCH /api/transactions/<id>   cost_center, usage, note, action=waive|unwaive|confirm|link|unlink
   POST /api/transactions/<id>/rematch  read new invoices, then look for this purchase's invoice again (202, a job)
+  POST /api/ask?year&month[&card]  voice mode: {"question"} -> a short answer to read aloud (read only)
   GET  /api/invoices?year&month[&all=1]  invoices of the surrounding month folders (link picker)
   GET  /api/cards  POST /api/cards (AP)     card labels, owners, Chat space names
   GET  /api/statements?year&month           uploads
@@ -75,6 +76,7 @@ try:
 except Exception:  # noqa: BLE001
     pass
 
+import assistant  # noqa: E402
 import chat  # noqa: E402
 import invoices as invoice_index  # noqa: E402
 import matching  # noqa: E402
@@ -1059,6 +1061,25 @@ def api_transaction_rematch(txn_id):
     if status == 202:
         payload["job"] = job_view(_jobs[payload["job"]["id"]])
     return jsonify(payload), status
+
+
+@app.route("/api/ask", methods=["POST"])
+def api_ask():
+    """Voice mode: {"question": "..."} about the month the page shows (?year&month[&card]); answers in two
+    or three sentences for the browser to read aloud. Read only, for anyone signed in (everyone may read
+    every card). Gemini answers when it is on; otherwise, or when it fails, a summary of the month does."""
+    user = require_user()
+    year, month = _year_month()
+    card = (request.args.get("card") or "").strip() or None
+    body = request.get_json(silent=True)
+    question = body.get("question") if isinstance(body, dict) else None
+    if not isinstance(question, str) or not question.strip():
+        return jsonify({"error": "ask a question"}), 400
+    question = question.strip()[:assistant.MAX_QUESTION]
+    data = assistant.build_context(get_store(), year, month, card, job=job_view(), user=user)
+    result = assistant.answer(get_gemini(), question, data, model=GEMINI_EXTRACT_MODEL)
+    print(f"voice: {user['email']} asked about {year}-{month:02d}: {question[:80]!r} ({result['source']})")
+    return jsonify(result)
 
 
 @app.route("/api/invoices")

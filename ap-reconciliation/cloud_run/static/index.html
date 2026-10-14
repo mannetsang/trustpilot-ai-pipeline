@@ -108,6 +108,26 @@
     #main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
     #topbar { background: var(--surface); border-bottom: 1px solid var(--border-subtle); min-height: 56px; display: flex; align-items: center; gap: 12px; padding: 8px 16px; position: sticky; top: 0; z-index: 20; }
     #content { padding: 16px; max-width: 1480px; width: 100%; }
+    /* Voice mode: a switch in the top bar; when on, a microphone and a question box, and an answer panel
+       under the top bar (which stays in view while scrolling and when pinched in). */
+    #voiceBtn { display: inline-flex; align-items: center; gap: 6px; }
+    #voiceBtn[aria-pressed="true"] { background: var(--brand-soft); color: var(--brand-ink); border-color: var(--brand); }
+    #voiceBar { display: flex; align-items: center; gap: 6px; flex: 0 1 380px; min-width: 0; margin-left: 8px; }
+    #voiceBar form { flex: 1; min-width: 0; }
+    #voiceInput { height: 32px; width: 100%; }
+    .voice-mic { width: 32px; height: 32px; flex: 0 0 32px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+                 border: 1px solid var(--border); background: var(--surface); color: var(--text-mid); cursor: pointer; }
+    .voice-mic:hover { color: var(--text); border-color: var(--text-mute); }
+    .voice-mic[aria-pressed="true"] { background: var(--down); border-color: var(--down); color: #fff; animation: voice-pulse 1.2s ease-in-out infinite; }
+    @keyframes voice-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(212,63,63,0.45); } 50% { box-shadow: 0 0 0 6px rgba(212,63,63,0); } }
+    #voicePanel { position: absolute; top: calc(100% + 6px); left: 16px; z-index: 25; width: min(560px, calc(100% - 32px));
+                  background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px;
+                  box-shadow: 0 12px 32px rgba(0,0,0,0.12); font-size: 13px; }
+    #voiceHeard { color: var(--text-mute); font-size: 12px; }
+    #voiceAnswer { margin-top: 4px; color: var(--text); line-height: 1.5; }
+    #voiceAnswer:empty, #voiceHeard:empty { display: none; }
+    .vp-actions { display: flex; gap: 4px; margin-top: 8px; justify-content: flex-end; }
+    @media (max-width: 899px) { #voiceBar { flex: 0 0 auto; } #voiceBar form { display: none; } }
     #offscreen { display: flex; align-items: center; gap: 10px; max-width: 980px; margin: 0 0 10px; padding: 8px 12px; border-radius: 10px;
                  background: var(--warn); color: var(--warn-text); font-size: 12.5px; border: 1px solid #f3dca8; }
     #offscreen b { color: #6b4500; }
@@ -300,7 +320,21 @@
       <div id="mobileNav">
         <select id="monthSelect" class="inp" aria-label="Month" style="height: 36px; font-weight: 600;"></select>
       </div>
+      <div id="voiceBar" class="hidden">
+        <button id="voiceMic" class="voice-mic" type="button" aria-pressed="false" title="Ask out loud: click, speak, then wait for the answer"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v4"/><path d="M8 21h8"/></svg></button>
+        <form id="voiceForm" autocomplete="off"><input id="voiceInput" class="inp" type="text" maxlength="500" placeholder="Ask what's going on…" aria-label="Ask a question about this month" /></form>
+      </div>
+      <div id="voicePanel" class="hidden" role="status" aria-live="polite">
+        <div id="voiceHeard"></div>
+        <div id="voiceAnswer"></div>
+        <div class="vp-actions">
+          <button id="voiceReplay" class="btn btn-ghost btn-xs" type="button">Say again</button>
+          <button id="voiceStop" class="btn btn-ghost btn-xs" type="button">Stop talking</button>
+          <button id="voicePanelClose" class="btn btn-ghost btn-xs" type="button">Close</button>
+        </div>
+      </div>
       <div class="ml-auto flex items-center gap-2 min-w-0">
+        <button id="voiceBtn" class="btn btn-ghost btn-xs" type="button" aria-pressed="false" title="Voice mode: hear what is going on, and ask about it"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg><span>Voice</span></button>
         <input id="whoAmI" class="inp hidden" type="text" placeholder="Your name" maxlength="80" autocomplete="name" aria-label="Your name, recorded with your changes" title="Recorded as 'Updated by' on anything you change; remembered by this browser" style="width: 150px; height: 30px;" />
         <div id="userChip" class="flex items-center gap-2 min-w-0"></div>
         <a id="switchAccount" class="btn btn-ghost btn-xs hidden" href="/_gcp_iap/clear_login_cookie" title="Pick another Google account for this site">Switch account</a>
@@ -516,6 +550,7 @@
     if (e && e.status === 401) return;
     console.error(e);
     toast((prefix ? prefix + ': ' : '') + (e && e.message ? e.message : String(e)), 'err');
+    say((prefix ? prefix + '. ' : 'Something went wrong. ') + (e && e.message ? e.message : String(e)));
   }
 
   // ---------------------------------------------------------------------------
@@ -589,6 +624,130 @@
   }
   window.addEventListener('resize', checkOffscreen);
   setInterval(checkOffscreen, 3000);             // moving a window fires no event
+
+  // ---------------------------------------------------------------------------
+  // Voice mode. The page says what is happening (a job step starting, finishing or failing, a
+  // Rematch result, an error) and answers questions about the month it shows, asked out loud (the
+  // browser's speech recognition) or typed; the server answers from the month's data (/api/ask) and
+  // the browser reads the answer aloud with its own voice. Remembered per browser.
+  // ---------------------------------------------------------------------------
+  var VOICE_KEY = 'ap_recon_voice';
+  var SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var voice = { on: false, pick: null, rec: null, listening: false, last: '' };
+  function pickVoice() {
+    if (!window.speechSynthesis) return null;
+    var all = speechSynthesis.getVoices() || [];
+    var english = all.filter(function (v) { return /^en([-_]|$)/i.test(v.lang || ''); });
+    var lang = (navigator.language || 'en-US').toLowerCase().replace('_', '-');
+    var mine = english.filter(function (v) { return (v.lang || '').toLowerCase().replace('_', '-') === lang; });
+    var prefer = [/natural/i, /online/i, /google/i];          // the neural voices sound far better
+    for (var i = 0; i < prefer.length; i++) {
+      var hit = mine.filter(function (v) { return prefer[i].test(v.name); })[0] || english.filter(function (v) { return prefer[i].test(v.name); })[0];
+      if (hit) return hit;
+    }
+    return mine[0] || english[0] || null;
+  }
+  if (window.speechSynthesis && 'onvoiceschanged' in speechSynthesis) {
+    speechSynthesis.onvoiceschanged = function () { voice.pick = pickVoice(); };
+  }
+  function say(text, interrupt) {
+    if (!voice || !voice.on || !window.speechSynthesis || !text) return;   // also safe before this block has run
+    // Read the way it is meant: "Link…" is a button name, " - " separates a card from its holder.
+    text = String(text).replace(/\s+/g, ' ').replace(/…/g, '').replace(/\s+-\s+/g, ', ').trim().slice(0, 700);
+    if (!text) return;
+    if (interrupt) speechSynthesis.cancel();
+    else if (speechSynthesis.pending) speechSynthesis.cancel();   // never fall behind: newest news wins
+    var u = new SpeechSynthesisUtterance(text);
+    if (!voice.pick) voice.pick = pickVoice();
+    if (voice.pick) { u.voice = voice.pick; u.lang = voice.pick.lang; }
+    u.rate = 1.04;
+    speechSynthesis.speak(u);
+  }
+  function voiceShow(heard, answer) {
+    if (heard !== undefined) $('#voiceHeard').textContent = heard || '';
+    if (answer !== undefined) $('#voiceAnswer').textContent = answer || '';
+    $('#voicePanel').classList.toggle('hidden', !voice.on || (!$('#voiceHeard').textContent && !$('#voiceAnswer').textContent));
+  }
+  function setVoice(on, quiet) {
+    voice.on = !!on;
+    try { localStorage.setItem(VOICE_KEY, voice.on ? '1' : '0'); } catch (e) { /* private mode */ }
+    $('#voiceBtn').setAttribute('aria-pressed', voice.on ? 'true' : 'false');
+    $('#voiceBar').classList.toggle('hidden', !voice.on);
+    if (!voice.on) {
+      if (window.speechSynthesis) speechSynthesis.cancel();
+      if (voice.rec) { try { voice.rec.abort(); } catch (e) { /* already stopped */ } }
+      voiceShow('', '');
+      return;
+    }
+    voiceShow(SpeechRec ? 'Click the microphone and ask, for example: how many invoices are still missing?'
+                        : 'Type a question, for example: how many invoices are still missing? (This browser cannot listen; Chrome and Edge can.)', '');
+    if (!quiet) say('Voice mode is on. I will tell you what is happening. Click the microphone to ask about this month.', true);
+  }
+  function updateMic() {
+    $('#voiceMic').setAttribute('aria-pressed', voice.listening ? 'true' : 'false');
+    $('#voiceMic').title = voice.listening ? 'Listening… click to stop' : 'Ask out loud: click, speak, then wait for the answer';
+  }
+  function listen() {
+    if (!SpeechRec) { $('#voiceInput').focus(); voiceShow('This browser cannot listen; type the question instead (Chrome and Edge can listen).'); return; }
+    if (voice.listening && voice.rec) { voice.rec.stop(); return; }
+    if (window.speechSynthesis) speechSynthesis.cancel();      // stop talking when the person starts
+    var rec = new SpeechRec(), heard = '';
+    rec.lang = navigator.language || 'en-US';
+    rec.interimResults = true;
+    rec.continuous = false;
+    rec.maxAlternatives = 1;
+    rec.onresult = function (ev) {
+      var interim = '';
+      for (var i = ev.resultIndex; i < ev.results.length; i++) {
+        if (ev.results[i].isFinal) heard += ev.results[i][0].transcript; else interim += ev.results[i][0].transcript;
+      }
+      voiceShow('“' + (heard + interim).trim() + '”', '');
+    };
+    rec.onerror = function (ev) {
+      var why = { 'not-allowed': 'The microphone is blocked for this site. Allow it with the icon in the address bar, or type the question.',
+                  'service-not-allowed': 'The microphone is blocked for this site. Allow it with the icon in the address bar, or type the question.',
+                  'no-speech': 'I did not hear anything. Click the microphone and ask again.',
+                  'audio-capture': 'No microphone was found. Type the question instead.',
+                  'network': 'Speech recognition needs the internet and could not reach it. Type the question instead.' }[ev.error];
+      if (ev.error !== 'aborted') voiceShow(why || ('Could not listen (' + ev.error + '). Type the question instead.'), '');
+    };
+    rec.onend = function () {
+      voice.listening = false; voice.rec = null; updateMic();
+      if (heard.trim()) askVoice(heard);
+    };
+    voice.rec = rec; voice.listening = true; updateMic();
+    voiceShow('Listening…', '');
+    try { rec.start(); } catch (e) { voice.listening = false; voice.rec = null; updateMic(); voiceShow('Could not start listening. Type the question instead.', ''); }
+  }
+  async function askVoice(question) {
+    question = String(question || '').trim().slice(0, 500);
+    if (!question) return;
+    var now = new Date(), year = state.year || now.getFullYear(), month = state.month || (now.getMonth() + 1);
+    voiceShow('“' + question + '”', 'Looking at ' + monthLabel(year, month) + '…');
+    try {
+      var data = await api('/api/ask?year=' + year + '&month=' + month + (state.card ? '&card=' + encodeURIComponent(state.card) : ''),
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: question }) });
+      voice.last = data.answer || '';
+      voiceShow(undefined, voice.last);
+      say(voice.last, true);
+    } catch (e) {
+      if (e && e.status === 401) return;
+      voiceShow(undefined, 'I could not get an answer: ' + (e && e.message ? e.message : e));
+      say('Sorry, I could not get an answer.', true);
+    }
+  }
+  $('#voiceBtn').addEventListener('click', function () { setVoice(!voice.on); });
+  $('#voiceMic').addEventListener('click', listen);
+  $('#voiceForm').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var box = $('#voiceInput'), q = box.value;
+    box.value = '';
+    askVoice(q);
+  });
+  $('#voiceReplay').addEventListener('click', function () { var t = $('#voiceAnswer').textContent; if (t) say(t, true); });
+  $('#voiceStop').addEventListener('click', function () { if (window.speechSynthesis) speechSynthesis.cancel(); });
+  $('#voicePanelClose').addEventListener('click', function () { if (window.speechSynthesis) speechSynthesis.cancel(); voiceShow('', ''); });
+  try { if (localStorage.getItem(VOICE_KEY) === '1') setVoice(true, true); } catch (e) { /* private mode */ }
 
   // Pinched in: lay the page out for the visible area rather than the whole window, so nothing is out
   // of view on the right (the page is just larger). Undone as soon as the pinch is.
@@ -1314,6 +1473,7 @@
       delete rematching[id];
       if (result.transaction) replaceTxn(mergeRematchedRow(result.transaction), at); else restoreRow(id);
       toast(rematchMessage(result), result.status === 'missing' || result.outcome === 'conflict' ? '' : 'ok', 7000);
+      say(rematchMessage(result));
     } catch (e) {
       delete rematching[id];
       restoreRow(id);
@@ -1606,6 +1766,7 @@
   }
   // A fresh run: the steps it will go through, all waiting.
   function startJob(steps) {
+    stepSaid = {};
     logEl.innerHTML = '';
     detailsEl.open = false;
     stepsEl.innerHTML = steps.map(function (key) {
@@ -1615,9 +1776,12 @@
     jobEl.classList.remove('hidden');
   }
   // status: pending | running | done | warn | failed. text: the plain-language line under the title.
+  var stepSaid = {};      // voice mode: what was last said for each step, so progress ticks stay quiet
   function setStep(key, status, text, actionsHtml) {
     var li = stepsEl.querySelector('li[data-step="' + key + '"]');
     if (!li) return;
+    if (status === 'done' || status === 'failed' || status === 'ask' || (status === 'running' && stepSaid[key] !== 'running')) say(text);
+    stepSaid[key] = status;
     li.className = 'step ' + status;
     $('.step-icon', li).innerHTML = STEP_ICONS[status] || '';
     $('.step-text', li).textContent = text || '';

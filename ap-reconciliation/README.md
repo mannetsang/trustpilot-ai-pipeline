@@ -263,6 +263,23 @@ Two other modes exist, one edit of the deploy workflow away (step 5):
   invoice column: the linked file with vendor, number and total, or the
   buttons *Confirm* / *Not this* on a possible match, *Link...* / *No
   invoice* on a missing one, *Undo* on a waived one. Edits save on change.
+- **Voice mode** (*Voice* in the top bar, remembered per browser). The page
+  says what is happening: a step of an upload, *Re-run matching* or *Send
+  reminders* starting, finishing or failing, a *Rematch* result, an error
+  (progress ticks stay quiet). And it answers questions about the month on
+  screen (and the card tab picked): click the microphone and ask ("how many
+  invoices are still missing?", "what does Bo Li still need to send?", "is
+  anything running?"), or type the question. `POST /api/ask` condenses the
+  month into a brief (counts per card, the purchases still missing or
+  possible, the running or last job, uploads, reminders sent) and Gemini
+  (`GEMINI_EXTRACT_MODEL`) answers in two or three sentences, which the
+  browser reads aloud with its own voice (Windows' natural voices when
+  there). Without Gemini, or if it fails, a plain summary of the month is
+  the answer. Read only: a question cannot change anything, and text from
+  bank files and invoices goes to the model as data. Listening uses the
+  browser's speech recognition: Chrome and Edge (which send the audio to
+  their speech service); other browsers type the question. Anyone signed
+  in may ask; everyone can read every card anyway.
 - **Rematch** on each purchase that is missing an invoice, has a possible
   match, or was matched automatically (not on waived rows or on invoices
   someone linked or confirmed by hand; *Unlink* those first). It is for the
@@ -328,6 +345,7 @@ under *Cards...*) are never notified.
 | `GET /api/months` | signed in | month navigation with per-card counts, cards, cost centres |
 | `GET /api/transactions?year&month[&card]` | signed in | the month's transactions with their invoice, `editable` flag, uploads and recent notifications |
 | `PATCH /api/transactions/<id>` | signed in, AP or the card's owner | body: `cost_center`, `usage`, `note`, and/or `action` (`waive` with `reason`, `unwaive`, `confirm`, `link` with `invoice_id`, `unlink`) |
+| `POST /api/ask?year&month[&card]` | signed in | voice mode: `{"question": "..."}` (up to 500 characters) answered as `{"answer", "source": "gemini" \| "summary"}` for the browser to read aloud; read only |
 | `POST /api/transactions/<id>/rematch` | signed in, AP or the card's owner | *Rematch*: reads new invoices for the purchase's months, then looks for its invoice again, as a background job (202 with the job, polled through `/api/jobs/current?id=`; 409 while another job runs; 400 for a waived, non-purchase or hand-linked row). The job's result has `outcome` (`found`, `same`, `kept`, `none` or `conflict`), the status and invoice the row now has, `changed`, `invoices_read`, `read_errors` with `read_error_files`, and the updated row; its progress has `stage` and `percent` |
 | `GET /api/invoices?year&month` | signed in | invoices of month-1..month+1 with a `linked` flag (the picker) |
 | `GET /api/cards` | signed in | cards |
@@ -598,6 +616,8 @@ next idle period, or at once with *Run workflow*.
 
 | Symptom | Cause and fix |
 |---|---|
+| Voice mode: the microphone does nothing, or says it is blocked | the browser was refused the microphone for this site: click the icon at the left of the address bar and allow it. Firefox and Safari cannot listen at all: type the question |
+| Voice mode: nothing is read aloud | the browser speaks only after the page has been clicked once (browser rule), and not while the computer's sound is muted; *Say again* in the answer panel repeats the last answer |
 | *Rematch* says *No invoice found yet* although the invoice is in Drive | the file is filed outside the purchase's month folder and the months either side, or Gemini could not read it (the job's read errors; files over 15 MB are skipped), or its total differs from the charge by more than the matcher allows, or another purchase already holds it. *Link...* picks it by hand |
 | *Network error: Failed to fetch* in the middle of a step | the network between the browser and Cloud Run dropped a long, silent request (office proxies do this after about a minute). Each step now runs as a background job that the page polls every two seconds, so this should not recur; *Re-run matching* resumes where the read stopped |
 | `409 {"status": "busy"}` from an upload, index, match or notify | one job at a time per instance; wait for it (`/health` shows `last_job`) and retry. The dashboard retries by itself |
