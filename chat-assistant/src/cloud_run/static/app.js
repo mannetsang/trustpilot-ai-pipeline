@@ -1017,6 +1017,7 @@ async function browserAct(body, label) {
     browserActing = false;
     renderBrowser({ ...data, available: true });
     if (data.error) toast(data.error);
+    else if (data.note) toast(data.note);
   } catch (e) { toast(e.message); }
   finally { browserActing = false; $("browserNow").hidden = true; }
 }

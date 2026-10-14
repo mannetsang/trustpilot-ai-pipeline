@@ -167,7 +167,46 @@ class LiveViewTests(unittest.TestCase):
             out = tools.user_browser(self.store, "close")
         self.assertNotIn("session_id", out["view"])
         self.assertEqual(out["view"]["steps"][-1]["action"], "close")
-        self.assertIn("Type an address", tools.user_browser(self.store, "click", x=1, y=1)["error"])
+        with mock.patch.object(tools, "_browser_call", return_value={**copy.deepcopy(PAGE), "session": "s9"}) as call:
+            again = tools.user_browser(self.store, "click", x=1, y=1)  # a fresh, signed-out tab on the last page
+        self.assertEqual(call.call_args[0][0]["action"], "open")
+        self.assertIn("reopened", again["note"])
+
+    def _visited(self, *urls):
+        for url in urls:
+            with mock.patch.object(tools, "_browser_call", return_value={**copy.deepcopy(PAGE), "url": url}):
+                self.toolset.call("browser", {"action": "goto" if self.store.get_browser_view() else "open", "url": url})
+
+    def test_an_ended_tab_reopens_by_itself_for_man_ai(self):
+        self._visited("https://app.wiz.io/login", "https://accounts.google.com/v3/signin/challenge/dp")
+        sent = []
+
+        def service(body):
+            sent.append(body)
+            if body["action"] == "back":
+                return {"error": "That browser session has ended (closed or idle too long). Use action=open again."}
+            return {**copy.deepcopy(PAGE), "session": "s2", "url": body["url"]}
+        with mock.patch.object(tools, "_browser_call", side_effect=service):
+            out = self.toolset.call("browser", {"action": "back"})
+        self.assertNotIn("error", out)
+        self.assertEqual(sent[-1], {"action": "open", "url": "https://app.wiz.io/login", "device": "desktop"})
+        self.assertIn("old tab had closed", out["notes"][-1])
+        self.assertIn("https://accounts.google.com/v3/signin/challenge/dp", out["notes"][-1])  # where it had been
+        view = self.store.get_browser_view()
+        self.assertEqual(view["session_id"], "s2")
+        self.assertEqual((view["steps"][-1]["action"], view["steps"][-1]["status"]), ("open", "done"))
+
+    def test_an_ended_tab_reopens_for_a_person_too(self):
+        self._visited("https://app.wiz.io/login")
+        view = self.store.get_browser_view()
+        view["session_used_at"] = "2020-01-01T00:00:00+00:00"  # long unused: the service has closed it
+        self.store.set_browser_view(view)
+        with mock.patch.object(tools, "_browser_call", return_value={**copy.deepcopy(PAGE), "session": "s3",
+                                                                      "url": "https://app.wiz.io/login"}) as call:
+            out = tools.user_browser(self.store, "click", x=10, y=10)
+        self.assertEqual(call.call_args[0][0]["action"], "open")  # the old click isn't replayed on a new page
+        self.assertIn("reopened https://app.wiz.io/login", out["note"])
+        self.assertEqual(out["view"]["session_id"], "s3")
 
     def test_control_runs_out_by_itself(self):
         view = tools.set_control(self.store, True)
