@@ -333,11 +333,12 @@ def rematchable(txn):
     return None
 
 
-def match_transaction(store, gemini, txn_id, use_ai=True, log=print, updated_by=None):
+def match_transaction(store, gemini, txn_id, use_ai=True, log=print, updated_by=None, on_stage=None):
     """Look for the invoice of one purchase again: rules first, then the Gemini judge, against the
     invoices of its month and the months either side that no other transaction holds. The purchase's
     own current invoice stays in the pool, so a correct match survives. Invoices refused with
-    "Not this" are never proposed again. Returns what was found and what changed."""
+    "Not this" are never proposed again. on_stage("rules" | "ai"), when given, says which pass
+    is running. Returns what was found and what changed."""
     txn = store.get_transaction(txn_id)
     if not txn:
         raise RematchError("transaction not found")
@@ -351,10 +352,14 @@ def match_transaction(store, gemini, txn_id, use_ai=True, log=print, updated_by=
     label = f"{txn.get('txn_date')} {str(txn.get('description') or '')[:40]} {float(txn['amount']):.2f}"
     log(f"Rematch {label}: {len(pool)} invoices to consider")
 
+    if on_stage:
+        on_stage("rules")
     found = rule_match([txn], pool).get(txn["id"])
     method = "rule" if found else None
     if not found and use_ai and gemini is not None and pool:
         log(f"Rematch {label}: no rule match, asking {gemini.match_model}")
+        if on_stage:
+            on_stage("ai")
         found = ai_match(gemini, [txn], pool, log=log).get(txn["id"])
         method = "ai" if found else None
 

@@ -161,6 +161,9 @@
     .td-desc .desc { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .btn-row { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
     .rematch-status { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 11.5px; color: var(--text-mid); }
+    .rematch-status .pct { font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; min-width: 30px; }
+    .rematch-bar { height: 3px; margin-top: 4px; max-width: 220px; background: var(--border); border-radius: 2px; overflow: hidden; }
+    .rematch-bar > span { display: block; height: 100%; width: 0; background: var(--brand); border-radius: 2px; transition: width .4s ease; }
     .rematch-status .spin { width: 11px; height: 11px; flex: 0 0 11px; border: 2px solid var(--border); border-top-color: var(--text-mid); border-radius: 50%; animation: rematch-spin .8s linear infinite; }
     @keyframes rematch-spin { to { transform: rotate(360deg); } }
     @media (prefers-reduced-motion: reduce) { .rematch-status .spin { animation: none; } }
@@ -934,7 +937,12 @@
         : '<span title="' + esc(inv.file_name || '') + '">' + esc(text) + '</span>') + totalBit + '</div>';
     }
     if (rematching[t.id] !== undefined) {
-      return html + '<div class="rematch-status" role="status"><span class="spin" aria-hidden="true"></span><span class="rematch-text">' + esc(rematching[t.id]) + '</span></div>';
+      var rs = rematching[t.id], known = rs.pct !== null && rs.pct !== undefined;
+      return html + '<div class="rematch-status" role="status"><span class="spin" aria-hidden="true"></span>' +
+        '<span class="pct"' + (known ? '' : ' hidden') + '>' + (known ? rs.pct + '%' : '') + '</span>' +
+        '<span class="rematch-text">' + esc(rs.text) + '</span></div>' +
+        '<div class="rematch-bar" role="progressbar" aria-label="Rematch progress" aria-valuemin="0" aria-valuemax="100"' +
+        (known ? ' aria-valuenow="' + rs.pct + '"' : '') + '><span style="width: ' + (known ? rs.pct : 0) + '%"></span></div>';
     }
     var again = canRematch(t)
       ? '<button class="btn btn-ghost btn-xs" data-action="rematch"' + (ed ? ' title="Read any invoices newly filed in Drive and look for this purchase\'s invoice again"' : dis) + '>Rematch</button>'
@@ -1106,16 +1114,35 @@
   // Per-row Rematch: the server reads invoices newly filed in Drive for the purchase's months, then
   // looks for its invoice again, as a background job this row polls. While it runs the row shows what
   // the server is doing, and keeps showing it through re-sorting, filtering and re-rendering.
-  var rematching = {};          // transaction id -> the progress text shown in its row
-  function setRematchText(id, text) {
-    rematching[id] = text;
-    var row = rowEl(id), el = row && row.querySelector('.rematch-text');
+  var rematching = {};          // transaction id -> { text, pct } shown in its row (pct null: not known yet)
+  function setRematchState(id, text, pct) {
+    if (rematching[id] === undefined) return;          // finished while this poll was in flight
+    var prev = rematching[id].pct;
+    // The server's percentage only grows; a late poll answer must not move the bar back.
+    if (pct !== null && pct !== undefined && prev !== null && prev !== undefined) pct = Math.max(pct, prev);
+    rematching[id] = { text: text, pct: pct === undefined ? null : pct };
+    var row = rowEl(id);
+    if (!row) return;
+    var known = rematching[id].pct !== null;
+    var el = row.querySelector('.rematch-text'), pe = row.querySelector('.rematch-status .pct'),
+        bar = row.querySelector('.rematch-bar'), fill = bar && bar.firstElementChild;
     if (el) el.textContent = text;
+    if (pe) { pe.hidden = !known; pe.textContent = known ? rematching[id].pct + '%' : ''; }
+    if (bar) { if (known) bar.setAttribute('aria-valuenow', rematching[id].pct); else bar.removeAttribute('aria-valuenow'); }
+    if (fill) fill.style.width = (known ? rematching[id].pct : 0) + '%';
   }
+  // The server reports a percentage per stage: listing Drive 0-5, reading new invoices 5-75 (files
+  // finished of files to read), rules 78, Gemini's judgement 85, done 100.
   function rematchProgress(p) {
-    if (p.stage === 'match') return 'Looking for the invoice…';
-    var done = (p.read || 0) + (p.live || 0);
-    return done ? 'Reading new invoices from Drive (' + count(done, 'read', 'read') + ')…' : 'Checking Drive for new invoices…';
+    var pct = typeof p.percent === 'number' ? Math.max(0, Math.min(100, Math.round(p.percent))) : null;
+    var text;
+    if (p.stage === 'done') text = 'Finishing…';
+    else if (p.stage === 'ai') text = 'Asking Gemini to compare the invoices…';
+    else if (p.stage === 'match') text = 'Looking for the invoice…';
+    else if (p.files_total) text = 'Reading new invoices from Drive: ' + Math.min(p.files_done || 0, p.files_total) + ' of ' + p.files_total + '…';
+    else if (p.files_total === 0) text = 'No new invoices in Drive…';
+    else text = 'Checking Drive for new invoices…';
+    return { text: text, pct: pct };
   }
   function rematchMessage(r) {
     var inv = r.invoice, what = inv ? (inv.vendor || inv.file_name || 'an invoice') + (inv.total !== null && inv.total !== undefined ? ' ' + money(inv.total, inv.currency || '') : '') : '';
@@ -1127,15 +1154,18 @@
   async function rematchRow(id) {
     if (rematching[id] !== undefined) return;
     var at = { year: state.year, month: state.month };
-    rematching[id] = 'Starting…';
+    rematching[id] = { text: 'Starting…', pct: 0 };
     // The row renderer keeps a cell that holds the focus as it is; let go of the clicked button first.
     var row = rowEl(id);
     if (row && row.contains(document.activeElement)) document.activeElement.blur();
     restoreRow(id);
     try {
       var started = await apiRetryBusy('/api/transactions/' + encodeURIComponent(id) + '/rematch', { method: 'POST' },
-        function () { setRematchText(id, 'Waiting for another job to finish…'); });
-      var result = await pollJob(started.job, function (p) { setRematchText(id, rematchProgress(p)); }, true);
+        function () { setRematchState(id, 'Waiting for another job to finish…', null); });
+      setRematchState(id, 'Starting…', 0);
+      var result = await pollJob(started.job, function (p) { var r = rematchProgress(p); setRematchState(id, r.text, r.pct); }, true, 1000);
+      setRematchState(id, 'Done', 100);
+      await sleep(250);                                  // let the bar reach the end before the row changes
       delete rematching[id];
       if (result.transaction) replaceTxn(result.transaction, at); else restoreRow(id);
       toast(rematchMessage(result), result.status === 'missing' ? '' : 'ok', 7000);
@@ -1483,11 +1513,11 @@
   var STEP_OF = { upload: 'upload', index: 'read', match: 'match', notify: 'notify' };
   // Polls one job by its id until it has finished; the server keeps finished jobs readable for a
   // while, so another person starting the next job does not take ours away.
-  async function pollJob(job, onProgress, quiet) {
+  async function pollJob(job, onProgress, quiet, every) {
     var misses = 0, id = job && job.id, seen = 0;
     if (!id) throw new ApiError(500, 'the server did not start the job', job);
     while (!job.finished) {
-      await sleep(2000);
+      await sleep(every || 2000);
       try { job = await api('/api/jobs/current?id=' + encodeURIComponent(id)); misses = 0; }
       catch (e) {
         if (e.status === 0 && ++misses <= 30) continue;   // a dropped poll is harmless; the job carries on

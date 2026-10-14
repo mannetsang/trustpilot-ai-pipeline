@@ -11,7 +11,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "cloud_run"))
 
 from test_pipeline import (MEMBER, ApiTestCase, FakeDrive, FakeGemini, facts_handler, file_, folder,  # noqa: E402
-                           inv, quiet, txn)
+                           inv, invoice_tree, quiet, txn)
+import invoices  # noqa: E402
 import main  # noqa: E402
 import matching  # noqa: E402
 from store import MemoryStore  # noqa: E402
@@ -146,7 +147,7 @@ class RematchApiTests(ApiTestCase):
         r = self.start(ids["anth"], headers={"X-Dashboard-User": "Kelly"})
         self.assertEqual(r.status_code, 202, r.get_json())
         job = r.get_json()["job"]
-        self.assertEqual((job["name"], job["running"]), ("rematch", True))
+        self.assertEqual(job["name"], "rematch")         # it may already have finished: no Gemini in the tests
         j = self.wait(job["id"])
         self.assertIsNone(j["error"])
         res = j["result"]
@@ -221,6 +222,107 @@ class RematchApiTests(ApiTestCase):
         self.assertIn("f_a", drive.downloads)
         self.assertEqual(self.store.get_transaction(ids["anth"])["invoice_id"], "f_a")
 
+
+
+class RematchProgressTests(ApiTestCase):
+    """The percentage the row shows: 0-5 listing Drive, 5-75 reading new invoices, 78 rules, 85 Gemini, 100 done."""
+
+    def test_the_reader_reports_every_file_including_failures(self):
+        tree, files_by_id = invoice_tree()
+        drive = FakeDrive(tree, files_by_id, contents={"f_txt": b"Order 123 total 39.00"})
+        calls = []
+        result = invoices.index_invoices(MemoryStore(), drive, FakeGemini(handler=facts_handler), "root", limit=40,
+                                         log=quiet, on_read=lambda *a: calls.append(a))
+        batch, new = result["indexed"], 9
+        self.assertEqual(calls[0], (0, batch, new))                   # announced before the first read
+        self.assertEqual([c[0] for c in calls], list(range(0, batch + 1)))   # then once per file, failures too
+        self.assertEqual(len(result["errors"]), 2)
+        self.assertEqual(calls[-1], (batch, batch, new))
+
+    def test_the_total_holds_across_read_rounds(self):
+        rounds = iter([8, 8, 4])                 # 20 new files read 8 at a time
+        left = {"new": 20}
+
+        def fake_index_month(year, month, limit=None, log=print, on_read=None):
+            batch = next(rounds)
+            on_read(0, batch, left["new"])
+            for done in range(1, batch + 1):
+                on_read(done, batch, left["new"])
+            left["new"] -= batch
+            return {"indexed": batch, "errors": [], "remaining": left["new"], "files_seen": 20, "month_folders": []}
+
+        seen = []
+        main._last_job["progress"] = {}
+        with mock.patch.object(main, "index_month", fake_index_month):
+            out = main.index_until_done(2026, 9, limit=8, on_read=lambda d, t: seen.append((d, t)))
+        self.assertEqual(out["indexed"], 20)
+        self.assertEqual({t for _, t in seen}, {20})                    # one total for the whole pass
+        self.assertEqual([d for d, _ in seen], sorted(d for d, _ in seen))   # never goes back
+        self.assertEqual(seen[-1], (20, 20))
+
+    def test_the_percentage_climbs_through_every_stage_to_100(self):
+        self.upload()
+        ids = self.ids()
+        self.store.upsert_invoices([inv("i_r", "Retell AI Inc", 70.40, "2026-09-11", currency="USD", vendor_folder="Retell")])
+        main._last_job["progress"] = progress = {}
+        trail = []
+
+        def fake_index_until_done(year, month, limit=None, on_read=None):
+            for done in range(5):
+                on_read(done, 4) if done <= 4 else None
+                trail.append(("read", progress.get("percent")))
+            return {"indexed": 4, "errors": [], "remaining": 0}
+
+        gemini = FakeGemini(handler=lambda parts, model: (trail.append(("ai", progress.get("percent"))) or
+                                                          {"matches": [{"transaction_id": ids["retell"], "invoice_id": "i_r",
+                                                                        "confidence": 0.95, "reason": "same vendor"}]}))
+        main.set_clients(gemini=gemini)
+        self.addCleanup(lambda: main._clients.pop("gemini", None))
+        with mock.patch.object(main, "index_until_done", fake_index_until_done), \
+                mock.patch.object(main, "AI_DISABLED", False), \
+                mock.patch.object(matching, "rule_match", return_value={}):
+            result = main.rematch_transaction(ids["retell"], "kelly@superhairpieces.com")
+        self.assertEqual(result["status"], "matched")
+        self.assertEqual([p for stage, p in trail if stage == "read"], [5, 22, 40, 57, 75])
+        self.assertEqual([p for stage, p in trail if stage == "ai"], [85])
+        self.assertEqual((progress["stage"], progress["percent"], progress["files_done"], progress["files_total"]),
+                         ("done", 100, 4, 4))
+
+    def test_nothing_new_to_read_jumps_to_the_matching_stage(self):
+        self.upload()
+        ids = self.ids()
+        main._last_job["progress"] = progress = {}
+        snapshots = []
+        real_match = matching.match_transaction
+
+        def spy(*args, **kwargs):
+            snapshots.append(dict(progress))
+            return real_match(*args, **kwargs)
+
+        with mock.patch.object(main, "index_until_done", lambda y, m, limit=None, on_read=None: (on_read(0, 0), {"indexed": 0})[1]), \
+                mock.patch.object(matching, "match_transaction", spy):
+            main.rematch_transaction(ids["anth"])
+        self.assertEqual((snapshots[0]["files_total"], snapshots[0]["percent"], snapshots[0]["stage"]), (0, 78, "match"))
+        self.assertEqual(progress["percent"], 100)
+
+    def test_a_finished_job_shows_100_and_the_files_it_read(self):
+        """End to end through the API: the invoice filed after the reminder is read, then matched."""
+        self.upload()
+        ids = self.ids()
+        tree = {"root": [folder("m09", "2026 09")], "m09": [folder("v_anth", "Anthropic")], "v_anth": [file_("f_a", "a.pdf")]}
+        main.set_clients(drive=FakeDrive(tree), gemini=FakeGemini(handler=facts_handler))
+        self.addCleanup(lambda: main._clients.pop("gemini", None))
+        with mock.patch.object(main, "AI_DISABLED", False), mock.patch.object(main, "INVOICE_FOLDER_ID", "root"):
+            r = self.client.post(f"/api/transactions/{ids['anth']}/rematch")
+            job_id = r.get_json()["job"]["id"]
+            for _ in range(300):
+                j = self.client.get(f"/api/jobs/current?id={job_id}").get_json()
+                if j["finished"]:
+                    break
+                time.sleep(0.02)
+        p = j["progress"]
+        self.assertEqual((p["stage"], p["percent"], p["files_done"], p["files_total"]), ("done", 100, 1, 1))
+        self.assertEqual(j["result"]["status"], "matched")
 
 if __name__ == "__main__":
     unittest.main()

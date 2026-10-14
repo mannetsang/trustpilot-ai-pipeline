@@ -263,8 +263,11 @@ Two other modes exist, one edit of the deploy workflow away (step 5):
   that one purchase, against the invoices no other purchase holds (its own
   current invoice stays in the running, so a right match survives;
   invoices refused with *Not this* are never proposed again). It runs as a
-  background job the row polls: the row shows what the server is doing,
-  a second row waits for the first, and a message says what was found.
+  background job the row polls every second: the row shows what the
+  server is doing with a percentage and a thin bar (listing the Drive
+  folders 0-5%, reading new invoices 5-75% by files read of files to
+  read, the rules 78%, waiting for Gemini 85%, done 100%), a second row
+  waits for the first, and a message says what was found.
   AP or the card's owner may use it.
 - **Invoice picker** (from *Link...*): every invoice of the surrounding
   month folders, searchable by vendor, file, folder and amount; ones already

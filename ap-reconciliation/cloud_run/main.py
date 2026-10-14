@@ -513,13 +513,28 @@ def job_view(job=None):
     return view
 
 
-def index_until_done(year, month, limit=JOB_INDEX_LIMIT):
-    """The read step: batch after batch until the month's folders hold nothing new (or nothing readable)."""
+def index_until_done(year, month, limit=JOB_INDEX_LIMIT, on_read=None):
+    """The read step: batch after batch until the month's folders hold nothing new (or nothing readable).
+
+    on_read(done, total), when given, follows the whole pass: files finished so far (read or failed)
+    against the files the pass will read, known once the first round has listed the folders."""
     progress = _last_job["progress"]
     read, errors, remaining, last_remaining, stalls = 0, [], 0, None, 0
     stalled = True                      # until a round ends with nothing remaining
+    tally = {"before": 0, "total": None}  # files finished in earlier rounds; the pass's total
+
+    def round_read(done, batch, new):
+        retries = max(batch - min(new, limit), 0)        # earlier failures retried in this round
+        total = tally["before"] + new + retries
+        tally["total"] = total if tally["total"] is None else max(tally["total"], total)
+        on_read(tally["before"] + done, tally["total"])
+        if done == batch:
+            tally["before"] += batch
+
     for rounds in range(1, MAX_INDEX_ROUNDS + 1):
-        result = index_month(year, month, limit=limit, log=_job_log)
+        # The month-wide read step passes no on_read and calls index_month exactly as before.
+        extra = {"on_read": round_read} if on_read else {}
+        result = index_month(year, month, limit=limit, log=_job_log, **extra)
         if result.get("skipped"):
             progress["skipped"] = result["skipped"]
             return {"indexed": 0, "errors": [], "remaining": 0, "skipped": result["skipped"]}
@@ -627,14 +642,15 @@ def ingest_statement(file_name, data, mime_type, uploaded_by):
     }
 
 
-def index_month(year, month, limit=None, log=print):
+def index_month(year, month, limit=None, log=print, on_read=None):
     folders = [month_folder_name(y, m) for y, m in neighbouring_months(year, month)]
     gemini = get_gemini()
     if gemini is None:
         return {"files_seen": 0, "indexed": 0, "remaining": 0, "errors": [], "month_folders": folders,
                 "skipped": "AI_DISABLED=1: invoices are not read"}
     return invoice_index.index_invoices(get_store(), get_drive(), gemini, INVOICE_FOLDER_ID,
-                                        month_folders=folders, limit=limit or INDEX_BATCH, workers=INDEX_WORKERS, log=log)
+                                        month_folders=folders, limit=limit or INDEX_BATCH, workers=INDEX_WORKERS, log=log,
+                                        on_read=on_read)
 
 
 def index_all(month_folders=None, limit=None):
@@ -659,12 +675,23 @@ def rematch_transaction(txn_id, user_email=""):
         raise matching.RematchError("transaction not found")
     year, month = int(txn["year"]), int(txn["month"])
     progress = _last_job["progress"]
-    progress.update({"year": year, "month": month, "transaction_id": txn_id, "stage": "read"})
+    # percent: 0-5 listing the Drive folders, 5-75 reading new invoices (files finished of files to
+    # read), 78 the rules, 85 waiting for Gemini's judgement, 100 done.
+    progress.update({"year": year, "month": month, "transaction_id": txn_id, "stage": "read", "percent": 2})
     _job_log(f"Rematch: reading new invoices for {month_folder_name(year, month)} and the months either side")
-    read = index_until_done(year, month)
-    progress["stage"] = "match"
+
+    def on_read(done, total):
+        progress.update({"files_done": done, "files_total": total,
+                         "percent": 5 + int(70 * min(done, total) / total) if total else 75})
+
+    read = index_until_done(year, month, on_read=on_read)
+
+    def on_stage(stage):
+        progress.update({"stage": "ai" if stage == "ai" else "match", "percent": 85 if stage == "ai" else 78})
+
+    on_stage("rules")
     result = matching.match_transaction(store, get_gemini(), txn_id, use_ai=not AI_DISABLED, log=_job_log,
-                                        updated_by=user_email or None)
+                                        updated_by=user_email or None, on_stage=on_stage)
     result["invoices_read"] = int(read.get("indexed") or 0)
     result["read_errors"] = len(read.get("errors") or [])
     if read.get("skipped"):
@@ -673,6 +700,7 @@ def rematch_transaction(txn_id, user_email=""):
     row = with_invoices(store, [updated])[0]
     row["editable"] = True              # the job only starts for someone allowed to edit the row
     result["transaction"] = row
+    progress.update({"stage": "done", "percent": 100})
     return result
 
 

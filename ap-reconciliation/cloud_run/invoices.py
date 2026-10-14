@@ -164,14 +164,18 @@ def extract_invoice(gemini, drive, record):
     return row
 
 
-def index_invoices(store, drive, gemini, root_id, month_folders=None, limit=40, workers=4, log=print):
+def index_invoices(store, drive, gemini, root_id, month_folders=None, limit=40, workers=4, log=print, on_read=None):
     """Read every new or changed file under the Invoice root (optionally only some
     month folders), at most `limit` per call. Returns counts and what is left.
 
     Files whose last read failed are retried only with the room left in the
     batch after the new files, and never count towards `remaining`, so a file
     Gemini cannot read does not keep the callers' loops going for ever. Files
-    that disappeared from the walked folders are stamped removed_at."""
+    that disappeared from the walked folders are stamped removed_at.
+
+    on_read(done, batch, new), when given, is called once the folders are listed
+    (done=0) and after every file of the batch, read or failed: `batch` is how many
+    files this call reads, `new` how many new or changed files there are in all."""
     known = store.invoice_index()
     files, seen = [], set()
     for rec in walk(drive, root_id, month_folders):
@@ -201,10 +205,14 @@ def index_invoices(store, drive, gemini, root_id, month_folders=None, limit=40, 
         log(f"{len(gone)} indexed file(s) no longer in Drive; marked removed")
     batch = todo[:limit] + retry[:max(limit - len(todo), 0)]
     rows, errors = [], []
+    if on_read:
+        on_read(0, len(batch), len(todo))
     if batch:
         with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
             for row in pool.map(lambda r: extract_invoice(gemini, drive, r), batch):
                 rows.append(row)
+                if on_read:
+                    on_read(len(rows), len(batch), len(todo))
                 if row.get("extraction_error"):
                     errors.append({"file": row["file_name"], "error": row["extraction_error"]})
                 else:
