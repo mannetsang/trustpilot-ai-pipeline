@@ -303,8 +303,7 @@
 
     <div id="content">
       <div id="offscreen" class="hidden" role="status">
-        <span><b>This browser window is wider than your screen,</b> so the right side of the page may be hidden.
-        Maximize the window (double-click its title bar, or press Windows key + Up) to see everything.</span>
+        <span id="offscreenText"></span>
         <button id="offscreenClose" class="btn btn-ghost btn-xs" type="button">Dismiss</button>
       </div>
       <div id="emptyState" class="hidden card empty">
@@ -553,21 +552,38 @@
   // ---------------------------------------------------------------------------
   // Loading
   // ---------------------------------------------------------------------------
-  // The page fits the browser window, but a window that runs past the edge of the screen hides its
-  // right side (screen sizes and window positions are in the same screen units, whatever the zoom).
-  // Windows puts an 8px invisible border round a maximized window, hence the allowance.
+  // The page fits the browser window, but two things hide its right side without the page knowing:
+  // a touchpad pinch (it magnifies the page without laying it out again, so the right part is off view;
+  // visualViewport.scale says by how much), and a window that runs past the edge of the screen (screen
+  // sizes and window positions are in the same screen units, whatever the zoom; Windows puts an 8px
+  // invisible border round a maximized window, hence the allowance).
   var offscreenDismissed = false;
   function checkOffscreen() {
-    var el = $('#offscreen');
-    if (!el || offscreenDismissed || !window.screen || !screen.availWidth) return;
-    var left = (typeof screen.availLeft === 'number') ? screen.availLeft : 0;
-    var x = (typeof window.screenX === 'number') ? window.screenX : left;
-    var past = Math.max((x + window.outerWidth) - (left + screen.availWidth), left - x);
-    el.classList.toggle('hidden', !(window.outerWidth > 0 && past > 40));
-    el.title = 'Window ' + window.outerWidth + ' wide at ' + x + '; screen ' + screen.availWidth + ' wide at ' + left +
-      '; page ' + window.innerWidth + ' CSS px at ' + Math.round((window.devicePixelRatio || 1) * 100) + '% scale';
+    var el = $('#offscreen'), text = $('#offscreenText');
+    if (!el || offscreenDismissed) return;
+    var pinch = (window.visualViewport && window.visualViewport.scale) || 1;
+    var past = 0, left = 0, x = 0;
+    if (window.screen && screen.availWidth) {
+      left = (typeof screen.availLeft === 'number') ? screen.availLeft : 0;
+      x = (typeof window.screenX === 'number') ? window.screenX : left;
+      past = window.outerWidth > 0 ? Math.max((x + window.outerWidth) - (left + screen.availWidth), left - x) : 0;
+    }
+    var msg = '';
+    if (pinch > 1.02) {
+      msg = '<b>This page is zoomed in to about ' + Math.round(pinch * 100) + '% with a touchpad pinch,</b> so its right side is out of view. ' +
+            'Pinch outwards with two fingers on the touchpad until the whole page shows (or reload the page).';
+    } else if (past > 40) {
+      msg = '<b>This browser window is wider than your screen,</b> so the right side of the page may be hidden. ' +
+            'Maximize the window (double-click its title bar, or press Windows key + Up) to see everything.';
+    }
+    if (msg && text.innerHTML !== msg) text.innerHTML = msg;
+    el.classList.toggle('hidden', !msg);
+    el.title = 'Pinch zoom ' + Math.round(pinch * 100) + '%; window ' + window.outerWidth + ' wide at ' + x + '; screen ' +
+      (window.screen ? screen.availWidth : '?') + ' wide at ' + left + '; page ' + window.innerWidth + ' CSS px; device scale ' +
+      Math.round((window.devicePixelRatio || 1) * 100) + '%';
   }
   window.addEventListener('resize', checkOffscreen);
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', checkOffscreen);   // pinching fires this
   setInterval(checkOffscreen, 3000);             // moving a window fires no event
   async function boot() {
     try {
