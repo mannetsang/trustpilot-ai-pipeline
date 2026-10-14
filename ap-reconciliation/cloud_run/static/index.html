@@ -42,7 +42,6 @@
     }
     html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
     html, body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: var(--text); line-height: 1.45; -webkit-font-smoothing: antialiased; font-variant-numeric: tabular-nums; font-size: 14px; }
-    body { overflow-x: hidden; }
     .hidden { display: none !important; }
 
     .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--card-shadow); }
@@ -109,6 +108,10 @@
     #main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
     #topbar { background: var(--surface); border-bottom: 1px solid var(--border-subtle); min-height: 56px; display: flex; align-items: center; gap: 12px; padding: 8px 16px; position: sticky; top: 0; z-index: 20; }
     #content { padding: 16px; max-width: 1480px; width: 100%; }
+    #offscreen { display: flex; align-items: center; gap: 10px; max-width: 980px; margin: 0 0 10px; padding: 8px 12px; border-radius: 10px;
+                 background: var(--warn); color: var(--warn-text); font-size: 12.5px; border: 1px solid #f3dca8; }
+    #offscreen b { color: #6b4500; }
+    #offscreen button { flex-shrink: 0; }      /* next to the text: the far right is what may be hidden */
     #mobileNav { display: none; flex: 1; min-width: 0; }
     @media (max-width: 899px) {
       #sidebar { display: none; }
@@ -299,6 +302,11 @@
     </header>
 
     <div id="content">
+      <div id="offscreen" class="hidden" role="status">
+        <span><b>This browser window is wider than your screen,</b> so the right side of the page may be hidden.
+        Maximize the window (double-click its title bar, or press Windows key + Up) to see everything.</span>
+        <button id="offscreenClose" class="btn btn-ghost btn-xs" type="button">Dismiss</button>
+      </div>
       <div id="emptyState" class="hidden card empty">
         <div class="text-base font-semibold" style="color: var(--text);" id="emptyTitle">Nothing to show yet</div>
         <div class="text-sm mt-1" id="emptyBody">No statement has been uploaded.</div>
@@ -545,6 +553,22 @@
   // ---------------------------------------------------------------------------
   // Loading
   // ---------------------------------------------------------------------------
+  // The page fits the browser window, but a window that runs past the edge of the screen hides its
+  // right side (screen sizes and window positions are in the same screen units, whatever the zoom).
+  // Windows puts an 8px invisible border round a maximized window, hence the allowance.
+  var offscreenDismissed = false;
+  function checkOffscreen() {
+    var el = $('#offscreen');
+    if (!el || offscreenDismissed || !window.screen || !screen.availWidth) return;
+    var left = (typeof screen.availLeft === 'number') ? screen.availLeft : 0;
+    var x = (typeof window.screenX === 'number') ? window.screenX : left;
+    var past = Math.max((x + window.outerWidth) - (left + screen.availWidth), left - x);
+    el.classList.toggle('hidden', !(window.outerWidth > 0 && past > 40));
+    el.title = 'Window ' + window.outerWidth + ' wide at ' + x + '; screen ' + screen.availWidth + ' wide at ' + left +
+      '; page ' + window.innerWidth + ' CSS px at ' + Math.round((window.devicePixelRatio || 1) * 100) + '% scale';
+  }
+  window.addEventListener('resize', checkOffscreen);
+  setInterval(checkOffscreen, 3000);             // moving a window fires no event
   async function boot() {
     try {
       var res = await fetch('/api/config', { cache: 'no-store', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
@@ -1343,6 +1367,8 @@
     var p = ev.target.value.split('-'); if (p.length === 2) navigate(Number(p[0]), Number(p[1]), '');
   });
   $('#gateReload').addEventListener('click', function () { location.reload(); });
+  $('#offscreenClose').addEventListener('click', function () { offscreenDismissed = true; $('#offscreen').classList.add('hidden'); });
+  checkOffscreen();
   $('#gateForm').addEventListener('submit', async function (ev) {
     ev.preventDefault();
     var box = $('#gatePassword'), btn = $('#gateSubmit'), err = $('#gateErr');
