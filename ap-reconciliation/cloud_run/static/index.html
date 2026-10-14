@@ -235,6 +235,14 @@
     .list-wrap { overflow-x: auto; }
 
     #toast { position: fixed; right: 16px; bottom: 16px; z-index: 60; display: flex; flex-direction: column; gap: 8px; max-width: calc(100vw - 32px); }
+    /* Pinched in (a touchpad pinch magnifies the page without laying it out again): the app takes the
+       width of the visible area and follows it, and what is pinned to the window is pinned to the
+       visible area instead (--vv-* are set from window.visualViewport). */
+    html.vv-fit #app { width: var(--vv-width); margin-left: var(--vv-left); }
+    html.vv-fit #sidebar { height: var(--vv-height); top: var(--vv-top); }
+    html.vv-fit #topbar { top: var(--vv-top); }
+    html.vv-fit #toast { right: calc(var(--vv-right) + 16px); bottom: calc(var(--vv-bottom) + 16px); max-width: calc(var(--vv-width) - 32px); }
+    html.vv-fit .modal-backdrop, html.vv-fit #gate { inset: auto; left: var(--vv-left); top: var(--vv-top); width: var(--vv-width); height: var(--vv-height); }
     .toast { background: #1d2128; color: #fff; padding: 10px 14px; border-radius: 10px; font-size: 13px; box-shadow: 0 10px 30px rgba(0,0,0,0.25); max-width: 420px; animation: toast-in .18s ease; }
     .toast.err { background: var(--down); }
     .toast.ok { background: var(--brand-ink); }
@@ -569,10 +577,7 @@
       past = window.outerWidth > 0 ? Math.max((x + window.outerWidth) - (left + screen.availWidth), left - x) : 0;
     }
     var msg = '';
-    if (pinch > 1.02) {
-      msg = '<b>This page is zoomed in to about ' + Math.round(pinch * 100) + '% with a touchpad pinch,</b> so its right side is out of view. ' +
-            'Pinch outwards with two fingers on the touchpad until the whole page shows (or reload the page).';
-    } else if (past > 40) {
+    if (past > 40) {
       msg = '<b>This browser window is wider than your screen,</b> so the right side of the page may be hidden. ' +
             'Maximize the window (double-click its title bar, or press Windows key + Up) to see everything.';
     }
@@ -583,8 +588,35 @@
       Math.round((window.devicePixelRatio || 1) * 100) + '%';
   }
   window.addEventListener('resize', checkOffscreen);
-  if (window.visualViewport) window.visualViewport.addEventListener('resize', checkOffscreen);   // pinching fires this
   setInterval(checkOffscreen, 3000);             // moving a window fires no event
+
+  // Pinched in: lay the page out for the visible area rather than the whole window, so nothing is out
+  // of view on the right (the page is just larger). Undone as soon as the pinch is.
+  var vvFrame = 0, vvLastWidth = -1;
+  function fitToVisible() {
+    vvFrame = 0;
+    var vv = window.visualViewport, root = document.documentElement;
+    var on = !!(vv && vv.scale > 1.02);
+    root.classList.toggle('vv-fit', on);
+    if (on) {
+      var cw = root.clientWidth, ch = root.clientHeight;
+      root.style.setProperty('--vv-width', Math.floor(vv.width) + 'px');
+      root.style.setProperty('--vv-height', Math.floor(vv.height) + 'px');
+      root.style.setProperty('--vv-left', Math.max(0, Math.round(vv.offsetLeft)) + 'px');
+      root.style.setProperty('--vv-top', Math.max(0, Math.round(vv.offsetTop)) + 'px');
+      root.style.setProperty('--vv-right', Math.max(0, Math.round(cw - vv.offsetLeft - vv.width)) + 'px');
+      root.style.setProperty('--vv-bottom', Math.max(0, Math.round(ch - vv.offsetTop - vv.height)) + 'px');
+    }
+    var width = on ? Math.floor(vv.width) : 0;
+    if (state.loaded && width !== vvLastWidth) renderCols();        // the table fits the new width
+    else if (state.loaded) setStickyTop();
+    vvLastWidth = width;
+  }
+  function queueFit() { if (!vvFrame) vvFrame = requestAnimationFrame(fitToVisible); }
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', queueFit);     // pinching fires this
+    window.visualViewport.addEventListener('scroll', queueFit);     // so does panning while pinched in
+  }
   async function boot() {
     try {
       var res = await fetch('/api/config', { cache: 'no-store', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
@@ -812,8 +844,12 @@
     // Fits: no sideways scrolling, so the header row can stick under the top bar while the page scrolls.
     var fits = sum <= avail + 1;
     if (wrap) wrap.classList.toggle('fits', fits);
-    var bar = $('#topbar');
-    document.documentElement.style.setProperty('--sticky-top', (bar ? bar.offsetHeight : 0) + 'px');
+    setStickyTop();
+  }
+  function setStickyTop() {
+    var bar = $('#topbar'), root = document.documentElement, vv = window.visualViewport;
+    var top = root.classList.contains('vv-fit') && vv ? Math.max(0, Math.round(vv.offsetTop)) : 0;
+    root.style.setProperty('--sticky-top', (top + (bar ? bar.offsetHeight : 0)) + 'px');
   }
   function renderHead() {
     $('#txnHead').innerHTML = shownColumns().map(function (c) {
@@ -1385,6 +1421,7 @@
   $('#gateReload').addEventListener('click', function () { location.reload(); });
   $('#offscreenClose').addEventListener('click', function () { offscreenDismissed = true; $('#offscreen').classList.add('hidden'); });
   checkOffscreen();
+  fitToVisible();
   $('#gateForm').addEventListener('submit', async function (ev) {
     ev.preventDefault();
     var box = $('#gatePassword'), btn = $('#gateSubmit'), err = $('#gateErr');
