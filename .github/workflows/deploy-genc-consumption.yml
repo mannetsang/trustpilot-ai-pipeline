@@ -1,0 +1,78 @@
+name: Deploy GenC Consumption dashboard
+
+# Deploys genc-consumption/cloud_run to the Cloud Run service `genc-consumption`
+# in its own project, genc-consumption-2026 (see genc-consumption/README.md).
+#
+# Access: Google sign-in through Identity-Aware Proxy. No public invoker
+# (--no-allow-unauthenticated --iap); only the superhairpieces.com domain is on
+# IAP's access list, and the app verifies IAP's signed header against
+# IAP_AUDIENCE.
+#
+# The Supabase service-role key reaches the container as a Secret Manager
+# reference (genc-consumption-2026/supabase-service-key), never as a value in
+# this file. The Supabase URL, the sheet id and the audience are identifiers,
+# not secrets.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'genc-consumption/cloud_run/**'
+      - '.github/workflows/deploy-genc-consumption.yml'
+  workflow_dispatch:
+
+# Keyless Google Cloud auth (Workload Identity Federation): GitHub's OIDC token
+# is swapped for claude-sessions' credentials, which is Owner on
+# genc-consumption-2026. No JSON key is stored. See docs/credentials.md.
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT: genc-consumption-2026
+  REGION: northamerica-northeast1
+  SERVICE: genc-consumption
+  RUNTIME_SA: consumption-dashboard@genc-consumption-2026.iam.gserviceaccount.com
+  SUPABASE_URL: https://zitrqrchbdracjvxbwtn.supabase.co
+  SPREADSHEET_ID: 1fc2OkX2f9jfMlYxHSPuvyFP2p13JygwrguWxJQkeNdE
+  ALLOWED_DOMAINS: superhairpieces.com
+  ADMIN_EMAILS: manne@superhairpieces.com,anais@superhairpieces.com
+  IAP_AUDIENCE: /projects/83164121214/locations/northamerica-northeast1/services/genc-consumption
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Unit tests
+        run: |
+          pip install -q -r genc-consumption/cloud_run/requirements.txt
+          cd genc-consumption && python -m unittest discover -s tests -v
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/304363458561/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: claude-sessions@shp-ai-bot-2026.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      # "^;^" makes gcloud split the env-var list on semicolons, because
+      # ADMIN_EMAILS holds a comma-separated list itself. --set-env-vars
+      # replaces the whole set, so every variable is listed here.
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --source ./genc-consumption/cloud_run \
+            --region "$REGION" --project "$PROJECT" \
+            --service-account "$RUNTIME_SA" \
+            --no-allow-unauthenticated --iap \
+            --min-instances 0 --max-instances 2 --memory 512Mi --timeout 120 \
+            --set-env-vars "^;^SUPABASE_URL=$SUPABASE_URL;IAP_AUDIENCE=$IAP_AUDIENCE;ALLOWED_DOMAINS=$ALLOWED_DOMAINS;ADMIN_EMAILS=$ADMIN_EMAILS;SPREADSHEET_ID=$SPREADSHEET_ID" \
+            --set-secrets "SUPABASE_SERVICE_KEY=supabase-service-key:latest" \
+            --quiet
+          gcloud run services describe "$SERVICE" --region "$REGION" --project "$PROJECT" --format 'value(status.url)'

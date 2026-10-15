@@ -110,6 +110,21 @@ Storage is a **separate Supabase project** (ref
 with `setup_db.py`), not shared with anything else. Secrets are `ap-reconciliation-*` plus the AP user's Drive
 OAuth triple `google-workspace-ap-*`; see `ap-reconciliation/README.md`.
 
+### GenC Consumption dashboard
+
+Cloud Run `genc-consumption` (source `genc-consumption/`) in its **own GCP
+project** `genc-consumption-2026` (`northamerica-northeast1`, behind IAP for the
+`superhairpieces.com` domain, runtime SA
+`consumption-dashboard@genc-consumption-2026.iam.gserviceaccount.com`): GenC
+Beauty's office-use stock consumption. Rows from before the dashboard are read
+live from the Google Sheet **office use**
+(`1fc2OkX2f9jfMlYxHSPuvyFP2p13JygwrguWxJQkeNdE`, tab `明细`; reasons from
+`Note Ref`, costs from `Cost Ref`), never copied; rows entered on the dashboard
+go to the **separate Supabase project** GenC Consumption (ref
+`zitrqrchbdracjvxbwtn`, schema `genc-consumption/schema.sql`). Its secrets
+(`supabase-service-key`, `supabase-db-password`) live in that project's own
+Secret Manager, not on `shp-ai-bot-2026`. See `genc-consumption/README.md`.
+
 ### Known data-quality caveats
 
 - `payment_method` on orders contains free text in places (service-request

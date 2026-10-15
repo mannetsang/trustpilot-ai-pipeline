@@ -1,0 +1,1124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GenC Consumption</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232a78d6'/%3E%3Cpath d='M9 22V13M15 22V9M21 22v-6' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --surface-2: #f3f2ee;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.10);
+  --accent: #2a78d6;
+  --accent-ink: #ffffff;
+  --neutral-bar: #8a8983;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+  --s5: #e87ba4; --s6: #008300; --s7: #6250d6; --s8: #e34948;
+  --s-other: #b4b3ab;
+  --good: #0ca30c; --good-ink: #006300;
+  --warning: #fab219; --warning-ink: #8a5a00;
+  --critical: #d03b3b;
+  --shadow: 0 1px 2px rgba(11, 11, 11, 0.04), 0 8px 24px rgba(11, 11, 11, 0.06);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --surface-2: #232321;
+    --ink: #f0efec;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255, 255, 255, 0.10);
+    --accent: #3987e5;
+    --neutral-bar: #8f8e87;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+    --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+    --s-other: #5c5b56;
+    --good-ink: #0ca30c;
+    --warning-ink: #fab219;
+    --shadow: none;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--page); color: var(--ink);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+a { color: var(--accent); }
+.wrap { max-width: 1280px; margin: 0 auto; padding: 0 16px 48px; }
+
+/* Header */
+.top { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding: 18px 0 14px; }
+.brand { display: flex; align-items: center; gap: 12px; margin-right: auto; min-width: 0; }
+.logo { width: 36px; height: 36px; border-radius: 10px; background: var(--accent); display: grid; place-items: center; flex: none; }
+.brand h1 { font-size: 18px; margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+.brand p { margin: 0; color: var(--ink-2); font-size: 13px; }
+.who { display: flex; align-items: center; gap: 10px; color: var(--ink-2); font-size: 13px; flex-wrap: wrap; }
+.who a { color: var(--ink-2); }
+.btn {
+  border: 1px solid var(--border); background: var(--surface); border-radius: 8px;
+  padding: 7px 12px; cursor: pointer; white-space: nowrap;
+}
+.btn:hover { background: var(--surface-2); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; font-weight: 600; }
+.btn.primary:hover { filter: brightness(1.06); }
+.btn.small { padding: 3px 8px; font-size: 12px; }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--ink-2); }
+.btn.ghost:hover { background: var(--surface-2); }
+.btn.danger { color: var(--critical); }
+.btn:disabled { opacity: 0.5; cursor: default; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Notices */
+.notice { border: 1px solid var(--border); border-left: 3px solid var(--warning); background: var(--surface);
+  border-radius: 8px; padding: 10px 12px; margin: 0 0 12px; display: flex; gap: 10px; align-items: flex-start; }
+.notice.error { border-left-color: var(--critical); }
+
+/* Filters */
+.filters { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: end; margin: 4px 0 16px; }
+.filters label { display: grid; gap: 3px; font-size: 12px; color: var(--muted); }
+.filters select, .filters input {
+  min-width: 0; border: 1px solid var(--border); background: var(--surface); border-radius: 8px; padding: 6px 8px; height: 34px;
+}
+.filters .search { flex: 1 1 200px; }
+.filters .search input { width: 100%; }
+.filters .reset { margin-bottom: 1px; }
+
+/* Cards */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); padding: 16px; min-width: 0; }
+.card-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.card-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.card-head .sub { color: var(--muted); font-size: 12px; }
+.card-head .spacer { margin-left: auto; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; background: transparent; padding: 4px 10px; cursor: pointer; font-size: 12px; color: var(--ink-2); }
+.seg button[aria-pressed="true"] { background: var(--surface-2); color: var(--ink); font-weight: 600; }
+main.busy { opacity: 0.55; transition: opacity 0.15s; }
+
+/* Tiles */
+.tiles { display: grid; grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+.tile { display: flex; flex-direction: column; gap: 4px; }
+.tile .label { color: var(--ink-2); font-size: 13px; }
+.tile .value { font-size: 28px; font-weight: 650; letter-spacing: -0.02em; line-height: 1.15; }
+.tile.hero .value { font-size: 48px; }
+.tile .foot { color: var(--muted); font-size: 12px; }
+.tile button.linkish { all: unset; cursor: pointer; color: var(--accent); font-size: 12px; }
+.tile button.linkish:focus-visible { outline: 2px solid var(--accent); }
+.status { display: inline-flex; align-items: center; gap: 6px; }
+.status .ic { width: 16px; height: 16px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 11px; font-weight: 700; color: #fff; flex: none; }
+.status.ok .ic { background: var(--good); }
+.status.wait .ic { background: var(--warning); color: #3a2a00; }
+
+/* Charts */
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 10px; height: 10px; border-radius: 2px; flex: none; display: inline-block; }
+.chart svg { display: block; width: 100%; overflow: visible; }
+.chart text { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.chart text.cap { fill: var(--ink-2); font-weight: 600; }
+.chart .hit { fill: transparent; cursor: pointer; }
+.chart .hit:hover, .chart .hit:focus { fill: var(--ink); fill-opacity: 0.04; outline: none; }
+.chart .dim { opacity: 0.28; }
+.grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 12px 0; }
+.bars { display: grid; gap: 6px; }
+.bar-row { display: grid; grid-template-columns: minmax(0, 40%) minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 3px 4px; border-radius: 6px; cursor: default; }
+.bar-row:hover, .bar-row:focus { background: var(--surface-2); outline: none; }
+.bar-row[data-filter] { cursor: pointer; }
+.bar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; display: flex; align-items: center; gap: 6px; min-width: 0; }
+.bar-label > span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.bar-track { height: 12px; position: relative; }
+.bar-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 0 4px 4px 0; min-width: 2px; }
+.bar-val { font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.empty { color: var(--muted); font-size: 13px; padding: 20px 0; text-align: center; }
+
+/* Tables */
+.table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { padding: 7px 8px; text-align: left; border-bottom: 1px solid var(--grid); white-space: nowrap; vertical-align: middle; }
+th { color: var(--muted); font-weight: 500; font-size: 12px; position: sticky; top: 0; background: var(--surface); }
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { color: var(--ink); }
+th[aria-sort="ascending"]::after { content: " ▲"; font-size: 9px; }
+th[aria-sort="descending"]::after { content: " ▼"; font-size: 9px; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+td.sku { white-space: normal; min-width: 220px; max-width: 360px; }
+td.wrapcell { white-space: normal; min-width: 90px; max-width: 200px; }
+tr.total td { font-weight: 600; border-bottom: 0; }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: 1px; }
+.src { font-size: 12px; color: var(--muted); }
+.src a { color: var(--muted); }
+.tag { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--surface-2); color: var(--ink-2); }
+.check { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; vertical-align: middle; }
+.ro-check { color: var(--good-ink); font-weight: 700; }
+.ro-cross { color: var(--muted); }
+.muted { color: var(--muted); }
+.more { text-align: center; padding-top: 10px; }
+
+/* Dialog */
+dialog { border: 1px solid var(--border); border-radius: 14px; padding: 0; background: var(--surface); color: var(--ink);
+  width: min(860px, calc(100vw - 32px)); max-height: calc(100vh - 32px); box-shadow: 0 20px 60px rgba(0,0,0,0.25); }
+dialog::backdrop { background: rgba(11, 11, 11, 0.35); }
+.dlg { display: flex; flex-direction: column; max-height: calc(100vh - 34px); }
+.dlg-head { padding: 16px 18px 8px; display: flex; align-items: center; gap: 10px; }
+.dlg-head h2 { margin: 0; font-size: 17px; }
+.dlg-body { padding: 8px 18px 12px; overflow: auto; }
+.dlg-foot { padding: 12px 18px 16px; display: flex; gap: 10px; align-items: center; border-top: 1px solid var(--grid); flex-wrap: wrap; }
+.dlg-foot .total { margin-right: auto; color: var(--ink-2); }
+.dlg-foot .total b { color: var(--ink); font-size: 16px; }
+.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.field { display: grid; gap: 4px; font-size: 12px; color: var(--ink-2); min-width: 0; }
+.field input, .field select { border: 1px solid var(--border); background: var(--page); border-radius: 8px; padding: 7px 9px; height: 36px; width: 100%; min-width: 0; }
+.field input:disabled { opacity: 0.6; }
+.field.full { grid-column: 1 / -1; }
+.reasons { display: flex; flex-wrap: wrap; gap: 6px; }
+.reasons label { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: 13px; color: var(--ink); background: var(--page); }
+.reasons input { position: absolute; opacity: 0; pointer-events: none; }
+.reasons label:has(input:checked) { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.reasons label:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.reasons label:has(input:disabled) { opacity: 0.6; cursor: default; }
+h3.section { font-size: 13px; margin: 18px 0 8px; color: var(--ink-2); font-weight: 600; }
+.items { display: grid; gap: 8px; }
+.item { display: grid; grid-template-columns: minmax(0, 1fr) 84px 110px 96px 32px; gap: 8px; align-items: start; }
+.item .cell { position: relative; min-width: 0; }
+.item input { border: 1px solid var(--border); background: var(--page); border-radius: 8px; padding: 7px 9px; height: 36px; width: 100%; min-width: 0; }
+.item .hint { font-size: 11px; color: var(--muted); margin-top: 3px; }
+.item .hint.warn { color: var(--warning-ink); }
+.item .sub { padding-top: 8px; text-align: right; font-variant-numeric: tabular-nums; }
+.item-head { display: grid; grid-template-columns: minmax(0, 1fr) 84px 110px 96px 32px; gap: 8px; font-size: 12px; color: var(--muted); }
+.item-head span:nth-child(4) { text-align: right; }
+.suggest { position: absolute; z-index: 5; left: 0; right: 0; top: 38px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,0.15); max-height: 260px; overflow: auto; }
+.suggest div { padding: 7px 10px; cursor: pointer; display: flex; gap: 10px; justify-content: space-between; font-size: 13px; }
+.suggest div span:last-child { color: var(--muted); font-variant-numeric: tabular-nums; }
+.suggest div[aria-selected="true"], .suggest div:hover { background: var(--surface-2); }
+.statuses { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 4px; }
+.statuses label { display: inline-flex; gap: 8px; align-items: center; font-size: 13px; cursor: pointer; }
+.form-error { color: var(--critical); font-size: 13px; margin-top: 10px; min-height: 1em; }
+.perm-note { font-size: 12px; color: var(--muted); margin: 0 0 10px; }
+
+/* Tooltip & toast */
+#tip { position: fixed; z-index: 50; pointer-events: none; background: var(--surface); color: var(--ink); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 10px; font-size: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.18); min-width: 150px; max-width: 280px; display: none; }
+#tip .t-head { color: var(--ink-2); margin-bottom: 4px; }
+#tip .t-row { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+#tip .t-row .k { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-2); }
+#tip .t-row .key { width: 10px; height: 2px; border-radius: 1px; display: inline-block; }
+#tip .t-row b { font-variant-numeric: tabular-nums; }
+#toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: var(--surface);
+  padding: 9px 14px; border-radius: 8px; font-size: 13px; z-index: 60; display: none; max-width: calc(100vw - 32px); }
+footer { color: var(--muted); font-size: 12px; margin-top: 18px; line-height: 1.6; }
+footer a { color: var(--muted); }
+
+@media (max-width: 980px) {
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tile.hero { grid-column: 1 / -1; }
+  .grid3 { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 640px) {
+  .tile.hero .value { font-size: 40px; }
+  .tile .value { font-size: 22px; }
+  .form-grid { grid-template-columns: minmax(0, 1fr); }
+  .item, .item-head { grid-template-columns: minmax(0, 1fr) 70px 32px; }
+  .item .cell.cost { grid-column: 1 / 2; }
+  .item .sub { grid-column: 2 / 3; }
+  .item-head span:nth-child(3), .item-head span:nth-child(4) { display: none; }
+  .filters label { flex: 1 1 calc(50% - 10px); }
+  .filters select { width: 100%; }
+}
+@media (forced-colors: active) {
+  .bar-fill, .sw, .dot { forced-color-adjust: none; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <div class="logo" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 32 32"><path d="M9 24V14M16 24V8M23 24v-7" stroke="white" stroke-width="3.4" stroke-linecap="round" fill="none"/></svg></div>
+      <div>
+        <h1>GenC Consumption</h1>
+        <p>Stock taken out of GenC Beauty inventory for office use</p>
+      </div>
+    </div>
+    <div class="who">
+      <span id="who"></span>
+      <a id="switch" href="/_gcp_iap/clear_login_cookie" hidden>Switch account</a>
+      <button class="btn primary" id="add-btn" type="button" disabled>+ Add items</button>
+    </div>
+  </header>
+
+  <div id="notices"></div>
+
+  <section class="filters" aria-label="Filters">
+    <label>Year <select id="f-year"></select></label>
+    <label>Month <select id="f-month"></select></label>
+    <label>Reason <select id="f-reason"></select></label>
+    <label>Requested by <select id="f-who"></select></label>
+    <label>Status <select id="f-status">
+      <option value="">All</option>
+      <option value="waiting">Waiting (拿货 / 出库)</option>
+      <option value="done">Done</option>
+    </select></label>
+    <label>Source <select id="f-source">
+      <option value="">Both</option>
+      <option value="sheet">Google Sheet</option>
+      <option value="app">Dashboard</option>
+    </select></label>
+    <label class="search">Search <input id="f-q" type="search" placeholder="SKU, sent to, requester…" autocomplete="off"></label>
+    <button class="btn ghost reset" id="f-reset" type="button">Reset</button>
+  </section>
+
+  <main id="main">
+    <section class="tiles" id="tiles" aria-label="Totals"></section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Spend by month</h2>
+        <span class="sub" id="month-sub"></span>
+        <span class="spacer"></span>
+        <div class="seg" role="group" aria-label="View">
+          <button type="button" id="v-chart" aria-pressed="true">Chart</button>
+          <button type="button" id="v-table" aria-pressed="false">Table</button>
+        </div>
+      </div>
+      <div class="legend" id="month-legend"></div>
+      <div class="chart" id="month-chart" style="margin-top:8px"></div>
+      <div class="table-wrap" id="month-table" hidden></div>
+    </section>
+
+    <section class="grid3">
+      <div class="card">
+        <div class="card-head"><h2>By reason</h2><span class="sub">click to filter</span></div>
+        <div class="bars" id="by-reason"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>By requester</h2><span class="sub">top 8</span></div>
+        <div class="bars" id="by-who"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Top SKUs</h2><span class="sub">by cost</span></div>
+        <div class="bars" id="by-sku"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Lines</h2>
+        <span class="sub" id="lines-sub"></span>
+        <span class="spacer"></span>
+        <button class="btn small" id="csv-btn" type="button">Download CSV</button>
+      </div>
+      <div class="table-wrap"><table id="lines"></table></div>
+      <div class="more" id="more" hidden><button class="btn small" type="button" id="more-btn">Show more</button></div>
+    </section>
+  </main>
+
+  <footer id="footer"></footer>
+</div>
+
+<dialog id="dlg" aria-labelledby="dlg-title">
+  <form class="dlg" id="dlg-form" method="dialog" novalidate>
+    <div class="dlg-head"><h2 id="dlg-title">Add items</h2></div>
+    <div class="dlg-body">
+      <p class="perm-note" id="perm-note" hidden></p>
+      <div class="form-grid">
+        <label class="field">Date <input type="date" id="e-date" required></label>
+        <label class="field">Requested by <input id="e-who" list="dl-who" maxlength="80" required autocomplete="off"></label>
+        <div class="field full">Reason <div class="reasons" id="e-reasons" role="radiogroup" aria-label="Reason"></div></div>
+        <label class="field">Sent to / purpose <input id="e-sent" list="dl-sent" maxlength="200" placeholder="e.g. 展会, 包装用, STC门店用" autocomplete="off"></label>
+        <label class="field" id="e-process-wrap" hidden>Process date <input type="date" id="e-process"></label>
+      </div>
+      <h3 class="section">Items</h3>
+      <div class="item-head" aria-hidden="true"><span>SKU (from Cost Ref)</span><span>Qty</span><span>Unit cost CAD</span><span>Subtotal</span><span></span></div>
+      <div class="items" id="e-items"></div>
+      <div style="margin-top:8px"><button type="button" class="btn small" id="e-add-line">+ Another item</button></div>
+      <h3 class="section">Status</h3>
+      <div class="statuses">
+        <label><input type="checkbox" class="check" id="e-picked"> 拿货 Picked up</label>
+        <label><input type="checkbox" class="check" id="e-issued"> 出库 Stocked out</label>
+      </div>
+      <div class="form-error" id="e-error" role="alert"></div>
+    </div>
+    <div class="dlg-foot">
+      <span class="total">Total <b id="e-total">$0.00</b></span>
+      <button type="button" class="btn danger" id="e-delete" hidden>Delete line</button>
+      <button type="button" class="btn" id="e-cancel">Cancel</button>
+      <button type="submit" class="btn primary" id="e-save">Save</button>
+    </div>
+  </form>
+</dialog>
+<datalist id="dl-who"></datalist>
+<datalist id="dl-sent"></datalist>
+<div id="tip" role="tooltip"></div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+(() => {
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const GLOSS = { "视频需要": "Video", "样品需要": "Samples", "客户需求": "Customer", "跨部门": "Cross-dept" };
+const PAGE = 100;
+const money = new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", currencyDisplay: "narrowSymbol" });
+const num = new Intl.NumberFormat("en-CA", { maximumFractionDigits: 2 });
+const $ = (id) => document.getElementById(id);
+
+const state = {
+  data: null, reasons: [], user: null, config: null,
+  view: "chart", sort: { key: "entry_date", dir: -1 }, shown: PAGE,
+  f: { year: "", month: "", reason: "", who: "", status: "", source: "", q: "" },
+};
+
+// ---------- helpers ----------
+function el(tag, attrs, ...kids) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "class") node.className = v;
+    else if (k === "text") node.textContent = v;
+    else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
+    else if (k === "style") node.setAttribute("style", v);
+    else node.setAttribute(k, v === true ? "" : v);
+  }
+  for (const kid of kids.flat()) if (kid !== null && kid !== undefined && kid !== false) node.append(kid instanceof Node ? kid : String(kid));
+  return node;
+}
+const svgNS = "http://www.w3.org/2000/svg";
+function sv(tag, attrs, text) {
+  const node = document.createElementNS(svgNS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) node.setAttribute(k, v);
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+function fmtMoney(v) { return v === null || v === undefined ? "—" : money.format(v); }
+function compactMoney(v) {
+  if (Math.abs(v) >= 1000) return "$" + (v / 1000).toFixed(v >= 10000 ? 0 : 1).replace(/\.0$/, "") + "K";
+  return "$" + Math.round(v);
+}
+function reasonLabel(r) { return GLOSS[r] ? `${r} · ${GLOSS[r]}` : (r || "(no reason)"); }
+function reasonColor(r) {
+  const i = state.reasons.indexOf(r);
+  return i >= 0 && i < 8 ? `var(--s${i + 1})` : "var(--s-other)";
+}
+function toast(msg) {
+  const t = $("toast"); t.textContent = msg; t.style.display = "block";
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => { t.style.display = "none"; }, 3200);
+}
+
+async function api(method, path, body) {
+  const opts = { method, headers: { "X-Requested-With": "XMLHttpRequest" }, credentials: "same-origin" };
+  if (body !== undefined) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
+  let res;
+  try { res = await fetch(path, opts); } catch (e) { throw new Error("Network error: " + e.message); }
+  let json = null;
+  try { json = await res.json(); } catch (e) { /* not JSON: IAP's own pages */ }
+  if (res.status === 401 || (!json && (res.status === 302 || res.status === 403))) {
+    sessionEnded();
+    throw new Error("Your Google session has ended. Reload the page to sign in again.");
+  }
+  if (!res.ok) throw new Error((json && json.error) || `HTTP ${res.status}`);
+  return json;
+}
+
+function sessionEnded() {
+  const box = $("notices");
+  if (box.querySelector("[data-session]")) return;
+  box.prepend(el("div", { class: "notice error", "data-session": "1" },
+    el("span", { text: "Your Google session has ended." }),
+    el("button", { class: "btn small", type: "button", onclick: () => location.reload() }, "Reload")));
+}
+
+// ---------- data ----------
+function prep(r) {
+  r._date = r.entry_date || "";
+  r._year = r._date.slice(0, 4);
+  r._month = r._date ? Number(r._date.slice(5, 7)) : 0;
+  r._waiting = !(r.picked_up && r.issued);
+  r._search = [r.sku, r.sent_to, r.request_by, r.reason, r.created_by].join(" ").toLowerCase();
+  // Tie-break for sorting: sheet rows in sheet order, then dashboard lines in the order entered.
+  r._order = r.source === "sheet" ? r.sheet_row : 1e13 + (Date.parse(r.created_at) || 0);
+  return r;
+}
+
+async function load(first) {
+  $("main").classList.add("busy");
+  try {
+    const data = await api("GET", "/api/data");
+    state.data = data;
+    state.reasons = data.reasons || [];
+    state.user = data.user;
+    data.rows.forEach(prep);
+    if (first) initFilters();
+    else refreshFilterOptions();
+    renderNotices();
+    render();
+    $("add-btn").disabled = false;
+  } catch (e) {
+    renderError(e.message);
+  } finally {
+    $("main").classList.remove("busy");
+  }
+}
+
+function renderError(msg) {
+  $("notices").replaceChildren(el("div", { class: "notice error" }, el("span", { text: msg })));
+}
+
+function renderNotices() {
+  const box = $("notices");
+  box.querySelectorAll("[data-warning]").forEach((n) => n.remove());
+  for (const w of state.data.warnings || []) box.append(el("div", { class: "notice", "data-warning": "1" }, el("span", { text: w })));
+}
+
+// ---------- filters ----------
+function years() {
+  const ys = new Set(state.data.rows.map((r) => r._year).filter(Boolean));
+  ys.add(state.data.today.slice(0, 4));
+  return [...ys].sort().reverse();
+}
+function options(select, items, current, allLabel) {
+  select.replaceChildren(...(allLabel ? [el("option", { value: "" }, allLabel)] : []),
+    ...items.map(([v, label]) => el("option", { value: v, selected: String(v) === String(current) }, label)));
+  select.value = current;
+  if (select.value !== String(current)) select.value = "";
+}
+function refreshFilterOptions() {
+  const f = state.f;
+  options($("f-year"), years().map((y) => [y, y]), f.year);
+  if (!$("f-year").value) { f.year = years()[0]; $("f-year").value = f.year; }
+  options($("f-month"), MONTHS.map((m, i) => [String(i + 1), m]), f.month, "All months");
+  const reasonsSeen = [...new Set([...state.reasons, ...state.data.rows.map((r) => r.reason).filter(Boolean)])];
+  options($("f-reason"), reasonsSeen.map((r) => [r, reasonLabel(r)]), f.reason, "All reasons");
+  const whos = [...new Set(state.data.rows.map((r) => r.request_by).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  options($("f-who"), whos.map((w) => [w, w]), f.who, "Everyone");
+  $("dl-who").replaceChildren(...whos.map((w) => el("option", { value: w })));
+  const sents = [...new Set(state.data.rows.map((r) => r.sent_to).filter(Boolean))].sort();
+  $("dl-sent").replaceChildren(...sents.map((s) => el("option", { value: s })));
+}
+function initFilters() {
+  const saved = (() => { try { return JSON.parse(sessionStorage.getItem("gc-filters") || "{}"); } catch (e) { return {}; } })();
+  Object.assign(state.f, saved);
+  if (!state.f.year) state.f.year = state.data.today.slice(0, 4);
+  refreshFilterOptions();
+  $("f-status").value = state.f.status; $("f-source").value = state.f.source; $("f-q").value = state.f.q;
+  const bind = (id, key, ev = "change") => $(id).addEventListener(ev, () => { state.f[key] = $(id).value.trim(); filtersChanged(); });
+  bind("f-year", "year"); bind("f-month", "month"); bind("f-reason", "reason"); bind("f-who", "who");
+  bind("f-status", "status"); bind("f-source", "source"); bind("f-q", "q", "input");
+  $("f-reset").addEventListener("click", () => {
+    Object.assign(state.f, { year: state.data.today.slice(0, 4), month: "", reason: "", who: "", status: "", source: "", q: "" });
+    refreshFilterOptions(); $("f-status").value = ""; $("f-source").value = ""; $("f-q").value = "";
+    filtersChanged();
+  });
+}
+function setFilter(key, value) {
+  state.f[key] = state.f[key] === String(value) ? "" : String(value);
+  refreshFilterOptions();
+  if (key === "status") $("f-status").value = state.f.status;
+  filtersChanged();
+}
+function filtersChanged() {
+  state.shown = PAGE;
+  try { sessionStorage.setItem("gc-filters", JSON.stringify(state.f)); } catch (e) { /* private mode */ }
+  render();
+}
+// Everything but the month: the monthly chart shows the whole year with the chosen month highlighted.
+function matches(r, skipMonth) {
+  const f = state.f;
+  if (f.year && r._year !== f.year) return false;
+  if (!skipMonth && f.month && String(r._month) !== f.month) return false;
+  if (f.reason && r.reason !== f.reason) return false;
+  if (f.who && r.request_by !== f.who) return false;
+  if (f.source && r.source !== f.source) return false;
+  if (f.status === "waiting" && !r._waiting) return false;
+  if (f.status === "done" && r._waiting) return false;
+  if (f.q) { for (const w of f.q.toLowerCase().split(/\s+/)) if (w && !r._search.includes(w)) return false; }
+  return true;
+}
+
+// ---------- render ----------
+function render() {
+  if (!state.data) return;
+  const yearRows = state.data.rows.filter((r) => r._date && matches(r, true));
+  const rows = yearRows.filter((r) => matches(r, false));
+  renderTiles(rows, yearRows);
+  renderMonthly(yearRows);
+  renderBreakdowns(rows);
+  renderLines(rows);
+  renderFooter();
+  const u = state.user;
+  $("who").textContent = u ? (u.email === "local" ? "Local run (no sign-in)" : u.email) : "";
+  $("switch").hidden = !(state.config && state.config.auth === "iap");
+}
+
+function sum(rows) { return rows.reduce((s, r) => s + (r.subtotal_cad || 0), 0); }
+
+function periodName() {
+  const f = state.f;
+  return f.month ? `${MONTHS[Number(f.month) - 1]} ${f.year}` : f.year;
+}
+
+function renderTiles(rows, yearRows) {
+  const f = state.f;
+  const total = sum(rows);
+  const noCost = rows.filter((r) => r.subtotal_cad === null || r.subtotal_cad === undefined).length;
+  const units = rows.reduce((s, r) => s + (r.qty || 0), 0);
+  const waiting = rows.filter((r) => r._waiting).length;
+  let foot;
+  if (f.month) {
+    const m = Number(f.month);
+    const prevRows = m > 1 ? yearRows.filter((r) => r._month === m - 1) : null;
+    if (prevRows) {
+      const diff = total - sum(prevRows);
+      foot = `${diff >= 0 ? "+" : "−"}${fmtMoney(Math.abs(diff))} vs ${MONTHS[m - 2]}`;
+    } else foot = "January: no earlier month this year";
+  } else {
+    const months = new Set(rows.map((r) => r._month)).size;
+    foot = months ? `${fmtMoney(total / months)} a month on average over ${months} month${months === 1 ? "" : "s"}` : "No lines yet";
+  }
+  if (noCost) foot += ` · ${noCost} line${noCost === 1 ? "" : "s"} without a cost not counted`;
+  const statusTile = el("div", { class: "card tile" },
+    el("span", { class: "label" }, "Waiting for 拿货 / 出库"),
+    el("span", { class: "value" }, String(waiting)),
+    waiting
+      ? el("span", { class: "foot status wait" }, el("span", { class: "ic", "aria-hidden": "true" }, "!"),
+          el("button", { class: "linkish", type: "button", onclick: () => setFilter("status", "waiting") },
+            state.f.status === "waiting" ? "Showing these" : "Show these lines"))
+      : el("span", { class: "foot status ok" }, el("span", { class: "ic", "aria-hidden": "true" }, "✓"), "All picked up and stocked out"));
+  $("tiles").replaceChildren(
+    el("div", { class: "card tile hero" },
+      el("span", { class: "label" }, `Spend · ${periodName()}`),
+      el("span", { class: "value" }, fmtMoney(total)),
+      el("span", { class: "foot" }, foot)),
+    el("div", { class: "card tile" },
+      el("span", { class: "label" }, "Lines"),
+      el("span", { class: "value" }, num.format(rows.length)),
+      el("span", { class: "foot" }, `${rows.filter((r) => r.source === "app").length} entered on the dashboard`)),
+    el("div", { class: "card tile" },
+      el("span", { class: "label" }, "Units taken"),
+      el("span", { class: "value" }, num.format(units)),
+      el("span", { class: "foot" }, `${new Set(rows.map((r) => r.sku)).size} different SKUs`)),
+    statusTile);
+}
+
+// Month × reason matrix for the selected year.
+function matrix(yearRows) {
+  const reasons = [...state.reasons];
+  for (const r of yearRows) if (r.reason && !reasons.includes(r.reason)) reasons.push(r.reason);
+  const m = Array.from({ length: 12 }, () => Object.fromEntries(reasons.map((r) => [r, 0])));
+  for (const r of yearRows) {
+    if (!r._month || !r.subtotal_cad) continue;
+    const key = r.reason || "(no reason)";
+    if (!(key in m[r._month - 1])) { reasons.push(key); m.forEach((row) => { row[key] = row[key] || 0; }); }
+    m[r._month - 1][key] += r.subtotal_cad;
+  }
+  return { reasons, m };
+}
+
+function niceStep(max, ticks) {
+  const raw = max / ticks;
+  const pow = Math.pow(10, Math.floor(Math.log10(raw)));
+  const n = raw / pow;
+  return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * pow;
+}
+
+function renderMonthly(yearRows) {
+  const { reasons, m } = matrix(yearRows);
+  const present = reasons.filter((r) => m.some((row) => row[r] > 0));
+  const shownReasons = state.f.reason ? present.filter((r) => r === state.f.reason) : present;
+  $("month-sub").textContent = state.f.year + (state.f.month ? ` · ${MONTHS[Number(state.f.month) - 1]} highlighted, click a month to change` : " · click a month to filter");
+  $("month-legend").replaceChildren(...shownReasons.map((r) =>
+    el("span", {}, el("i", { class: "sw", style: `background:${reasonColor(r)}` }), reasonLabel(r))));
+  $("month-legend").hidden = shownReasons.length < 2;
+  $("v-chart").setAttribute("aria-pressed", String(state.view === "chart"));
+  $("v-table").setAttribute("aria-pressed", String(state.view === "table"));
+  $("month-chart").hidden = state.view !== "chart";
+  $("month-table").hidden = state.view !== "table";
+  if (state.view === "table") renderMonthTable(shownReasons, m);
+  else drawColumns(shownReasons, m);
+}
+
+function renderMonthTable(reasons, m) {
+  const head = el("tr", {}, el("th", {}, "Month"), ...reasons.map((r) => el("th", { class: "num" }, reasonLabel(r))), el("th", { class: "num" }, "Total"));
+  const body = m.map((row, i) => {
+    const total = reasons.reduce((s, r) => s + row[r], 0);
+    return el("tr", {}, el("td", {}, `${MONTHS[i]} ${state.f.year}`), ...reasons.map((r) => el("td", { class: "num" }, row[r] ? fmtMoney(row[r]) : "—")),
+      el("td", { class: "num" }, total ? fmtMoney(total) : "—"));
+  });
+  const totals = reasons.map((r) => m.reduce((s, row) => s + row[r], 0));
+  const foot = el("tr", { class: "total" }, el("td", {}, "Year"), ...totals.map((t) => el("td", { class: "num" }, fmtMoney(t))),
+    el("td", { class: "num" }, fmtMoney(totals.reduce((a, b) => a + b, 0))));
+  $("month-table").replaceChildren(el("table", {}, el("thead", {}, head), el("tbody", {}, ...body, foot)));
+}
+
+function roundedTop(x, y, w, h, r) {
+  r = Math.min(r, w / 2, h);
+  return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`;
+}
+
+function drawColumns(reasons, m) {
+  const box = $("month-chart");
+  const W = Math.max(box.clientWidth, 280);
+  const plotH = 240, top = 20, axisH = 26, left = 48, right = 8;
+  const H = top + plotH + axisH;
+  const totals = m.map((row) => reasons.reduce((s, r) => s + row[r], 0));
+  const svg = sv("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img",
+    "aria-label": `Spend by month in ${state.f.year}, stacked by reason. The Table view lists every value.` });
+  const max = Math.max(...totals, 0);
+  if (!max) {
+    box.replaceChildren(el("div", { class: "empty" }, `No spend recorded for ${state.f.year} with these filters.`));
+    return;
+  }
+  const step = niceStep(max, 4);
+  const ymax = Math.ceil(max / step) * step;
+  const y = (v) => top + plotH - (v / ymax) * plotH;
+  for (let t = 0; t <= ymax + 1e-9; t += step) {
+    svg.append(sv("line", { x1: left, x2: W - right, y1: y(t), y2: y(t), stroke: t === 0 ? "var(--axis)" : "var(--grid)", "stroke-width": 1, "shape-rendering": "crispEdges" }));
+    svg.append(sv("text", { x: left - 8, y: y(t) + 4, "text-anchor": "end" }, compactMoney(t)));
+  }
+  const band = (W - left - right) / 12;
+  const barW = Math.min(24, band * 0.62);
+  const sel = state.f.month ? Number(state.f.month) - 1 : -1;
+  m.forEach((row, i) => {
+    const cx = left + band * i + band / 2;
+    const x = cx - barW / 2;
+    const g = sv("g", { class: sel >= 0 && sel !== i ? "dim" : "" });
+    let cursor = y(0);
+    const segs = reasons.filter((r) => row[r] > 0);
+    segs.forEach((r, k) => {
+      const h = (row[r] / ymax) * plotH;
+      const gap = k > 0 ? 2 : 0;
+      const visible = Math.max(h - gap, 0.75);
+      const yTop = cursor - h;
+      const isTop = k === segs.length - 1;
+      g.append(isTop ? sv("path", { d: roundedTop(x, yTop, barW, visible, 4), fill: reasonColor(r) })
+                     : sv("rect", { x, y: yTop, width: barW, height: visible, fill: reasonColor(r) }));
+      cursor -= h;
+    });
+    if (totals[i] > 0 && band >= 34) g.append(sv("text", { x: cx, y: y(totals[i]) - 6, "text-anchor": "middle", class: "cap" }, compactMoney(totals[i])));
+    svg.append(g);
+    svg.append(sv("text", { x: cx, y: top + plotH + 17, "text-anchor": "middle", class: sel === i ? "cap" : "" }, band < 26 ? MONTHS[i][0] : MONTHS[i]));
+    const hit = sv("rect", { x: left + band * i, y: top - 14, width: band, height: plotH + 14 + axisH, class: "hit", tabindex: 0,
+      role: "button", "aria-label": `${MONTHS[i]} ${state.f.year}: ${fmtMoney(totals[i])}. Press to filter to this month.` });
+    const show = (ev) => tipMonth(ev, i, row, reasons, totals[i]);
+    hit.addEventListener("pointermove", show);
+    hit.addEventListener("focus", show);
+    hit.addEventListener("pointerleave", hideTip);
+    hit.addEventListener("blur", hideTip);
+    hit.addEventListener("click", () => { hideTip(); setFilter("month", i + 1); });
+    hit.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); setFilter("month", i + 1); } });
+    svg.append(hit);
+  });
+  box.replaceChildren(svg);
+}
+
+// ---------- tooltip ----------
+function placeTip(ev) {
+  const tip = $("tip");
+  tip.style.display = "block";
+  let x, yy;
+  if (ev.clientX !== undefined && ev.type !== "focus") { x = ev.clientX; yy = ev.clientY; }
+  else { const b = ev.target.getBoundingClientRect(); x = b.left + b.width / 2; yy = b.top + 20; }
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  const vw = window.visualViewport ? window.visualViewport.width : innerWidth;
+  let left = x + 14; if (left + w > vw - 8) left = x - w - 14; if (left < 8) left = 8;
+  let topPos = yy - h / 2; if (topPos < 8) topPos = 8; if (topPos + h > innerHeight - 8) topPos = innerHeight - h - 8;
+  tip.style.left = left + "px"; tip.style.top = topPos + "px";
+}
+function tipMonth(ev, i, row, reasons, total) {
+  const tip = $("tip");
+  const lines = reasons.filter((r) => row[r] > 0).reverse().map((r) =>
+    el("div", { class: "t-row" }, el("span", { class: "k" }, el("i", { class: "key", style: `background:${reasonColor(r)}` }), reasonLabel(r)), el("b", {}, fmtMoney(row[r]))));
+  tip.replaceChildren(el("div", { class: "t-head" }, `${MONTHS[i]} ${state.f.year}`), ...lines,
+    el("div", { class: "t-row", style: "margin-top:4px;border-top:1px solid var(--grid);padding-top:4px" }, el("span", { class: "k" }, "Total"), el("b", {}, fmtMoney(total))));
+  placeTip(ev);
+}
+function tipSimple(ev, head, value, extra) {
+  $("tip").replaceChildren(el("div", { class: "t-head" }, head), el("div", { class: "t-row" }, el("b", {}, value), el("span", { class: "k" }, extra || "")));
+  placeTip(ev);
+}
+function hideTip() { $("tip").style.display = "none"; }
+
+// ---------- breakdowns ----------
+function group(rows, key) {
+  const out = new Map();
+  for (const r of rows) {
+    const k = key(r) || "(blank)";
+    const cur = out.get(k) || { label: k, value: 0, lines: 0 };
+    cur.value += r.subtotal_cad || 0; cur.lines += 1; out.set(k, cur);
+  }
+  return [...out.values()].sort((a, b) => b.value - a.value);
+}
+function bars(container, items, opts) {
+  if (!items.length || !items.some((i) => i.value > 0)) { container.replaceChildren(el("div", { class: "empty" }, "Nothing for these filters.")); return; }
+  const max = Math.max(...items.map((i) => i.value));
+  const total = items.reduce((s, i) => s + i.value, 0);
+  container.replaceChildren(...items.map((it) => {
+    const pct = total ? Math.round((it.value / total) * 100) : 0;
+    const color = opts.color(it);
+    const row = el("div", { class: "bar-row", tabindex: 0, "data-filter": opts.filter ? "1" : null,
+      "aria-label": `${it.display || it.label}: ${fmtMoney(it.value)}, ${pct}% of the period, ${it.lines} line${it.lines === 1 ? "" : "s"}` },
+      el("span", { class: "bar-label", title: it.display || it.label },
+        opts.dot ? el("i", { class: "sw", style: `background:${color}` }) : null, el("span", {}, it.display || it.label)),
+      el("span", { class: "bar-track" }, el("span", { class: "bar-fill", style: `width:${max ? (it.value / max) * 100 : 0}%;background:${color}` })),
+      el("span", { class: "bar-val" }, opts.pct ? `${fmtMoney(it.value)} · ${pct}%` : fmtMoney(it.value)));
+    const show = (ev) => tipSimple(ev, it.display || it.label, fmtMoney(it.value), `${pct}% · ${it.lines} line${it.lines === 1 ? "" : "s"}`);
+    row.addEventListener("pointermove", show); row.addEventListener("focus", show);
+    row.addEventListener("pointerleave", hideTip); row.addEventListener("blur", hideTip);
+    if (opts.filter && !it.other) {
+      row.addEventListener("click", () => { hideTip(); opts.filter(it); });
+      row.addEventListener("keydown", (ev) => { if (ev.key === "Enter") opts.filter(it); });
+    }
+    return row;
+  }));
+}
+function topN(items, n) {
+  if (items.length <= n) return items;
+  const rest = items.slice(n - 1);
+  return [...items.slice(0, n - 1), { label: `Other (${rest.length})`, value: rest.reduce((s, i) => s + i.value, 0), lines: rest.reduce((s, i) => s + i.lines, 0), other: true }];
+}
+function renderBreakdowns(rows) {
+  const byReason = group(rows, (r) => r.reason);
+  byReason.sort((a, b) => {
+    const ia = state.reasons.indexOf(a.label), ib = state.reasons.indexOf(b.label);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  });
+  byReason.forEach((it) => { it.display = reasonLabel(it.label); });
+  bars($("by-reason"), byReason, { color: (it) => reasonColor(it.label), dot: true, pct: true, filter: (it) => setFilter("reason", it.label) });
+  bars($("by-who"), topN(group(rows, (r) => r.request_by), 8), { color: () => "var(--neutral-bar)", filter: (it) => setFilter("who", it.label) });
+  bars($("by-sku"), topN(group(rows, (r) => r.sku), 8), { color: () => "var(--neutral-bar)", filter: (it) => { state.f.q = it.label; $("f-q").value = it.label; filtersChanged(); } });
+}
+
+// ---------- lines table ----------
+const COLS = [
+  { key: "entry_date", label: "Date" },
+  { key: "sku", label: "SKU", cls: "sku" },
+  { key: "reason", label: "Reason" },
+  { key: "qty", label: "Qty", num: true },
+  { key: "unit_cost_cad", label: "Unit cost", num: true },
+  { key: "subtotal_cad", label: "Subtotal", num: true },
+  { key: "request_by", label: "Requested by" },
+  { key: "sent_to", label: "Sent to", cls: "wrapcell" },
+  { key: "process_date", label: "Processed" },
+  { key: "picked_up", label: "拿货" },
+  { key: "issued", label: "出库" },
+  { key: "source", label: "Source" },
+];
+function sortRows(rows) {
+  const { key, dir } = state.sort;
+  return [...rows].sort((a, b) => {
+    let va = a[key], vb = b[key];
+    if (va === null || va === undefined) va = typeof vb === "number" ? -Infinity : "";
+    if (vb === null || vb === undefined) vb = typeof va === "number" ? -Infinity : "";
+    const c = typeof va === "number" && typeof vb === "number" ? va - vb : String(va).localeCompare(String(vb));
+    return (c || a._order - b._order) * dir;
+  });
+}
+function renderLines(rows) {
+  const sorted = sortRows(rows);
+  const shown = sorted.slice(0, state.shown);
+  $("lines-sub").textContent = `${num.format(rows.length)} line${rows.length === 1 ? "" : "s"} · ${periodName()}`;
+  const head = el("tr", {}, ...COLS.map((c) => {
+    const th = el("th", { class: (c.num ? "num " : "") + "sortable", tabindex: 0, scope: "col",
+      "aria-sort": state.sort.key === c.key ? (state.sort.dir > 0 ? "ascending" : "descending") : null }, c.label);
+    const go = () => { state.sort = { key: c.key, dir: state.sort.key === c.key ? -state.sort.dir : (c.num || c.key.endsWith("date") ? -1 : 1) }; renderLines(rows); };
+    th.addEventListener("click", go);
+    th.addEventListener("keydown", (ev) => { if (ev.key === "Enter") go(); });
+    return th;
+  }), el("th", {}, ""));
+  const body = shown.map((r) => lineRow(r));
+  if (!rows.length) body.push(el("tr", {}, el("td", { colspan: COLS.length + 1, class: "muted", style: "text-align:center;padding:24px" }, "No lines match these filters.")));
+  $("lines").replaceChildren(el("thead", {}, head), el("tbody", {}, ...body));
+  $("more").hidden = sorted.length <= state.shown;
+  $("more-btn").textContent = `Show ${Math.min(PAGE, sorted.length - state.shown)} more`;
+}
+function checkCell(r, field) {
+  if (r.source !== "app") return el("td", {}, r[field] ? el("span", { class: "ro-check", title: "Ticked in the sheet" }, "✓") : el("span", { class: "ro-cross", title: "Not ticked in the sheet" }, "—"));
+  const box = el("input", { type: "checkbox", class: "check", checked: r[field], "aria-label": `${field === "picked_up" ? "拿货 picked up" : "出库 stocked out"}: ${r.sku}` });
+  box.addEventListener("change", async () => {
+    box.disabled = true;
+    try {
+      const { entry } = await api("PATCH", `/api/entries/${encodeURIComponent(r.id)}`, { [field]: box.checked });
+      replaceRow(entry);
+      toast(`${field === "picked_up" ? "拿货" : "出库"} ${box.checked ? "ticked" : "cleared"}: ${r.sku}`);
+    } catch (e) { box.checked = !box.checked; toast(e.message); }
+    finally { box.disabled = false; }
+  });
+  return el("td", {}, box);
+}
+function lineRow(r) {
+  const src = r.source === "app"
+    ? el("span", { class: "src", title: `Entered by ${r.created_by}${r.updated_by ? `, last changed by ${r.updated_by}` : ""}` }, el("span", { class: "tag" }, "Dashboard"), " ", (r.created_by || "").split("@")[0])
+    : el("span", { class: "src" }, el("a", { href: r.sheet_url, target: "_blank", rel: "noopener" }, `Sheet row ${r.sheet_row} ↗`));
+  const cost = r.unit_cost_cad === null || r.unit_cost_cad === undefined
+    ? el("span", { class: "muted", title: "Not in Cost Ref" }, "no cost")
+    : el("span", { title: r.cost_source === "manual" ? "Typed in by hand (not in Cost Ref)" : "" }, fmtMoney(r.unit_cost_cad), r.cost_source === "manual" ? "*" : "");
+  return el("tr", {},
+    el("td", {}, r.entry_date || el("span", { class: "muted" }, "no date")),
+    el("td", { class: "sku" }, r.sku),
+    el("td", {}, el("i", { class: "dot", style: `background:${reasonColor(r.reason)}` }), reasonLabel(r.reason)),
+    el("td", { class: "num" }, r.qty === null ? "—" : num.format(r.qty)),
+    el("td", { class: "num" }, cost),
+    el("td", { class: "num" }, fmtMoney(r.subtotal_cad)),
+    el("td", {}, r.request_by),
+    el("td", { class: "wrapcell" }, r.sent_to),
+    el("td", {}, r.process_date || ""),
+    checkCell(r, "picked_up"),
+    checkCell(r, "issued"),
+    el("td", {}, src),
+    el("td", {}, r.source === "app" ? el("button", { class: "btn small ghost", type: "button", onclick: () => openEdit(r) }, r.can_edit ? "Edit" : "Status") : ""));
+}
+function replaceRow(entry) {
+  const rows = state.data.rows;
+  const i = rows.findIndex((r) => r.id === entry.id);
+  prep(entry);
+  if (i >= 0) rows[i] = entry; else rows.push(entry);
+  render();
+}
+
+function downloadCsv() {
+  const rows = sortRows(state.data.rows.filter((r) => r._date && matches(r, false)));
+  const cols = ["entry_date", "sku", "reason", "qty", "unit_cost_cad", "subtotal_cad", "request_by", "sent_to", "process_date", "picked_up", "issued", "source", "sheet_row", "created_by"];
+  const esc = (v) => { const s = v === null || v === undefined ? "" : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  const csv = "﻿" + [cols.join(","), ...rows.map((r) => cols.map((c) => esc(r[c])).join(","))].join("\r\n");
+  const a = el("a", { href: URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" })), download: `genc-consumption-${periodName().replace(/\s+/g, "-")}.csv` });
+  document.body.append(a); a.click(); a.remove();
+}
+
+function renderFooter() {
+  const s = state.data.sheet;
+  const fetched = s.fetched_at ? new Date(s.fetched_at).toLocaleTimeString("en-CA", { hour: "2-digit", minute: "2-digit" }) : "not read";
+  $("footer").replaceChildren(
+    el("div", {}, "Lines from before the dashboard: Google Sheet ", el("a", { href: s.url, target: "_blank", rel: "noopener" }, `${s.title || "office use"} › ${s.tab}`),
+      `, read live (last read ${fetched}); change them in the sheet. Lines added here are stored in the GenC Consumption database.`),
+    el("div", {}, "Costs: the sheet's Cost Ref tab, in CAD. A cost marked * was typed in by hand because the SKU is not in Cost Ref."));
+}
+
+// ---------- entry dialog ----------
+const dlg = $("dlg");
+let editing = null;           // the row being edited, or null when adding
+function reasonPicker(selected, disabled) {
+  $("e-reasons").replaceChildren(...state.reasons.map((r, i) => el("label", {},
+    el("input", { type: "radio", name: "reason", value: r, checked: r === selected, disabled, required: true }),
+    el("i", { class: "sw", style: `background:${reasonColor(r)}` }), reasonLabel(r))));
+}
+function itemLine(item, lockAdd) {
+  const sku = el("input", { "aria-label": "SKU", value: item.sku || "", placeholder: "Type to search Cost Ref", autocomplete: "off", maxlength: 300, required: true });
+  const qty = el("input", { "aria-label": "Quantity", type: "number", min: "0", step: "any", inputmode: "decimal", value: item.qty ?? 1, required: true });
+  const cost = el("input", { "aria-label": "Unit cost CAD", type: "number", min: "0", step: "0.01", inputmode: "decimal", readonly: true, tabindex: -1, placeholder: "—" });
+  const hint = el("div", { class: "hint" });
+  const sub = el("div", { class: "sub" }, "—");
+  const list = el("div", { class: "suggest", role: "listbox", hidden: true });
+  const del = el("button", { type: "button", class: "btn ghost small", "aria-label": "Remove this item", title: "Remove", style: "margin-top:4px" }, "✕");
+  const line = el("div", { class: "item" },
+    el("div", { class: "cell" }, sku, list, hint), el("div", { class: "cell" }, qty),
+    el("div", { class: "cell cost" }, cost), sub, lockAdd ? el("span") : del);
+  line._get = () => ({ sku: sku.value.trim(), qty: qty.value, unit_cost_cad: line._known ? undefined : (cost.value === "" ? undefined : cost.value) });
+  line._known = false;
+  line._refCost = null;        // Cost Ref's unrounded cost; the box shows it to the cent
+  const setKnown = (known, value, canonical) => {
+    line._known = known;
+    line._refCost = known ? Number(value) : null;
+    if (known) {
+      if (canonical) sku.value = canonical;
+      cost.value = Number(value).toFixed(2); cost.readOnly = true; cost.tabIndex = -1;
+      hint.textContent = "Cost from Cost Ref"; hint.className = "hint";
+    } else if (sku.value.trim()) {
+      cost.readOnly = false; cost.tabIndex = 0;
+      if (!cost.value) cost.placeholder = "optional";
+      hint.textContent = "Not in Cost Ref: type a unit cost if you know it"; hint.className = "hint warn";
+    } else {
+      cost.value = ""; cost.readOnly = true; hint.textContent = "";
+    }
+    updateTotals();
+  };
+  line._sub = () => {
+    const q = Number(qty.value);
+    const c = line._known ? line._refCost : (cost.value === "" ? null : Number(cost.value));
+    return q > 0 && c !== null ? q * c : null;
+  };
+  line._paint = () => { const s = line._sub(); sub.textContent = s === null ? "—" : fmtMoney(s); };
+  let timer = null, results = [], active = -1, seq = 0;
+  const close = () => { list.hidden = true; active = -1; };
+  const pick = (res) => { close(); setKnown(true, res.unit_cost_cad, res.sku); qty.focus(); qty.select(); };
+  const paintList = () => {
+    list.replaceChildren(...results.map((res, i) => {
+      const opt = el("div", { role: "option", "aria-selected": String(i === active) }, el("span", {}, res.sku), el("span", {}, fmtMoney(res.unit_cost_cad)));
+      opt.addEventListener("mousedown", (ev) => { ev.preventDefault(); pick(res); });
+      return opt;
+    }));
+    list.hidden = !results.length;
+  };
+  const search = async (exactCheck) => {
+    const q = sku.value.trim();
+    if (q.length < 2) { results = []; paintList(); if (exactCheck) setKnown(false); return; }
+    const mine = ++seq;
+    try {
+      const { skus } = await api("GET", `/api/skus?q=${encodeURIComponent(q)}`);
+      if (mine !== seq) return;
+      const exact = skus.find((s) => s.sku.toLowerCase() === q.toLowerCase());
+      if (exactCheck) { close(); setKnown(Boolean(exact), exact && exact.unit_cost_cad, exact && exact.sku); return; }
+      results = skus; active = -1; paintList();
+      if (exact) setKnown(true, exact.unit_cost_cad); else if (line._known) setKnown(false);
+    } catch (e) { hint.textContent = e.message; hint.className = "hint warn"; }
+  };
+  sku.addEventListener("input", () => { line._known = false; clearTimeout(timer); timer = setTimeout(() => search(false), 180); });
+  sku.addEventListener("keydown", (ev) => {
+    if (list.hidden) return;
+    if (ev.key === "ArrowDown") { ev.preventDefault(); active = Math.min(active + 1, results.length - 1); paintList(); }
+    else if (ev.key === "ArrowUp") { ev.preventDefault(); active = Math.max(active - 1, 0); paintList(); }
+    else if (ev.key === "Enter" && active >= 0) { ev.preventDefault(); pick(results[active]); }
+    else if (ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); close(); }
+  });
+  sku.addEventListener("blur", () => { setTimeout(() => { if (!list.hidden) close(); if (!line._known) search(true); }, 120); });
+  qty.addEventListener("input", updateTotals);
+  cost.addEventListener("input", updateTotals);
+  del.addEventListener("click", () => { line.remove(); if (!$("e-items").children.length) $("e-items").append(itemLine({})); updateTotals(); });
+  if (item.sku) {
+    if (item.unit_cost_cad !== null && item.unit_cost_cad !== undefined) cost.value = Number(item.unit_cost_cad).toFixed(2);
+    if (item.cost_source === "cost_ref") setKnown(true, item.unit_cost_cad);
+    else if (item.sku) { setKnown(false); }
+  }
+  line._inputs = [sku, qty, cost];
+  return line;
+}
+function updateTotals() {
+  let total = 0, missing = 0;
+  const lines = [...$("e-items").children];
+  for (const line of lines) { line._paint(); const s = line._sub(); if (s === null) missing += 1; else total += s; }
+  $("e-total").textContent = fmtMoney(total) + (missing ? ` (+${missing} without cost)` : "");
+  if (!editing) $("e-save").textContent = `Save ${lines.length} item${lines.length === 1 ? "" : "s"}`;
+}
+function openAdd() {
+  editing = null;
+  $("dlg-title").textContent = "Add items";
+  $("perm-note").hidden = true;
+  $("e-date").value = state.data.today; $("e-date").disabled = false;
+  $("e-who").value = state.user && state.user.email !== "local" ? state.user.name : ""; $("e-who").disabled = false;
+  $("e-sent").value = ""; $("e-sent").disabled = false;
+  $("e-process-wrap").hidden = true;
+  reasonPicker(state.f.reason || "", false);
+  $("e-items").replaceChildren(itemLine({}));
+  $("e-add-line").hidden = false;
+  $("e-picked").checked = false; $("e-issued").checked = false;
+  $("e-delete").hidden = true;
+  $("e-error").textContent = "";
+  updateTotals();
+  dlg.showModal();
+  ($("e-who").value ? $("e-items").querySelector("input") : $("e-who")).focus();
+}
+function openEdit(r) {
+  editing = r;
+  const can = r.can_edit;
+  $("dlg-title").textContent = can ? "Edit line" : "Update status";
+  $("perm-note").hidden = can;
+  $("perm-note").textContent = `Entered by ${r.created_by}. Only they or an admin can change the line itself; anyone can tick 拿货 / 出库 and set the process date.`;
+  $("e-date").value = r.entry_date; $("e-date").disabled = !can;
+  $("e-who").value = r.request_by; $("e-who").disabled = !can;
+  $("e-sent").value = r.sent_to; $("e-sent").disabled = !can;
+  $("e-process-wrap").hidden = false; $("e-process").value = r.process_date || "";
+  reasonPicker(r.reason, !can);
+  const line = itemLine(r, true);
+  line._inputs.forEach((i) => { if (!can) i.disabled = true; });
+  $("e-items").replaceChildren(line);
+  $("e-add-line").hidden = true;
+  $("e-picked").checked = r.picked_up; $("e-issued").checked = r.issued;
+  $("e-delete").hidden = !can;
+  $("e-error").textContent = "";
+  $("e-save").textContent = "Save";
+  updateTotals();
+  dlg.showModal();
+}
+async function save(ev) {
+  ev.preventDefault();
+  const err = $("e-error");
+  err.textContent = "";
+  const reason = (dlg.querySelector('input[name="reason"]:checked') || {}).value;
+  const lines = [...$("e-items").children].map((l) => l._get());
+  const common = { entry_date: $("e-date").value, reason, request_by: $("e-who").value.trim(), sent_to: $("e-sent").value.trim(),
+    picked_up: $("e-picked").checked, issued: $("e-issued").checked };
+  if (!editing || editing.can_edit) {
+    if (!common.entry_date) { err.textContent = "Pick a date."; return; }
+    if (!common.request_by) { err.textContent = "Who asked for it? Fill in Requested by."; $("e-who").focus(); return; }
+    if (!reason) { err.textContent = "Pick a reason."; return; }
+    const bad = lines.findIndex((l) => !l.sku || !(Number(l.qty) > 0));
+    if (bad >= 0) { err.textContent = `Item ${bad + 1}: a SKU and a quantity above 0 are needed.`; return; }
+  }
+  $("e-save").disabled = true;
+  try {
+    if (!editing) {
+      const { created } = await api("POST", "/api/entries", { ...common, items: lines });
+      created.forEach(replaceRow);
+      toast(`Saved ${created.length} item${created.length === 1 ? "" : "s"}.`);
+    } else {
+      // Only what changed: re-sending an unchanged SKU would be harmless, but a smaller patch
+      // keeps "updated by" honest and never re-prices a line by accident.
+      const body = {};
+      const procDate = $("e-process").value || null;
+      if (common.picked_up !== editing.picked_up) body.picked_up = common.picked_up;
+      if (common.issued !== editing.issued) body.issued = common.issued;
+      if (procDate !== (editing.process_date || null)) body.process_date = procDate;
+      if (editing.can_edit) {
+        const l = lines[0];
+        for (const k of ["entry_date", "reason", "request_by", "sent_to"]) if (common[k] !== (editing[k] || "")) body[k] = common[k];
+        if (l.sku !== editing.sku) body.sku = l.sku;
+        if (Number(l.qty) !== editing.qty) body.qty = l.qty;
+        if (!$("e-items").children[0]._known) {
+          const typed = l.unit_cost_cad === undefined ? null : Number(l.unit_cost_cad);
+          const before = editing.cost_source === "cost_ref" ? undefined : editing.unit_cost_cad;
+          if (typed !== before) body.unit_cost_cad = typed;
+        }
+      }
+      if (!Object.keys(body).length) { dlg.close(); return; }
+      const { entry } = await api("PATCH", `/api/entries/${encodeURIComponent(editing.id)}`, body);
+      replaceRow(entry);
+      toast("Saved.");
+    }
+    dlg.close();
+    refreshFilterOptions();
+  } catch (e) { err.textContent = e.message; }
+  finally { $("e-save").disabled = false; }
+}
+async function removeLine() {
+  if (!editing || !confirm(`Delete this line?\n\n${editing.sku} × ${editing.qty}\n\nIt disappears from the dashboard; the database keeps a record of it.`)) return;
+  try {
+    await api("DELETE", `/api/entries/${encodeURIComponent(editing.id)}`);
+    state.data.rows = state.data.rows.filter((r) => r.id !== editing.id);
+    dlg.close(); render(); toast("Line deleted.");
+  } catch (e) { $("e-error").textContent = e.message; }
+}
+
+// ---------- wiring ----------
+$("add-btn").addEventListener("click", openAdd);
+$("e-add-line").addEventListener("click", () => { const l = itemLine({}); $("e-items").append(l); updateTotals(); l.querySelector("input").focus(); });
+$("e-cancel").addEventListener("click", () => dlg.close());
+$("e-delete").addEventListener("click", removeLine);
+$("dlg-form").addEventListener("submit", save);
+$("v-chart").addEventListener("click", () => { state.view = "chart"; render(); });
+$("v-table").addEventListener("click", () => { state.view = "table"; render(); });
+$("more-btn").addEventListener("click", () => { state.shown += PAGE; render(); });
+$("csv-btn").addEventListener("click", downloadCsv);
+let resizeTimer = null;
+new ResizeObserver(() => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { if (state.data && state.view === "chart") renderMonthly(state.data.rows.filter((r) => r._date && matches(r, true))); }, 80); }).observe($("month-chart"));
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && state.data && !dlg.open) load(false); });
+
+(async () => {
+  try { state.config = await api("GET", "/api/config"); } catch (e) { state.config = null; }
+  await load(true);
+})();
+})();
+</script>
+</body>
+</html>
