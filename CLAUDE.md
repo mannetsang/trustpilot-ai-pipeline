@@ -127,7 +127,9 @@ Secret Manager, not on `shp-ai-bot-2026`. Ticking 出库 removes the stock from
 **SkuVault** (least-stock bin first, warehouse WH1 only, English reasons
 Video / Sample / Customer Request / Cross-Department, login from the
 `SKUVAULT_*` secrets on `shp-ai-bot-2026`), so a local run must never carry
-those credentials. See `genc-consumption/README.md`.
+those credentials. It also has a phone layout and a read-only voice assistant
+(Gemini Live `gemini-3.8-live` on Vertex AI in `us-central1`, Mandarin by
+default, `genc-consumption/cloud_run/voice.py`). See `genc-consumption/README.md`.
 
 ### Known data-quality caveats
 

@@ -4,3 +4,5 @@ gunicorn==23.0.0
 google-auth==2.38.0
 cryptography==45.0.7
 tzdata==2025.2
+flask-sock==0.7.0
+websockets==15.0.1

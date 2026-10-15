@@ -6,5 +6,6 @@ COPY *.py ./
 COPY static/ ./static/
 ENV PORT=8080
 ENV PYTHONUNBUFFERED=1
-# One worker keeps the sheet cache and the IAP key cache in one place; threads serve the page.
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "8", "--timeout", "120", "main:app"]
+# One worker keeps the sheet cache, the IAP key cache and the voice sessions in one place;
+# threads serve the page, and each open voice connection holds one.
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "16", "--timeout", "120", "main:app"]

@@ -13,6 +13,48 @@ the default) lists every line, with 拿货 / 出库 ticks, edit and CSV download
 requester and SKU. The open tab is kept in the address (`#transactions`,
 `#charts`), so a reload or a shared link opens the same one.
 
+**On a phone** (720 px wide or less) the same page changes layout: the
+transactions are cards (date, reason, SKU, qty × cost, requested by / sent to,
+the 拿货 and 出库 ticks), sorted newest, oldest or largest; the filters fold into
+a **筛选 Filters** button that shows how many are set; **+ 添加 Add** and
+**🎙 问助手** sit in a bar at the bottom; the Add form and the voice assistant
+open full screen; inputs are 16 px so iPhones do not zoom in on them.
+
+## Voice assistant (语音助手)
+
+Added 2026-10-15. **🎙 问助手 Ask** opens a conversation with Gemini Live
+(`gemini-3.8-live` on Vertex AI, `us-central1`): tap the microphone and talk,
+or type; it answers out loud with a live transcript and can be interrupted
+mid-sentence. It speaks **Mandarin by default** and English when spoken to in
+English. Example: 八月份一共花了多少钱？ → 八月份一共花了大约 1,051 加元。
+
+- **Read only.** Its tools ([`cloud_run/voice.py`](cloud_run/voice.py)) total
+  and list lines with the same filters as the page, search Cost Ref, read
+  live SkuVault stock (WH1) and switch the dashboard to a tab and filters
+  ("给我看九月份的样品"). It cannot add, change, delete or stock out a line,
+  and never changes SkuVault.
+- **How it streams.** The page records the microphone (16 kHz PCM, made in the
+  browser, so it works in Safari on iPhone too) and sends it to this service,
+  which holds the one connection to the Live API as the runtime account and
+  relays the spoken answer (24 kHz PCM) back. The server, not the page, picks
+  the model, writes the instructions and runs the tools. The page connects by
+  WebSocket (`/api/voice/ws`, own origin only) and, if the network refuses
+  WebSockets, falls back by itself to plain HTTP (`/api/voice/sessions`:
+  POST to send, a server-sent-event stream to receive).
+- **Limits.** One session per person (a new one ends the old); a session ends
+  after 10 minutes or 3 silent minutes (tap the mic to start a new one, which
+  forgets the earlier conversation); at most 8 at once per instance. The
+  instructions carry the names of requesters and sent-to values from the data
+  so misheard names (STC heard as 西门) are matched to real ones.
+- **Setup (done):** Vertex AI API enabled on `genc-consumption-2026`, the
+  runtime account holds `roles/aiplatform.user`. `LIVE_MODEL`,
+  `LIVE_LOCATION`, `LIVE_VOICE`, `VOICE_DISABLED=1` change or switch it off.
+  Voice audio goes to Google's `us-central1` region.
+- **Not verified from here:** whether Identity-Aware Proxy lets the WebSocket
+  through for a signed-in browser (it cannot be tested without a person's
+  Google sign-in). The HTTP fallback covers a refusal; if neither works the
+  panel says *无法连接语音助手* with the reason.
+
 | | |
 |---|---|
 | Google Cloud project | `genc-consumption-2026` (number `83164121214`), billing `014EEF-576861-01E7C3` |
@@ -207,3 +249,7 @@ Tests (no network): from `genc-consumption`, `python -m unittest discover -s tes
 | **!** on 出库, *SkuVault refused the removal ... Reason* | the SkuVault reason (table above) does not exist in SkuVault yet: create it, then tick 出库 again |
 | **!** on 出库, *only N on hand in the allowed warehouses* | WH1 holds less than the line's quantity (often the stock sits in RCE `GCE`): move it in SkuVault, or remove it by hand and choose *Already removed in SkuVault by hand* |
 | *SkuVault is busy* | the shared rate limit (5 lookups / 10 removals a minute); tick 出库 again in a minute |
+| Voice: *麦克风被拒绝* | the browser was refused the microphone: allow it from the address bar (iPhone: Settings, Safari, Microphone), or type the question |
+| Voice: the answer is very quiet on an iPhone | iOS plays sound through the earpiece while the microphone is open: turn the volume up, use headphones, or tap the mic off to hear the end |
+| Voice: *无法连接语音助手* | the WebSocket and the HTTP fallback both failed: the reason follows the message (sign-in expired: reload; *too many voice sessions*: wait a minute) |
+| Voice: it keeps interrupting itself | the phone's speaker reaches the microphone: lower the volume or use headphones |

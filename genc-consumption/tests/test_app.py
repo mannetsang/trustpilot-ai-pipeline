@@ -3,6 +3,7 @@
 Standard library plus the service's own requirements; no network. From genc-consumption:
     python -m unittest discover -s tests -v
 """
+import json
 import os
 import sys
 import time
@@ -52,6 +53,18 @@ class FakeSheet(sheet.SheetClient):
             else:
                 out.append(COSTS)
         return out
+
+
+class PageScriptTests(unittest.TestCase):
+    def test_no_function_is_declared_twice(self):
+        # A second `function x()` silently replaces the first in a browser script (the SkuVault
+        # helper sv() once replaced the chart helper sv() and the month chart stopped drawing).
+        import collections, re
+        with open(os.path.join(HERE, "..", "cloud_run", "static", "index.html"), encoding="utf-8") as handle:
+            page = handle.read()
+        script = page[page.rindex("<script>"):]
+        names = collections.Counter(re.findall(r"^\s*(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(", script, re.M))
+        self.assertEqual({n: c for n, c in names.items() if c > 1}, {})
 
 
 class ParsingTests(unittest.TestCase):
@@ -464,3 +477,113 @@ class IapTests(ApiTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VoiceTests(unittest.TestCase):
+    """voice.py without the network: the tools over a fixed data set, and the relay over a fake Live API."""
+
+    import voice as _voice                                                              # noqa: E402
+
+    ROWS = [
+        {"entry_date": "2026-08-04", "sku": "SP_BCM02_BK01", "qty": 1.0, "subtotal_cad": 251.53, "unit_cost_cad": 251.53,
+         "reason": "客户需求", "request_by": "Wenyu", "sent_to": "客户换配件", "picked_up": True, "issued": True, "source": "sheet"},
+        {"entry_date": "2026-08-11", "sku": "VGR_Barber Combo 3in1_BK", "qty": 1.0, "subtotal_cad": 66.34, "unit_cost_cad": 66.34,
+         "reason": "跨部门", "request_by": "Jessica", "sent_to": "STC门店用", "picked_up": True, "issued": True, "source": "sheet"},
+        {"entry_date": "2026-10-09", "sku": "VGR_Clipper 001_BK", "qty": 2.0, "subtotal_cad": 86.03, "unit_cost_cad": 43.01,
+         "reason": "跨部门", "request_by": "STC", "sent_to": "", "picked_up": True, "issued": False, "source": "app",
+         "skuvault_status": "failed"},
+    ]
+
+    def tools(self):
+        return self._voice.Tools(lambda: {"rows": [dict(r) for r in self.ROWS]}, dict(main.SKUVAULT_REASONS),
+                                 lambda: sheet.CostIndex(sheet.parse_costs(COSTS)), today=lambda: main.dt.date(2026, 10, 15))
+
+    def test_summarize_filters_like_the_page(self):
+        t = self.tools()
+        aug = t.run("summarize", {"month": 8}, None)
+        self.assertEqual((aug["spend_cad"], aug["lines"], aug["by_reason"][0]["name"], aug["by_reason"][0]["english"]),
+                         (317.87, 2, "客户需求", "Customer Request"))
+        self.assertEqual(t.run("summarize", {"reason": "cross-department"}, None)["lines"], 2)   # English, any case
+        self.assertEqual(t.run("summarize", {"status": "waiting"}, None)["lines"], 1)
+        self.assertEqual(t.run("summarize", {"request_by": "stc"}, None)["spend_cad"], 86.03)
+        self.assertEqual(t.run("summarize", {"year": 2025}, None)["lines"], 0)
+
+    def test_find_lines_orders_and_limits(self):
+        t = self.tools()
+        biggest = t.run("find_lines", {"order": "largest", "limit": 1}, None)
+        self.assertEqual((biggest["matching"], biggest["lines"][0]["sku"]), (3, "SP_BCM02_BK01"))
+        newest = t.run("find_lines", {"sent_to": "stc"}, None)["lines"]
+        self.assertEqual([(l["sku"], l["source"]) for l in newest], [("VGR_Barber Combo 3in1_BK", "sheet")])
+        self.assertEqual(t.run("find_lines", {"limit": 999}, None)["matching"], 3)
+
+    def test_sku_search_stock_and_show(self):
+        t = self.tools()
+        self.assertEqual(t.run("search_skus", {"query": "clipper"}, None)["skus"], [{"sku": "VGR_Clipper 001_BK", "unit_cost_cad": 43.01}])
+        self.assertIn("not connected", t.run("skuvault_stock", {"sku": "X"}, None)["error"])
+        shown = []
+        out = t.run("show_on_dashboard", {"tab": "charts", "month": 9, "reason": "Sample", "request_by": "Amber"}, shown.append)
+        self.assertEqual(shown, [{"t": "ui", "view": {"tab": "charts", "month": "9", "reason": "样品需要", "who": "Amber"}}])
+        self.assertEqual(out["shown"]["reason"], "样品需要")
+        self.assertIn("error", t.run("nope", {}, None))
+
+    class FakeLive:
+        def __init__(self, replies):
+            self.sent, self.replies, self.closed = [], list(replies), False
+
+        def send(self, raw):
+            self.sent.append(json.loads(raw))
+
+        def recv(self, timeout=None):
+            if self.replies:
+                return json.dumps(self.replies.pop(0))
+            while not self.closed:
+                time.sleep(0.01)
+            raise RuntimeError("closed")
+
+        def close(self):
+            self.closed = True
+
+    def test_relay_runs_tools_and_turns_server_content_into_events(self):
+        live = self.FakeLive([
+            {"setupComplete": {}},
+            {"serverContent": {"inputTranscription": {"text": "八月份花了多少？"}}},
+            {"toolCall": {"functionCalls": [{"id": "c1", "name": "summarize", "args": {"month": 8}}]}},
+            {"serverContent": {"modelTurn": {"parts": [{"inlineData": {"mimeType": "audio/pcm;rate=24000", "data": "AAAA"}}]},
+                               "outputTranscription": {"text": "大约 318 加元"}}},
+            {"serverContent": {"interrupted": True}},
+            {"serverContent": {"turnComplete": True}},
+        ])
+        events = []
+        with mock.patch.object(self._voice, "project_id", return_value="genc-consumption-2026"):
+            s = self._voice.LiveSession({"email": "amber@superhairpieces.com", "name": "Amber"}, self.tools(), events.append,
+                                        view={"tab": "charts", "month": "8"}, today=main.dt.date(2026, 10, 15), connect=lambda url: live)
+            s.start()
+        deadline = time.time() + 3
+        while time.time() < deadline and not any(e["t"] == "turn" for e in events):
+            time.sleep(0.02)
+        setup = live.sent[0]["setup"]
+        self.assertEqual(setup["model"], f"projects/genc-consumption-2026/locations/{self._voice.LIVE_LOCATION}/publishers/google/models/{self._voice.LIVE_MODEL}")
+        prompt = setup["system_instruction"]["parts"][0]["text"]
+        self.assertIn("Speak Mandarin Chinese (普通话) by default", prompt)
+        self.assertIn("Wenyu", prompt)                                  # known names, for misheard ones
+        self.assertIn("month 8", prompt)
+        tool_reply = live.sent[1]["tool_response"]["function_responses"][0]
+        self.assertEqual((tool_reply["id"], tool_reply["name"], tool_reply["response"]["spend_cad"]), ("c1", "summarize", 317.87))
+        self.assertEqual([e["t"] for e in events], ["ready", "you", "tool", "audio", "bot", "interrupted", "turn"])
+        # browser input is checked before it goes upstream
+        s.handle({"t": "audio", "d": "x" * (self._voice.MAX_AUDIO_B64 + 1)})
+        s.handle({"t": "text", "text": "  谁领取最多？ "})
+        s.handle({"t": "bogus"})
+        self.assertEqual(live.sent[-1], {"client_content": {"turns": [{"role": "user", "parts": [{"text": "谁领取最多？"}]}], "turn_complete": True}})
+        s.handle({"t": "stop"})
+        self.assertTrue(s.closed)
+        self.assertEqual(events[-1], {"t": "closed", "reason": "stopped"})
+
+    def test_one_session_per_person(self):
+        reg = self._voice.Registry()
+        a = self._voice.LiveSession({"email": "a@x"}, None, lambda e: None)
+        b = self._voice.LiveSession({"email": "a@x"}, None, lambda e: None)
+        reg.add(a); reg.add(b)
+        self.assertTrue(a.closed)
+        self.assertIs(reg.get(b.id, {"email": "a@x"}), b)
+        self.assertIsNone(reg.get(b.id, {"email": "someone@else"}))

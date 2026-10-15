@@ -33,21 +33,29 @@ Endpoints
                                stock_out: skuvault | manual | no, items: [{sku, qty, unit_cost_cad?}]}
   PATCH  /api/entries/<id>    any of the fields above for one line (stock_out runs or retries the removal)
   DELETE /api/entries/<id>    soft delete
+  WS     /api/voice/ws        voice assistant (Gemini Live, see voice.py): first message {"t": "start", "view": {...}}
+  POST   /api/voice/sessions  the same over plain HTTP, for networks that block WebSockets: start -> {id};
+  GET    /api/voice/sessions/<id>/events (server-sent events); POST /api/voice/sessions/<id> {messages: [...]};
+  DELETE /api/voice/sessions/<id>
 
 Env: SPREADSHEET_ID, DETAIL_TAB, DETAIL_GID, STORE (supabase | memory), SUPABASE_URL,
 SUPABASE_SERVICE_KEY, IAP_AUDIENCE, ALLOWED_DOMAINS, ADMIN_EMAILS, AUTH_DISABLED, TIMEZONE,
-SKUVAULT_EMAIL, SKUVAULT_PASSWORD, SKUVAULT_WAREHOUSES, SKUVAULT_REASONS.
+SKUVAULT_EMAIL, SKUVAULT_PASSWORD, SKUVAULT_WAREHOUSES, SKUVAULT_REASONS, VOICE_DISABLED, LIVE_MODEL,
+LIVE_LOCATION, LIVE_VOICE, GCP_PROJECT.
 """
 
 import datetime as dt
 import json
 import os
+import queue
 import sys
 import threading
 import time
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
-from flask import Flask, g, jsonify, request, send_from_directory
+from flask import Flask, Response, g, jsonify, request, send_from_directory, stream_with_context
+from flask_sock import Sock
 from werkzeug.exceptions import HTTPException
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -63,6 +71,8 @@ except Exception:  # noqa: BLE001
 
 from sheet import SheetClient, SheetError  # noqa: E402
 from skuvault import NotEnoughStock, SkuVaultClient, SkuVaultError, plan_removal  # noqa: E402
+import voice  # noqa: E402
+from voice import VoiceError  # noqa: E402
 from store import MemoryStore, StoreError, SupabaseStore, now_iso  # noqa: E402
 
 SERVICE = "genc-consumption"
@@ -101,6 +111,7 @@ try:
 except ValueError:
     raise SystemExit("SKUVAULT_REASONS must be a JSON object of dashboard reason -> SkuVault reason") from None
 STOCK_OUT = ("skuvault", "manual", "no")
+VOICE_ENABLED = os.environ.get("VOICE_DISABLED") != "1"
 PENDING_STALE = dt.timedelta(minutes=10)      # a removal "pending" longer than this was cut off
 
 if os.environ.get("K_SERVICE") and not AUTH_DISABLED and not IAP_AUDIENCE:
@@ -112,6 +123,7 @@ if AUTH_DISABLED:
 app = Flask(__name__, static_folder=os.path.join(HERE, "static"), static_url_path="/static")
 app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024
 app.json.ensure_ascii = False
+sock = Sock(app)
 
 
 # ---------------------------------------------------------------------------
@@ -478,6 +490,12 @@ def _store_error(exc):
     return jsonify({"error": f"database: {exc}"}), 502
 
 
+@app.errorhandler(VoiceError)
+def _voice_error(exc):
+    print(f"voice: {exc}")
+    return jsonify({"error": str(exc)}), 503
+
+
 @app.errorhandler(SheetError)
 def _sheet_error(exc):
     print(f"sheet: {exc}")
@@ -544,7 +562,7 @@ def health():
 @app.route("/api/config")
 def api_config():
     return jsonify({"auth": "open" if AUTH_DISABLED else "iap", "sheet_url": get_sheet().url, "detail_tab": DETAIL_TAB,
-                    "skuvault": skuvault_info()})
+                    "skuvault": skuvault_info(), "voice": {"enabled": VOICE_ENABLED, "model": voice.LIVE_MODEL}})
 
 
 def skuvault_info():
@@ -559,6 +577,12 @@ def api_me():
 @app.route("/api/data")
 def api_data():
     user = require_user()
+    return jsonify(collect_data(user))
+
+
+def collect_data(user):
+    """Every line from both sources, the reasons and what could not be read: the page's data, and
+    what the voice assistant's tools work on."""
     warnings = []
     sheet = get_sheet()
     try:
@@ -579,7 +603,7 @@ def api_data():
     undated = sum(1 for r in old_rows if not r["entry_date"])
     if undated:
         warnings.append(f"{undated} row(s) in the {DETAIL_TAB} tab have no readable date and are left out of the charts.")
-    return jsonify({
+    return {
         "rows": old_rows + new_rows,
         "reasons": found_reasons,
         "today": today().isoformat(),
@@ -588,7 +612,7 @@ def api_data():
         "store": store_info,
         "skuvault": skuvault_info(),
         "warnings": warnings,
-    })
+    }
 
 
 @app.route("/api/skus")
@@ -740,6 +764,121 @@ def api_delete(entry_id):
         raise AuthError(403, f"only {row.get('created_by')} or an admin can delete this line")
     store.delete_entry(entry_id, user["email"])
     return jsonify({"deleted": entry_id})
+
+
+# ---------------------------------------------------------------------------
+# Voice assistant (voice.py). WebSocket first; the HTTP pair is the same session for networks or
+# proxies that refuse WebSockets. Sessions live in this instance (the deploy turns on session
+# affinity so the HTTP calls of one session reach the same instance).
+# ---------------------------------------------------------------------------
+VOICE = voice.Registry()
+
+
+def start_voice(user, view, emit):
+    if not VOICE_ENABLED:
+        raise VoiceError("the voice assistant is switched off on this service")
+    tools = voice.Tools(lambda: collect_data(user), dict(SKUVAULT_REASONS), cost_index,
+                        get_skuvault if skuvault_enabled() else None, SKUVAULT_WAREHOUSES, today)
+    session = voice.LiveSession(user, tools, emit, view=view if isinstance(view, dict) else None, today=today())
+    VOICE.add(session)
+    session.start()
+    return session
+
+
+def same_origin():
+    origin = request.headers.get("Origin", "")
+    return not origin or urlparse(origin).netloc == request.host
+
+
+@sock.route("/api/voice/ws")
+def voice_ws(ws):
+    def fail(message):
+        ws.send(json.dumps({"t": "error", "error": message}))
+        ws.send(json.dumps({"t": "closed", "reason": message}))
+
+    # A WebSocket is not bound by the same-origin rule, and IAP's cookie rides along: only the
+    # dashboard's own page may open one.
+    if not same_origin():
+        return fail("voice can only be opened from the dashboard page")
+    user = current_user()
+    if not user:
+        return fail("sign in with your superhairpieces.com Google account")
+    try:
+        first = json.loads(ws.receive(timeout=10) or "{}")
+        session = start_voice(user, first.get("view"), lambda event: ws.send(json.dumps(event, ensure_ascii=False)))
+    except VoiceError as exc:
+        return fail(str(exc))
+    except Exception as exc:  # noqa: BLE001
+        return fail(f"could not start the voice session ({exc.__class__.__name__})")
+    try:
+        while not session.closed:
+            raw = ws.receive(timeout=1)
+            if raw:
+                session.handle(json.loads(raw))
+    except Exception:  # noqa: BLE001 - the page went away
+        pass
+    finally:
+        session.close("the page closed the voice connection")
+
+
+@app.route("/api/voice/sessions", methods=["POST"])
+def voice_start_http():
+    user = require_user()
+    body = request.get_json(silent=True) or {}
+    events = queue.Queue(maxsize=4000)
+
+    def emit(event):
+        try:
+            events.put_nowait(event)
+        except queue.Full:
+            pass
+
+    session = start_voice(user, body.get("view"), emit)
+    session.events = events
+    return jsonify({"id": session.id})
+
+
+def _voice_session(sid, user):
+    session = VOICE.get(sid, user)
+    if not session or not hasattr(session, "events"):
+        raise AuthError(404, "no such voice session (it ended, or it belongs to someone else)")
+    return session
+
+
+@app.route("/api/voice/sessions/<sid>/events")
+def voice_events_http(sid):
+    session = _voice_session(sid, require_user())
+
+    def stream():
+        while True:
+            try:
+                event = session.events.get(timeout=15)
+            except queue.Empty:
+                if session.closed:
+                    return
+                yield ": keep-alive\n\n"
+                continue
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            if event.get("t") == "closed":
+                return
+
+    return Response(stream_with_context(stream()), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+
+@app.route("/api/voice/sessions/<sid>", methods=["POST"])
+def voice_input_http(sid):
+    session = _voice_session(sid, require_user())
+    messages = (request.get_json(silent=True) or {}).get("messages")
+    for message in (messages if isinstance(messages, list) else [])[:50]:
+        session.handle(message)
+    return jsonify({"ok": not session.closed})
+
+
+@app.route("/api/voice/sessions/<sid>", methods=["DELETE"])
+def voice_stop_http(sid):
+    _voice_session(sid, require_user()).close("stopped")
+    return jsonify({"ok": True})
 
 
 if __name__ == "__main__":

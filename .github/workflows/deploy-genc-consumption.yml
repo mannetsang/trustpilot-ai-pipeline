@@ -17,6 +17,11 @@ name: Deploy GenC Consumption dashboard
 #
 # SkuVault: ticking 出库 removes stock, bins with the least stock first, only in
 # SKUVAULT_WAREHOUSES. Widening that list changes where real stock comes out.
+#
+# Voice assistant (Gemini Live on Vertex AI, us-central1, as the runtime account,
+# which holds roles/aiplatform.user): a voice connection is one long request, so
+# the request timeout is 15 minutes (sessions stop at 10), and session affinity
+# keeps the plain-HTTP fallback's calls of one session on one instance.
 
 on:
   push:
@@ -44,6 +49,8 @@ env:
   ADMIN_EMAILS: manne@superhairpieces.com,anais@superhairpieces.com
   IAP_AUDIENCE: /projects/83164121214/locations/northamerica-northeast1/services/genc-consumption
   SKUVAULT_WAREHOUSES: WH1
+  LIVE_MODEL: gemini-3.8-live
+  LIVE_LOCATION: us-central1
   SECRETS: SUPABASE_SERVICE_KEY=supabase-service-key:latest,SKUVAULT_EMAIL=projects/304363458561/secrets/SKUVAULT_EMAIL:latest,SKUVAULT_PASSWORD=projects/304363458561/secrets/SKUVAULT_PASSWORD:latest
 
 jobs:
@@ -78,8 +85,8 @@ jobs:
             --region "$REGION" --project "$PROJECT" \
             --service-account "$RUNTIME_SA" \
             --no-allow-unauthenticated --iap \
-            --min-instances 0 --max-instances 2 --memory 512Mi --timeout 120 \
-            --set-env-vars "^;^SUPABASE_URL=$SUPABASE_URL;IAP_AUDIENCE=$IAP_AUDIENCE;ALLOWED_DOMAINS=$ALLOWED_DOMAINS;ADMIN_EMAILS=$ADMIN_EMAILS;SPREADSHEET_ID=$SPREADSHEET_ID;SKUVAULT_WAREHOUSES=$SKUVAULT_WAREHOUSES" \
+            --min-instances 0 --max-instances 2 --memory 512Mi --timeout 900 --session-affinity \
+            --set-env-vars "^;^SUPABASE_URL=$SUPABASE_URL;IAP_AUDIENCE=$IAP_AUDIENCE;ALLOWED_DOMAINS=$ALLOWED_DOMAINS;ADMIN_EMAILS=$ADMIN_EMAILS;SPREADSHEET_ID=$SPREADSHEET_ID;SKUVAULT_WAREHOUSES=$SKUVAULT_WAREHOUSES;GCP_PROJECT=$PROJECT;LIVE_MODEL=$LIVE_MODEL;LIVE_LOCATION=$LIVE_LOCATION" \
             --set-secrets "$SECRETS" \
             --quiet
           gcloud run services describe "$SERVICE" --region "$REGION" --project "$PROJECT" --format 'value(status.url)'

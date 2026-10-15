@@ -244,19 +244,107 @@ h3.section { font-size: 13px; margin: 18px 0 8px; color: var(--ink-2); font-weig
 footer { color: var(--muted); font-size: 12px; margin-top: 18px; line-height: 1.6; }
 footer a { color: var(--muted); }
 
+/* Voice assistant */
+.btn.ask { display: inline-flex; align-items: center; gap: 6px; }
+.chat { position: fixed; z-index: 40; top: 0; right: 0; bottom: 0; width: min(420px, 100vw); background: var(--surface);
+  border-left: 1px solid var(--border); box-shadow: -12px 0 40px rgba(0, 0, 0, 0.12); display: flex; flex-direction: column; }
+.chat-head { display: flex; align-items: center; gap: 8px; padding: 14px 14px 10px; border-bottom: 1px solid var(--grid); }
+.chat-head .title { margin-right: auto; line-height: 1.2; }
+.chat-head .title b { font-size: 15px; display: block; }
+.chat-head .title span { font-size: 12px; color: var(--muted); }
+.chip { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: var(--surface-2); color: var(--ink-2); white-space: nowrap; }
+.chip.live { background: color-mix(in srgb, var(--good) 18%, transparent); color: var(--good-ink); }
+.chip.speak { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.chip.err { background: color-mix(in srgb, var(--critical) 15%, transparent); color: var(--critical); }
+.icon-btn { border: 0; background: transparent; width: 36px; height: 36px; border-radius: 8px; cursor: pointer; font-size: 17px; color: var(--ink-2); }
+.icon-btn:hover { background: var(--surface-2); }
+.chat-log { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 8px; overscroll-behavior: contain; }
+.bubble { max-width: 86%; padding: 9px 12px; border-radius: 14px; font-size: 14px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+.bubble.you { align-self: flex-end; background: var(--accent); color: var(--accent-ink); border-bottom-right-radius: 4px; }
+.bubble.bot { align-self: flex-start; background: var(--surface-2); color: var(--ink); border-bottom-left-radius: 4px; }
+.bubble.partial { opacity: 0.75; }
+.note { align-self: center; font-size: 12px; color: var(--muted); text-align: center; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: center; }
+.note.err { color: var(--critical); }
+.note .btn { padding: 2px 8px; font-size: 12px; }
+.examples { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: auto 0 4px; }
+.examples button { border: 1px solid var(--border); background: var(--page); border-radius: 999px; padding: 7px 12px; font-size: 13px; cursor: pointer; }
+.examples button:hover { background: var(--surface-2); }
+.chat-intro { text-align: center; color: var(--ink-2); font-size: 13px; margin-top: auto; padding: 0 10px; }
+.chat-intro b { display: block; font-size: 16px; color: var(--ink); margin-bottom: 4px; }
+.chat-foot { border-top: 1px solid var(--grid); padding: 12px 14px calc(12px + env(safe-area-inset-bottom)); display: flex; gap: 10px; align-items: center; }
+.mic { flex: none; width: 56px; height: 56px; border-radius: 50%; border: 0; cursor: pointer; background: var(--accent); color: #fff;
+  display: grid; place-items: center; box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 40%, transparent); }
+.mic svg { width: 26px; height: 26px; }
+.mic[aria-pressed="true"] { background: var(--critical); animation: pulse 1.6s ease-out infinite; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--critical) 45%, transparent); } 100% { box-shadow: 0 0 0 16px transparent; } }
+@media (prefers-reduced-motion: reduce) { .mic[aria-pressed="true"] { animation: none; } }
+.chat-form { flex: 1; display: flex; gap: 6px; min-width: 0; }
+.chat-form input { flex: 1; min-width: 0; border: 1px solid var(--border); background: var(--page); border-radius: 999px; padding: 9px 14px; height: 42px; }
+.chat-form button { border-radius: 999px; height: 42px; }
+.chat-hint { margin: 0; padding: 0 14px 10px; font-size: 11px; color: var(--muted); text-align: center; }
+
+/* Phone: bottom bar, filter toggle, transaction cards */
+.mbar, .f-toggle, .tx-list, .m-sort { display: none; }
+.tx-list { gap: 10px; }
+.tx { border: 1px solid var(--border); border-radius: 12px; padding: 12px; background: var(--surface); display: grid; gap: 6px; }
+.tx-top { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--ink-2); }
+.tx-sku { font-weight: 600; font-size: 15px; line-height: 1.3; word-break: break-word; }
+.tx-money { display: flex; justify-content: space-between; align-items: baseline; font-variant-numeric: tabular-nums; color: var(--ink-2); font-size: 13px; }
+.tx-money b { font-size: 17px; color: var(--ink); }
+.tx-meta { font-size: 13px; color: var(--ink-2); }
+.tx-foot { display: flex; align-items: center; gap: 14px; padding-top: 6px; border-top: 1px solid var(--grid); flex-wrap: wrap; }
+.tx-foot .tick { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; min-height: 36px; }
+.tx-foot .grow { margin-left: auto; }
+
 @media (max-width: 980px) {
   .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .tile.hero { grid-column: 1 / -1; }
   .grid3 { grid-template-columns: minmax(0, 1fr); }
 }
+@media (max-width: 720px) {
+  body { padding-bottom: calc(72px + env(safe-area-inset-bottom)); }
+  .wrap { padding: 0 12px 24px; }
+  .top { padding: 12px 0 6px; }
+  .brand p, #who { display: none; }
+  .who #add-btn, .who #ask-btn { display: none; }
+  .tabs { position: sticky; top: 0; z-index: 20; background: var(--page); margin-bottom: 10px; }
+  .tabs button { flex: 1; padding: 12px 8px; font-size: 15px; }
+  .f-toggle { display: flex; width: 100%; justify-content: space-between; align-items: center; margin-bottom: 10px; min-height: 44px; }
+  .filters { display: none; }
+  .filters.open { display: flex; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+  .filters label { flex: 1 1 calc(50% - 10px); }
+  .filters label.search { flex-basis: 100%; }
+  .filters select, .filters input { width: 100%; height: 44px; font-size: 16px; }
+  #panel-transactions > .card { padding: 12px; border: 0; box-shadow: none; background: transparent; }
+  #panel-transactions .table-wrap { display: none; }
+  .tx-list { display: grid; }
+  .m-sort { display: block; border: 1px solid var(--border); background: var(--surface); border-radius: 8px; height: 36px; font-size: 14px; }
+  #csv-btn { display: none; }
+  .mbar { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); background: color-mix(in srgb, var(--surface) 92%, transparent);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-top: 1px solid var(--border); }
+  .mbar .btn { height: 50px; font-size: 16px; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+  dialog { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0; border-radius: 0; border: 0; }
+  .dlg { max-height: 100dvh; height: 100dvh; }
+  .dlg-foot { padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
+  .field input, .field select, .item input, .chat-form input { font-size: 16px; height: 44px; }
+  .reasons label, .stockout label { min-height: 44px; }
+  .check { width: 22px; height: 22px; }
+  .chat { width: 100vw; border-left: 0; }
+}
 @media (max-width: 640px) {
   .tile.hero .value { font-size: 40px; }
   .tile .value { font-size: 22px; }
   .form-grid { grid-template-columns: minmax(0, 1fr); }
-  .item, .item-head { grid-template-columns: minmax(0, 1fr) 70px 32px; }
-  .item .cell.cost { grid-column: 1 / 2; }
-  .item .sub { grid-column: 2 / 3; }
-  .item-head span:nth-child(3), .item-head span:nth-child(4) { display: none; }
+  /* SKU on its own row; qty, unit cost, subtotal and remove under it */
+  .item-head { display: none; }
+  .item { grid-template-columns: 76px minmax(0, 1fr) auto 32px; grid-template-areas: "sku sku sku sku" "qty cost sub del";
+    border: 1px solid var(--border); border-radius: 10px; padding: 10px; row-gap: 8px; }
+  .item > :nth-child(1) { grid-area: sku; }
+  .item > :nth-child(2) { grid-area: qty; }
+  .item > :nth-child(3) { grid-area: cost; }
+  .item > :nth-child(4) { grid-area: sub; padding-top: 12px; }
+  .item > :nth-child(5) { grid-area: del; }
   .filters label { flex: 1 1 calc(50% - 10px); }
   .filters select { width: 100%; }
 }
@@ -278,6 +366,7 @@ footer a { color: var(--muted); }
     <div class="who">
       <span id="who"></span>
       <a id="switch" href="/_gcp_iap/clear_login_cookie" hidden>Switch account</a>
+      <button class="btn ask" id="ask-btn" type="button" hidden>🎙 问助手 Ask</button>
       <button class="btn primary" id="add-btn" type="button" disabled>+ Add items</button>
     </div>
   </header>
@@ -289,7 +378,9 @@ footer a { color: var(--muted); }
     <button type="button" role="tab" id="tab-charts" aria-controls="panel-charts" aria-selected="false" tabindex="-1">Charts</button>
   </nav>
 
-  <section class="filters" aria-label="Filters">
+  <button class="btn f-toggle" id="f-toggle" type="button" aria-expanded="false" aria-controls="filters">
+    <span>筛选 Filters <span class="muted" id="f-count"></span></span><span aria-hidden="true">▾</span></button>
+  <section class="filters" id="filters" aria-label="Filters">
     <label>Year <select id="f-year"></select></label>
     <label>Month <select id="f-month"></select></label>
     <label>Reason <select id="f-reason"></select></label>
@@ -315,9 +406,15 @@ footer a { color: var(--muted); }
           <h2 id="lines-title">Transactions</h2>
           <span class="sub" id="lines-sub"></span>
           <span class="spacer"></span>
+          <select class="m-sort" id="m-sort" aria-label="Sort">
+            <option value="entry_date:-1">最新 Newest</option>
+            <option value="entry_date:1">最早 Oldest</option>
+            <option value="subtotal_cad:-1">金额 Largest</option>
+          </select>
           <button class="btn small" id="csv-btn" type="button">Download CSV</button>
         </div>
         <div class="table-wrap"><table id="lines"></table></div>
+        <div class="tx-list" id="cards"></div>
         <div class="more" id="more" hidden><button class="btn small" type="button" id="more-btn">Show more</button></div>
       </section>
     </div>
@@ -359,6 +456,31 @@ footer a { color: var(--muted); }
 
   <footer id="footer"></footer>
 </div>
+
+<nav class="mbar" id="mbar" aria-label="Actions">
+  <button class="btn" id="m-ask" type="button" hidden>🎙 问助手</button>
+  <button class="btn primary" id="m-add" type="button" disabled>+ 添加 Add</button>
+</nav>
+
+<aside class="chat" id="chat" hidden aria-label="Voice assistant">
+  <div class="chat-head">
+    <div class="title"><b>语音助手</b><span>Voice assistant · 只读 read-only</span></div>
+    <span class="chip" id="chat-status">未连接</span>
+    <button class="icon-btn" id="chat-mute" type="button" aria-pressed="false" title="静音 Mute">🔊</button>
+    <button class="icon-btn" id="chat-close" type="button" title="关闭 Close" aria-label="Close">✕</button>
+  </div>
+  <div class="chat-log" id="chat-log" aria-live="polite"></div>
+  <div class="chat-foot">
+    <button class="mic" id="mic" type="button" aria-pressed="false" aria-label="Start talking">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+    </button>
+    <form class="chat-form" id="chat-form">
+      <input id="chat-input" maxlength="500" placeholder="输入问题… Type a question" autocomplete="off" enterkeyhint="send">
+      <button class="btn primary" type="submit">发送</button>
+    </form>
+  </div>
+  <p class="chat-hint">点麦克风说话，可以随时打断。助手只能查询，不会修改数据或 SkuVault。</p>
+</aside>
 
 <dialog id="dlg" aria-labelledby="dlg-title">
   <form class="dlg" id="dlg-form" method="dialog" novalidate>
@@ -451,7 +573,7 @@ function reasonLabel(r) {
   const en = (state.data && state.data.skuvault && state.data.skuvault.reasons || {})[r] || GLOSS[r];
   return en ? `${r} · ${en}` : (r || "(no reason)");
 }
-function sv() { return (state.data && state.data.skuvault) || { enabled: false, warehouses: [] }; }
+function svInfo() { return (state.data && state.data.skuvault) || { enabled: false, warehouses: [] }; }
 const TOUCHED = ["removed", "partial", "pending"];
 function removedQty(r) { return (r.skuvault_removed || []).reduce((n, p) => n + (p.qty || 0), 0); }
 function binsText(r) { return (r.skuvault_removed || []).map((p) => `${p.qty} from ${p.warehouse} · ${p.location}`).join(", "); }
@@ -523,7 +645,10 @@ async function load(first) {
     else refreshFilterOptions();
     renderNotices();
     render();
-    $("add-btn").disabled = false;
+    $("add-btn").disabled = false; $("m-add").disabled = false;
+    const voiceOn = Boolean(state.config && state.config.voice && state.config.voice.enabled);
+    $("ask-btn").hidden = !voiceOn; $("m-ask").hidden = !voiceOn;
+    $("f-count").textContent = filterCount() ? `(${filterCount()})` : "";
   } catch (e) {
     renderError(e.message);
   } finally {
@@ -593,8 +718,14 @@ function showWaiting() {
   filtersChanged();
   setTab("transactions", true);
 }
+function filterCount() {
+  const f = state.f;
+  return ["month", "reason", "who", "status", "source", "q"].filter((k) => f[k]).length + (f.year && state.data && f.year !== state.data.today.slice(0, 4) ? 1 : 0);
+}
 function filtersChanged() {
   state.shown = PAGE;
+  const n = filterCount();
+  $("f-count").textContent = n ? `(${n})` : "";
   try { sessionStorage.setItem("gc-filters", JSON.stringify(state.f)); } catch (e) { /* private mode */ }
   render();
 }
@@ -908,8 +1039,38 @@ function sortRows(rows) {
     return (c || a._order - b._order) * dir;
   });
 }
+const phone = window.matchMedia("(max-width: 720px)");
+function lineCard(r) {
+  const src = r.source === "app"
+    ? el("span", { class: "src" }, el("span", { class: "tag" }, "Dashboard"), " ", (r.created_by || "").split("@")[0])
+    : el("span", { class: "src" }, el("a", { href: r.sheet_url, target: "_blank", rel: "noopener" }, `Sheet row ${r.sheet_row} ↗`));
+  const unit = r.unit_cost_cad === null || r.unit_cost_cad === undefined ? "no cost" : fmtMoney(r.unit_cost_cad) + (r.cost_source === "manual" ? "*" : "");
+  const meta = [r.request_by, r.sent_to].filter(Boolean).join(" · ");
+  return el("article", { class: "tx" },
+    el("div", { class: "tx-top" }, el("span", {}, r.entry_date || "no date"),
+      el("span", {}, el("i", { class: "dot", style: `background:${reasonColor(r.reason)}` }), reasonLabel(r.reason))),
+    el("div", { class: "tx-sku" }, r.sku),
+    el("div", { class: "tx-money" }, el("span", {}, `${r.qty === null ? "—" : num.format(r.qty)} × ${unit}`), el("b", {}, fmtMoney(r.subtotal_cad))),
+    meta ? el("div", { class: "tx-meta" }, meta) : null,
+    el("div", { class: "tx-foot" },
+      el("span", { class: "tick" }, "拿货", checkControl(r, "picked_up")),
+      el("span", { class: "tick" }, "出库", stockOutControl(r)),
+      el("span", { class: "grow" }, src),
+      r.source === "app" ? el("button", { class: "btn small", type: "button", onclick: () => openEdit(r) }, r.can_edit ? "Edit" : "Status") : null));
+}
 function renderLines(rows) {
   const sorted = sortRows(rows);
+  if (phone.matches) {
+    const waiting = rows.filter((r) => r._waiting).length;
+    $("lines-sub").textContent = `${num.format(rows.length)} · ${fmtMoney(sum(rows))} · ${waiting} 待处理`;
+    $("tab-count").textContent = num.format(rows.length);
+    $("m-sort").value = `${state.sort.key}:${state.sort.dir}`;
+    const shown = sorted.slice(0, state.shown);
+    $("cards").replaceChildren(...(shown.length ? shown.map(lineCard) : [el("div", { class: "empty" }, "No lines match these filters.")]));
+    $("more").hidden = sorted.length <= state.shown;
+    $("more-btn").textContent = `Show ${Math.min(PAGE, sorted.length - state.shown)} more`;
+    return;
+  }
   const shown = sorted.slice(0, state.shown);
   const waiting = rows.filter((r) => r._waiting).length;
   $("lines-sub").textContent = `${num.format(rows.length)} line${rows.length === 1 ? "" : "s"} · ${fmtMoney(sum(rows))} · ${waiting} waiting for 拿货 / 出库 · ${periodName()}`;
@@ -928,22 +1089,23 @@ function renderLines(rows) {
   $("more").hidden = sorted.length <= state.shown;
   $("more-btn").textContent = `Show ${Math.min(PAGE, sorted.length - state.shown)} more`;
 }
-function stockOutCell(r) {
-  if (r.source !== "app") return checkCell(r, "issued");
+function stockOutCell(r) { return el("td", {}, stockOutControl(r)); }
+function stockOutControl(r) {
+  if (r.source !== "app") return checkControl(r, "issued");
   const status = r.skuvault_status || "none";
   if (status === "removed")
-    return el("td", {}, el("span", { class: "ro-check", title: `Removed from SkuVault: ${binsText(r)}` }, "✓"), el("span", { class: "sv-tag" }, "SkuVault"));
+    return el("span", {}, el("span", { class: "ro-check", title: `Removed from SkuVault: ${binsText(r)}` }, "✓"), el("span", { class: "sv-tag" }, "SkuVault"));
   if (status === "pending")
-    return el("td", {}, el("span", { class: "muted", title: "A SkuVault removal is running" }, "…"));
+    return el("span", { class: "muted", title: "A SkuVault removal is running" }, "…");
   const box = el("input", { type: "checkbox", class: "check", checked: r.issued, "aria-label": `出库 stocked out: ${r.sku}`,
     title: status === "manual" ? "Marked as removed in SkuVault by hand" : "Tick to remove it from SkuVault" });
   box.addEventListener("change", async () => {
     let choice = "no";
     if (box.checked) {
-      if (!sv().enabled) choice = "manual";
+      if (!svInfo().enabled) choice = "manual";
       else {
         const left = r.qty - removedQty(r);
-        const ok = confirm(`Remove ${num.format(left)} × ${r.sku} from SkuVault now?\n\nIt comes out of the bins with the least stock first, in ${sv().warehouses.join(", ")}, with the reason "${(sv().reasons || {})[r.reason] || r.reason}".\n\nAlready removed it in SkuVault by hand? Cancel, then use ${r.can_edit ? "Edit" : "Status"} on this line.`);
+        const ok = confirm(`Remove ${num.format(left)} × ${r.sku} from SkuVault now?\n\nIt comes out of the bins with the least stock first, in ${svInfo().warehouses.join(", ")}, with the reason "${(svInfo().reasons || {})[r.reason] || r.reason}".\n\nAlready removed it in SkuVault by hand? Cancel, then use ${r.can_edit ? "Edit" : "Status"} on this line.`);
         if (!ok) { box.checked = false; return; }
         choice = "skuvault";
       }
@@ -957,15 +1119,16 @@ function stockOutCell(r) {
     } catch (e) { box.checked = !box.checked; toast(e.message, true); }
     finally { box.disabled = false; }
   });
-  const cell = el("td", {}, box);
+  const cell = el("span", {}, box);
   if (status === "failed" || status === "partial") {
     const what = status === "partial" ? `${removedQty(r)} of ${num.format(r.qty)} came out of SkuVault (${binsText(r)}), then: ` : "SkuVault did not remove it: ";
     cell.append(el("span", { class: "sv-flag", title: what + (r.skuvault_error || "unknown error") + ". Tick 出库 to try again.", "aria-label": "SkuVault problem" }, "!"));
   }
   return cell;
 }
-function checkCell(r, field) {
-  if (r.source !== "app") return el("td", {}, r[field] ? el("span", { class: "ro-check", title: "Ticked in the sheet" }, "✓") : el("span", { class: "ro-cross", title: "Not ticked in the sheet" }, "—"));
+function checkCell(r, field) { return el("td", {}, checkControl(r, field)); }
+function checkControl(r, field) {
+  if (r.source !== "app") return r[field] ? el("span", { class: "ro-check", title: "Ticked in the sheet" }, "✓") : el("span", { class: "ro-cross", title: "Not ticked in the sheet" }, "—");
   const box = el("input", { type: "checkbox", class: "check", checked: r[field], "aria-label": `${field === "picked_up" ? "拿货 picked up" : "出库 stocked out"}: ${r.sku}` });
   box.addEventListener("change", async () => {
     box.disabled = true;
@@ -976,7 +1139,7 @@ function checkCell(r, field) {
     } catch (e) { box.checked = !box.checked; toast(e.message); }
     finally { box.disabled = false; }
   });
-  return el("td", {}, box);
+  return box;
 }
 function lineRow(r) {
   const src = r.source === "app"
@@ -1036,8 +1199,8 @@ function reasonPicker(selected, disabled) {
 }
 function itemLine(item, lockAdd) {
   const sku = el("input", { "aria-label": "SKU", value: item.sku || "", placeholder: "Type to search Cost Ref", autocomplete: "off", maxlength: 300, required: true });
-  const qty = el("input", { "aria-label": "Quantity", type: "number", min: "0", step: "any", inputmode: "decimal", value: item.qty ?? 1, required: true });
-  const cost = el("input", { "aria-label": "Unit cost CAD", type: "number", min: "0", step: "0.01", inputmode: "decimal", readonly: true, tabindex: -1, placeholder: "—" });
+  const qty = el("input", { "aria-label": "Quantity", title: "数量 Qty", type: "number", min: "0", step: "any", inputmode: "decimal", value: item.qty ?? 1, required: true });
+  const cost = el("input", { "aria-label": "Unit cost CAD", title: "单价 Unit cost CAD", type: "number", min: "0", step: "0.01", inputmode: "decimal", readonly: true, tabindex: -1, placeholder: "单价 Unit cost" });
   const hint = el("div", { class: "hint" });
   const sub = el("div", { class: "sub" }, "—");
   const list = el("div", { class: "suggest", role: "listbox", hidden: true });
@@ -1126,14 +1289,14 @@ function setStockOut(r) {
   const box = $("e-sv");
   const radios = $("e-stockout");
   const pick = (v) => { for (const i of radios.querySelectorAll("input")) i.checked = i.value === v; };
-  $("so-skuvault-note").textContent = sv().enabled
-    ? `Takes the quantity out of SkuVault when you save: bins with the least stock first, in ${sv().warehouses.join(", ")}. Whole units only.`
+  $("so-skuvault-note").textContent = svInfo().enabled
+    ? `Takes the quantity out of SkuVault when you save: bins with the least stock first, in ${svInfo().warehouses.join(", ")}. Whole units only.`
     : "SkuVault is not connected to this dashboard.";
-  $("so-skuvault").querySelector("input").disabled = !sv().enabled || status === "manual";
+  $("so-skuvault").querySelector("input").disabled = !svInfo().enabled || status === "manual";
   $("so-manual").querySelector("input").disabled = false;
   radios.hidden = TOUCHED.includes(status);
   box.hidden = true; box.className = "sv-box"; box.replaceChildren();
-  if (!r) { pick(sv().enabled ? "skuvault" : "no"); return; }
+  if (!r) { pick(svInfo().enabled ? "skuvault" : "no"); return; }
   if (status === "removed") {
     box.hidden = false;
     box.append(el("div", {}, `✓ Removed from SkuVault: ${binsText(r)}`), el("div", { class: "muted" },
@@ -1273,8 +1436,281 @@ async function removeLine() {
   } catch (e) { $("e-error").textContent = e.message; }
 }
 
+// ---------- voice assistant ----------
+const Voice = { transport: null, ctx: null, playHead: 0, sources: [], mic: null, muted: false, workletReady: false,
+  you: null, bot: null, connecting: null, started: false };
+const EXAMPLES = ["八月份一共花了多少钱？", "谁领取得最多？", "还有哪些没有出库？", "给我看本月的样品", "Medicube 面霜还有多少库存？"];
+const WORKLET = `class Down16k extends AudioWorkletProcessor {
+  constructor() { super(); this.step = sampleRate / 16000; this.pos = 0; this.out = new Int16Array(1600); this.n = 0; }
+  process(inputs) {
+    const ch = inputs[0] && inputs[0][0];
+    if (!ch) return true;
+    let i = this.pos;
+    for (; i < ch.length; i += this.step) {
+      const j = Math.floor(i), f = i - j, a = ch[j], b = j + 1 < ch.length ? ch[j + 1] : a;
+      const v = Math.max(-1, Math.min(1, a + (b - a) * f));
+      this.out[this.n++] = v < 0 ? v * 32768 : v * 32767;
+      if (this.n === this.out.length) { this.port.postMessage(this.out.buffer, [this.out.buffer]); this.out = new Int16Array(1600); this.n = 0; }
+    }
+    this.pos = i - ch.length;
+    return true;
+  }
+}
+registerProcessor("down-16k", Down16k);`;
+
+function voiceView() {
+  const f = state.f;
+  return { tab: state.tab, year: f.year, month: f.month, reason: f.reason, who: f.who, status: f.status, source: f.source, q: f.q };
+}
+function setVoiceStatus(kind) {
+  const labels = { idle: ["未连接", ""], connecting: ["连接中…", ""], ready: ["已连接", "live"], listening: ["正在听…", "live"],
+    thinking: ["查询中…", "speak"], speaking: ["正在说…", "speak"], ended: ["已结束", ""], error: ["出错", "err"] };
+  const [text, cls] = labels[kind] || labels.idle;
+  const chip = $("chat-status");
+  chip.textContent = text; chip.className = "chip" + (cls ? " " + cls : "");
+}
+function chatScroll() { const log = $("chat-log"); log.scrollTop = log.scrollHeight; }
+function chatIntro() {
+  if (Voice.started) return;
+  $("chat-log").replaceChildren(
+    el("div", { class: "chat-intro" }, el("b", {}, "你好！我可以回答关于办公室领用的问题。"),
+      "用普通话或英文提问：花费、谁领取的、哪些还没出库、SkuVault 库存…"),
+    el("div", { class: "examples" }, ...EXAMPLES.map((q) => el("button", { type: "button", onclick: () => sendText(q) }, q))));
+}
+function bubble(kind, text) {
+  const log = $("chat-log");
+  if (!Voice.started) { log.replaceChildren(); Voice.started = true; }
+  if (kind === "you") {
+    if (Voice.bot) { Voice.bot.classList.remove("partial"); Voice.bot = null; }
+    if (!Voice.you) { Voice.you = el("div", { class: "bubble you partial" }); log.append(Voice.you); }
+    Voice.you.textContent += text;
+  } else {
+    if (Voice.you) { Voice.you.classList.remove("partial"); Voice.you = null; }
+    if (!Voice.bot) { Voice.bot = el("div", { class: "bubble bot partial" }); log.append(Voice.bot); }
+    Voice.bot.textContent += text;
+  }
+  chatScroll();
+}
+function chatNote(text, isError, action) {
+  if (!Voice.started) { $("chat-log").replaceChildren(); Voice.started = true; }
+  $("chat-log").append(el("div", { class: "note" + (isError ? " err" : "") }, el("span", {}, text), action || null));
+  chatScroll();
+}
+function endTurn() {
+  for (const k of ["you", "bot"]) if (Voice[k]) { Voice[k].classList.remove("partial"); Voice[k] = null; }
+  if (!Voice.sources.length) setVoiceStatus(Voice.mic ? "listening" : "ready");
+}
+function ensureAudio() {
+  if (!Voice.ctx) { const AC = window.AudioContext || window.webkitAudioContext; Voice.ctx = new AC(); }
+  if (Voice.ctx.state === "suspended") Voice.ctx.resume();
+  return Voice.ctx;
+}
+function playChunk(b64data) {
+  if (Voice.muted) return;
+  const ctx = ensureAudio();
+  const bin = atob(b64data), n = bin.length >> 1;
+  const buf = ctx.createBuffer(1, n, 24000), ch = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) { let v = bin.charCodeAt(2 * i) | (bin.charCodeAt(2 * i + 1) << 8); if (v >= 32768) v -= 65536; ch[i] = v / 32768; }
+  const src = ctx.createBufferSource();
+  src.buffer = buf; src.connect(ctx.destination);
+  const at = Math.max(ctx.currentTime + 0.04, Voice.playHead);
+  src.start(at); Voice.playHead = at + buf.duration;
+  Voice.sources.push(src);
+  src.onended = () => { Voice.sources = Voice.sources.filter((x) => x !== src); if (!Voice.sources.length && !Voice.bot) setVoiceStatus(Voice.mic ? "listening" : "ready"); };
+  setVoiceStatus("speaking");
+}
+function stopPlayback() {
+  for (const src of Voice.sources) { try { src.stop(); } catch (e) { /* already stopped */ } }
+  Voice.sources = []; Voice.playHead = 0;
+}
+function toB64(buffer) {
+  const bytes = new Uint8Array(buffer); let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+function applyView(view) {
+  // A view the assistant puts on screen is complete: filters it does not name go back to their defaults.
+  const f = state.f;
+  for (const k of ["month", "reason", "who", "status", "source", "q"]) f[k] = String(view[k] || "");
+  f.year = String(view.year || state.data.today.slice(0, 4));
+  refreshFilterOptions();
+  $("f-status").value = f.status; $("f-source").value = f.source; $("f-q").value = f.q;
+  filtersChanged();
+  if (view.tab) setTab(view.tab);
+  const parts = [f.month ? `${f.year}-${String(f.month).padStart(2, "0")}` : f.year, f.reason && reasonLabel(f.reason), f.who, f.q].filter(Boolean);
+  chatNote(`已显示 ${state.tab === "charts" ? "Charts" : "Transactions"} · ${parts.join(" · ")}`, false,
+    phone.matches ? el("button", { class: "btn", type: "button", onclick: closeChat }, "查看 View") : null);
+}
+function onVoiceEvent(ev) {
+  switch (ev.t) {
+    case "ready": setVoiceStatus(Voice.mic ? "listening" : "ready"); break;
+    case "audio": playChunk(ev.d); break;
+    case "you": bubble("you", ev.text); break;
+    case "bot": bubble("bot", ev.text); break;
+    case "turn": endTurn(); break;
+    case "interrupted": stopPlayback(); if (Voice.bot) { Voice.bot.classList.remove("partial"); Voice.bot = null; } break;
+    case "tool": setVoiceStatus("thinking"); break;
+    case "ui": applyView(ev.view || {}); break;
+    case "error": chatNote(ev.error || "出错了 Something went wrong", true); break;
+    case "closed": voiceEnded(ev.reason); break;
+  }
+}
+function openWs() {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/voice/ws`);
+    let ready = false;
+    const tr = { kind: "ws", send: (o) => { if (ws.readyState === 1) ws.send(JSON.stringify(o)); },
+      close: () => { try { ws.send(JSON.stringify({ t: "stop" })); } catch (e) { /* closed */ } try { ws.close(); } catch (e) { /* closed */ } } };
+    const timer = setTimeout(() => { if (!ready) { try { ws.close(); } catch (e) { /* closed */ } reject(new Error("timeout")); } }, 12000);
+    ws.onopen = () => ws.send(JSON.stringify({ t: "start", view: voiceView() }));
+    ws.onmessage = (m) => {
+      const ev = JSON.parse(m.data);
+      if (!ready) {
+        if (ev.t === "ready") { ready = true; clearTimeout(timer); resolve(tr); }
+        else if (ev.t === "error") { clearTimeout(timer); const err = new Error(ev.error); err.server = true; reject(err); return; }
+      }
+      if (ready && tr === Voice.transport) onVoiceEvent(ev);
+      else if (ready && ev.t === "ready") onVoiceEvent(ev);
+    };
+    ws.onerror = () => { if (!ready) { clearTimeout(timer); reject(new Error("websocket refused")); } };
+    ws.onclose = () => { if (ready && tr === Voice.transport) onVoiceEvent({ t: "closed", reason: "connection closed" }); else if (!ready) { clearTimeout(timer); reject(new Error("websocket closed")); } };
+  });
+}
+async function openHttp() {
+  const { id } = await api("POST", "/api/voice/sessions", { view: voiceView() });
+  const base = `/api/voice/sessions/${encodeURIComponent(id)}`;
+  let queue = [], timer = null, closed = false;
+  const flush = async () => {
+    timer = null;
+    if (!queue.length || closed) return;
+    const batch = queue; queue = [];
+    try { await api("POST", base, { messages: batch }); } catch (e) { onVoiceEvent({ t: "error", error: e.message }); }
+  };
+  const tr = { kind: "http",
+    send: (o) => { queue.push(o); if (o.t !== "audio") flush(); else if (!timer) timer = setTimeout(flush, 200); },
+    close: () => { closed = true; fetch(base, { method: "DELETE", headers: { "X-Requested-With": "XMLHttpRequest" }, credentials: "same-origin" }).catch(() => {}); } };
+  (async () => {
+    const res = await fetch(`${base}/events`, { credentials: "same-origin" });
+    const reader = res.body.getReader(), dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf("\n\n")) >= 0) {
+        const chunk = buf.slice(0, i); buf = buf.slice(i + 2);
+        for (const line of chunk.split("\n")) if (line.startsWith("data: ") && tr === Voice.transport) onVoiceEvent(JSON.parse(line.slice(6)));
+      }
+    }
+    if (!closed && tr === Voice.transport) onVoiceEvent({ t: "closed", reason: "connection closed" });
+  })().catch((e) => { if (tr === Voice.transport) onVoiceEvent({ t: "error", error: e.message }); });
+  return tr;
+}
+async function voiceConnect() {
+  if (Voice.transport) return Voice.transport;
+  if (Voice.connecting) return Voice.connecting;
+  setVoiceStatus("connecting");
+  Voice.connecting = (async () => {
+    let tr;
+    try { tr = await openWs(); }
+    catch (e) {
+      if (e.server) throw e;
+      tr = await openHttp();            // the network refused the WebSocket: same session over plain HTTP
+    }
+    Voice.transport = tr;
+    setVoiceStatus(Voice.mic ? "listening" : "ready");
+    return tr;
+  })();
+  try { return await Voice.connecting; }
+  catch (e) { setVoiceStatus("error"); chatNote(`无法连接语音助手：${e.message}`, true); throw e; }
+  finally { Voice.connecting = null; }
+}
+function voiceEnded(reason) {
+  const had = Voice.transport;
+  Voice.transport = null;
+  micStop(true);
+  endTurn();
+  setVoiceStatus("ended");
+  if (had) chatNote(`会话已结束（${reason || "closed"}）。点麦克风重新开始。`);
+}
+async function micStart() {
+  const ctx = ensureAudio();
+  try {
+    if (!Voice.workletReady) {
+      await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: "application/javascript" })));
+      Voice.workletReady = true;
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
+    await voiceConnect();
+    const src = ctx.createMediaStreamSource(stream);
+    const node = new AudioWorkletNode(ctx, "down-16k");
+    const sink = ctx.createGain(); sink.gain.value = 0;
+    node.port.onmessage = (e) => { if (Voice.transport) Voice.transport.send({ t: "audio", d: toB64(e.data) }); };
+    src.connect(node); node.connect(sink); sink.connect(ctx.destination);
+    Voice.mic = { stream, src, node, sink };
+    $("mic").setAttribute("aria-pressed", "true"); $("mic").setAttribute("aria-label", "Stop talking");
+    setVoiceStatus("listening");
+  } catch (e) {
+    if (e && (e.name === "NotAllowedError" || e.name === "SecurityError")) chatNote("麦克风被拒绝。请在浏览器地址栏允许麦克风，或直接输入问题。", true);
+    else if (e && e.name === "NotFoundError") chatNote("没有找到麦克风。可以直接输入问题。", true);
+    else if (!(e && e.server)) chatNote(`麦克风无法启动：${(e && e.message) || e}`, true);
+  }
+}
+function micStop(silent) {
+  if (!Voice.mic) return;
+  const { stream, src, node, sink } = Voice.mic;
+  Voice.mic = null;
+  try { src.disconnect(); node.disconnect(); sink.disconnect(); } catch (e) { /* gone */ }
+  stream.getTracks().forEach((t) => t.stop());
+  if (!silent && Voice.transport) Voice.transport.send({ t: "end" });
+  $("mic").setAttribute("aria-pressed", "false"); $("mic").setAttribute("aria-label", "Start talking");
+  if (!silent) setVoiceStatus(Voice.transport ? "ready" : "ended");
+}
+async function sendText(text) {
+  text = (text || "").trim();
+  if (!text) return;
+  ensureAudio();
+  bubble("you", text); Voice.you.classList.remove("partial"); Voice.you = null;
+  try { const tr = await voiceConnect(); setVoiceStatus("thinking"); tr.send({ t: "text", text }); } catch (e) { /* reported */ }
+}
+function openChat() {
+  ensureAudio();                        // inside the tap: phones only allow sound that a tap started
+  $("chat").hidden = false;
+  chatIntro();
+  voiceConnect().catch(() => {});
+  if (!phone.matches) $("chat-input").focus();
+}
+function closeChat() {
+  $("chat").hidden = true;
+  if (phone.matches) return;            // phones keep the session for "查看 View"; the close button below ends it
+}
+function endChat() {
+  micStop(true); stopPlayback();
+  if (Voice.transport) { const tr = Voice.transport; Voice.transport = null; tr.close(); }
+  setVoiceStatus("idle");
+  $("chat").hidden = true;
+}
+
 // ---------- wiring ----------
 $("add-btn").addEventListener("click", openAdd);
+$("m-add").addEventListener("click", openAdd);
+$("ask-btn").addEventListener("click", openChat);
+$("m-ask").addEventListener("click", openChat);
+$("chat-close").addEventListener("click", endChat);
+$("mic").addEventListener("click", () => { ensureAudio(); if (Voice.mic) micStop(); else micStart(); });
+$("chat-mute").addEventListener("click", () => {
+  Voice.muted = !Voice.muted; if (Voice.muted) stopPlayback();
+  $("chat-mute").textContent = Voice.muted ? "🔇" : "🔊"; $("chat-mute").setAttribute("aria-pressed", String(Voice.muted));
+});
+$("chat-form").addEventListener("submit", (ev) => { ev.preventDefault(); const v = $("chat-input").value; $("chat-input").value = ""; sendText(v); });
+$("f-toggle").addEventListener("click", () => {
+  const open = !$("filters").classList.contains("open");
+  $("filters").classList.toggle("open", open); $("f-toggle").setAttribute("aria-expanded", String(open));
+});
+$("m-sort").addEventListener("change", () => { const [key, dir] = $("m-sort").value.split(":"); state.sort = { key, dir: Number(dir) }; render(); });
+phone.addEventListener("change", () => render());
+window.addEventListener("pagehide", () => { if (Voice.transport) Voice.transport.close(); });
 for (const t of TABS) $(`tab-${t}`).addEventListener("click", () => setTab(t));
 $("tabs").addEventListener("keydown", (ev) => {
   const i = TABS.indexOf(state.tab);
