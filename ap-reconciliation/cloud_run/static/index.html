@@ -201,6 +201,9 @@
     table.txns tbody tr:hover td { background: #fbfcfc; }
     table.txns tr.row-muted td { color: var(--text-mute); }
     table.txns tr.row-muted .amt { color: var(--text-mute); font-weight: 400; }
+    /* In the table the receipt button says "Receipt…": "Add receipt…" would not fit beside No invoice and
+       Rematch in the invoice column's 232px. The phone layout below shows the long label. */
+    .lbl-long { display: none; }
     /* Phones: the table would push the Invoice column (the status) off the screen, so each purchase is a
        block instead: date, description and amount, then the status with its file and buttons, then cost
        centre and usage, then card and who changed it; a coloured edge says the status at a glance. */
@@ -226,6 +229,8 @@
       table.txns td[data-col="invoice"] .pill { font-size: 12px; }
       table.txns td[data-col="invoice"] .truncate { white-space: normal; max-width: none !important; overflow-wrap: anywhere; }
       table.txns td[data-col="invoice"] .btn-row .btn-xs { min-height: 32px; padding-left: 10px; padding-right: 10px; }
+      .lbl-short { display: none; }               /* a phone block has room for "Add receipt…" */
+      .lbl-long { display: inline; }
       table.txns td[data-col="cost"] { grid-area: cost; }
       table.txns td[data-col="usage"] { grid-area: usage; }
       table.txns td[data-col="card"] { grid-area: card; }
@@ -324,7 +329,9 @@
     .btn-link { background: none; border: 0; padding: 0; color: var(--brand-ink); font: inherit; font-size: 12.5px; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
     .btn-link:disabled { opacity: .5; cursor: not-allowed; }
     label.btn.is-disabled, label.rc-add.is-disabled { opacity: .5; pointer-events: none; }
-    .rc-file { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; pointer-events: none; }
+    /* Fixed: a fixed element is always in view, so tapping its label (which focuses it) never scrolls the
+       receipts list or the dialog back to where the input sits. */
+    .rc-file { position: fixed; top: 0; left: 0; width: 1px; height: 1px; opacity: 0; overflow: hidden; pointer-events: none; }
     /* 100%: the visible height, so Save is never under a phone's browser toolbar. */
     .modal.rcpt-sheet { width: 560px; max-height: min(90vh, 100%); }
     @media (max-width: 640px) { .modal.rcpt-sheet { max-height: min(92vh, calc(100% - 12px)); } }
@@ -398,6 +405,12 @@
     .rv-summary .pill { font-size: 12.5px; }
     .rv-empty { text-align: center; padding: 28px 16px; color: var(--text-mid); }
     .rv-foot { margin: 22px 0 8px; text-align: center; font-size: 14px; }
+    /* Touch screens (phones, also in landscape, and tablets): the small text buttons get 44px targets. */
+    @media (pointer: coarse) {
+      #rcptChange, .rv-foot a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 8px; font-size: 14px; }
+      #rcptChange { margin-left: -4px; }       /* the word keeps close to the destination (or under it, when it wraps) */
+      .rc-alt { min-height: 44px; }            /* "Already in Drive? Link a file instead" */
+    }
   </style>
 </head>
 <body>
@@ -1074,8 +1087,10 @@
     if (data.cost_centers) state.costCenters = data.cost_centers;
     var cardsHere = {};
     state.txns.forEach(function (t) { cardsHere[t.card_last4] = true; });
+    var hadView = state.view;
     if (state.card && !cardsHere[state.card]) state.card = '';
     if (!state.card) state.view = '';            // the receipts list is always for one card
+    if (state.view !== hadView) renderSidebar();  // its month counts were the card's
     renderMonth();
   }
 
@@ -1109,18 +1124,24 @@
     routing = (async function () {
       if (!state.months.length) { showEmpty(); return; }
       var r = parseHash();
-      var target = (r && findMonth(r.year, r.month)) ? r : null;
+      var monthMissing = !!(r && !findMonth(r.year, r.month));
+      var target = (r && !monthMissing) ? r : null;
       var wantsReceipts = !!(r && r.view === 'receipts');
       if (!target) {
+        // A receipts link keeps its card: its list for the newest month, if the card has purchases there.
         var newest = state.months[0];
-        target = { year: newest.year, month: newest.month, card: '', view: '' };
+        target = { year: newest.year, month: newest.month, card: wantsReceipts ? r.card : '', view: '' };
         history.replaceState(null, '', hashFor(newest.year, newest.month, ''));
       }
       var entry = findMonth(target.year, target.month);
       var askedCard = target.card;
       if (target.card && entry && entry.cards && !entry.cards[target.card]) target.card = '';
       target.view = wantsReceipts && target.card && receiptsOn(target.card) ? 'receipts' : '';
-      if (wantsReceipts && !target.view) {
+      if (wantsReceipts && monthMissing) {
+        // The hash takes months 0 and 13-99 too, which have no name.
+        toast((r.month >= 1 && r.month <= 12 ? monthLabel(r.year, r.month) : 'That month') + ' has no purchases on the dashboard; showing ' +
+          (target.view ? '' : 'all purchases in ') + monthLabel(target.year, target.month) + '.');
+      } else if (wantsReceipts && !target.view) {
         toast(askedCard && !target.card
           ? 'Card ' + askedCard + ' has no purchases in ' + monthLabel(target.year, target.month) + '; showing all purchases.'
           : 'The receipts list is only for cards with receipt upload; showing all purchases.');
@@ -1153,7 +1174,8 @@
   $('#monthNav').addEventListener('click', function (ev) {
     var row = ev.target.closest('a.nav-row'); if (!row) return;
     ev.preventDefault();
-    navigate(Number(row.dataset.year), Number(row.dataset.month), '');
+    var keep = state.view === 'receipts';           // as the month drop-down: the receipts list stays
+    navigate(Number(row.dataset.year), Number(row.dataset.month), keep ? state.card : '', keep ? 'receipts' : '');
   });
 
   var apHome = $('#apPanel').parentNode;
@@ -1234,16 +1256,13 @@
   // What the table shows: the chosen columns, minus Card while one card is picked (every row is that card).
   function shownColumns() { return visibleColumns().filter(function (c) { return !(c.key === 'card' && state.card); }); }
   // How far each column may give way when the window is narrow, before the table scrolls sideways.
-  // The invoice column keeps room for its three buttons on one line (Add receipt… or Link…, No invoice,
-  // Rematch): 250px while a card with receipt upload is in the month, since Add receipt… is the wider one
-  // (with every column at its minimum the table then still fits a 1280px laptop screen).
+  // The invoice column keeps room for its three buttons on one line (Receipt… or Link…, No invoice,
+  // Rematch). With every column at its minimum (980px) the table still fits a 1280px window that shows
+  // a 15-17px scrollbar, as Windows does (981-983px of room).
   // Date and Updated by keep room for "posted May 10" and "May 10, 00:00"; Amount for "-CAD 12,345.67".
   var MIN_WIDTH = { date: 98, card: 84, desc: 140, amount: 116, invoice: 232, cost: 112, usage: 100, by: 98 };
-  function minWidth(key) {
-    if (key === 'invoice' && state.txns.some(function (t) { return receiptsOn(t.card_last4); })) return 250;
-    return MIN_WIDTH[key];
-  }
-  // Never narrower than the minimum by default (250 also becomes the invoice column's default then).
+  function minWidth(key) { return MIN_WIDTH[key]; }
+  // Never narrower than the minimum by default.
   function colWidth(c) { return Math.max(60, Number(cols.widths[c.key]) || Math.max(c.width, minWidth(c.key) || 0)); }
   // Exact pixel widths; whatever room is left in the card goes to the description column.
   function renderCols() {
@@ -1413,7 +1432,8 @@
       sel.innerHTML = '<option>No months yet</option>';
       return;
     }
-    var html = '', optHtml = '', year = null;
+    // The receipts list is about one card, so the month counts are that card's while it shows.
+    var html = '', optHtml = '', year = null, only = state.view === 'receipts' && state.card;
     state.months.forEach(function (m) {
       if (m.year !== year) {
         year = m.year;
@@ -1422,14 +1442,15 @@
         optHtml += '<optgroup label="' + year + '">';
       }
       var active = m.year === state.year && m.month === state.month;
+      var n = only ? ((m.cards || {})[state.card] || {}) : m;
       var badges = '';
-      if (m.missing) badges += '<span class="badge badge-red" title="Invoices missing">' + m.missing + '</span>';
-      if (m.possible) badges += '<span class="badge badge-amber" title="Possible matches to confirm">' + m.possible + '</span>';
-      html += '<a class="nav-row' + (active ? ' active' : '') + '" href="' + hashFor(m.year, m.month, '') + '" data-year="' + m.year + '" data-month="' + m.month + '">' +
+      if (n.missing) badges += '<span class="badge badge-red" title="Invoices missing">' + n.missing + '</span>';
+      if (n.possible) badges += '<span class="badge badge-amber" title="Possible matches to confirm">' + n.possible + '</span>';
+      html += '<a class="nav-row' + (active ? ' active' : '') + '" href="' + hashFor(m.year, m.month, only ? state.card : '', only ? 'receipts' : '') + '" data-year="' + m.year + '" data-month="' + m.month + '">' +
         '<span>' + esc(MONTHS[m.month - 1]) + '</span><span class="badges">' + badges + '</span></a>';
       var tail = [];
-      if (m.missing) tail.push(m.missing + ' missing');
-      if (m.possible) tail.push(m.possible + ' possible');
+      if (n.missing) tail.push(n.missing + ' missing');
+      if (n.possible) tail.push(n.possible + ' possible');
       optHtml += '<option value="' + m.year + '-' + m.month + '"' + (active ? ' selected' : '') + '>' + esc(MONTHS[m.month - 1]) + (tail.length ? ' · ' + tail.join(', ') : '') + '</option>';
     });
     if (optHtml) optHtml += '</optgroup>';
@@ -1514,7 +1535,7 @@
     }
     var by = st === 'matched' ? uploadedBy(t) : '';
     if (by) {
-      var when = fmtLocalDay(t.updated_at);
+      var when = fmtLocalDay(t.invoice && t.invoice.created_at);   // set once, at upload; updated_at moves with every edit
       html += '<div class="sub" title="' + esc(t.match_note) + '">Uploaded by ' + esc(by.split('@')[0]) + (when ? ' · ' + esc(when) : '') + '</div>';
     }
     if (warns.length) html += '<div class="sub check-warn" title="' + esc(warns.map(function (c) { return c.text; }).join(' ')) + '">' + esc(warns[0].text) + '</div>';
@@ -1536,9 +1557,10 @@
     if (st === 'possible') {
       html += '<div class="btn-row"><button class="btn btn-primary btn-xs" data-action="confirm"' + dis + '>Confirm</button><button class="btn btn-secondary btn-xs" data-action="unlink"' + dis + '>Not this</button>' + again + '</div>';
     } else if (st === 'missing') {
-      // Cards with receipt upload get Add receipt… in place of Link… (the dialog still offers Link…).
+      // Cards with receipt upload get Add receipt… in place of Link… (the dialog still offers Link…);
+      // "Receipt…" on a computer, where the column is narrow (see .lbl-long).
       var add = receiptsOn(t.card_last4)
-        ? '<button class="btn btn-secondary btn-xs" data-action="receipt"' + (ed ? ' title="Take a photo or upload the receipt; it is saved in the Invoice folder on Drive and linked to this purchase"' : dis) + '>Add receipt…</button>'
+        ? '<button class="btn btn-secondary btn-xs" data-action="receipt"' + (ed ? ' title="Take a photo or upload the receipt; it is saved in the Invoice folder on Drive and linked to this purchase"' : dis) + '><span class="lbl-long">Add receipt…</span><span class="lbl-short">Receipt…</span></button>'
         : '<button class="btn btn-secondary btn-xs" data-action="pick"' + dis + '>Link…</button>';
       html += '<div class="btn-row">' + add + '<button class="btn btn-ghost btn-xs" data-action="waive"' + dis + '>No invoice</button>' + again + '</div>';
     } else if (st === 'waived') {
@@ -1678,6 +1700,9 @@
     var k = kpisOf(state.txns);
     var entry = findMonth(state.year, state.month);
     if (entry) { entry.missing = k.missing; entry.possible = k.possible; entry.matched = k.matched; entry.waived = k.waived; entry.uncoded = k.uncoded; }
+    // The picked card's own counts too: the receipts list shows them in the month list.
+    var ce = entry && state.card && entry.cards && entry.cards[state.card];
+    if (ce) { var kc = kpisOf(scopeTxns()); ce.missing = kc.missing; ce.possible = kc.possible; ce.matched = kc.matched; ce.waived = kc.waived; ce.uncoded = kc.uncoded; }
     renderSidebar();
   }
   async function patchTxn(id, body, okMessage) {
@@ -2130,7 +2155,7 @@
       fileInput('rcptCamera', false) + fileInput('rcptFiles', true) +
       '<div id="rcptPick" class="rc-pick">' + pick + '</div>' +
       '<div id="rcptPagesWrap" class="hidden"><div id="rcptStrip" class="rc-strip" role="list" aria-label="Pages of the receipt"></div>' +
-      '<div class="sub mt-1">Long receipt? Add a photo of each part, top to bottom; they are saved together as one PDF.</div></div>' +
+      '<div id="rcptHint" class="sub mt-1">Long receipt? Add a photo of each part, top to bottom; they are saved together as one PDF.</div></div>' +
       '<div id="rcptDestWrap" class="rc-dest"><span id="rcptDest">Finding the folder…</span> ' +
       '<button type="button" id="rcptChange" class="btn-link hidden" data-rc="change" aria-expanded="false" aria-controls="rcptChangeBox">Change</button>' +
       '<div id="rcptChangeBox" class="rc-change hidden"><label for="rcptFolder">Vendor folder</label>' +
@@ -2155,11 +2180,14 @@
     body.classList.add('rc-body');
     s.body = body;
     sheet = s;
+    // Closing while it is being sent is not a discard: the save carries on in the background and its
+    // outcome comes as a toast.
     modalGuard = function () {
-      if (s.saved || !s.pages.length) return true;
+      if (s.saved || s.sending || !s.pages.length) return true;
       return window.confirm('Discard the ' + (s.pages.length > 1 ? 'photos' : 'photo') + ' you took for ' + (t.description || 'this purchase') + '?');
     };
     modalCleanup = function () {
+      if (s.sending) toast('Still saving the receipt for ' + (t.description || 'this purchase') + '…', '', 4000);
       s.closed = true;
       s.pages.forEach(function (p) { if (p.url) URL.revokeObjectURL(p.url); });
       if (sheet === s) sheet = null;
@@ -2286,6 +2314,11 @@
   // A different set of pages is a different receipt: it gets its own upload_id when it is sent.
   function receiptPagesChanged(s) { s.uploadId = ''; renderReceiptSheet(s); }
 
+  // Whether another page may be added: not to a PDF or a photo this browser could not prepare (each is
+  // sent on its own), and not past 10. Decides both "+ Add page" and the "Long receipt?" hint.
+  function canAddPage(s) {
+    return !s.pages.some(function (p) { return p.kind === 'pdf' || p.kind === 'raw'; }) && s.pages.length < RCPT_MAX_PAGES;
+  }
   function receiptPagesHtml(s) {
     var busy = s.sending;
     var html = s.pages.map(function (p, i) {
@@ -2296,8 +2329,7 @@
       return '<div class="rc-page" role="listitem" data-page-tile="' + n + '">' + thumb + '<div class="rc-cap">Page ' + n + '</div>' +
         '<button type="button" class="rc-x" data-rc="remove-page" data-page="' + p.id + '" aria-label="Remove page ' + n + '"' + (busy ? ' disabled' : '') + '>✕</button></div>';
     }).join('');
-    var single = s.pages.some(function (p) { return p.kind === 'pdf' || p.kind === 'raw'; });
-    if (!single && s.pages.length < RCPT_MAX_PAGES) {
+    if (canAddPage(s)) {
       html += '<div role="listitem">' + fileLabel(s.touch ? 'rcptCamera' : 'rcptFiles', 'rc-add', '+ Add page') + '</div>';
     }
     return html;
@@ -2307,7 +2339,10 @@
     var b = s.body, has = s.pages.length > 0, busy = s.sending;
     $('#rcptPick', b).classList.toggle('hidden', has || s.saved);
     $('#rcptPagesWrap', b).classList.toggle('hidden', !has || s.saved);
-    if (has && !s.saved) $('#rcptStrip', b).innerHTML = receiptPagesHtml(s);
+    if (has && !s.saved) {
+      $('#rcptStrip', b).innerHTML = receiptPagesHtml(s);
+      $('#rcptHint', b).classList.toggle('hidden', !canAddPage(s));
+    }
     $('#rcptDestWrap', b).classList.toggle('hidden', s.saved);
     $('#rcptFootSave', b).classList.toggle('hidden', s.saved);
     $('#rcptSave', b).disabled = busy || s.saved || !has || s.preparing > 0;
@@ -2385,8 +2420,7 @@
     for (var i = 0; i < waits.length; i++) {
       if (waits[i]) {
         setReceiptMsg(s, 'No connection, retrying…');
-        await sleep(waits[i]);
-        if (s.closed) break;                         // discarded meanwhile
+        await sleep(waits[i]);                       // and on, also when the dialog was closed meanwhile
       }
       setReceiptMsg(s, 'Uploading… 0%');
       try {
@@ -2402,7 +2436,11 @@
     if (data) { receiptSaved(s, data); return; }
     // Not kept (the purchase changed, or already has its invoice): show the row as it is now.
     if (err && err.data && err.data.transaction && (err.data.withdrawn || err.data.status === 'not_saved')) replaceTxn(err.data.transaction, s.at);
-    if (s.closed) { if (err && err.status && err.status !== 401) toast(err.message, 'err'); return; }
+    // Closed while it was sent: say how it ended, also when it never got through.
+    if (s.closed) {
+      if (err && err.status !== 401) toast(err.status === 0 ? 'No connection: the receipt for ' + (s.t.description || 'this purchase') + ' was not saved. Add it again when you are back online.' : err.message, 'err', 9000);
+      return;
+    }
     if (!err) return;
     if (err.status === 0) {
       setReceiptMsg(s, 'No connection. Your photo is still here; tap Try again when you have signal.', 'err',
@@ -2429,12 +2467,16 @@
     renderReceiptSheet(s);
   }
 
-  // The server reads the receipt in the background; poll the row (every 3 s, for a minute) until it has,
-  // then say what it found. The row is refreshed even when the dialog was closed meanwhile.
+  // The server reads the receipt in the background; poll the row until it has, then say what it found:
+  // every 3 s for the first minute, then every 15 s (a queue of uploads or Gemini's retries can take
+  // longer), for up to 10 minutes, and not while the tab is hidden. The row, its pill and the receipts
+  // list are refreshed even when the dialog was closed meanwhile.
   async function watchReceiptRead(s, id, fileId) {
-    var until = Date.now() + 60000;
-    while (Date.now() < until) {
-      await sleep(3000);
+    var start = Date.now(), late = false;
+    while (Date.now() - start < 600000) {
+      await sleep(Date.now() - start < 60000 ? 3000 : 15000);
+      if (document.hidden) continue;
+      if (!late && Date.now() - start >= 60000) { late = true; setReceiptRead(s, 'Still reading the receipt…'); }
       var row;
       try { row = (await api('/api/transactions/' + encodeURIComponent(id))).transaction; }
       catch (e) { if (e.status === 401 || e.status === 403 || e.status === 404) return; continue; }
@@ -2445,7 +2487,7 @@
       showReceiptRead(s, row);
       return;
     }
-    setReceiptRead(s, "Still reading the receipt; this row updates when it's done.");
+    setReceiptRead(s, 'Still reading the receipt; reload the page later to see what it says.');
   }
   function showReceiptRead(s, row) {
     var inv = row.invoice || {}, warn = warnChecks(row)[0], infos = infoChecks(row);

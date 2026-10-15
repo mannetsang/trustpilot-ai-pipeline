@@ -269,6 +269,33 @@ class ApiReviewTests(ApiTestCase):
             self.patch(ids["anth"], {"action": "link", "invoice_id": "inv_9999"}, expect=403)
             self.patch(ids["anth"], {"action": "link", "invoice_id": "inv_none"})
 
+    def test_a_confirm_read_before_a_release_or_an_unlink_is_refused(self):
+        self.upload()
+        amzn = self.ids()["amzn"]
+        self.inject_invoices()
+        self.client.post("/api/match?year=2026&month=9")
+        stale = self.store.get_transaction(amzn)
+        self.assertEqual((stale["invoice_status"], stale["invoice_id"], stale["match_method"]),
+                         ("possible", "inv_far", "rule"))
+        # A match run releases the proposal (its first pass) after the Confirm read the row; then
+        # someone presses Not this. Neither may end as matched without an invoice.
+        changes = [{"invoice_id": None},
+                   {"invoice_status": "missing", "invoice_id": None, "match_method": None, "match_note": None}]
+        for change in changes:
+            self.store.update_transaction(amzn, dict(change))
+            with mock.patch.object(self.store, "get_transaction", return_value=dict(stale)):
+                body = self.patch(amzn, {"action": "confirm"}, expect=409)
+            self.assertEqual(body["error"], "This purchase changed meanwhile; reload.")
+            t = self.store.get_transaction(amzn)
+            self.assertIsNone(t["invoice_id"])
+            self.assertNotEqual(t["invoice_status"], "matched")
+            self.assertNotEqual(t["match_method"], "manual")
+        # A Confirm of the proposal as it stands still goes through.
+        self.store.update_transaction(amzn, {k: stale[k] for k in ("invoice_status", "invoice_id", "match_method")})
+        row = self.patch(amzn, {"action": "confirm"})["transaction"]
+        self.assertEqual((row["invoice_status"], row["invoice_id"], row["match_method"]),
+                         ("matched", "inv_far", "manual"))
+
 
 if __name__ == "__main__":
     unittest.main()

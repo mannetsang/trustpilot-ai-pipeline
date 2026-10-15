@@ -194,10 +194,13 @@ def prepare_upload(parts):
         except ReceiptError:
             raise ReceiptError(415, f"Page {number} could not be read as a photo; take it again.") from None
         pages.append(data)
+    too_big = ReceiptError(413, f"These pages come to more than {MAX_PDF_BYTES // (1024 * 1024)} MB as one PDF; "
+                                "remove a page.")
+    if sum(len(p) for p in pages) > MAX_PDF_BYTES:
+        raise too_big       # the PDF is never smaller than its photos: refuse before building it
     pdf = jpegs_to_pdf(pages)
     if len(pdf) > MAX_PDF_BYTES:
-        raise ReceiptError(413, f"These pages come to more than {MAX_PDF_BYTES // (1024 * 1024)} MB as one PDF; "
-                                "remove a page.")
+        raise too_big       # the PDF's own overhead tipped it over
     return pdf, "application/pdf", "pdf", len(pages)
 
 

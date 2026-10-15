@@ -166,6 +166,7 @@ SERVICE = "ap-reconciliation"
 RECEIPT_UPLOAD_CARDS = set(_csv("RECEIPT_UPLOAD_CARDS", "4421"))
 RECEIPT_WINDOW = 600            # receipt saves are counted over this many seconds...
 RECEIPT_MAX = 40                # ...per person
+RECEIPT_MAX_BODY = receipts.MAX_PDF_BYTES + 1024 * 1024     # a receipt's request: the PDF limit plus form overhead
 
 
 def receipt_upload_enabled(last4):
@@ -896,7 +897,7 @@ def with_invoices(store, txns):
         row["invoice"] = ({k: inv.get(k) for k in ("id", "file_name", "web_view_link", "vendor", "invoice_number",
                                                    "invoice_date", "total", "currency", "vendor_folder", "month_folder",
                                                    "card_last4", "is_invoice", "extraction_error", "extracted_at",
-                                                   "summary")}
+                                                   "summary", "created_at")}
                           if inv else None)
         if inv:
             row["invoice"]["reading"] = inv["id"] in reading
@@ -952,6 +953,8 @@ _receipt_pool = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name
 _receipt_times = {}                    # email -> [time of each receipt save in the window]
 _receipt_lock = threading.Lock()
 WITHDRAWN = "upload withdrawn: the purchase changed while it was saving"
+# Same prefix: index_invoices skips the file and candidate_invoices leaves it out, even if its trash failed.
+REMOVED = "upload withdrawn: removed with Remove…"
 
 
 def receipt_access(user, txn, need_enabled=True):
@@ -1072,6 +1075,23 @@ def _saved_body(store, txn, file_info, reading, replayed):
             "transaction": transaction_row(store, txn)}
 
 
+def _replay(store, drive, txn, email, upload_id, pages, data, mime):
+    """(200, the saved body) when txn is linked to this person's receipt sent with upload_id: a
+    retry whose first save went through (its answer lost, or still on its way). Else None."""
+    if not (upload_id and txn.get("invoice_status") == "matched" and txn.get("invoice_id")
+            and txn.get("match_note") == f"receipt uploaded by {email}"
+            and _uploaded_with(drive, txn["invoice_id"]) == upload_id):
+        return None
+    inv = store.get_invoice(txn["invoice_id"]) or {}
+    with _reading_lock:
+        reading = txn["invoice_id"] in _reading
+    file_info = {"id": txn["invoice_id"], "name": inv.get("file_name"),
+                 "folder": str(inv.get("folder_path") or "").strip("/"), "folder_created": False,
+                 "web_view_link": inv.get("web_view_link"), "pages": pages, "size": len(data),
+                 "mime_type": inv.get("mime_type") or mime}
+    return 200, _saved_body(store, txn, file_info, reading, True)
+
+
 def save_receipt(user, txn_id, parts, vendor_text, upload_id):
     """Save the receipt of one purchase from the dashboard. -> (HTTP status, body).
 
@@ -1098,17 +1118,9 @@ def save_receipt(user, txn_id, parts, vendor_text, upload_id):
     if status == "waived":
         return 409, _not_saved(store, txn, "This purchase is marked as having no invoice; undo that first.")
     if status == "matched":
-        if (upload_id and txn.get("invoice_id") and txn.get("match_note") == f"receipt uploaded by {email}"
-                and _uploaded_with(drive, txn["invoice_id"]) == upload_id):
-            # The same receipt again: the first save went through but its answer was lost.
-            inv = store.get_invoice(txn["invoice_id"]) or {}
-            with _reading_lock:
-                reading = txn["invoice_id"] in _reading
-            file_info = {"id": txn["invoice_id"], "name": inv.get("file_name"),
-                         "folder": str(inv.get("folder_path") or "").strip("/"), "folder_created": False,
-                         "web_view_link": inv.get("web_view_link"), "pages": pages, "size": len(data),
-                         "mime_type": inv.get("mime_type") or mime}
-            return 200, _saved_body(store, txn, file_info, reading, True)
+        replay = _replay(store, drive, txn, email, upload_id, pages, data, mime)
+        if replay:
+            return replay
         inv = store.get_invoice(txn["invoice_id"]) if txn.get("invoice_id") else None
         return 409, _not_saved(store, txn, f"This purchase already has its invoice{_invoice_label(inv, txn)}; "
                                            "nothing was saved.")
@@ -1154,15 +1166,26 @@ def save_receipt(user, txn_id, parts, vendor_text, upload_id):
     expect = {"invoice_status": status, "invoice_id": txn.get("invoice_id"), "match_method": txn.get("match_method")}
     try:
         linked = store.update_transaction(txn_id, patch, expect=expect)
-    except StoreError as exc:                   # the unique index: that id is linked elsewhere
+    except StoreError as exc:                   # the unique index (that id is linked elsewhere), or a timeout
         print(f"receipt: link of {meta['id']} to {txn_id} refused: {exc}")
         linked = None
+    current = None
     if linked is None:
-        # The purchase changed while the file went up (a match job, a Link, a waive): take the
-        # upload back so no stray copy joins the matching pool.
+        # A timed-out PATCH may have landed: a link whose answer was lost counts as linked. If this
+        # read fails too, the error goes out and nothing is trashed (the file may be linked).
+        current = store.get_transaction(txn_id)
+        if current and current.get("invoice_id") == meta["id"]:
+            linked = current
+    if linked is None:
+        # The purchase changed while the file went up (a match job, a Link, a waive, or this same
+        # receipt's first try): take the upload back so no stray copy joins the matching pool.
         _trash_quietly(drive, meta["id"], "the purchase changed while it was saving")
         store.update_invoices([meta["id"]], {"removed_at": now_iso(), "extraction_error": WITHDRAWN})
-        current = store.get_transaction(txn_id)
+        replay = current and _replay(store, drive, current, email, upload_id, pages, data, mime)
+        if replay:
+            print(f"receipt: {email} {txn_id} retry of {upload_id} arrived mid-save; kept {current['invoice_id']}, "
+                  f"trashed {meta['id']}")
+            return replay
         status_now = (current or {}).get("invoice_status")
         label = STATUS_LABELS.get(status_now, status_now) if current else "removed"
         print(f"receipt: {email} {txn_id} withdrawn ({meta['id']}): the purchase is now {label}")
@@ -1194,14 +1217,21 @@ def save_receipt(user, txn_id, parts, vendor_text, upload_id):
 def read_receipt(record, data, mime):
     """The receipt pool: Gemini reads the receipt just uploaded, from the bytes in hand (no download).
 
-    Writes only the invoice row, never the transaction, so it races with nothing. removed_at is left
-    out of the row, so a Remove made during the read stands. On any failure the index retries the
-    file (modified_time unset, or the stored extraction_error)."""
+    Writes only the invoice row, never the transaction, so it races with nothing. removed_at, and
+    extraction_error when the read worked, are left out of the row, so a Remove made during the read
+    stands with its marker. On any failure the index retries the file (modified_time unset, or the
+    stored extraction_error)."""
     try:
+        store = get_store()
         row = invoice_index.extract_invoice(get_gemini(), get_drive(), record, content=(data, mime))
         row.pop("removed_at", None)
-        get_store().upsert_invoices([row])
-        print(f"receipt read {record['id']}: " + (f"error {row['extraction_error']}" if row.get("extraction_error")
+        error = row.get("extraction_error")
+        if error is None:
+            row.pop("extraction_error", None)   # the placeholder's is None already
+        elif str((store.get_invoice(record["id"]) or {}).get("extraction_error") or "").startswith("upload withdrawn"):
+            row.pop("extraction_error")         # removed meanwhile: a read error must not clear the marker
+        store.upsert_invoices([row])
+        print(f"receipt read {record['id']}: " + (f"error {error}" if error
               else f"{row.get('vendor')} {row.get('total')} {row.get('currency')} {row.get('invoice_date')}"))
     except Exception as exc:  # noqa: BLE001
         print(f"receipt read {record.get('id')} failed: {exc}")
@@ -1213,7 +1243,8 @@ def read_receipt(record, data, mime):
 def remove_receipt(user, txn_id):
     """Remove…: unlink a receipt added from the dashboard and move its file to the Drive trash.
     -> (HTTP status, body). Not gated on RECEIPT_UPLOAD_CARDS, so an upload can still be taken back
-    after a card is switched off. The id is not added to rejected_invoice_ids: the file is gone."""
+    after a card is switched off. The id is not added to rejected_invoice_ids: the file is gone, and its
+    row is marked (REMOVED) so neither the index nor the matcher takes it again, even if the trash fails."""
     store = get_store()
     txn = store.get_transaction(txn_id)
     if not txn:
@@ -1233,18 +1264,26 @@ def remove_receipt(user, txn_id):
         meta = None                             # already gone from Drive
     if meta is not None and (meta.get("appProperties") or {}).get("apTxn") != txn_id:
         return 409, {"error": not_uploaded}
+    # Out of the matching pool before the purchase lets go of it, so a match run in between cannot
+    # link it again; the marker keeps the index from bringing it back if the trash fails. If the
+    # unlink fails with an error, the marker stays: the file is still linked, and Remove… can be retried.
+    prior = store.get_invoice(invoice_id) or {}
+    store.update_invoices([invoice_id], {"removed_at": now_iso(), "extraction_error": REMOVED})
     patch = {"invoice_status": "missing", "invoice_id": None, "match_confidence": None, "match_method": None,
              "match_note": None, "updated_by": user["email"], "updated_at": now_iso()}
     updated = store.update_transaction(txn_id, patch, expect={"invoice_id": invoice_id, "match_method": "manual"})
     if updated is None:
+        store.update_invoices([invoice_id], {"removed_at": prior.get("removed_at"),
+                                             "extraction_error": prior.get("extraction_error")})
         return 409, {"error": "This purchase changed meanwhile; reload."}
     trashed, error = _trash_quietly(drive, invoice_id, "Remove") if meta is not None else (True, "")
-    store.update_invoices([invoice_id], {"removed_at": now_iso()})
     print(f"receipt: {user['email']} removed {invoice_id} from {txn_id}"
           + ("" if trashed else f" (not trashed: {error})"))
     body = {"transaction": transaction_row(store, updated), "trashed": trashed}
     if not trashed:
-        body["warning"] = f"Unlinked, but the file could not be moved to the Drive trash: {error}"
+        where = f"Invoice{prior['folder_path']}" if prior.get("folder_path") else "the Invoice folder"
+        body["warning"] = (f"Unlinked, but the file could not be moved to the Drive trash: {error.rstrip('.')}. "
+                           f"It won't be matched again; delete it from {where} by hand.")
     return 200, body
 
 
@@ -1282,6 +1321,14 @@ def _drive_error(exc):
 def _gemini_error(exc):
     print(f"gemini error: {exc}")
     return jsonify({"error": f"Gemini error: {exc}"}), 502
+
+
+@app.errorhandler(413)
+def _too_large(exc):
+    """A body over the limit; the receipt route says it in the dialog's words, the rest as before."""
+    if request.endpoint == "api_receipt_save":
+        return jsonify({"error": f"The receipt is larger than {receipts.MAX_PDF_BYTES // (1024 * 1024)} MB."}), 413
+    return _unexpected(exc)
 
 
 @app.errorhandler(Exception)
@@ -1451,6 +1498,7 @@ def api_transaction_update(txn_id):
     action = str(body.get("action") or "").strip().lower()
     status = txn.get("invoice_status")
     rejected = list(txn.get("rejected_invoice_ids") or [])
+    expect = None
     if action == "waive":
         if status in ("missing", "possible"):
             patch.update({"invoice_status": "waived", "invoice_id": None, "match_confidence": None,
@@ -1462,6 +1510,9 @@ def api_transaction_update(txn_id):
         if status == "possible" and txn.get("invoice_id"):
             patch.update({"invoice_status": "matched", "match_confidence": 1.0, "match_method": "manual",
                           "match_note": "confirmed by " + user["email"]})
+            # Only the proposal this request read: a match run may have released or moved it meanwhile,
+            # and confirming then would leave the row matched without an invoice.
+            expect = {"invoice_status": "possible", "invoice_id": txn["invoice_id"]}
     elif action == "link":
         invoice_id = str(body.get("invoice_id") or "").strip()
         inv = store.get_invoice(invoice_id) if invoice_id else None
@@ -1487,7 +1538,9 @@ def api_transaction_update(txn_id):
     if not patch:
         return jsonify({"error": "nothing to update"}), 400
     patch.update({"updated_by": user["email"], "updated_at": now_iso()})
-    updated = store.update_transaction(txn_id, patch)
+    updated = store.update_transaction(txn_id, patch, expect=expect)
+    if updated is None:
+        return jsonify({"error": "This purchase changed meanwhile; reload."}), 409
     row = with_invoices(store, [updated])[0]
     row["editable"] = True  # may_edit passed above; the dashboard re-renders the row from this
     return jsonify({"transaction": row})
@@ -1529,6 +1582,9 @@ def api_receipt_save(txn_id):
     """Add receipt…: multipart 'file' parts (one photo or PDF, or up to 10 photos of one receipt, in page
     order), optional vendor_folder and upload_id. 201 saved, 200 the same upload_id again, 409 not kept."""
     user = require_user()
+    # A receipt is at most a 15 MB PDF (or photos that make one): a bigger body is refused from its
+    # Content-Length, before it is spooled to /tmp (RAM on Cloud Run) or read into memory.
+    request.max_content_length = RECEIPT_MAX_BODY
     parts = [(f.filename or "", f.read()) for f in request.files.getlist("file")]
     status, body = save_receipt(user, txn_id, parts, request.form.get("vendor_folder") or "",
                                 request.form.get("upload_id") or "")

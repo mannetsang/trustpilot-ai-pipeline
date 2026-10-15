@@ -13,6 +13,8 @@ import time
 import unittest
 from unittest import mock
 
+import requests
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "cloud_run"))
 
@@ -23,9 +25,11 @@ import chat  # noqa: E402
 import invoices  # noqa: E402
 import main  # noqa: E402
 import matching  # noqa: E402
+import receipts  # noqa: E402
+import store as store_module  # noqa: E402
 from drive import DriveError  # noqa: E402
 from gemini import GeminiError  # noqa: E402
-from store import StoreError  # noqa: E402
+from store import StoreError, SupabaseStore  # noqa: E402
 
 DEFAULT_RECEIPT_CARDS = set(main.RECEIPT_UPLOAD_CARDS)      # as configured without RECEIPT_UPLOAD_CARDS
 PAGE = {"X-Requested-With": "XMLHttpRequest"}
@@ -219,6 +223,32 @@ class SaveReceiptTests(ReceiptApiTestCase):
         self.assertEqual((r.status_code, r.get_json()["error"]), (413, "That photo is larger than 7 MB."))
         self.assertEqual(self.drive.calls, [])
 
+    def test_a_body_over_the_receipt_limit_is_refused_before_it_is_read(self):
+        self.assertEqual(main.RECEIPT_MAX_BODY, 16 * 1024 * 1024)
+        big = BASELINE + b"\x00" * main.RECEIPT_MAX_BODY
+        with mock.patch.object(receipts, "prepare_upload", side_effect=AssertionError("read anyway")):
+            r = self.send(self.ids_["anth"], files=(big,))
+        self.assertEqual((r.status_code, r.get_json()), (413, {"error": "The receipt is larger than 15 MB."}))
+        self.assertEqual(self.drive.calls, [])
+        # Other routes keep MAX_CONTENT_LENGTH and Werkzeug's words, as JSON.
+        with mock.patch.dict(main.app.config, {"MAX_CONTENT_LENGTH": 1000}):
+            r = self.upload(data=b"x" * 2000)
+            self.assertEqual((r.status_code, r.get_json()),
+                             (413, {"error": "The data value transmitted exceeds the capacity limit."}))
+            self.assertEqual(self.send(self.ids_["anth"]).status_code, 201)     # the receipt route has its own
+
+    def test_the_upload_date_is_when_the_row_was_made_not_its_last_edit(self):
+        anth = self.ids_["anth"]
+        with mock.patch.object(store_module, "now_iso", return_value="2026-10-15T09:00:00Z"):
+            file_id = self.saved(anth)["file"]["id"]
+        self.patch(anth, {"cost_center": "Marketing"})                         # updated_at moves on
+        invoices.index_invoices(self.store, self.drive, FakeGemini(handler=lambda parts, model: dict(FACTS)), "root",
+                                log=quiet)                                    # the row is read and written again
+        row = self.row(anth)
+        self.assertEqual((row["invoice"]["id"], row["invoice"]["total"], row["invoice"]["created_at"]),
+                         (file_id, 150.0, "2026-10-15T09:00:00Z"))
+        self.assertNotEqual(row["updated_at"][:10], "2026-10-15T09:00:00Z")
+
 
 class FolderTests(ReceiptApiTestCase):
     @staticmethod
@@ -261,7 +291,8 @@ class FolderTests(ReceiptApiTestCase):
         self.assertEqual(self.drive.created_folders, [])
         self.target("nope", expect=404)
 
-    def test_a_cached_month_folder_that_was_deleted_is_looked_up_again(self):
+    def test_a_cached_month_folder_that_was_deleted_is_found_again_before_saving(self):
+        # Saving checks a cached folder first (_folder_alive): Drive's 404 on get drops it.
         main._month_folder_ids["2026 09"] = "gone"
         real = self.drive.list_children
 
@@ -275,6 +306,23 @@ class FolderTests(ReceiptApiTestCase):
         self.assertEqual((self.drive.uploads[0]["parent"], body["file"]["folder"]), ("v_uber", "2026-09/uber"))
         self.assertEqual(main._month_folder_ids["2026 09"], "m09")
 
+    def test_receipt_target_with_a_cached_month_folder_deleted_since(self):
+        # receipt-target uses a cached id unchecked; listing it fails with a 404 and in_month_folder
+        # looks the month up once more.
+        main._month_folder_ids["2026 09"] = "gone"
+        real = self.drive.list_children
+
+        def list_children(folder_id):
+            if folder_id == "gone":
+                raise DriveError("Drive GET files -> 404 File not found: gone.")
+            return real(folder_id)
+
+        with mock.patch.object(self.drive, "list_children", side_effect=list_children) as listed:
+            t = self.target(self.ids_["amzn"])
+        self.assertEqual((t["month_folder"], t["month_exists"], t["folders"]), ("2026-09", True, ["Costco", "uber"]))
+        self.assertEqual([c.args[0] for c in listed.call_args_list], ["gone", "root", "m09"])
+        self.assertEqual(main._month_folder_ids["2026 09"], "m09")
+        self.assertEqual(self.drive.created_folders, [])
 
     def test_a_cached_month_folder_now_in_the_trash_is_looked_up_again(self):
         main._month_folder_ids["2026 09"] = "old"
@@ -433,6 +481,46 @@ class ReplayTests(ReceiptApiTestCase):
             self.assertEqual(self.send(anth, upload_id="0123456789abcdef").status_code, 409)
         self.assertEqual(len(self.drive.uploads), 1)
 
+    def race(self, retry_upload_id):
+        """Send the Anthropic receipt with one upload id; while its file goes up to Drive, a second
+        request (the page's retry after a lost connection, or another receipt) runs to the end.
+        -> (outer response, inner response, outer file id, inner file id)."""
+        anth, inner = self.ids_["anth"], []
+
+        def second_request(entry):
+            self.drive.on_upload = None
+            inner.append(self.send(anth, upload_id=retry_upload_id))
+
+        self.drive.on_upload = second_request
+        outer = self.send(anth, upload_id="0123456789abcdef")
+        return outer, inner[0], self.drive.uploads[0]["id"], self.drive.uploads[1]["id"]
+
+    def test_a_retry_that_arrives_while_the_first_save_is_still_running_gets_the_saved_answer(self):
+        anth = self.ids_["anth"]
+        first, retry, first_id, retry_id = self.race("0123456789abcdef")
+        # The retry finished first and linked its copy; the first request's copy is the duplicate.
+        self.assertEqual(retry.status_code, 201, retry.get_json())
+        self.assertEqual(first.status_code, 200, first.get_json())
+        body = first.get_json()
+        self.assertEqual((body["status"], body["replayed"]), ("saved", True))
+        self.assertEqual((body["file"]["id"], body["file"]["folder"], body["transaction"]["invoice_id"]),
+                         (retry_id, "2026 09/Anthropic", retry_id))
+        t = self.store.get_transaction(anth)
+        self.assertEqual((t["invoice_status"], t["invoice_id"], t["match_note"]),
+                         ("matched", retry_id, "receipt uploaded by anonymous"))
+        self.assertEqual(self.drive.trashed, [first_id])
+        row = self.store.get_invoice(first_id)
+        self.assertTrue(row["removed_at"])
+        self.assertEqual(row["extraction_error"], main.WITHDRAWN)
+        self.assertIsNone(self.store.get_invoice(retry_id)["removed_at"])
+
+    def test_another_receipt_in_the_same_race_is_still_not_kept(self):
+        first, other, first_id, other_id = self.race("fedcba9876543210")
+        self.assertEqual(other.status_code, 201, other.get_json())
+        self.assertEqual((first.status_code, first.get_json()["withdrawn"]), (409, True))
+        self.assertEqual(self.store.get_transaction(self.ids_["anth"])["invoice_id"], other_id)
+        self.assertEqual(self.drive.trashed, [first_id])
+
 
 class WithdrawTests(ReceiptApiTestCase):
     def test_a_purchase_linked_meanwhile_keeps_its_link_and_the_upload_is_taken_back(self):
@@ -489,6 +577,35 @@ class WithdrawTests(ReceiptApiTestCase):
         self.assertTrue(row["removed_at"])
         self.assertTrue(row["extraction_error"].startswith("upload withdrawn"))
         self.assertNotIn(file_id, [i["id"] for i in matching.candidate_invoices(self.store, 2026, 9)])
+
+    def test_a_network_error_storing_the_placeholder_trashes_the_upload(self):
+        supabase = SupabaseStore("https://x.supabase.co", "k")
+        reset = requests.ConnectionError("connection reset")
+        with mock.patch.object(store_module.requests, "request", side_effect=reset), \
+                mock.patch.object(self.store, "upsert_invoices", side_effect=supabase.upsert_invoices):
+            r = self.send(self.ids_["anth"])
+        self.assertEqual(r.status_code, 502)
+        self.assertEqual(r.get_json()["error"], "database error: POST invoices -> ConnectionError: connection reset")
+        self.assertEqual(self.drive.trashed, [self.drive.uploads[0]["id"]])
+
+    def test_a_link_whose_answer_was_lost_is_kept(self):
+        anth = self.ids_["anth"]
+        real = self.store.update_transaction
+
+        def lands_then_times_out(txn_id, patch, expect=None):
+            real(txn_id, patch, expect=expect)
+            raise StoreError("PATCH transactions -> ReadTimeout: read timed out")
+
+        with mock.patch.object(self.store, "update_transaction", side_effect=lands_then_times_out):
+            r = self.send(anth)
+        self.assertEqual(r.status_code, 201, r.get_json())
+        file_id = self.drive.uploads[0]["id"]
+        self.assertEqual((r.get_json()["status"], r.get_json()["transaction"]["invoice_id"]), ("saved", file_id))
+        self.assertEqual(self.drive.trashed, [])
+        row = self.store.get_invoice(file_id)
+        self.assertEqual((row["removed_at"], row["extraction_error"]), (None, None))
+        t = self.store.get_transaction(anth)
+        self.assertEqual((t["invoice_status"], t["invoice_id"]), ("matched", file_id))
 
     def test_a_store_failure_after_the_upload_trashes_the_file(self):
         anth = self.ids_["anth"]
@@ -593,7 +710,9 @@ class RemoveTests(ReceiptApiTestCase):
                          ("missing", None, None, None, None, [], True))
         self.assertEqual(self.store.get_transaction(anth)["rejected_invoice_ids"], [])      # not "Not this"
         self.assertEqual(self.drive.trashed, [file_id])
-        self.assertTrue(self.store.get_invoice(file_id)["removed_at"])
+        row = self.store.get_invoice(file_id)
+        self.assertTrue(row["removed_at"])
+        self.assertEqual(row["extraction_error"], "upload withdrawn: removed with Remove…")
         self.assertEqual(self.remove(anth, expect=409)["error"], "This invoice wasn't added with Add receipt…; use Unlink.")
         self.saved(anth)                                                      # and a new receipt can follow
 
@@ -614,16 +733,99 @@ class RemoveTests(ReceiptApiTestCase):
         self.assertEqual(self.store.get_transaction(anth)["invoice_id"], file_id)
         self.assertEqual(self.drive.trashed, [])
 
-    def test_a_trash_failure_still_unlinks(self):
+    def remove_with_a_failing_trash(self, read_first):
+        """Upload the Anthropic receipt (read at once when read_first, else left for the index), then
+        Remove… it while Drive's trash fails. -> (response body, file id)."""
+        if read_first:
+            self.ai_on()
         anth = self.ids_["anth"]
         file_id = self.saved(anth)["file"]["id"]
         with mock.patch.object(self.drive, "trash", side_effect=DriveError("Drive PATCH files/x -> 500 backend error")):
             body = self.remove(anth)
+        return body, file_id
+
+    def test_a_trash_failure_still_unlinks(self):
+        body, file_id = self.remove_with_a_failing_trash(read_first=False)
         self.assertEqual(body["trashed"], False)
         self.assertEqual(body["warning"], "Unlinked, but the file could not be moved to the Drive trash: "
-                                          "Drive PATCH files/x -> 500 backend error")
+                                          "Drive PATCH files/x -> 500 backend error. It won't be matched again; "
+                                          "delete it from Invoice/2026 09/Anthropic by hand.")
+        self.assertEqual(self.store.get_transaction(self.ids_["anth"])["invoice_status"], "missing")
+        row = self.store.get_invoice(file_id)
+        self.assertTrue(row["removed_at"])
+        self.assertEqual(row["extraction_error"], main.REMOVED)
+
+    def index_and_match_after_a_failed_trash(self, read_first):
+        """The file is still in Invoice/2026 09/Anthropic: neither the next index run nor the month's
+        match run may bring it back to the purchase."""
+        _, file_id = self.remove_with_a_failing_trash(read_first)
+        gemini = FakeGemini(handler=lambda parts, model: dict(FACTS))
+        result = invoices.index_invoices(self.store, self.drive, gemini, "root", log=quiet)
+        self.assertEqual((result["indexed"], result["removed"]), (0, 0))
+        row = self.store.get_invoice(file_id)
+        self.assertTrue(row["removed_at"])
+        self.assertEqual(row["extraction_error"], main.REMOVED)
+        self.assertEqual(row["total"], 150.0 if read_first else None)
+        matching.match_month(self.store, None, 2026, 9, log=quiet)
+        t = self.store.get_transaction(self.ids_["anth"])
+        self.assertEqual((t["invoice_status"], t["invoice_id"]), ("missing", None))
+        self.assertNotIn(file_id, self.store.used_invoice_ids())
+
+    def test_a_read_file_whose_trash_failed_never_comes_back(self):
+        self.index_and_match_after_a_failed_trash(read_first=True)
+
+    def test_an_unread_file_whose_trash_failed_is_never_read_or_matched(self):
+        self.index_and_match_after_a_failed_trash(read_first=False)
+
+    def test_an_index_run_that_listed_before_the_remove_cannot_put_it_back_in_the_pool(self):
+        self.ai_on()
+        anth = self.ids_["anth"]
+        file_id = self.saved(anth)["file"]["id"]
+        stale = self.store.invoice_index()                                    # an index run starts...
+        with mock.patch.object(self.drive, "trash", side_effect=DriveError("Drive PATCH files/x -> 500 backend error")):
+            self.remove(anth)                                                 # ...Remove… lands, the trash fails...
+        with mock.patch.object(self.store, "invoice_index", return_value=stale):
+            invoices.index_invoices(self.store, self.drive, FakeGemini(), "root", log=quiet)
+        row = self.store.get_invoice(file_id)                                 # ...and it refreshes the file as moved
+        self.assertEqual((row["removed_at"], row["extraction_error"], row["total"]), (None, main.REMOVED, 150.0))
+        self.assertNotIn(file_id, [i["id"] for i in matching.candidate_invoices(self.store, 2026, 9)])
+        matching.match_month(self.store, None, 2026, 9, log=quiet)
         self.assertEqual(self.store.get_transaction(anth)["invoice_status"], "missing")
-        self.assertTrue(self.store.get_invoice(file_id)["removed_at"])
+
+    def test_a_match_run_while_the_file_goes_to_the_trash_cannot_link_it(self):
+        self.ai_on()                                                          # read: it has a total
+        anth = self.ids_["anth"]
+        file_id = self.saved(anth)["file"]["id"]
+        real = self.drive.trash
+
+        def trash_slowly(fid):
+            matching.match_month(self.store, None, 2026, 9, log=quiet)     # the weekly job, or Re-run matching
+            return real(fid)
+
+        with mock.patch.object(self.drive, "trash", side_effect=trash_slowly):
+            body = self.remove(anth)
+        self.assertEqual(body["transaction"]["invoice_status"], "missing")
+        t = self.store.get_transaction(anth)
+        self.assertEqual((t["invoice_status"], t["invoice_id"]), ("missing", None))
+        self.assertEqual(self.drive.trashed, [file_id])
+
+    def test_a_remove_during_an_index_read_keeps_it_removed(self):
+        anth = self.ids_["anth"]
+        file_id = self.saved(anth)["file"]["id"]                              # AI off: the index reads it
+
+        def read_while_removed(parts, model):
+            self.remove(anth)
+            return dict(FACTS)
+
+        result = invoices.index_invoices(self.store, self.drive, FakeGemini(handler=read_while_removed), "root",
+                                         workers=1, log=quiet)
+        self.assertEqual(result["indexed"], 1)
+        self.assertEqual(self.drive.trashed, [file_id])
+        row = self.store.get_invoice(file_id)
+        self.assertTrue(row["removed_at"])
+        self.assertEqual(row["extraction_error"], main.REMOVED)
+        matching.match_month(self.store, None, 2026, 9, log=quiet)
+        self.assertEqual(self.store.get_transaction(anth)["invoice_status"], "missing")
 
     def test_a_file_already_gone_from_drive(self):
         anth = self.ids_["anth"]
@@ -649,10 +851,13 @@ class RemoveTests(ReceiptApiTestCase):
         anth = self.ids_["anth"]
         self.saved(anth)
         real = self.store.update_transaction
+        file_id = self.store.get_transaction(anth)["invoice_id"]
         with mock.patch.object(self.store, "update_transaction",
                                side_effect=lambda tid, patch, expect=None: None if expect else real(tid, patch)):
             self.assertEqual(self.remove(anth, expect=409)["error"], "This purchase changed meanwhile; reload.")
         self.assertEqual(self.drive.trashed, [])
+        row = self.store.get_invoice(file_id)                                  # the stamp is taken back
+        self.assertEqual((row["removed_at"], row["extraction_error"]), (None, None))
 
     def test_a_read_that_finishes_after_remove_keeps_it_removed(self):
         pool = DeferredPool()
@@ -664,8 +869,23 @@ class RemoveTests(ReceiptApiTestCase):
         row = self.store.get_invoice(file_id)
         self.assertEqual(row["total"], 150.0)                                   # the read did land...
         self.assertTrue(row["removed_at"])                                      # ...without bringing it back
+        self.assertEqual(row["extraction_error"], main.REMOVED)
         self.assertNotIn(file_id, [i["id"] for i in matching.candidate_invoices(self.store, 2026, 9)])
         self.assertEqual(self.store.get_transaction(anth)["invoice_status"], "missing")
+
+    def test_a_read_that_fails_after_remove_keeps_the_marker(self):
+        def failing(parts, model):
+            raise GeminiError("Vertex AI 429 quota")
+
+        pool = DeferredPool()
+        self.ai_on(handler=failing, pool=pool)
+        anth = self.ids_["anth"]
+        file_id = self.saved(anth)["file"]["id"]
+        self.remove(anth)
+        pool.run()
+        row = self.store.get_invoice(file_id)
+        self.assertEqual(row["extraction_error"], main.REMOVED)
+        self.assertTrue(row["removed_at"])
 
 
 class IndexAndMatcherTests(ReceiptApiTestCase):
@@ -767,7 +987,6 @@ class ChatReceiptsTests(ReceiptApiTestCase):
         # Head, sections and card id are the same as without it.
         self.assertEqual(sections[:-1], plain["cardsV2"][0]["card"]["sections"][:-1])
         self.assertEqual(with_receipts["cardsV2"][0]["cardId"], plain["cardsV2"][0]["cardId"])
-        self.assertEqual(json.dumps(plain), json.dumps(self.card(receipts_url="")))
         self.assertEqual([b["text"] for b in plain["cardsV2"][0]["card"]["sections"][-1]["widgets"][1]["buttonList"]["buttons"]],
                          ["Open dashboard", "Invoice folder"])
 

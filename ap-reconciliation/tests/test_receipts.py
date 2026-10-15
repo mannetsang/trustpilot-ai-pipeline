@@ -16,6 +16,8 @@ import tempfile
 import unittest
 from unittest import mock
 
+import requests
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "cloud_run"))
 
@@ -242,6 +244,18 @@ class PrepareUploadTests(unittest.TestCase):
         self.refused([("1.jpg", page), ("2.jpg", page), ("3.jpg", page)], 413,
                      "These pages come to more than 15 MB as one PDF; remove a page.")
 
+    def test_pages_over_the_limit_are_refused_before_the_pdf_is_built(self):
+        page = BASELINE + b"\0" * (6 * MB - len(BASELINE))
+        with mock.patch.object(receipts, "jpegs_to_pdf", side_effect=AssertionError("built anyway")):
+            self.refused([("1.jpg", page), ("2.jpg", page), ("3.jpg", page)], 413,
+                         "These pages come to more than 15 MB as one PDF; remove a page.")
+        # Photos just under the limit together: the PDF's own overhead still tips it over, after the build.
+        page = BASELINE + b"\0" * ((15 * MB - 100) // 3 - len(BASELINE))
+        with mock.patch.object(receipts, "jpegs_to_pdf", wraps=receipts.jpegs_to_pdf) as built:
+            self.refused([("1.jpg", page), ("2.jpg", page), ("3.jpg", page)], 413,
+                         "These pages come to more than 15 MB as one PDF; remove a page.")
+        self.assertEqual(built.call_count, 1)
+
 
 # ---------------------------------------------------------------------------
 # Folder and file names
@@ -395,6 +409,16 @@ class InvoiceChecksTests(unittest.TestCase):
                            "text": "Couldn't read the receipt yet; it is read again with the next invoice run."}])
         self.assertEqual(self.checks(extracted_at=None, total=None,
                                      extraction_error="upload withdrawn: the purchase changed while it was saving"), [])
+
+    def test_a_file_that_is_never_read_says_so_for_good(self):
+        # index_invoices does not retry "unsupported" errors, so no "read again" promise.
+        for error in ("unsupported file type image/tiff", "unsupported file type application/msword",
+                      "unsupported: file larger than 15 MB"):
+            self.assertEqual(self.checks({"match_note": "linked by ap@superhairpieces.com"}, extraction_error=error,
+                                         extracted_at="2026-10-15T12:00:00Z", is_invoice=False, total=None),
+                             [{"kind": "unreadable", "level": "info",
+                               "text": "This file can't be read automatically, so its amount and date weren't checked "
+                                       "against the charge."}], error)
 
     def test_not_a_receipt_and_another_card(self):
         self.assertEqual(self.checks(is_invoice=False, summary="a bank statement"),
@@ -575,6 +599,23 @@ class UpdateInvoicesTests(unittest.TestCase):
         moved, gone = writes
         self.assertTrue(all("file_name" in row for row in moved["json"]))     # the refresh of f_kept: a full key set
         self.assertEqual(list(gone["json"]), ["removed_at"])
+
+    def test_network_errors_are_store_errors(self):
+        # So save_receipt's clean-up (trash an upload whose row could not be written) runs on them too.
+        for exc in (requests.ConnectionError("connection reset"), requests.ReadTimeout("read timed out")):
+            with mock.patch.object(store_module.requests, "request", side_effect=exc):
+                with self.assertRaises(StoreError) as caught:
+                    self.store.update_transaction("t1", {"invoice_id": "x"})
+            self.assertEqual(str(caught.exception), f"PATCH transactions -> {type(exc).__name__}: {exc}")
+            self.assertIs(caught.exception.__cause__, exc)
+
+    def test_memory_store_sets_created_at_once(self):
+        store = MemoryStore()
+        with mock.patch.object(store_module, "now_iso", return_value="2026-10-15T09:00:00Z"):
+            store.upsert_invoices([inv("i1", "Uber", None, None)])
+        store.upsert_invoices([inv("i1", "Uber", 10.0, "2026-09-04")])
+        store.update_invoices(["i1"], {"removed_at": "2026-10-16T00:00:00Z"})
+        self.assertEqual(store.get_invoice("i1")["created_at"], "2026-10-15T09:00:00Z")
 
     def test_memory_store_updates_only_rows_it_has(self):
         store = MemoryStore()

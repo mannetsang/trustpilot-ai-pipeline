@@ -165,12 +165,19 @@ dropped, and one that is off by more than 2% can only be `possible`. The
 
 **Manual actions** (the `action` field of `PATCH /api/transactions/<id>`):
 `confirm` a possible match, `link` an invoice chosen from the picker,
-`unlink`, `waive` (no invoice exists, with a reason) and `unwaive`. A
-receipt added with *Add receipt...* is a manual link too: matching never
-moves it; *Remove...* (which also sends the file to the Drive trash) or
-*Unlink* undoes it. The month-wide matcher writes each row only if nobody
-changed it while it ran (compare and set), so an upload or a *Link* made
-during a run is kept; the result counts such rows as `skipped`.
+`unlink`, `waive` (no invoice exists, with a reason) and `unwaive`.
+`confirm` applies only to the proposal the dashboard showed: if a match run
+released or moved it meanwhile, the answer is `409` *This purchase changed
+meanwhile; reload.* A receipt added with *Add receipt...* is a manual link
+too: matching never moves it; *Remove...* (which also sends the file to the
+Drive trash) or *Unlink* undoes it. *Remove...* marks the file's invoice
+row first (its `extraction_error` starts *upload withdrawn*), so neither the
+index nor the matcher takes the file again, even when the Drive trash fails
+or the file is later restored from the trash (add it again with *Add
+receipt...* if it was wanted after all). The month-wide matcher writes each
+row only if nobody changed it while it ran (compare and set), so an upload
+or a *Link* made during a run is kept; the result counts such rows as
+`skipped`.
 
 ## Access and roles
 
@@ -426,8 +433,8 @@ phone. Chat cards posted before keep their old button until the next send.
 | `POST /api/transactions/<id>/rematch` | signed in, AP or the card's owner | *Rematch*: reads new invoices for the purchase's months, then looks for its invoice again, as a background job (202 with the job, polled through `/api/jobs/current?id=`; 409 while another job runs; 400 for a waived, non-purchase or hand-linked row). The job's result has `outcome` (`found`, `same`, `kept`, `none` or `conflict`), the status and invoice the row now has, `changed`, `invoices_read`, `read_errors` with `read_error_files`, and the updated row; its progress has `stage` and `percent` |
 | `GET /api/transactions/<id>` | signed in | one row as the table shows it (with `checks` and `invoice.reading`); the receipt dialog polls it while the file is read |
 | `GET /api/transactions/<id>/receipt-target` | signed in, AP or the card's owner, card with receipt upload | where *Save receipt* would put the file: `month_folder`, `month_exists`, `vendor_folder`, `vendor_exists`, `source` (`this_month`, `earlier_month` or `new`), the month's `folders`, `limits`. Creates nothing |
-| `POST /api/transactions/<id>/receipt` | signed in, AP or the card's owner, card with receipt upload | multipart: one to ten `file` parts (photos; or one PDF), optional `vendor_folder` and `upload_id`. Saves to Drive and links the purchase: `201 {"status": "saved", "file", "transaction", "reading"}`; the same `upload_id` again answers `200` with `"replayed": true`; `409 not_saved` when the purchase already has its invoice, is waived or changed meanwhile (the file is then trashed); 413 too large, 415 not a photo or PDF, 429 more than 40 in ten minutes |
-| `DELETE /api/transactions/<id>/receipt` | signed in, AP or the card's owner | *Remove...*: unlinks a receipt added from the dashboard and sends its file to the Drive trash |
+| `POST /api/transactions/<id>/receipt` | signed in, AP or the card's owner, card with receipt upload | multipart: one to ten `file` parts (photos; or one PDF), optional `vendor_folder` and `upload_id`. Saves to Drive and links the purchase: `201 {"status": "saved", "file", "transaction", "reading"}`; the same `upload_id` again answers `200` with `"replayed": true`, also when it arrives while the first is still saving (its own copy is trashed); `409 not_saved` when the purchase already has its invoice, is waived or changed meanwhile (the file is then trashed); 413 too large (a body over 16 MB is refused before it is read), 415 not a photo or PDF, 429 more than 40 in ten minutes |
+| `DELETE /api/transactions/<id>/receipt` | signed in, AP or the card's owner | *Remove...*: unlinks a receipt added from the dashboard and sends its file to the Drive trash; the file stays out of matching even when the trash fails (`200` with `"trashed": false` and a `warning`) |
 | `GET /receipts/<last4>/<YYYY>/<MM>` | signed in | the Chat card's *Add receipts*: redirects to the receipts list |
 | `GET /api/invoices?year&month` | signed in | invoices of month-1..month+1 with a `linked` flag (the picker) |
 | `GET /api/cards` | signed in | cards |

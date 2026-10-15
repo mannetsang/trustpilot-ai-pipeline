@@ -73,8 +73,13 @@ class SupabaseStore:
         headers = dict(self.headers)
         if prefer:
             headers["Prefer"] = prefer
-        r = requests.request(method, f"{self.base}/{table}", params=params, json=body,
-                             headers=headers, timeout=self.timeout)
+        try:
+            r = requests.request(method, f"{self.base}/{table}", params=params, json=body,
+                                 headers=headers, timeout=self.timeout)
+        except requests.RequestException as exc:
+            # A reset or a timeout is a store failure too, so the callers' clean-up (trash an
+            # upload whose row could not be written) runs; a timed-out write may still have landed.
+            raise StoreError(f"{method} {table} -> {type(exc).__name__}: {exc}") from exc
         if r.status_code >= 400:
             raise StoreError(f"{method} {table} -> {r.status_code} {r.text[:400]}")
         if want_response:
@@ -422,7 +427,8 @@ class MemoryStore:
     def upsert_invoices(self, rows):
         with self.lock:
             for r in rows:
-                self.invoices.setdefault(r["id"], {}).update(r)
+                # created_at is set once, as the column's default does in Postgres.
+                self.invoices.setdefault(r["id"], {"created_at": now_iso()}).update(r)
 
     def update_invoices(self, ids, patch):
         with self.lock:

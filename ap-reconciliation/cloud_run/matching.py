@@ -329,6 +329,11 @@ def invoice_checks(txn, inv, reading=False):
     if inv.get("extracted_at") is None and not error:
         return [{"kind": "unread", "level": "info",
                  "text": "Reading the receipt…" if reading else "Receipt not read yet."}]
+    if error.startswith("unsupported"):
+        # Never read (a Word file, a PDF over 15 MB): index_invoices does not retry these.
+        return [{"kind": "unreadable", "level": "info",
+                 "text": "This file can't be read automatically, so its amount and date weren't checked "
+                         "against the charge."}]
     if error:
         return [{"kind": "unreadable", "level": "info",
                  "text": "Couldn't read the receipt yet; it is read again with the next invoice run."}]
@@ -366,11 +371,13 @@ def invoice_checks(txn, inv, reading=False):
 
 def candidate_invoices(store, year, month):
     """Invoices a purchase of (year, month) may be matched with: the month's folder and its
-    neighbours, real invoices with a total, not removed, not credit notes."""
+    neighbours, real invoices with a total, not removed, not credit notes, and not a dashboard
+    upload taken back (withdrawn or removed with Remove…: an index run may have cleared removed_at)."""
     folders = [month_folder_name(y, m) for y, m in neighbouring_months(int(year), int(month))]
     return [i for i in store.list_invoices(month_folders=folders)
             if i.get("is_invoice", True) is not False and i.get("total") is not None
-            and not i.get("removed_at") and (i.get("document_type") or "") != "credit_note"]
+            and not i.get("removed_at") and (i.get("document_type") or "") != "credit_note"
+            and not str(i.get("extraction_error") or "").startswith("upload withdrawn")]
 
 
 REMATCHABLE = ("missing", "possible", "matched")

@@ -239,7 +239,11 @@ def index_invoices(store, drive, gemini, root_id, month_folders=None, limit=40, 
                 else:
                     log(f"indexed {row['month_folder']}/{row['vendor_folder']}/{row['file_name']}: "
                         f"{row.get('vendor')} {row.get('total')} {row.get('currency')} {row.get('invoice_date')}")
-        store.upsert_invoices(rows)
+        # A file stamped removed while it was being read (Remove… on a dashboard upload, or another
+        # run that found it gone) stays removed: the read's row would clear removed_at.
+        now = {i["id"]: i for i in store.list_invoices(ids=[r["id"] for r in rows])}
+        store.upsert_invoices([r for r in rows if not (now.get(r["id"]) or {}).get("removed_at")
+                               or (known.get(r["id"]) or {}).get("removed_at")])
     return {"files_seen": len(files), "indexed": len(rows), "remaining": max(len(todo) - limit, 0),
             "retried": len(batch) - min(len(todo), limit), "removed": len(gone),
             "errors": errors, "month_folders": sorted(month_folders) if month_folders else "all"}
