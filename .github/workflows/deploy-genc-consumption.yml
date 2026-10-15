@@ -10,8 +10,13 @@ name: Deploy GenC Consumption dashboard
 #
 # The Supabase service-role key reaches the container as a Secret Manager
 # reference (genc-consumption-2026/supabase-service-key), never as a value in
-# this file. The Supabase URL, the sheet id and the audience are identifiers,
-# not secrets.
+# this file; so does the SkuVault login (SKUVAULT_EMAIL / SKUVAULT_PASSWORD on
+# shp-ai-bot-2026, project number 304363458561, which the runtime account may
+# read). The Supabase URL, the sheet id and the audience are identifiers, not
+# secrets.
+#
+# SkuVault: ticking 出库 removes stock, bins with the least stock first, only in
+# SKUVAULT_WAREHOUSES. Widening that list changes where real stock comes out.
 
 on:
   push:
@@ -38,6 +43,8 @@ env:
   ALLOWED_DOMAINS: superhairpieces.com
   ADMIN_EMAILS: manne@superhairpieces.com,anais@superhairpieces.com
   IAP_AUDIENCE: /projects/83164121214/locations/northamerica-northeast1/services/genc-consumption
+  SKUVAULT_WAREHOUSES: WH1
+  SECRETS: SUPABASE_SERVICE_KEY=supabase-service-key:latest,SKUVAULT_EMAIL=projects/304363458561/secrets/SKUVAULT_EMAIL:latest,SKUVAULT_PASSWORD=projects/304363458561/secrets/SKUVAULT_PASSWORD:latest
 
 jobs:
   deploy:
@@ -72,7 +79,7 @@ jobs:
             --service-account "$RUNTIME_SA" \
             --no-allow-unauthenticated --iap \
             --min-instances 0 --max-instances 2 --memory 512Mi --timeout 120 \
-            --set-env-vars "^;^SUPABASE_URL=$SUPABASE_URL;IAP_AUDIENCE=$IAP_AUDIENCE;ALLOWED_DOMAINS=$ALLOWED_DOMAINS;ADMIN_EMAILS=$ADMIN_EMAILS;SPREADSHEET_ID=$SPREADSHEET_ID" \
-            --set-secrets "SUPABASE_SERVICE_KEY=supabase-service-key:latest" \
+            --set-env-vars "^;^SUPABASE_URL=$SUPABASE_URL;IAP_AUDIENCE=$IAP_AUDIENCE;ALLOWED_DOMAINS=$ALLOWED_DOMAINS;ADMIN_EMAILS=$ADMIN_EMAILS;SPREADSHEET_ID=$SPREADSHEET_ID;SKUVAULT_WAREHOUSES=$SKUVAULT_WAREHOUSES" \
+            --set-secrets "$SECRETS" \
             --quiet
           gcloud run services describe "$SERVICE" --region "$REGION" --project "$PROJECT" --format 'value(status.url)'

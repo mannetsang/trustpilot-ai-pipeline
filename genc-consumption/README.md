@@ -47,6 +47,60 @@ requester and SKU. The open tab is kept in the address (`#transactions`,
 The dashboard's totals for the sheet's rows match the sheet's `Summary` tab to the
 cent (checked 2026-10-15: Jul $502.78, Aug $1,050.94, Sep $174.86, Oct $177.99).
 
+## SkuVault stock-out (出库)
+
+Added 2026-10-15. 出库 on a dashboard line means the stock came out of SkuVault.
+The Add form offers three choices, the first one preselected:
+
+| Choice | What happens |
+|---|---|
+| **Remove from SkuVault now** | the line is saved first, then its quantity is removed from SkuVault (`inventory/removeItem`) and 出库 is ticked |
+| **Already removed in SkuVault by hand** | 出库 is ticked, SkuVault is not touched (`skuvault_status = 'manual'`) |
+| **Not stocked out yet** | nothing; ticking 出库 in the table later asks, then removes it from SkuVault |
+
+- **Bins:** least stock first, only in `SKUVAULT_WAREHOUSES` (**WH1** only for
+  now), reserved bins skipped; when the smallest bin does not hold enough, the
+  rest comes out of the next one. One bin lookup per save for every item
+  (`getInventoryByLocation`), then one `removeItem` per bin. What came out of
+  which bin is kept on the line (`skuvault_removed`) and shown in the table and
+  the edit dialog.
+- **Reason:** the English name of the dashboard reason (`SKUVAULT_REASONS`):
+
+  | Dashboard | SkuVault transaction reason |
+  |---|---|
+  | 视频需要 | `Video` |
+  | 样品需要 | `Sample` |
+  | 客户需求 | `Customer Request` |
+  | 跨部门 | `Cross-Department` |
+
+  **Each must exist in SkuVault** (its transaction-reason settings) before the
+  first removal: SkuVault refuses a reason it does not know, and the line is then
+  saved as *failed* with SkuVault's message. To use other names, change them in
+  SkuVault and set `SKUVAULT_REASONS` to the JSON map (e.g.
+  `{"视频需要": "Video", ...}`) in the deploy.
+- **Whole units only** (SkuVault's quantity is an integer).
+- **When it fails** (not enough stock in WH1, unknown reason, SkuVault busy) the
+  line is still saved, 出库 stays unticked, the table shows a **!** with the
+  reason, and ticking 出库 again retries. If one bin succeeded and the next
+  failed the line is *partial*: the retry removes only what is left.
+- **Locked once removed:** 出库 cannot be unticked and the SKU and quantity
+  cannot change (date, reason, requested by, sent to still can). Deleting the line
+  does not put the stock back: correct SkuVault by hand.
+- **No double removal:** a removal first claims the line in one conditional
+  database update (`skuvault_status` none/failed/partial to `pending`), so two
+  clicks or two people cannot both remove it. A line left `pending` by an
+  instance that died can be retried after 10 minutes (check SkuVault first).
+- **Login:** the `SKUVAULT_EMAIL` / `SKUVAULT_PASSWORD` secrets on
+  `shp-ai-bot-2026` (the SkuVault tenant the Walmart bridge also uses), mounted
+  cross-project; the runtime account `consumption-dashboard@` holds
+  `secretAccessor` on those two secrets only. Removals show in SkuVault as that
+  user. SkuVault allows 5 bin lookups and 10 removals a minute per tenant, shared
+  with the other integrations; a short throttle is waited out, a long one fails
+  the removal with *SkuVault is busy*.
+- **Staff who removed office stock in SkuVault by hand** (reason *Office Use
+  (Video/Packaging/Floor Model)*) should stop doing both: either let the
+  dashboard remove it, or choose *Already removed in SkuVault by hand*.
+
 ## Access and roles
 
 Identity-Aware Proxy signs people in with Google before any request reaches the
@@ -56,7 +110,7 @@ then verifies IAP's signed header (`X-Goog-IAP-JWT-Assertion`, ES256, audience
 
 | Who | May |
 |---|---|
-| anyone in the domain | see everything, add lines, tick 拿货 / 出库 and set the process date on any dashboard line |
+| anyone in the domain | see everything, add lines, tick 拿货 / 出库 (which removes the stock from SkuVault) and set the process date on any dashboard line |
 | whoever entered a line | change its date, SKU, qty, reason, cost, requested by, sent to; delete it |
 | `ADMIN_EMAILS` (`manne@`, `anais@`) | change or delete any dashboard line |
 
@@ -105,7 +159,7 @@ deploys on every push to `main` touching `genc-consumption/cloud_run/`, or from 
 Actions tab, as `claude-sessions` through Workload Identity Federation
 (`docs/credentials.md`). The same command by hand:
 
-`gcloud run deploy genc-consumption --source genc-consumption/cloud_run --region northamerica-northeast1 --project genc-consumption-2026 --service-account consumption-dashboard@genc-consumption-2026.iam.gserviceaccount.com --no-allow-unauthenticated --iap --min-instances 0 --max-instances 2 --memory 512Mi --timeout 120 --set-env-vars "^;^SUPABASE_URL=https://zitrqrchbdracjvxbwtn.supabase.co;IAP_AUDIENCE=/projects/83164121214/locations/northamerica-northeast1/services/genc-consumption;ALLOWED_DOMAINS=superhairpieces.com;ADMIN_EMAILS=manne@superhairpieces.com,anais@superhairpieces.com;SPREADSHEET_ID=1fc2OkX2f9jfMlYxHSPuvyFP2p13JygwrguWxJQkeNdE" --set-secrets "SUPABASE_SERVICE_KEY=supabase-service-key:latest"`
+`gcloud run deploy genc-consumption --source genc-consumption/cloud_run --region northamerica-northeast1 --project genc-consumption-2026 --service-account consumption-dashboard@genc-consumption-2026.iam.gserviceaccount.com --no-allow-unauthenticated --iap --min-instances 0 --max-instances 2 --memory 512Mi --timeout 120 --set-env-vars "^;^SUPABASE_URL=https://zitrqrchbdracjvxbwtn.supabase.co;IAP_AUDIENCE=/projects/83164121214/locations/northamerica-northeast1/services/genc-consumption;ALLOWED_DOMAINS=superhairpieces.com;ADMIN_EMAILS=manne@superhairpieces.com,anais@superhairpieces.com;SPREADSHEET_ID=1fc2OkX2f9jfMlYxHSPuvyFP2p13JygwrguWxJQkeNdE;SKUVAULT_WAREHOUSES=WH1" --set-secrets "SUPABASE_SERVICE_KEY=supabase-service-key:latest,SKUVAULT_EMAIL=projects/304363458561/secrets/SKUVAULT_EMAIL:latest,SKUVAULT_PASSWORD=projects/304363458561/secrets/SKUVAULT_PASSWORD:latest"`
 
 `--set-env-vars` replaces the whole set, so keep every variable in it. `^;^` makes
 gcloud split on semicolons, because `ADMIN_EMAILS` holds commas.
@@ -120,6 +174,9 @@ gcloud split on semicolons, because `ADMIN_EMAILS` holds commas.
 | `ADMIN_EMAILS` | `manne@`, `anais@` | |
 | `TIMEZONE` | `America/Toronto` | "today" for dates and the process date |
 | `STORE` | `supabase` | `memory` for local demos and tests |
+| `SKUVAULT_EMAIL`, `SKUVAULT_PASSWORD` | | the SkuVault login (secrets, cross-project); without them the "remove from SkuVault" choice is off |
+| `SKUVAULT_WAREHOUSES` | `WH1` | warehouse codes stock may come out of, comma-separated (others: `RCE`, `WH2`, `IT1`, `PKO`, `PKP`) |
+| `SKUVAULT_REASONS` | the table above | JSON map of dashboard reason to SkuVault transaction reason |
 | `AUTH_DISABLED` | | `1` lets everyone in as an admin: local runs only |
 
 ## Local runs and tests
@@ -131,7 +188,9 @@ gcloud split on semicolons, because `ADMIN_EMAILS` holds commas.
 `set AUTH_DISABLED=1&& set STORE=memory&& python main.py --port 8765`
 
 and open <http://127.0.0.1:8765>. Lines you add live in memory and are gone when
-the server stops. `GET /health?deep=1` checks the sheet, Cost Ref and the database.
+the server stops. **Never put `SKUVAULT_EMAIL` / `SKUVAULT_PASSWORD` in a local
+`.env`:** a local run with them removes real stock. Without them the "remove from
+SkuVault" choice is switched off; the tests use a fake SkuVault. `GET /health?deep=1` checks the sheet, Cost Ref and the database.
 
 Tests (no network): from `genc-consumption`, `python -m unittest discover -s tests -v`.
 
@@ -145,3 +204,6 @@ Tests (no network): from `genc-consumption`, `python -m unittest discover -s tes
 | A SKU is *Not in Cost Ref* although it is in the cost sheet | Cost Ref is cached for 10 minutes, and its `IMPORTRANGE` may lag; try again later, or type the cost |
 | Banner: *The database could not be read* | the Supabase project is paused or the key was rotated: restore it in Supabase, or add the new key as in setup step 3 |
 | *Your Google session has ended* | IAP's session expired; *Reload* |
+| **!** on 出库, *SkuVault refused the removal ... Reason* | the SkuVault reason (table above) does not exist in SkuVault yet: create it, then tick 出库 again |
+| **!** on 出库, *only N on hand in the allowed warehouses* | WH1 holds less than the line's quantity (often the stock sits in RCE `GCE`): move it in SkuVault, or remove it by hand and choose *Already removed in SkuVault by hand* |
+| *SkuVault is busy* | the shared rate limit (5 lookups / 10 removals a minute); tick 出库 again in a minute |

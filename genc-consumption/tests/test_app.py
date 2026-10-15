@@ -16,6 +16,7 @@ os.environ.pop("AUTH_DISABLED", None)
 
 import main  # noqa: E402
 import sheet  # noqa: E402
+import skuvault  # noqa: E402
 from store import MemoryStore  # noqa: E402
 
 AUDIENCE = "/projects/83164121214/locations/northamerica-northeast1/services/genc-consumption"
@@ -141,12 +142,15 @@ class EntryTests(ApiTestCase):
                 self.assertIn(message, r.get_json()["error"])
         self.assertEqual(self.store.list_entries(), [])
 
-    def test_ticking_stocked_out_fills_the_process_date(self):
+    def test_marking_stocked_out_by_hand_fills_the_process_date(self):
         line = self.post(self.entry()).get_json()["created"][0]
-        r = self.client.patch(f"/api/entries/{line['id']}", json={"issued": True}, headers=self.PAGE)
+        r = self.client.patch(f"/api/entries/{line['id']}", json={"stock_out": "manual"}, headers=self.PAGE)
         self.assertEqual(r.status_code, 200, r.get_json())
-        self.assertEqual(r.get_json()["entry"]["process_date"], main.today().isoformat())
-        self.assertEqual(r.get_json()["entry"]["updated_by"], "local")
+        entry = r.get_json()["entry"]
+        self.assertEqual((entry["issued"], entry["skuvault_status"], entry["process_date"], entry["updated_by"]),
+                         (True, "manual", main.today().isoformat(), "local"))
+        r = self.client.patch(f"/api/entries/{line['id']}", json={"stock_out": "no"}, headers=self.PAGE)
+        self.assertEqual((r.get_json()["entry"]["issued"], r.get_json()["entry"]["skuvault_status"]), (False, "none"))
 
     def test_resaving_the_same_sku_does_not_reprice(self):
         line = self.post(self.entry()).get_json()["created"][0]
@@ -166,7 +170,7 @@ class EntryTests(ApiTestCase):
         self.assertEqual(self.client.delete(f"/api/entries/{line['id']}", headers=self.PAGE).status_code, 404)
 
     def test_sheet_rows_cannot_be_changed_through_the_api(self):
-        r = self.client.patch("/api/entries/sheet-2", json={"issued": True}, headers=self.PAGE)
+        r = self.client.patch("/api/entries/sheet-2", json={"stock_out": "manual"}, headers=self.PAGE)
         self.assertEqual(r.status_code, 404)
 
 
@@ -207,6 +211,177 @@ class DataTests(ApiTestCase):
         self.assertTrue(body["ok"])
         self.assertEqual(body["checks"]["sheet"], {"ok": True, "rows": 3, "reasons": 4})
         self.assertEqual(body["checks"]["cost_ref"], {"ok": True, "skus": 2})
+
+
+class FakeSkuVault:
+    """Bins per SKU; records every removal; fail_after makes the nth removal fail."""
+
+    def __init__(self, bins=None, fail_after=None, lookup_error=None):
+        self.stock = bins if bins is not None else {
+            "Medicube_PDRN Pink Moist Cream_50ml": [("WH1", "Z1[Z1G09]", 78), ("WH1", "Z1[Z1A03]", 2)],
+            "VGR_Clipper 001_BK": [("WH1", "Z1[Z1A12]", 8)],
+        }
+        self.removals, self.fail_after, self.lookup_error, self.lookups = [], fail_after, lookup_error, 0
+
+    def bins(self, skus):
+        self.lookups += 1
+        if self.lookup_error:
+            raise skuvault.SkuVaultError(self.lookup_error)
+        return {s: [{"warehouse_code": w, "warehouse_id": 1, "location_code": loc, "quantity": q}
+                    for w, loc, q in self.stock.get(s, [])] for s in skus}
+
+    def remove(self, sku, warehouse_id, location_code, qty, reason):
+        if self.fail_after is not None and len(self.removals) >= self.fail_after:
+            raise skuvault.SkuVaultError(f"SkuVault refused the removal from {location_code}: Reason not found")
+        self.removals.append((sku, location_code, qty, reason))
+
+
+class SkuVaultFlowTests(ApiTestCase):
+    def setUp(self):
+        super().setUp()
+        self.sv = FakeSkuVault()
+        main.set_clients(store=self.store, sheet=self.sheet, skuvault=self.sv)
+
+    def test_least_stock_first_spilling_into_the_next_bin(self):
+        r = self.post(self.entry(stock_out="skuvault", items=[{"sku": "Medicube_PDRN Pink Moist Cream_50ml", "qty": 5}]))
+        self.assertEqual(r.status_code, 201, r.get_json())
+        line = r.get_json()["created"][0]
+        self.assertEqual(self.sv.removals, [("Medicube_PDRN Pink Moist Cream_50ml", "Z1[Z1A03]", 2, "Customer Request"),
+                                            ("Medicube_PDRN Pink Moist Cream_50ml", "Z1[Z1G09]", 3, "Customer Request")])
+        self.assertEqual((line["skuvault_status"], line["issued"], line["process_date"], line["skuvault_error"]),
+                         ("removed", True, main.today().isoformat(), None))
+        self.assertEqual([(p["location"], p["qty"]) for p in line["skuvault_removed"]], [("Z1[Z1A03]", 2), ("Z1[Z1G09]", 3)])
+        self.assertEqual(r.get_json()["skuvault"], {"removed": 1, "problems": []})
+
+    def test_one_lookup_for_every_item_of_an_entry(self):
+        self.post(self.entry(stock_out="skuvault", items=[{"sku": "VGR_Clipper 001_BK", "qty": 1},
+                                                         {"sku": "Medicube_PDRN Pink Moist Cream_50ml", "qty": 1}]))
+        self.assertEqual(self.sv.lookups, 1)
+        self.assertEqual([x[1] for x in self.sv.removals], ["Z1[Z1A12]", "Z1[Z1A03]"])
+
+    def test_not_enough_stock_saves_the_line_without_touching_skuvault(self):
+        r = self.post(self.entry(stock_out="skuvault", items=[{"sku": "VGR_Clipper 001_BK", "qty": 9}]))
+        line = r.get_json()["created"][0]
+        self.assertEqual((r.status_code, line["skuvault_status"], line["issued"]), (201, "failed", False))
+        self.assertIn("only 8 on hand", line["skuvault_error"])
+        self.assertEqual(self.sv.removals, [])
+        self.assertEqual(r.get_json()["skuvault"]["problems"][0]["status"], "failed")
+
+    def test_a_partial_removal_is_recorded_and_the_retry_takes_only_the_rest(self):
+        self.sv.fail_after = 1
+        line = self.post(self.entry(stock_out="skuvault", items=[{"sku": "Medicube_PDRN Pink Moist Cream_50ml", "qty": 5}])).get_json()["created"][0]
+        self.assertEqual((line["skuvault_status"], line["issued"]), ("partial", False))
+        self.assertIn("Reason not found", line["skuvault_error"])
+        self.sv.fail_after = None
+        self.sv.stock["Medicube_PDRN Pink Moist Cream_50ml"] = [("WH1", "Z1[Z1G09]", 78)]     # the small bin is empty now
+        r = self.client.patch(f"/api/entries/{line['id']}", json={"stock_out": "skuvault"}, headers=self.PAGE)
+        self.assertEqual(r.status_code, 200, r.get_json())
+        self.assertEqual(self.sv.removals[-1], ("Medicube_PDRN Pink Moist Cream_50ml", "Z1[Z1G09]", 3, "Customer Request"))
+        self.assertEqual(r.get_json()["entry"]["skuvault_status"], "removed")
+
+    def test_removed_lines_keep_their_sku_and_quantity_and_stay_stocked_out(self):
+        line = self.post(self.entry(stock_out="skuvault", items=[{"sku": "VGR_Clipper 001_BK", "qty": 2}])).get_json()["created"][0]
+        url = f"/api/entries/{line['id']}"
+        for body in ({"qty": 3}, {"sku": "Medicube_PDRN Pink Moist Cream_50ml"}, {"stock_out": "no"},
+                     {"stock_out": "manual"}, {"stock_out": "skuvault"}):
+            with self.subTest(body):
+                self.assertEqual(self.client.patch(url, json=body, headers=self.PAGE).status_code, 400)
+        r = self.client.patch(url, json={"sent_to": "展会", "picked_up": True}, headers=self.PAGE)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(len(self.sv.removals), 1)
+
+    def test_lines_marked_by_hand_are_never_removed_again(self):
+        line = self.post(self.entry(stock_out="manual")).get_json()["created"][0]
+        self.assertEqual((line["issued"], line["skuvault_status"]), (True, "manual"))
+        r = self.client.patch(f"/api/entries/{line['id']}", json={"stock_out": "skuvault"}, headers=self.PAGE)
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(self.sv.removals, [])
+
+    def test_whole_units_and_a_mapped_reason_are_needed_before_anything_is_saved(self):
+        r = self.post(self.entry(stock_out="skuvault", items=[{"sku": "VGR_Clipper 001_BK", "qty": 1.5}]))
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("whole units", r.get_json()["error"])
+        with mock.patch.dict(main.SKUVAULT_REASONS, {}, clear=True):
+            r = self.post(self.entry(stock_out="skuvault"))
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(self.store.list_entries(), [])
+
+    def test_a_failed_lookup_leaves_the_line_failed(self):
+        self.sv.lookup_error = "SkuVault is busy (rate limit shared with the other integrations); try again in a minute"
+        line = self.post(self.entry(stock_out="skuvault")).get_json()["created"][0]
+        self.assertEqual((line["skuvault_status"], line["skuvault_error"][:16]), ("failed", "SkuVault is busy"))
+
+    def test_two_claims_on_one_line_cannot_both_win(self):
+        line = self.post(self.entry()).get_json()["created"][0]
+        stale_before = "2000-01-01T00:00:00Z"
+        self.assertIsNotNone(self.store.claim_skuvault(line["id"], "a", stale_before))
+        self.assertIsNone(self.store.claim_skuvault(line["id"], "b", stale_before))
+        r = self.client.patch(f"/api/entries/{line['id']}", json={"stock_out": "skuvault"}, headers=self.PAGE)
+        self.assertEqual(r.status_code, 409)
+        self.assertEqual(self.sv.removals, [])
+
+    def test_without_skuvault_credentials_removal_is_refused(self):
+        main.set_clients(store=self.store, sheet=self.sheet)
+        with mock.patch.object(main, "SKUVAULT_EMAIL", ""):
+            r = self.post(self.entry(stock_out="skuvault"))
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("not set up", r.get_json()["error"])
+
+
+class SkuVaultClientTests(unittest.TestCase):
+    def test_plan_least_stock_first(self):
+        bins = [{"warehouse_code": "WH1", "location_code": "B", "quantity": 78},
+                {"warehouse_code": "WH1", "location_code": "A", "quantity": 2},
+                {"warehouse_code": "WH1", "location_code": "Z", "quantity": 0}]
+        self.assertEqual([(b["location_code"], q) for b, q in skuvault.plan_removal(bins, 1)], [("A", 1)])
+        self.assertEqual([(b["location_code"], q) for b, q in skuvault.plan_removal(bins, 80)], [("A", 2), ("B", 78)])
+        with self.assertRaises(skuvault.NotEnoughStock):
+            skuvault.plan_removal(bins, 81)
+
+    def client(self, responses):
+        session = mock.Mock()
+        session.post.side_effect = responses
+        return skuvault.SkuVaultClient("e", "p", warehouses=["WH1"], session=session), session
+
+    @staticmethod
+    def response(status=200, body=None, headers=None):
+        r = mock.Mock(status_code=status, headers=headers or {}, text=str(body))
+        r.json.return_value = body if body is not None else {}
+        return r
+
+    def test_bins_only_from_allowed_warehouses_and_not_reserved(self):
+        c, _ = self.client([
+            self.response(body={"TenantToken": "t", "UserToken": "u"}),
+            self.response(body={"Items": {"SKU-1": [
+                {"WarehouseCode": "WH1", "LocationCode": "Z1[Z1A03]", "Quantity": 19, "Reserve": False},
+                {"WarehouseCode": "IT1", "LocationCode": "PKO", "Quantity": 5, "Reserve": False},
+                {"WarehouseCode": "WH1", "LocationCode": "Z1[R]", "Quantity": 9, "Reserve": True}]}, "Errors": []}),
+            self.response(body={"Warehouses": [{"Id": "1", "Code": "WH1"}, {"Id": "4", "Code": "IT1"}]}),
+        ])
+        self.assertEqual(c.bins(["sku-1"]), {"sku-1": [{"warehouse_code": "WH1", "warehouse_id": 1,
+                                                       "location_code": "Z1[Z1A03]", "quantity": 19}]})
+
+    def test_remove_must_say_success_and_a_short_throttle_is_waited_out(self):
+        c, session = self.client([
+            self.response(body={"TenantToken": "t", "UserToken": "u"}),
+            self.response(status=429, headers={"X-RateLimit-Reset": "10"}),
+            self.response(body={"RemoveItemStatus": "Success"}),
+            self.response(body={"RemoveItemStatus": "NotEnoughQuantity"}),
+        ])
+        with mock.patch.object(skuvault.time, "sleep"):
+            c.remove("SKU-1", 1, "Z1[Z1A03]", 2, "Sample")
+        sent = session.post.call_args_list[2].kwargs["json"]
+        self.assertEqual((sent["Sku"], sent["WarehouseId"], sent["LocationCode"], sent["Quantity"], sent["Reason"], sent["TenantToken"]),
+                         ("SKU-1", 1, "Z1[Z1A03]", 2, "Sample", "t"))
+        with self.assertRaises(skuvault.SkuVaultError):
+            c.remove("SKU-1", 1, "Z1[Z1A03]", 2, "Sample")
+
+    def test_a_long_throttle_fails_instead_of_waiting(self):
+        c, _ = self.client([self.response(body={"TenantToken": "t", "UserToken": "u"}),
+                            self.response(status=429, headers={"X-RateLimit-Reset": "45000"})])
+        with self.assertRaises(skuvault.SkuVaultError) as ctx:
+            c.remove("SKU-1", 1, "Z1", 1, "Sample")
+        self.assertIn("busy", str(ctx.exception))
 
 
 class IapTests(ApiTestCase):

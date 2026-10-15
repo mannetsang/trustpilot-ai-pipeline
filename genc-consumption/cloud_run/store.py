@@ -13,7 +13,11 @@ import uuid
 import requests
 
 COLUMNS = ("id,entry_date,sku,reason,qty,unit_cost_cad,cost_source,subtotal_cad,request_by,sent_to,"
-           "process_date,picked_up,issued,created_by,created_at,updated_by,updated_at")
+           "process_date,picked_up,issued,created_by,created_at,updated_by,updated_at,"
+           "skuvault_status,skuvault_removed,skuvault_error,skuvault_started_at,skuvault_done_at,skuvault_by")
+# A SkuVault removal may start when nothing is running, or when a run was left "pending" this long
+# ago (an instance that died mid-way); see claim_skuvault.
+CLAIMABLE = ("none", "failed", "partial")
 
 
 class StoreError(Exception):
@@ -78,6 +82,17 @@ class SupabaseStore:
                         body=patch, prefer="return=representation")
         return _numbers(out[0]) if out else None
 
+    def claim_skuvault(self, entry_id, user, stale_before):
+        """Mark the line "pending" if no other removal holds it: one conditional PATCH, so two
+        requests racing for the same line cannot both get it. Returns the claimed line or None."""
+        claimable = f"skuvault_status.in.({','.join(CLAIMABLE)})"
+        stale = f"and(skuvault_status.eq.pending,skuvault_started_at.lt.{stale_before})"
+        out = self._req("PATCH", params={"select": COLUMNS, "id": f"eq.{entry_id}", "deleted_at": "is.null",
+                                         "or": f"({claimable},{stale})"},
+                        body={"skuvault_status": "pending", "skuvault_started_at": now_iso(), "skuvault_by": user,
+                              "skuvault_error": None}, prefer="return=representation")
+        return _numbers(out[0]) if out else None
+
     def delete_entry(self, entry_id, user):
         out = self._req("PATCH", params={"select": "id", "id": f"eq.{entry_id}", "deleted_at": "is.null"},
                         body={"deleted_at": now_iso(), "deleted_by": user}, prefer="return=representation")
@@ -118,7 +133,9 @@ class MemoryStore:
                 stamp = now_iso()
                 full = {"id": str(uuid.uuid4()), "created_at": stamp, "updated_at": stamp, "updated_by": None,
                         "picked_up": False, "issued": False, "process_date": None, "cost_source": "none",
-                        "unit_cost_cad": None, "request_by": "", "sent_to": ""}
+                        "unit_cost_cad": None, "request_by": "", "sent_to": "", "skuvault_status": "none",
+                        "skuvault_removed": [], "skuvault_error": None, "skuvault_started_at": None,
+                        "skuvault_done_at": None, "skuvault_by": None}
                 full.update(copy.deepcopy(row))
                 self.rows[full["id"]] = full
                 out.append(self._public(full))
@@ -130,6 +147,18 @@ class MemoryStore:
             if not row or row.get("deleted_at"):
                 return None
             row.update(copy.deepcopy(patch))
+            return self._public(row)
+
+    def claim_skuvault(self, entry_id, user, stale_before):
+        with self.lock:
+            row = self.rows.get(entry_id)
+            if not row or row.get("deleted_at"):
+                return None
+            stale = row["skuvault_status"] == "pending" and (row.get("skuvault_started_at") or "") < stale_before
+            if row["skuvault_status"] not in CLAIMABLE and not stale:
+                return None
+            row.update({"skuvault_status": "pending", "skuvault_started_at": now_iso(), "skuvault_by": user,
+                        "skuvault_error": None})
             return self._public(row)
 
     def delete_entry(self, entry_id, user):

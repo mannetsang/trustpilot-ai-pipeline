@@ -215,6 +215,19 @@ h3.section { font-size: 13px; margin: 18px 0 8px; color: var(--ink-2); font-weig
 .suggest div[aria-selected="true"], .suggest div:hover { background: var(--surface-2); }
 .statuses { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 4px; }
 .statuses label { display: inline-flex; gap: 8px; align-items: center; font-size: 13px; cursor: pointer; }
+.stockout { display: grid; gap: 6px; margin-top: 10px; }
+.stockout label { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; cursor: pointer; background: var(--page); }
+.stockout label:has(input:checked) { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.stockout label:has(input:disabled) { opacity: 0.55; cursor: default; }
+.stockout input { margin-top: 3px; accent-color: var(--accent); }
+.stockout b { font-weight: 600; font-size: 13px; display: block; }
+.stockout small { color: var(--muted); font-size: 12px; }
+.sv-box { margin-top: 10px; border: 1px solid var(--border); border-left: 3px solid var(--good); border-radius: 8px; padding: 9px 11px; font-size: 13px; background: var(--page); }
+.sv-box.warn { border-left-color: var(--warning); }
+.sv-box .btn { margin-top: 8px; }
+.sv-flag { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: var(--warning); color: #3a2a00; font-size: 11px; font-weight: 700; margin-left: 6px; vertical-align: middle; cursor: help; }
+.sv-tag { font-size: 10px; color: var(--muted); margin-left: 4px; }
+.notice .grow { flex: 1; }
 .form-error { color: var(--critical); font-size: 13px; margin-top: 10px; min-height: 1em; }
 .perm-note { font-size: 12px; color: var(--muted); margin: 0 0 10px; }
 
@@ -366,8 +379,16 @@ footer a { color: var(--muted); }
       <h3 class="section">Status</h3>
       <div class="statuses">
         <label><input type="checkbox" class="check" id="e-picked"> 拿货 Picked up</label>
-        <label><input type="checkbox" class="check" id="e-issued"> 出库 Stocked out</label>
       </div>
+      <div class="stockout" id="e-stockout" role="radiogroup" aria-label="出库 stock out">
+        <label id="so-skuvault"><input type="radio" name="stock_out" value="skuvault">
+          <span><b>出库 Remove from SkuVault now</b><small id="so-skuvault-note"></small></span></label>
+        <label id="so-manual"><input type="radio" name="stock_out" value="manual">
+          <span><b>出库 Already removed in SkuVault by hand</b><small>Marks it stocked out; SkuVault is not touched.</small></span></label>
+        <label id="so-no"><input type="radio" name="stock_out" value="no">
+          <span><b>Not stocked out yet</b><small>Tick 出库 in the table later to remove it from SkuVault then.</small></span></label>
+      </div>
+      <div class="sv-box" id="e-sv" hidden></div>
       <div class="form-error" id="e-error" role="alert"></div>
     </div>
     <div class="dlg-foot">
@@ -387,7 +408,8 @@ footer a { color: var(--muted); }
 "use strict";
 (() => {
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const GLOSS = { "视频需要": "Video", "样品需要": "Samples", "客户需求": "Customer", "跨部门": "Cross-dept" };
+// English names of the reasons; the server's SKUVAULT_REASONS (the SkuVault transaction reasons) win.
+const GLOSS = { "视频需要": "Video", "样品需要": "Sample", "客户需求": "Customer Request", "跨部门": "Cross-Department" };
 const PAGE = 100;
 const money = new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", currencyDisplay: "narrowSymbol" });
 const num = new Intl.NumberFormat("en-CA", { maximumFractionDigits: 2 });
@@ -425,14 +447,33 @@ function compactMoney(v) {
   if (Math.abs(v) >= 1000) return "$" + (v / 1000).toFixed(v >= 10000 ? 0 : 1).replace(/\.0$/, "") + "K";
   return "$" + Math.round(v);
 }
-function reasonLabel(r) { return GLOSS[r] ? `${r} · ${GLOSS[r]}` : (r || "(no reason)"); }
+function reasonLabel(r) {
+  const en = (state.data && state.data.skuvault && state.data.skuvault.reasons || {})[r] || GLOSS[r];
+  return en ? `${r} · ${en}` : (r || "(no reason)");
+}
+function sv() { return (state.data && state.data.skuvault) || { enabled: false, warehouses: [] }; }
+const TOUCHED = ["removed", "partial", "pending"];
+function removedQty(r) { return (r.skuvault_removed || []).reduce((n, p) => n + (p.qty || 0), 0); }
+function binsText(r) { return (r.skuvault_removed || []).map((p) => `${p.qty} from ${p.warehouse} · ${p.location}`).join(", "); }
 function reasonColor(r) {
   const i = state.reasons.indexOf(r);
   return i >= 0 && i < 8 ? `var(--s${i + 1})` : "var(--s-other)";
 }
-function toast(msg) {
+function toast(msg, long) {
   const t = $("toast"); t.textContent = msg; t.style.display = "block";
-  clearTimeout(toast.timer); toast.timer = setTimeout(() => { t.style.display = "none"; }, 3200);
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => { t.style.display = "none"; }, long ? 8000 : 3200);
+}
+// After a removal: a toast for what came out, and a notice that stays for anything that did not.
+function reportSkuvault(lines) {
+  const ok = lines.filter((l) => l.skuvault_status === "removed");
+  const bad = lines.filter((l) => l.skuvault_status === "failed" || l.skuvault_status === "partial");
+  if (ok.length) toast(`Removed from SkuVault: ${ok.map((l) => `${num.format(l.qty)} × ${l.sku} (${binsText(l)})`).join("; ")}`, true);
+  for (const l of bad) {
+    const n = el("div", { class: "notice error" },
+      el("span", { class: "grow" }, `SkuVault ${l.skuvault_status === "partial" ? `took only ${removedQty(l)} of ${num.format(l.qty)} × ` : "did not remove "}${l.sku}: ${l.skuvault_error || "unknown error"}. The line is saved; tick 出库 on it to try again.`),
+      el("button", { class: "btn small", type: "button", onclick: () => n.remove() }, "Dismiss"));
+    $("notices").append(n);
+  }
 }
 
 async function api(method, path, body) {
@@ -887,6 +928,42 @@ function renderLines(rows) {
   $("more").hidden = sorted.length <= state.shown;
   $("more-btn").textContent = `Show ${Math.min(PAGE, sorted.length - state.shown)} more`;
 }
+function stockOutCell(r) {
+  if (r.source !== "app") return checkCell(r, "issued");
+  const status = r.skuvault_status || "none";
+  if (status === "removed")
+    return el("td", {}, el("span", { class: "ro-check", title: `Removed from SkuVault: ${binsText(r)}` }, "✓"), el("span", { class: "sv-tag" }, "SkuVault"));
+  if (status === "pending")
+    return el("td", {}, el("span", { class: "muted", title: "A SkuVault removal is running" }, "…"));
+  const box = el("input", { type: "checkbox", class: "check", checked: r.issued, "aria-label": `出库 stocked out: ${r.sku}`,
+    title: status === "manual" ? "Marked as removed in SkuVault by hand" : "Tick to remove it from SkuVault" });
+  box.addEventListener("change", async () => {
+    let choice = "no";
+    if (box.checked) {
+      if (!sv().enabled) choice = "manual";
+      else {
+        const left = r.qty - removedQty(r);
+        const ok = confirm(`Remove ${num.format(left)} × ${r.sku} from SkuVault now?\n\nIt comes out of the bins with the least stock first, in ${sv().warehouses.join(", ")}, with the reason "${(sv().reasons || {})[r.reason] || r.reason}".\n\nAlready removed it in SkuVault by hand? Cancel, then use ${r.can_edit ? "Edit" : "Status"} on this line.`);
+        if (!ok) { box.checked = false; return; }
+        choice = "skuvault";
+      }
+    }
+    box.disabled = true;
+    try {
+      const res = await api("PATCH", `/api/entries/${encodeURIComponent(r.id)}`, { stock_out: choice });
+      replaceRow(res.entry);
+      if (choice === "skuvault") reportSkuvault([res.entry]);
+      else toast(`出库 ${box.checked ? "ticked" : "cleared"}: ${r.sku}`);
+    } catch (e) { box.checked = !box.checked; toast(e.message, true); }
+    finally { box.disabled = false; }
+  });
+  const cell = el("td", {}, box);
+  if (status === "failed" || status === "partial") {
+    const what = status === "partial" ? `${removedQty(r)} of ${num.format(r.qty)} came out of SkuVault (${binsText(r)}), then: ` : "SkuVault did not remove it: ";
+    cell.append(el("span", { class: "sv-flag", title: what + (r.skuvault_error || "unknown error") + ". Tick 出库 to try again.", "aria-label": "SkuVault problem" }, "!"));
+  }
+  return cell;
+}
 function checkCell(r, field) {
   if (r.source !== "app") return el("td", {}, r[field] ? el("span", { class: "ro-check", title: "Ticked in the sheet" }, "✓") : el("span", { class: "ro-cross", title: "Not ticked in the sheet" }, "—"));
   const box = el("input", { type: "checkbox", class: "check", checked: r[field], "aria-label": `${field === "picked_up" ? "拿货 picked up" : "出库 stocked out"}: ${r.sku}` });
@@ -919,7 +996,7 @@ function lineRow(r) {
     el("td", { class: "wrapcell" }, r.sent_to),
     el("td", {}, r.process_date || ""),
     checkCell(r, "picked_up"),
-    checkCell(r, "issued"),
+    stockOutCell(r),
     el("td", {}, src),
     el("td", {}, r.source === "app" ? el("button", { class: "btn small ghost", type: "button", onclick: () => openEdit(r) }, r.can_edit ? "Edit" : "Status") : ""));
 }
@@ -933,7 +1010,7 @@ function replaceRow(entry) {
 
 function downloadCsv() {
   const rows = sortRows(state.data.rows.filter((r) => r._date && matches(r, false)));
-  const cols = ["entry_date", "sku", "reason", "qty", "unit_cost_cad", "subtotal_cad", "request_by", "sent_to", "process_date", "picked_up", "issued", "source", "sheet_row", "created_by"];
+  const cols = ["entry_date", "sku", "reason", "qty", "unit_cost_cad", "subtotal_cad", "request_by", "sent_to", "process_date", "picked_up", "issued", "skuvault_status", "source", "sheet_row", "created_by"];
   const esc = (v) => { const s = v === null || v === undefined ? "" : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
   const csv = "﻿" + [cols.join(","), ...rows.map((r) => cols.map((c) => esc(r[c])).join(","))].join("\r\n");
   const a = el("a", { href: URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" })), download: `genc-consumption-${periodName().replace(/\s+/g, "-")}.csv` });
@@ -1044,6 +1121,45 @@ function updateTotals() {
   $("e-total").textContent = fmtMoney(total) + (missing ? ` (+${missing} without cost)` : "");
   if (!editing) $("e-save").textContent = `Save ${lines.length} item${lines.length === 1 ? "" : "s"}`;
 }
+function setStockOut(r) {
+  const status = r ? (r.skuvault_status || "none") : null;
+  const box = $("e-sv");
+  const radios = $("e-stockout");
+  const pick = (v) => { for (const i of radios.querySelectorAll("input")) i.checked = i.value === v; };
+  $("so-skuvault-note").textContent = sv().enabled
+    ? `Takes the quantity out of SkuVault when you save: bins with the least stock first, in ${sv().warehouses.join(", ")}. Whole units only.`
+    : "SkuVault is not connected to this dashboard.";
+  $("so-skuvault").querySelector("input").disabled = !sv().enabled || status === "manual";
+  $("so-manual").querySelector("input").disabled = false;
+  radios.hidden = TOUCHED.includes(status);
+  box.hidden = true; box.className = "sv-box"; box.replaceChildren();
+  if (!r) { pick(sv().enabled ? "skuvault" : "no"); return; }
+  if (status === "removed") {
+    box.hidden = false;
+    box.append(el("div", {}, `✓ Removed from SkuVault: ${binsText(r)}`), el("div", { class: "muted" },
+      `${(r.skuvault_done_at || "").slice(0, 10)} by ${r.skuvault_by || "?"}. The SKU and quantity can no longer change; to undo, put the stock back in SkuVault by hand.`));
+  } else if (status === "pending") {
+    box.hidden = false; box.classList.add("warn");
+    box.append(el("div", {}, "A SkuVault removal of this line is running. Reload in a moment."));
+  } else if (status === "partial") {
+    const left = r.qty - removedQty(r);
+    box.hidden = false; box.classList.add("warn");
+    box.append(el("div", {}, `${removedQty(r)} of ${num.format(r.qty)} came out of SkuVault (${binsText(r)}), then: ${r.skuvault_error || "unknown error"}`),
+      el("button", { class: "btn small", type: "button", onclick: () => retrySkuvault(r) }, `Remove the other ${num.format(left)} now`));
+  } else if (status === "failed") {
+    box.hidden = false; box.classList.add("warn");
+    box.append(el("div", {}, `SkuVault did not remove it: ${r.skuvault_error || "unknown error"}. Choose "Remove from SkuVault now" to try again.`));
+  }
+  pick(status === "manual" ? "manual" : "no");
+}
+async function retrySkuvault(r) {
+  $("e-error").textContent = "";
+  try {
+    const res = await api("PATCH", `/api/entries/${encodeURIComponent(r.id)}`, { stock_out: "skuvault" });
+    replaceRow(res.entry); reportSkuvault([res.entry]); dlg.close();
+  } catch (e) { $("e-error").textContent = e.message; }
+}
+function stockOutChoice() { return (dlg.querySelector('input[name="stock_out"]:checked') || {}).value || "no"; }
 function openAdd() {
   editing = null;
   $("dlg-title").textContent = "Add items";
@@ -1055,7 +1171,8 @@ function openAdd() {
   reasonPicker(state.f.reason || "", false);
   $("e-items").replaceChildren(itemLine({}));
   $("e-add-line").hidden = false;
-  $("e-picked").checked = false; $("e-issued").checked = false;
+  $("e-picked").checked = false;
+  setStockOut(null);
   $("e-delete").hidden = true;
   $("e-error").textContent = "";
   updateTotals();
@@ -1077,7 +1194,9 @@ function openEdit(r) {
   line._inputs.forEach((i) => { if (!can) i.disabled = true; });
   $("e-items").replaceChildren(line);
   $("e-add-line").hidden = true;
-  $("e-picked").checked = r.picked_up; $("e-issued").checked = r.issued;
+  $("e-picked").checked = r.picked_up;
+  setStockOut(r);
+  if (TOUCHED.includes(r.skuvault_status)) line._inputs.slice(0, 2).forEach((i) => { i.disabled = true; });
   $("e-delete").hidden = !can;
   $("e-error").textContent = "";
   $("e-save").textContent = "Save";
@@ -1091,7 +1210,9 @@ async function save(ev) {
   const reason = (dlg.querySelector('input[name="reason"]:checked') || {}).value;
   const lines = [...$("e-items").children].map((l) => l._get());
   const common = { entry_date: $("e-date").value, reason, request_by: $("e-who").value.trim(), sent_to: $("e-sent").value.trim(),
-    picked_up: $("e-picked").checked, issued: $("e-issued").checked };
+    picked_up: $("e-picked").checked };
+  const stockOut = stockOutChoice();
+  const wantsSkuvault = stockOut === "skuvault" && !(editing && TOUCHED.includes(editing.skuvault_status));
   if (!editing || editing.can_edit) {
     if (!common.entry_date) { err.textContent = "Pick a date."; return; }
     if (!common.request_by) { err.textContent = "Who asked for it? Fill in Requested by."; $("e-who").focus(); return; }
@@ -1099,19 +1220,26 @@ async function save(ev) {
     const bad = lines.findIndex((l) => !l.sku || !(Number(l.qty) > 0));
     if (bad >= 0) { err.textContent = `Item ${bad + 1}: a SKU and a quantity above 0 are needed.`; return; }
   }
+  if (wantsSkuvault) {
+    const frac = lines.findIndex((l) => !Number.isInteger(Number(l.qty)));
+    if (frac >= 0) { err.textContent = `Item ${frac + 1}: SkuVault removes whole units. Make the quantity a whole number, or choose another 出库 option.`; return; }
+  }
   $("e-save").disabled = true;
   try {
     if (!editing) {
-      const { created } = await api("POST", "/api/entries", { ...common, items: lines });
+      $("e-save").textContent = wantsSkuvault ? "Saving and removing from SkuVault…" : "Saving…";
+      const { created } = await api("POST", "/api/entries", { ...common, stock_out: stockOut, items: lines });
       created.forEach(replaceRow);
-      toast(`Saved ${created.length} item${created.length === 1 ? "" : "s"}.`);
+      if (wantsSkuvault) reportSkuvault(created);
+      else toast(`Saved ${created.length} item${created.length === 1 ? "" : "s"}.`);
     } else {
       // Only what changed: re-sending an unchanged SKU would be harmless, but a smaller patch
       // keeps "updated by" honest and never re-prices a line by accident.
       const body = {};
       const procDate = $("e-process").value || null;
       if (common.picked_up !== editing.picked_up) body.picked_up = common.picked_up;
-      if (common.issued !== editing.issued) body.issued = common.issued;
+      const before = editing.skuvault_status === "manual" ? "manual" : "no";
+      if (!TOUCHED.includes(editing.skuvault_status) && stockOut !== before) body.stock_out = stockOut;
       if (procDate !== (editing.process_date || null)) body.process_date = procDate;
       if (editing.can_edit) {
         const l = lines[0];
@@ -1127,15 +1255,17 @@ async function save(ev) {
       if (!Object.keys(body).length) { dlg.close(); return; }
       const { entry } = await api("PATCH", `/api/entries/${encodeURIComponent(editing.id)}`, body);
       replaceRow(entry);
-      toast("Saved.");
+      if (body.stock_out === "skuvault") reportSkuvault([entry]); else toast("Saved.");
     }
     dlg.close();
     refreshFilterOptions();
   } catch (e) { err.textContent = e.message; }
-  finally { $("e-save").disabled = false; }
+  finally { $("e-save").disabled = false; if (!editing) updateTotals(); else $("e-save").textContent = "Save"; }
 }
 async function removeLine() {
-  if (!editing || !confirm(`Delete this line?\n\n${editing.sku} × ${editing.qty}\n\nIt disappears from the dashboard; the database keeps a record of it.`)) return;
+  const out = editing ? removedQty(editing) : 0;
+  const note = out ? `\n\n${out} of it already came out of SkuVault. Deleting the line does NOT put the stock back in SkuVault.` : "";
+  if (!editing || !confirm(`Delete this line?\n\n${editing.sku} × ${editing.qty}\n\nIt disappears from the dashboard; the database keeps a record of it.${note}`)) return;
   try {
     await api("DELETE", `/api/entries/${encodeURIComponent(editing.id)}`);
     state.data.rows = state.data.rows.filter((r) => r.id !== editing.id);

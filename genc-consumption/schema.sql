@@ -37,6 +37,29 @@ create table if not exists public.consumption (
 
 create index if not exists consumption_entry_date_idx on public.consumption (entry_date) where deleted_at is null;
 
+-- SkuVault stock-out (added 2026-10-15). Ticking 出库 with "remove from SkuVault" takes the line's
+-- quantity out of SkuVault, bins with the least stock first; skuvault_removed lists what came out
+-- of which bin, e.g. [{"warehouse": "WH1", "location": "Z1[Z1A03]", "qty": 2}].
+--   none     nothing done in SkuVault (出库 not ticked, or ticked before this existed)
+--   pending  a removal is running (claimed atomically, so two clicks cannot remove twice)
+--   removed  the whole quantity came out of SkuVault
+--   partial  some bins succeeded, then one failed; a retry removes only what is left
+--   failed   nothing came out; skuvault_error says why
+--   manual   出库 ticked by someone who had already removed it in SkuVault by hand
+alter table public.consumption add column if not exists skuvault_status text not null default 'none';
+alter table public.consumption add column if not exists skuvault_removed jsonb not null default '[]'::jsonb;
+alter table public.consumption add column if not exists skuvault_error text;
+alter table public.consumption add column if not exists skuvault_started_at timestamptz;
+alter table public.consumption add column if not exists skuvault_done_at timestamptz;
+alter table public.consumption add column if not exists skuvault_by text;
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'consumption_skuvault_status_check') then
+    alter table public.consumption add constraint consumption_skuvault_status_check
+      check (skuvault_status in ('none', 'pending', 'removed', 'partial', 'failed', 'manual'));
+  end if;
+end $$;
+
 -- Only the server reaches the table, with the service-role key (which bypasses
 -- RLS). RLS on with no policies keeps the anon and authenticated keys out.
 alter table public.consumption enable row level security;

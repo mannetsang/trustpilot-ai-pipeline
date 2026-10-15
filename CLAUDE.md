@@ -123,7 +123,11 @@ live from the Google Sheet **office use**
 go to the **separate Supabase project** GenC Consumption (ref
 `zitrqrchbdracjvxbwtn`, schema `genc-consumption/schema.sql`). Its secrets
 (`supabase-service-key`, `supabase-db-password`) live in that project's own
-Secret Manager, not on `shp-ai-bot-2026`. See `genc-consumption/README.md`.
+Secret Manager, not on `shp-ai-bot-2026`. Ticking 出库 removes the stock from
+**SkuVault** (least-stock bin first, warehouse WH1 only, English reasons
+Video / Sample / Customer Request / Cross-Department, login from the
+`SKUVAULT_*` secrets on `shp-ai-bot-2026`), so a local run must never carry
+those credentials. See `genc-consumption/README.md`.
 
 ### Known data-quality caveats
 

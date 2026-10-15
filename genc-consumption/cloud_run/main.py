@@ -9,6 +9,13 @@ Costs for new lines come from the sheet's Cost Ref tab (the same lookup the 明�
 stored with the line, so a later price change does not rewrite past months. The reasons are the
 Note Ref tab.
 
+出库 (stock out) has three settings: "skuvault" takes the line's quantity out of SkuVault now (bins
+with the least stock first, in SKUVAULT_WAREHOUSES, with the English reason from SKUVAULT_REASONS;
+see skuvault.py), "manual" records that someone already did it in SkuVault by hand, "no" leaves it
+open. A line is saved before SkuVault is called, so a failed removal leaves the line with
+skuvault_status "failed" (or "partial") and the reason, and ticking 出库 again retries what is left.
+Once stock came out of SkuVault the line's SKU and quantity are fixed and 出库 cannot be unticked.
+
 Access: behind Identity-Aware Proxy. Google signs people in, the app verifies the
 X-Goog-IAP-JWT-Assertion header against IAP_AUDIENCE and allows ALLOWED_DOMAINS. Anyone allowed
 may add lines and tick 拿货 / 出库 on any line; a line's content (date, SKU, qty, reason, cost,
@@ -22,16 +29,18 @@ Endpoints
   GET    /api/me              who am I
   GET    /api/data            every row from both sources, the reasons, the sheet's link
   GET    /api/skus?q=         Cost Ref search for the entry form
-  POST   /api/entries         {entry_date, reason, request_by, sent_to, process_date, picked_up, issued,
-                               items: [{sku, qty, unit_cost_cad?}]}
-  PATCH  /api/entries/<id>    any of the fields above for one line
+  POST   /api/entries         {entry_date, reason, request_by, sent_to, process_date, picked_up,
+                               stock_out: skuvault | manual | no, items: [{sku, qty, unit_cost_cad?}]}
+  PATCH  /api/entries/<id>    any of the fields above for one line (stock_out runs or retries the removal)
   DELETE /api/entries/<id>    soft delete
 
 Env: SPREADSHEET_ID, DETAIL_TAB, DETAIL_GID, STORE (supabase | memory), SUPABASE_URL,
-SUPABASE_SERVICE_KEY, IAP_AUDIENCE, ALLOWED_DOMAINS, ADMIN_EMAILS, AUTH_DISABLED, TIMEZONE.
+SUPABASE_SERVICE_KEY, IAP_AUDIENCE, ALLOWED_DOMAINS, ADMIN_EMAILS, AUTH_DISABLED, TIMEZONE,
+SKUVAULT_EMAIL, SKUVAULT_PASSWORD, SKUVAULT_WAREHOUSES, SKUVAULT_REASONS.
 """
 
 import datetime as dt
+import json
 import os
 import sys
 import threading
@@ -53,6 +62,7 @@ except Exception:  # noqa: BLE001
     pass
 
 from sheet import SheetClient, SheetError  # noqa: E402
+from skuvault import NotEnoughStock, SkuVaultClient, SkuVaultError, plan_removal  # noqa: E402
 from store import MemoryStore, StoreError, SupabaseStore, now_iso  # noqa: E402
 
 SERVICE = "genc-consumption"
@@ -78,6 +88,20 @@ AUTH_DISABLED = os.environ.get("AUTH_DISABLED") == "1"
 TIMEZONE = ZoneInfo(os.environ.get("TIMEZONE", "America/Toronto"))
 EARLIEST_DATE = dt.date(2020, 1, 1)
 MAX_ITEMS = 50
+
+# SkuVault stock-out. The login is the SKUVAULT_EMAIL / SKUVAULT_PASSWORD pair of shp-ai-bot-2026
+# (the same SkuVault tenant the Walmart bridge uses). Only these warehouses are ever touched.
+SKUVAULT_EMAIL = os.environ.get("SKUVAULT_EMAIL", "").strip()
+SKUVAULT_PASSWORD = os.environ.get("SKUVAULT_PASSWORD", "").strip()
+SKUVAULT_WAREHOUSES = [w.strip().upper() for w in os.environ.get("SKUVAULT_WAREHOUSES", "WH1").split(",") if w.strip()]
+# Dashboard reason (Note Ref) -> SkuVault transaction reason. Each must exist in SkuVault first.
+DEFAULT_SKUVAULT_REASONS = {"视频需要": "Video", "样品需要": "Sample", "客户需求": "Customer Request", "跨部门": "Cross-Department"}
+try:
+    SKUVAULT_REASONS = json.loads(os.environ["SKUVAULT_REASONS"]) if os.environ.get("SKUVAULT_REASONS") else dict(DEFAULT_SKUVAULT_REASONS)
+except ValueError:
+    raise SystemExit("SKUVAULT_REASONS must be a JSON object of dashboard reason -> SkuVault reason") from None
+STOCK_OUT = ("skuvault", "manual", "no")
+PENDING_STALE = dt.timedelta(minutes=10)      # a removal "pending" longer than this was cut off
 
 if os.environ.get("K_SERVICE") and not AUTH_DISABLED and not IAP_AUDIENCE:
     # Without the audience no assertion can be checked, so nobody could get in anyway.
@@ -111,13 +135,26 @@ def get_sheet():
         return _clients["sheet"]
 
 
-def set_clients(store=None, sheet=None):
+def skuvault_enabled():
+    return "skuvault" in _clients or bool(SKUVAULT_EMAIL and SKUVAULT_PASSWORD)
+
+
+def get_skuvault():
+    with _client_lock:
+        if "skuvault" not in _clients:
+            _clients["skuvault"] = SkuVaultClient(SKUVAULT_EMAIL, SKUVAULT_PASSWORD, warehouses=SKUVAULT_WAREHOUSES)
+        return _clients["skuvault"]
+
+
+def set_clients(store=None, sheet=None, skuvault=None):
     with _client_lock:
         _clients.clear()
         if store is not None:
             _clients["store"] = store
         if sheet is not None:
             _clients["sheet"] = sheet
+        if skuvault is not None:
+            _clients["skuvault"] = skuvault
 
 
 # ---------------------------------------------------------------------------
@@ -312,6 +349,102 @@ def priced(sku, manual_cost, costs):
 
 
 # ---------------------------------------------------------------------------
+# SkuVault stock-out
+# ---------------------------------------------------------------------------
+TOUCHED = ("removed", "partial", "pending")      # SkuVault stock already (or maybe) came out
+
+
+def parse_stock_out(value):
+    choice = str(value or "no").strip().lower()
+    if choice not in STOCK_OUT:
+        raise BadRequest("stock_out must be skuvault, manual or no")
+    if choice == "skuvault" and not skuvault_enabled():
+        raise BadRequest("SkuVault is not set up on this service: choose 'already removed by hand' or 'not yet'")
+    return choice
+
+
+def skuvault_reason(reason):
+    name = SKUVAULT_REASONS.get(reason)
+    if not name:
+        raise BadRequest(f"no SkuVault reason is set for {reason} (SKUVAULT_REASONS), so it cannot be removed from SkuVault")
+    return name
+
+
+def whole_units(qty, label):
+    if qty != int(qty):
+        raise BadRequest(f"{label}: SkuVault removes whole units; make the quantity a whole number to remove it from SkuVault")
+    return int(qty)
+
+
+def removed_qty(row):
+    return sum(int(part.get("qty") or 0) for part in row.get("skuvault_removed") or [])
+
+
+def stock_out_lines(rows, user):
+    """Take each saved line's remaining quantity out of SkuVault and record the outcome on the line.
+    A line another request is already removing is left alone. Returns the lines, updated."""
+    store = get_store()
+    stale_before = (dt.datetime.now(dt.timezone.utc) - PENDING_STALE).strftime("%Y-%m-%dT%H:%M:%SZ")
+    result, claimed = {}, []
+    for row in rows:
+        got = store.claim_skuvault(row["id"], user["email"], stale_before)
+        if got:
+            claimed.append(got)
+        else:
+            result[row["id"]] = store.get_entry(row["id"]) or row
+    if claimed:
+        client = get_skuvault()
+        try:
+            bins, lookup_error = client.bins([r["sku"] for r in claimed]), None    # one lookup for every line
+        except SkuVaultError as exc:
+            bins, lookup_error = {}, str(exc)
+        for row in claimed:
+            result[row["id"]] = _stock_out_one(store, client, row, bins.get(row["sku"], []), lookup_error, user)
+    return [result[r["id"]] for r in rows]
+
+
+def _stock_out_one(store, client, row, bins, lookup_error, user):
+    done = list(row.get("skuvault_removed") or [])
+    left = int(row["qty"]) - removed_qty(row)
+    error = lookup_error
+    if not error:
+        try:
+            for spot, take in plan_removal(bins, left):
+                if spot["warehouse_id"] is None:
+                    raise SkuVaultError(f"SkuVault returned no id for warehouse {spot['warehouse_code']}")
+                client.remove(row["sku"], spot["warehouse_id"], spot["location_code"], take, skuvault_reason(row["reason"]))
+                done.append({"warehouse": spot["warehouse_code"], "location": spot["location_code"], "qty": take, "at": now_iso()})
+                left -= take
+        except (SkuVaultError, BadRequest) as exc:
+            error = str(exc)
+    stamp = now_iso()
+    patch = {"skuvault_removed": done, "skuvault_by": user["email"], "updated_by": user["email"], "updated_at": stamp}
+    if left <= 0:
+        patch.update({"skuvault_status": "removed", "skuvault_error": None, "skuvault_done_at": stamp, "issued": True,
+                      "process_date": row.get("process_date") or today().isoformat()})
+    else:
+        patch.update({"skuvault_status": "partial" if done else "failed", "skuvault_error": error})
+    print(f"skuvault: {row['id']} {row['sku']!r} x{int(row['qty'])} -> {patch['skuvault_status']} {done} {error or ''}")
+    for attempt in range(3):
+        try:
+            return store.update_entry(row["id"], patch) or row
+        except StoreError as exc:
+            # The stock is out of SkuVault but the line does not say so yet: the log line above is the
+            # record. Left "pending", the line cannot be removed again for PENDING_STALE.
+            print(f"skuvault: could not record the outcome for {row['id']} (attempt {attempt + 1}): {exc}")
+            time.sleep(1)
+    raise StoreError(f"SkuVault was updated for {row['sku']} but the line could not be saved; do not retry it, "
+                     "tell an admin (the service log has the details)")
+
+
+def skuvault_summary(lines):
+    removed = [line for line in lines if line.get("skuvault_status") == "removed"]
+    problems = [{"sku": line["sku"], "status": line.get("skuvault_status"), "error": line.get("skuvault_error")}
+                for line in lines if line.get("skuvault_status") in ("failed", "partial")]
+    return {"removed": len(removed), "problems": problems}
+
+
+# ---------------------------------------------------------------------------
 # Views
 # ---------------------------------------------------------------------------
 def app_row(row, user):
@@ -395,6 +528,14 @@ def health():
             checks["store"] = {"ok": True}
         except Exception as exc:  # noqa: BLE001
             checks["store"] = {"ok": False, "error": str(exc)[:160]}
+        if skuvault_enabled():
+            try:
+                ids = get_skuvault().warehouse_ids()
+                missing = [w for w in SKUVAULT_WAREHOUSES if w not in ids]
+                checks["skuvault"] = {"ok": not missing, "warehouses": SKUVAULT_WAREHOUSES,
+                                      **({"error": f"no such warehouse: {', '.join(missing)}"} if missing else {})}
+            except Exception as exc:  # noqa: BLE001
+                checks["skuvault"] = {"ok": False, "error": str(exc)[:160]}
         body["checks"] = checks
         body["ok"] = all(c.get("ok", True) for c in checks.values())
     return jsonify(body), 200 if body["ok"] else 503
@@ -402,7 +543,12 @@ def health():
 
 @app.route("/api/config")
 def api_config():
-    return jsonify({"auth": "open" if AUTH_DISABLED else "iap", "sheet_url": get_sheet().url, "detail_tab": DETAIL_TAB})
+    return jsonify({"auth": "open" if AUTH_DISABLED else "iap", "sheet_url": get_sheet().url, "detail_tab": DETAIL_TAB,
+                    "skuvault": skuvault_info()})
+
+
+def skuvault_info():
+    return {"enabled": skuvault_enabled(), "warehouses": SKUVAULT_WAREHOUSES, "reasons": SKUVAULT_REASONS}
 
 
 @app.route("/api/me")
@@ -440,6 +586,7 @@ def api_data():
         "user": user,
         "sheet": {**sheet_info, "url": sheet.url, "title": sheet.title, "tab": DETAIL_TAB},
         "store": store_info,
+        "skuvault": skuvault_info(),
         "warnings": warnings,
     })
 
@@ -467,9 +614,13 @@ def api_create():
         "sent_to": parse_text(body.get("sent_to"), "sent to", 200),
         "process_date": parse_date(body.get("process_date"), "process date", required=False),
         "picked_up": parse_bool(body.get("picked_up", False)),
-        "issued": parse_bool(body.get("issued", False)),
     }
-    if common["issued"] and not common["process_date"]:
+    stock_out = parse_stock_out(body.get("stock_out", "no"))
+    if stock_out == "skuvault":
+        skuvault_reason(common["reason"])
+    common["issued"] = stock_out == "manual"
+    common["skuvault_status"] = "manual" if stock_out == "manual" else "none"
+    if stock_out == "manual" and not common["process_date"]:
         common["process_date"] = today().isoformat()
     costs = cost_index()
     rows = []
@@ -479,15 +630,22 @@ def api_create():
         sku = parse_text(item.get("sku"), f"item {number} SKU", 300, required=True)
         qty = parse_number(item.get("qty"), f"item {number} qty", positive=True, maximum=100_000)
         manual = parse_number(item.get("unit_cost_cad"), f"item {number} unit cost", required=False, maximum=100_000)
+        if stock_out == "skuvault":
+            whole_units(qty, f"item {number}")
         sku, unit_cost, source = priced(sku, manual, costs)
         rows.append({**common, "sku": sku, "qty": qty, "unit_cost_cad": unit_cost, "cost_source": source,
                      "created_by": user["email"]})
+    # Saved first: a SkuVault removal never happens without the line that explains it.
     created = get_store().insert_entries(rows)
-    return jsonify({"created": [app_row(r, user) for r in created]}), 201
+    body = {}
+    if stock_out == "skuvault":
+        created = stock_out_lines(created, user)
+        body["skuvault"] = skuvault_summary(created)
+    return jsonify({"created": [app_row(r, user) for r in created], **body}), 201
 
 
 CONTENT_FIELDS = ("entry_date", "sku", "reason", "qty", "unit_cost_cad", "request_by", "sent_to")
-STATUS_FIELDS = ("picked_up", "issued", "process_date")
+STATUS_FIELDS = ("picked_up", "stock_out", "process_date")
 
 
 @app.route("/api/entries/<entry_id>", methods=["PATCH"])
@@ -504,6 +662,11 @@ def api_update(entry_id):
     if set(body) & set(CONTENT_FIELDS) and not may_edit_content(user, row):
         raise AuthError(403, f"only {row.get('created_by')} or an admin can change this line; "
                              "anyone can tick 拿货 / 出库")
+    status = row.get("skuvault_status") or "none"
+    if status in TOUCHED and (("sku" in body and body["sku"] != row["sku"])
+                              or ("qty" in body and parse_number(body["qty"], "qty", positive=True) != row["qty"])):
+        raise BadRequest(f"{removed_qty(row)} of this line already came out of SkuVault, so its SKU and quantity are "
+                         "fixed; delete it and enter it again, and correct SkuVault by hand")
     patch = {}
     if "entry_date" in body:
         patch["entry_date"] = parse_date(body["entry_date"], "date")
@@ -526,20 +689,44 @@ def api_update(entry_id):
         if "unit_cost_cad" in body and source == "cost_ref" and manual is not None and manual != unit_cost:
             raise BadRequest(f"{sku} is priced by the Cost Ref tab ({unit_cost:.2f}); change it there")
         patch.update({"sku": sku, "unit_cost_cad": unit_cost, "cost_source": source})
-    for field in ("picked_up", "issued"):
-        if field in body:
-            patch[field] = parse_bool(body[field])
+    if "picked_up" in body:
+        patch["picked_up"] = parse_bool(body["picked_up"])
     if "process_date" in body:
         patch["process_date"] = parse_date(body["process_date"], "process date", required=False)
-    elif patch.get("issued") and not row.get("process_date"):
-        patch["process_date"] = today().isoformat()
-    if not patch:
+    stock_out = parse_stock_out(body["stock_out"]) if "stock_out" in body else None
+    if stock_out == "skuvault":
+        if status == "removed":
+            raise BadRequest("this line already came out of SkuVault")
+        if status == "manual":
+            raise BadRequest("this line is marked as already removed in SkuVault by hand; it is not removed again")
+        skuvault_reason(patch.get("reason", row["reason"]))
+        whole_units(patch.get("qty", row["qty"]), row["sku"])
+    elif stock_out == "manual":
+        if status in TOUCHED:
+            raise BadRequest(f"the dashboard already took {removed_qty(row)} of this line out of SkuVault; tick 出库 to remove the rest")
+        patch.update({"issued": True, "skuvault_status": "manual", "skuvault_error": None})
+        if not row.get("process_date") and "process_date" not in body:
+            patch["process_date"] = today().isoformat()
+    elif stock_out == "no":
+        if status in TOUCHED:
+            raise BadRequest(f"{removed_qty(row)} of this line already came out of SkuVault, so 出库 cannot be unticked; "
+                             "put the stock back in SkuVault by hand if it was a mistake")
+        patch.update({"issued": False, "skuvault_status": "none", "skuvault_error": None})
+    if not patch and stock_out != "skuvault":
         raise BadRequest("nothing to change")
-    patch.update({"updated_by": user["email"], "updated_at": now_iso()})
-    updated = store.update_entry(entry_id, patch)
-    if not updated:
-        return jsonify({"error": "no such line"}), 404
-    return jsonify({"entry": app_row(updated, user)})
+    updated = row
+    if patch:
+        patch.update({"updated_by": user["email"], "updated_at": now_iso()})
+        updated = store.update_entry(entry_id, patch)
+        if not updated:
+            return jsonify({"error": "no such line"}), 404
+    extra = {}
+    if stock_out == "skuvault":
+        (updated,) = stock_out_lines([updated], user)
+        if updated.get("skuvault_status") == "pending":
+            return jsonify({"error": "another removal of this line is still running; reload in a moment"}), 409
+        extra["skuvault"] = skuvault_summary([updated])
+    return jsonify({"entry": app_row(updated, user), **extra})
 
 
 @app.route("/api/entries/<entry_id>", methods=["DELETE"])
