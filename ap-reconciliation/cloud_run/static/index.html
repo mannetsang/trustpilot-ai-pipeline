@@ -2606,14 +2606,14 @@
 
   // -- Cards settings ------------------------------------------------------------
   function cardsModalHtml() {
-    return '<div class="sub mb-3">Labels show in the dashboard and in the Chat cards. The owner may code the card\'s transactions. The Chat space name is for reference; the webhook itself is configured on the server.</div>' +
+    return '<div class="sub mb-3">Labels show in the dashboard and in the Chat cards. The owners (one address, or several separated by commas) may code the card\'s transactions and add its receipts. The Chat space name is for reference; the webhook itself is configured on the server.</div>' +
       '<div class="list-wrap"><table class="list" id="cardsTable"><thead><tr><th>Card</th><th>Label</th><th>Holder</th><th>Owner email</th><th>Chat space</th><th>Active</th><th>Webhook</th><th></th></tr></thead><tbody>' +
       (state.cards.length ? state.cards.map(function (c) {
         return '<tr data-last4="' + esc(c.last4) + '">' +
           '<td class="font-medium" style="white-space:nowrap;">•••• ' + esc(c.last4) + '</td>' +
           '<td><input class="inp" data-cf="label" value="' + esc(c.label || '') + '" style="min-width:160px;" /></td>' +
           '<td><input class="inp" data-cf="holder_name" value="' + esc(c.holder_name || '') + '" style="min-width:130px;" /></td>' +
-          '<td><input class="inp" data-cf="owner_email" type="email" value="' + esc(c.owner_email || '') + '" placeholder="name@superhairpieces.com" style="min-width:200px;" /></td>' +
+          '<td><input class="inp" data-cf="owner_email" type="email" multiple value="' + esc(c.owner_email || '') + '" placeholder="name@superhairpieces.com" title="One address, or several separated by commas" style="min-width:220px;" /></td>' +
           '<td><input class="inp" data-cf="chat_space" value="' + esc(c.chat_space || '') + '" style="min-width:140px;" /></td>' +
           '<td class="text-center"><input type="checkbox" data-cf="active"' + (c.active ? ' checked' : '') + ' aria-label="Active" /></td>' +
           '<td class="text-center" title="' + (c.webhook_configured ? 'Chat webhook configured for this card' : (c.webhook_default ? 'No webhook for this card: reminders go to the default space' : 'No webhook for this card: reminders fail')) + '">' + (c.webhook_configured ? '<span style="color: var(--up-ink); font-weight: 700;">✓</span>' : (c.webhook_default ? '<span class="sub">default</span>' : '<span class="sub">—</span>')) + '</td>' +

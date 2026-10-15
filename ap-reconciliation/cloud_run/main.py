@@ -430,9 +430,18 @@ def require_user(ap_only=False):
     return user
 
 
+EMAIL_RE = re.compile(r"^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$")
+
+
+def owner_emails(value):
+    """A card's owners: one address or several, separated by commas, semicolons or spaces."""
+    return [e for e in re.split(r"[\s,;]+", (value or "").lower()) if e]
+
+
 def cards_owned_by(email, cards=None):
     cards = cards if cards is not None else get_store().list_cards()
-    return {c["last4"] for c in cards if (c.get("owner_email") or "").lower() == email}
+    email = (email or "").lower()
+    return {c["last4"] for c in cards if email and email in owner_emails(c.get("owner_email"))}
 
 
 def may_edit(user, card_last4, cards=None):
@@ -1612,11 +1621,17 @@ def api_cards_update():
     if not last4:
         return jsonify({"error": "last4 must be four digits"}), 400
     row = {"last4": last4, "updated_at": now_iso()}
-    for field in ("label", "holder_name", "owner_email", "chat_space"):
+    for field in ("label", "holder_name", "chat_space"):
         if field in body:
             row[field] = (body.get(field) or "").strip()[:200] or None
-    if "owner_email" in row and row["owner_email"]:
-        row["owner_email"] = row["owner_email"].lower()
+    if "owner_email" in body:
+        # Several owners (the card holder and someone who files their receipts) are kept as one
+        # comma-separated, lower-case list.
+        emails = list(dict.fromkeys(owner_emails(body.get("owner_email"))))
+        bad = [e for e in emails if not EMAIL_RE.match(e)]
+        if bad:
+            return jsonify({"error": f"owner_email: '{bad[0][:80]}' is not an e-mail address"}), 400
+        row["owner_email"] = ", ".join(emails)[:500] or None
     if "active" in body:
         row["active"] = bool(body.get("active"))
     get_store().upsert_cards([row])

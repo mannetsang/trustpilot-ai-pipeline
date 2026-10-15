@@ -187,7 +187,7 @@ domain to be in `ALLOWED_DOMAINS` and derives the role:
 | Role | Who | May |
 |---|---|---|
 | `ap` | the addresses in `AP_EMAILS` (`ap@`, `manne@`); everyone, in password and open mode | upload, index, match, notify, edit cards, edit every transaction |
-| `member` | anyone else in the domain (IAP mode only) | read everything; edit only the transactions of cards whose **owner e-mail** (set by AP under *Cards...*) is theirs, which includes *Add receipt...* on cards with receipt upload. `/api/transactions` returns an `editable` flag per row and the page disables the rest. **Card 4421 has no owner e-mail yet**: until AP enters Bo Li's address under *Cards...*, only AP can add its receipts |
+| `member` | anyone else in the domain (IAP mode only) | read everything; edit only the transactions of cards whose **owner e-mail** (set by AP under *Cards...*; one address or several, separated by commas) is theirs, which includes *Add receipt...* on cards with receipt upload. `/api/transactions` returns an `editable` flag per row and the page disables the rest. Card 4421's owner is `anais@superhairpieces.com` (2026-10-15); add Bo Li's address next to it to let Bo Li add receipts too |
 
 In IAP mode nothing on the dashboard service is reachable without IAP: it
 has no `allUsers` invoker, only IAP's service agent, and the app answers 401
@@ -422,7 +422,7 @@ phone. Chat cards posted before keep their old button until the next send.
 | `GET /receipts/<last4>/<YYYY>/<MM>` | signed in | the Chat card's *Add receipts*: redirects to the receipts list |
 | `GET /api/invoices?year&month` | signed in | invoices of month-1..month+1 with a `linked` flag (the picker) |
 | `GET /api/cards` | signed in | cards |
-| `POST /api/cards` | AP | `{"last4", "label", "holder_name", "owner_email", "chat_space", "active"}` |
+| `POST /api/cards` | AP | `{"last4", "label", "holder_name", "owner_email", "chat_space", "active"}`; `owner_email` may list several addresses (commas, semicolons or spaces), stored lower-case as `a@x, b@x`; 400 if one is not an address |
 | `GET /api/statements?year&month` | signed in | uploads that touched the month |
 | `POST /api/statements[?background=1]` | AP | multipart `file`; `?sync=1` also indexes, matches and notifies (`&notify=0` to skip the cards) |
 | `POST /api/index?year&month[&limit]` | AP | read up to `limit` (max 100) new invoices for month-1..month+1 |

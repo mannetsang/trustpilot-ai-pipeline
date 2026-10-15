@@ -1538,6 +1538,24 @@ class MemberRoleTests(ApiTestCase):
         self.assertEqual(self.store.get_transaction(self.ids_["anth"])["cost_center"], "Marketing")
         self.assertEqual(self.store.get_transaction(self.ids_["retell"])["cost_center"], None)
 
+    def test_a_card_can_have_several_owners(self):
+        r = self.client.post("/api/cards", json={"last4": "1610", "owner_email": " Bo.Li@superhairpieces.com; X@superhairpieces.com,x@superhairpieces.com "})
+        self.assertEqual(r.status_code, 200)
+        cards = {c["last4"]: c for c in r.get_json()["cards"]}
+        self.assertEqual(cards["1610"]["owner_email"], "bo.li@superhairpieces.com, x@superhairpieces.com")
+        with self.as_member():                                   # x@ is the second owner
+            self.assertEqual(self.client.get("/api/me").get_json()["cards_owned"], ["1610"])
+            self.patch(self.ids_["anth"], {"cost_center": "Marketing"})
+            self.patch(self.ids_["retell"], {"cost_center": "Marketing"}, expect=403)
+        self.assertEqual(main.cards_owned_by("bo.li@superhairpieces.com", self.store.list_cards()), {"1610"})
+        self.assertEqual(main.cards_owned_by("li@superhairpieces.com", self.store.list_cards()), set())
+        self.assertEqual(main.cards_owned_by("", self.store.list_cards()), set())
+        r = self.client.post("/api/cards", json={"last4": "1610", "owner_email": "x@superhairpieces.com, not an address"})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("'not' is not an e-mail address", r.get_json()["error"])
+        self.assertEqual(self.client.post("/api/cards", json={"last4": "1610", "owner_email": ""}).status_code, 200)
+        self.assertIsNone(next(c for c in self.store.list_cards() if c["last4"] == "1610")["owner_email"])
+
     def test_no_user_is_401(self):
         with mock.patch.object(main, "current_user", return_value=None):
             for url in ("/api/me", "/api/months", "/api/transactions?year=2026&month=9", "/api/cards"):
