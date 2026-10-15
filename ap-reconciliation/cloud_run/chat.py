@@ -51,8 +51,19 @@ def _lines(txns, limit=25):
     return "<br>".join(lines) or "—"
 
 
-def missing_invoices_card(card, year, month, missing, possible, dashboard_url="", folder_url="", uncoded=0):
-    """cardsV2 payload listing a card's purchases that still have no invoice."""
+BLUE = {"red": 0.0, "green": 0.478, "blue": 1.0, "alpha": 1.0}
+RECEIPTS_FOOTER = ("Tap Add receipts to photograph or upload each receipt from your phone or computer: it is saved "
+                   "in this month's Invoice folder under the vendor's name and linked to the purchase. Open the "
+                   "dashboard to confirm possible matches, add the cost centre and usage, or mark a charge as "
+                   "having no invoice.")
+
+
+def missing_invoices_card(card, year, month, missing, possible, dashboard_url="", folder_url="", uncoded=0,
+                          receipts_url=""):
+    """cardsV2 payload listing a card's purchases that still have no invoice.
+
+    receipts_url (cards with receipt upload) puts "Add receipts" first and the dashboard second, with
+    no Invoice folder button: the receipt reaches the right folder from the phone."""
     label = card.get("label") or f"Card ending {card.get('last4', '????')}"
     holder = card.get("holder_name") or ""
     if holder and holder.lower() in label.lower():
@@ -73,14 +84,19 @@ def missing_invoices_card(card, year, month, missing, possible, dashboard_url=""
                          "widgets": [{"textParagraph": {"text": _lines(possible, 10)}}]})
     buttons = []
     link = f"{dashboard_url.rstrip('/')}/#/{int(year)}/{int(month):02d}?card={card.get('last4', '')}" if dashboard_url else ""
-    if link:
-        buttons.append({"text": "Open dashboard", "onClick": {"openLink": {"url": link}},
-                        "color": {"red": 0.0, "green": 0.478, "blue": 1.0, "alpha": 1.0}})
-    if folder_url:
-        buttons.append({"text": "Invoice folder", "onClick": {"openLink": {"url": folder_url}}})
-    footer = ("Upload the invoice or receipt to the Invoice folder for this month (a sub-folder named after the "
-              "vendor), or open the dashboard to link an existing file, add the cost centre and usage, or mark "
-              "the charge as having no invoice.")
+    if receipts_url:
+        buttons.append({"text": "Add receipts", "onClick": {"openLink": {"url": receipts_url}}, "color": dict(BLUE)})
+        if link:
+            buttons.append({"text": "Open dashboard", "onClick": {"openLink": {"url": link}}})
+        footer = RECEIPTS_FOOTER
+    else:
+        if link:
+            buttons.append({"text": "Open dashboard", "onClick": {"openLink": {"url": link}}, "color": dict(BLUE)})
+        if folder_url:
+            buttons.append({"text": "Invoice folder", "onClick": {"openLink": {"url": folder_url}}})
+        footer = ("Upload the invoice or receipt to the Invoice folder for this month (a sub-folder named after the "
+                  "vendor), or open the dashboard to link an existing file, add the cost centre and usage, or mark "
+                  "the charge as having no invoice.")
     sections.append({"widgets": [{"textParagraph": {"text": footer}}] + ([{"buttonList": {"buttons": buttons}}] if buttons else [])})
     card_id = f"ap-{card.get('last4', 'x')}-{int(year)}-{int(month):02d}"
     return {"cardsV2": [{"cardId": card_id, "card": {"sections": sections}}]}

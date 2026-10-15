@@ -22,6 +22,8 @@ TOKEN_URL = "https://oauth2.googleapis.com/token"
 FOLDER = "application/vnd.google-apps.folder"
 SHORTCUT = "application/vnd.google-apps.shortcut"
 FILE_FIELDS = "id,name,mimeType,modifiedTime,size,webViewLink,shortcutDetails"
+UPLOAD_FIELDS = "id,name,mimeType,modifiedTime,size,webViewLink"
+RESUMABLE_OVER = 5 * 1024 * 1024     # bytes; larger files go up in a resumable session
 EXPORT_AS_PDF = {
     "application/vnd.google-apps.document",
     "application/vnd.google-apps.presentation",
@@ -32,6 +34,11 @@ EXPORT_AS_PDF = {
 
 class DriveError(RuntimeError):
     pass
+
+
+def _q(value):
+    """A value for a single-quoted string in a Drive search query: the backslash first, then the quote."""
+    return str(value).replace("\\", "\\\\").replace("'", "\\'")
 
 
 class Drive:
@@ -82,13 +89,13 @@ class Drive:
         return r
 
     # -- reading ------------------------------------------------------------
-    def get(self, file_id):
-        return self._request("GET", f"{FILES}/{file_id}", {"fields": FILE_FIELDS, "supportsAllDrives": "true"}).json()
+    def get(self, file_id, fields=FILE_FIELDS):
+        return self._request("GET", f"{FILES}/{file_id}", {"fields": fields, "supportsAllDrives": "true"}).json()
 
     def list_children(self, folder_id):
         """Every non-trashed child of a folder, shortcuts resolved to their targets."""
         out, params = [], {
-            "q": f"'{folder_id}' in parents and trashed = false",
+            "q": f"'{_q(folder_id)}' in parents and trashed = false",
             "fields": f"nextPageToken,files({FILE_FIELDS})",
             "pageSize": 1000, "supportsAllDrives": "true", "includeItemsFromAllDrives": "true",
             "orderBy": "name",
@@ -121,10 +128,10 @@ class Drive:
         r = self._request("GET", f"{FILES}/{file['id']}", {"alt": "media", "supportsAllDrives": "true"}, timeout=300)
         return r.content, mime
 
-    # -- writing (optional: keep a copy of each uploaded statement) ----------
+    # -- writing: a copy of each uploaded statement, receipts added from the dashboard ----
     def find_child_folder(self, parent_id, name):
-        safe = name.replace("'", "\\'")
-        params = {"q": f"'{parent_id}' in parents and name = '{safe}' and mimeType = '{FOLDER}' and trashed = false",
+        params = {"q": f"'{_q(parent_id)}' in parents and name = '{_q(name)}' and mimeType = '{FOLDER}' "
+                       "and trashed = false",
                   "fields": "files(id,name)", "supportsAllDrives": "true", "includeItemsFromAllDrives": "true"}
         files = self._request("GET", FILES, params).json().get("files", [])
         return files[0]["id"] if files else None
@@ -137,12 +144,34 @@ class Drive:
         r = self._request("POST", FILES, {"supportsAllDrives": "true", "fields": "id"}, json=body)
         return r.json()["id"]
 
-    def upload(self, parent_id, name, data, mime_type):
-        meta = json.dumps({"name": name, "parents": [parent_id]})
-        files = {
-            "metadata": ("metadata", meta, "application/json; charset=UTF-8"),
-            "file": (name, data, mime_type or "application/octet-stream"),
-        }
-        r = self._request("POST", UPLOAD, {"uploadType": "multipart", "supportsAllDrives": "true",
-                                           "fields": "id,name,webViewLink"}, files=files, timeout=300)
-        return r.json()
+    def upload(self, parent_id, name, data, mime_type, description=None, app_properties=None):
+        """Create a file; returns its UPLOAD_FIELDS. description and app_properties (a dict of
+        short strings, private to this OAuth client's project) are stored with it when given."""
+        mime_type = mime_type or "application/octet-stream"
+        meta = {"name": name, "parents": [parent_id]}
+        if description:
+            meta["description"] = description
+        if app_properties:
+            meta["appProperties"] = app_properties
+        if len(data) <= RESUMABLE_OVER:
+            files = {
+                "metadata": ("metadata", json.dumps(meta), "application/json; charset=UTF-8"),
+                "file": (name, data, mime_type),
+            }
+            r = self._request("POST", UPLOAD, {"uploadType": "multipart", "supportsAllDrives": "true",
+                                               "fields": UPLOAD_FIELDS}, files=files, timeout=300)
+            return r.json()
+        # A big file goes up in a resumable session: one request opens it with the metadata, the
+        # bytes follow in one PUT to the session URL (a phone's PDF of 10 photos can be 15 MB).
+        r = self._request("POST", UPLOAD, {"uploadType": "resumable", "supportsAllDrives": "true",
+                                           "fields": UPLOAD_FIELDS}, json=meta,
+                          headers={"X-Upload-Content-Type": mime_type, "X-Upload-Content-Length": str(len(data))})
+        session = r.headers.get("Location")
+        if not session:
+            raise DriveError("Drive did not open an upload session (no Location header)")
+        return self._request("PUT", session, data=data, headers={"Content-Type": mime_type}, timeout=300).json()
+
+    def trash(self, file_id):
+        """Move a file to the Drive trash, where it can be restored for 30 days."""
+        return self._request("PATCH", f"{FILES}/{file_id}", {"supportsAllDrives": "true", "fields": "id,trashed"},
+                             json={"trashed": True}).json()

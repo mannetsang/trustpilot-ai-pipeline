@@ -18,12 +18,16 @@ transactions are never touched.
 
 match_transaction runs the same two passes for one purchase (the dashboard's
 per-row Rematch), against the same pool of invoices.
+
+invoice_checks compares a receipt linked by hand (an upload from the dashboard)
+with its purchase, for the dashboard to show; it never changes a status.
 """
 
 import datetime as dt
 import json
 import re
 
+from chat import money
 from store import month_folder_name, neighbouring_months, now_iso
 
 STOP = {"www", "com", "ca", "inc", "ltd", "llc", "the", "co", "corp", "store", "online", "payment",
@@ -311,6 +315,55 @@ def ai_match(gemini, transactions, invoices, txn_batch=40, inv_batch=120, log=pr
     return out
 
 
+def invoice_checks(txn, inv, reading=False):
+    """What a person should know about a receipt linked by hand: [{"kind", "level", "text"}].
+
+    Computed from the stored facts every time a row is served, never written back as a status:
+    an uploaded receipt stays linked (matched/manual, which no matcher touches) and the person or
+    accounts payable decide. level is "warn" (probably the wrong receipt) or "info"."""
+    if not inv:
+        return []
+    error = str(inv.get("extraction_error") or "")
+    if error.startswith("upload withdrawn"):
+        return []
+    if inv.get("extracted_at") is None and not error:
+        return [{"kind": "unread", "level": "info",
+                 "text": "Reading the receipt…" if reading else "Receipt not read yet."}]
+    if error:
+        return [{"kind": "unreadable", "level": "info",
+                 "text": "Couldn't read the receipt yet; it is read again with the next invoice run."}]
+    checks = []
+    if inv.get("is_invoice") is False:
+        summary = str(inv.get("summary") or "").strip().rstrip(".")
+        checks.append({"kind": "not_invoice", "level": "warn",
+                       "text": f"This doesn't look like a receipt ({summary})." if summary
+                       else "This doesn't look like a receipt."})
+    if inv.get("card_last4") and txn.get("card_last4") and str(inv["card_last4"]) != str(txn["card_last4"]):
+        checks.append({"kind": "card", "level": "warn",
+                       "text": f"The receipt shows card ending {inv['card_last4']}, not {txn['card_last4']}."})
+    if inv.get("total") is not None:
+        deviation = amount_deviation(txn, inv)
+        inv_cur = (inv.get("currency") or txn.get("currency") or "CAD").upper()
+        charge = money(txn["amount"], txn.get("currency") or "CAD")
+        if deviation is None:
+            checks.append({"kind": "amount", "level": "info",
+                           "text": f"Receipt is in {money(inv['total'], inv_cur)}; the charge is {charge} "
+                                   f"with no {inv_cur} amount to compare."})
+        elif deviation > 0.02:
+            # Name the amount the receipt was compared with: the foreign amount when it is in that currency.
+            source_cur = (txn.get("source_currency") or "").upper()
+            if txn.get("source_amount") is not None and source_cur and inv_cur == source_cur \
+                    and inv_cur != (txn.get("currency") or "").upper():
+                charge = money(txn["source_amount"], source_cur)
+            checks.append({"kind": "amount", "level": "warn" if deviation > 0.25 else "info",
+                           "text": f"Receipt reads {money(inv['total'], inv_cur)}; the charge is {charge}."})
+    days = days_apart(txn, inv)
+    if days is not None and days > MATCH_WINDOW_DAYS:
+        checks.append({"kind": "date", "level": "warn",
+                       "text": f"The receipt is dated {str(inv['invoice_date'])[:10]}, {days} days from the charge."})
+    return checks
+
+
 def candidate_invoices(store, year, month):
     """Invoices a purchase of (year, month) may be matched with: the month's folder and its
     neighbours, real invoices with a total, not removed, not credit notes."""
@@ -437,7 +490,8 @@ def match_transaction(store, gemini, txn_id, use_ai=True, log=print, updated_by=
 
 
 def match_month(store, gemini, year, month, card=None, use_ai=True, log=print):
-    """Run both passes for one month (optionally one card). Returns counts."""
+    """Run both passes for one month (optionally one card). Returns counts; counts["skipped"], present
+    only when it is not 0, is how many rows changed while the run was thinking and were left alone."""
     year, month = int(year), int(month)
     txns = store.list_transactions(year, month, card)
     pending = [t for t in txns if t.get("type") == "purchase" and t.get("invoice_status") in ("missing", "possible")]
@@ -478,10 +532,49 @@ def match_month(store, gemini, year, month, card=None, use_ai=True, log=print):
         if any(t.get(k) != v for k, v in patch.items() if k != "updated_at"):
             patches.append((t, patch))
     # Two passes: first let go of every invoice that moves, then write the new links, so the
-    # one-transaction-per-invoice index is never violated half way through.
+    # one-transaction-per-invoice index is never violated half way through. Both write only if the
+    # row still holds what this run read (compare and set): a Link, Confirm or receipt upload made
+    # while the matcher ran, here or in the weekly remind job, is never overwritten.
+    released, skipped = set(), {}
     for t, patch in patches:
         if t.get("invoice_id") and patch.get("invoice_id") != t.get("invoice_id"):
-            store.update_transaction(t["id"], {"invoice_id": None})
+            if store.update_transaction(t["id"], {"invoice_id": None}, expect=_snapshot(t)) is None:
+                skipped[t["id"]] = "changed while the matcher ran"
+            else:
+                released.add(t["id"])
     for t, patch in patches:
-        store.update_transaction(t["id"], patch)
+        if t["id"] in skipped:
+            continue
+        expect = _snapshot(t)
+        if t["id"] in released:
+            expect["invoice_id"] = None
+        try:
+            written = store.update_transaction(t["id"], patch, expect=expect)
+            why = "changed while the matcher ran"
+        except Exception as exc:  # noqa: BLE001  (the unique index: that invoice was linked elsewhere meanwhile)
+            written, why = None, str(exc)[:200]
+        if written is not None:
+            continue
+        skipped[t["id"]] = why
+        if t["id"] in released:
+            # Its invoice is gone and the new one could not be written: never leave it matched or
+            # possible with no invoice.
+            try:
+                store.update_transaction(t["id"], {"invoice_status": "missing", "match_confidence": None,
+                                                   "match_method": None, "match_note": None, "updated_at": stamp},
+                                         expect={"invoice_id": None, "invoice_status": t.get("invoice_status"),
+                                                 "match_method": t.get("match_method")})
+            except Exception as exc:  # noqa: BLE001
+                log(f"skipped  {t['txn_date']} {t['description'][:30]}: could not set it back to missing: {exc}")
+    for t, patch in patches:
+        if t["id"] in skipped:
+            counts[patch["invoice_status"]] -= 1
+            log(f"skipped  {t['txn_date']} {t['description'][:30]:30} {float(t['amount']):>10.2f}: {skipped[t['id']]}")
+    if skipped:
+        counts["skipped"] = len(skipped)
     return counts
+
+
+def _snapshot(t):
+    return {"invoice_status": t.get("invoice_status"), "invoice_id": t.get("invoice_id"),
+            "match_method": t.get("match_method")}

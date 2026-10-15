@@ -205,6 +205,7 @@
     .td-right { text-align: right; }
     .td-desc .desc { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .btn-row { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
+    .td-inv .btn-row .btn-xs { padding-left: 7px; padding-right: 7px; }   /* three on one line in a laptop-width table */
     .rematch-status { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 11.5px; color: var(--text-mid); }
     .rematch-status .pct { font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; min-width: 30px; }
     .rematch-bar { height: 3px; margin-top: 4px; max-width: 220px; background: var(--border); border-radius: 2px; overflow: hidden; }
@@ -213,6 +214,7 @@
     @keyframes rematch-spin { to { transform: rotate(360deg); } }
     @media (prefers-reduced-motion: reduce) { .rematch-status .spin { animation: none; } }
     .conf { font-size: 10.5px; color: var(--text-mute); }
+    .check-warn { color: var(--warn-text) !important; }
 
     .toolbar { position: relative; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); }
     .toolbar .inp { height: 34px; }
@@ -283,6 +285,79 @@
     .spinner.dark { width: 12px; height: 12px; border-color: rgba(0,117,77,0.25); border-top-color: var(--brand-ink); }
     @keyframes spin { to { transform: rotate(360deg); } }
     @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+    /* Add a receipt (the dialog; a bottom sheet under 640px) and the receipts list
+       (#/YYYY/MM?card=4421&view=receipts). Phone-first: 44px touch targets, nothing wider than the screen. */
+    .btn-link { background: none; border: 0; padding: 0; color: var(--brand-ink); font: inherit; font-size: 12.5px; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+    .btn-link:disabled { opacity: .5; cursor: not-allowed; }
+    label.btn.is-disabled, label.rc-add.is-disabled { opacity: .5; pointer-events: none; }
+    .rc-file { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; pointer-events: none; }
+    /* 100%: the visible height, so Save is never under a phone's browser toolbar. */
+    .modal.rcpt-sheet { width: 560px; max-height: min(90vh, 100%); }
+    @media (max-width: 640px) { .modal.rcpt-sheet { max-height: min(92vh, calc(100% - 12px)); } }
+    .modal-body.rc-body { padding-bottom: 0; }    /* the sticky footer sits flush with the bottom edge */
+    .rc-desc { font-weight: 600; overflow-wrap: anywhere; }
+    .rc-pick { margin-top: 14px; }
+    .rc-big { display: flex; gap: 8px; }
+    .rc-big .btn { flex: 1 1 0; min-height: 48px; font-size: 14px; white-space: normal; text-align: center; }
+    .rc-drop { padding: 26px 16px; }
+    .rc-strip { display: flex; gap: 12px; overflow-x: auto; padding: 8px 8px 4px 0; margin-top: 10px; }
+    .rc-page { position: relative; flex: 0 0 72px; width: 72px; }
+    .rc-thumb { display: block; width: 72px; height: 72px; border-radius: 8px; border: 1px solid var(--border); object-fit: cover; background: var(--bg); }
+    .rc-tile { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 4px; color: var(--text-mid); }
+    .rc-fname { font-size: 10px; line-height: 1.2; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rc-cap { font-size: 11px; color: var(--text-mute); text-align: center; margin-top: 3px; }
+    .rc-x { position: absolute; top: -8px; right: -8px; width: 32px; height: 32px; border-radius: 999px; border: 2px solid var(--surface); background: #1d2128; color: #fff; font-size: 13px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+    .rc-add { display: flex; align-items: center; justify-content: center; width: 72px; height: 72px; flex: 0 0 72px; border: 1.5px dashed var(--border); border-radius: 8px; font-size: 11.5px; font-weight: 500; color: var(--text-mid); cursor: pointer; text-align: center; line-height: 1.25; }
+    .rc-add:hover, .rc-add:focus-visible { border-color: var(--brand); color: var(--brand-ink); }
+    .rc-dest { margin-top: 14px; font-size: 13px; color: var(--text-mid); overflow-wrap: anywhere; }
+    .rc-dest b { color: var(--text); font-weight: 600; }
+    .rc-change { margin-top: 8px; display: grid; gap: 4px; }
+    .rc-change label { font-size: 12px; font-weight: 600; color: var(--text-mid); }
+    .rc-change .inp { height: 40px; font-size: 16px; }   /* 16px: iOS does not zoom into the field */
+    .rc-foot { position: sticky; bottom: 0; z-index: 2; margin: 14px -18px 0; padding: 10px 18px calc(12px + env(safe-area-inset-bottom, 0px)); background: var(--surface); border-top: 1px solid var(--border-subtle); display: grid; gap: 8px; }
+    .rc-save { width: 100%; min-height: 44px; font-size: 14px; white-space: normal; }
+    .rc-alt { justify-self: center; padding: 6px 4px; }
+    .rc-status { font-size: 13px; color: var(--text-mid); }
+    .rc-status:empty { display: none; }
+    .rc-status.err { color: var(--down); }
+    .rc-status .btn { margin-top: 6px; }
+    .rc-saved { margin-top: 14px; font-size: 14px; color: var(--up-ink); font-weight: 500; }
+    .rc-read { margin-top: 10px; font-size: 13px; color: var(--text-mid); }
+    .rc-read.warn { background: var(--warn); color: var(--warn-text); border-radius: 10px; padding: 10px 12px; }
+    .rc-read .btn { margin-top: 8px; min-height: 40px; }
+    .rc-next { display: grid; gap: 8px; }
+    .rc-next-text { font-size: 13.5px; overflow-wrap: anywhere; }
+
+    #monthView.rv-on > :not(#receiptsView) { display: none !important; }
+    #receiptsView { max-width: 640px; margin: 0 auto; font-size: 15px; }
+    #receiptsView .sub { font-size: 13px; }
+    .rv-head { display: flex; align-items: flex-start; gap: 10px; }
+    .rv-head h1 { font-size: 22px; font-weight: 600; line-height: 1.2; }
+    .rv-head .pill { margin-top: 4px; font-size: 12.5px; }
+    .rv-all { display: inline-flex; align-items: center; min-height: 44px; font-size: 14px; }
+    .rv-banner { margin-top: 8px; padding: 10px 12px; border-radius: 10px; background: var(--info-soft); color: var(--info-text); font-size: 14px; }
+    .rv-group { margin-top: 14px; }
+    .rv-group-title { font-size: 12px; font-weight: 600; letter-spacing: .8px; text-transform: uppercase; color: var(--text-mute); margin: 0 0 8px; }
+    details.rv-group > summary { cursor: pointer; padding: 12px 0; }
+    .rv-item { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin-bottom: 10px; }
+    .rv-top { display: flex; align-items: flex-start; gap: 12px; }
+    .rv-desc { font-weight: 600; overflow-wrap: anywhere; }
+    .rv-date { color: var(--text-mute); font-weight: 500; margin-right: 4px; white-space: nowrap; }
+    .rv-amt { margin-left: auto; text-align: right; font-weight: 700; white-space: nowrap; }
+    .rv-amt .sub { font-weight: 400; }
+    .rv-actions { display: flex; gap: 8px; margin-top: 10px; }
+    .rv-item .btn { min-height: 44px; font-size: 15px; padding: 8px 14px; }
+    .rv-cam { flex: 2 1 0; }
+    .rv-up { flex: 1 1 0; }
+    .rv-add { flex: 1 1 auto; }
+    .rv-link { display: inline-flex; align-items: center; min-height: 44px; font-size: 14px; }
+    .rv-possible { margin-top: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; color: var(--warn-text); }
+    .rv-check { margin-top: 6px; color: var(--warn-text); font-size: 14px; }
+    .rv-done { display: flex; align-items: center; gap: 10px; }
+    .rv-done > div { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .rv-empty { text-align: center; padding: 28px 16px; color: var(--text-mid); }
+    .rv-foot { margin: 22px 0 8px; text-align: center; font-size: 14px; }
   </style>
 </head>
 <body>
@@ -408,6 +483,7 @@
             <input id="search" class="inp" type="search" placeholder="Search description, amount, cost centre, usage" style="max-width: 320px; flex: 1; min-width: 180px;" />
             <select id="cardSelect" class="inp" style="width: auto; min-width: 150px;" aria-label="Card"></select>
             <div id="rowCount" class="sub ml-auto"></div>
+            <button id="receiptsBtn" class="btn btn-secondary btn-xs hidden" type="button" title="This card's purchases that still need a receipt, one block each, made for a phone">Receipts list</button>
             <button id="colsBtn" class="btn btn-secondary btn-xs" type="button" title="Show or hide columns; reset widths and sorting">Columns</button>
             <div id="colMenu" class="col-menu hidden"></div>
           </div>
@@ -424,12 +500,21 @@
           <div class="card p-4"><div class="label mb-2">Uploads this month</div><div id="uploadsList" class="text-xs"></div></div>
           <div class="card p-4"><div class="label mb-2">Last notifications</div><div id="notifList" class="text-xs"></div></div>
         </div>
+
+        <!-- Receipts list for one card (view=receipts): replaces everything above while it shows. -->
+        <section id="receiptsView" class="hidden" aria-labelledby="rvTitle">
+          <!-- One pair of file inputs for every block, outside what re-renders: the list is drawn again
+               whenever a row changes, which may be while the camera is still open. -->
+          <input type="file" id="rvCamera" class="rc-file" tabindex="-1" aria-hidden="true" accept="image/*" capture="environment" />
+          <input type="file" id="rvFiles" class="rc-file" tabindex="-1" aria-hidden="true" accept="image/*,application/pdf" multiple />
+          <div id="rvContent"></div>
+        </section>
       </div>
     </div>
   </main>
 </div>
 
-<div id="modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+<div id="modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
   <div class="modal" id="modalBox">
     <div class="modal-head">
       <div class="font-semibold text-base flex-1 min-w-0 truncate" id="modalTitle"></div>
@@ -456,7 +541,7 @@
   var state = {
     config: null, me: null,
     months: [], cards: [], costCenters: [],
-    year: null, month: null, card: '', status: 'all', q: '',
+    year: null, month: null, card: '', view: '', status: 'all', q: '',     // view: '' (the table) or 'receipts'
     txns: [], statements: [], notifications: [],
     loaded: false, jobRunning: false,
   };
@@ -499,6 +584,12 @@
     if (isNaN(d.getTime())) return String(iso).slice(0, 16);
     return MONTHS_SHORT[d.getMonth()] + ' ' + d.getDate() + ', ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
   }
+  // A timestamp's day in this browser's time zone: "Oct 15".
+  function fmtLocalDay(iso) {
+    if (!iso) return '';
+    var d = new Date(iso);
+    return isNaN(d.getTime()) ? fmtDay(iso) : MONTHS_SHORT[d.getMonth()] + ' ' + d.getDate();
+  }
   function monthLabel(y, m) { return MONTHS[m - 1] + ' ' + y; }
   function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   function nearly(a, b) { return a !== null && a !== undefined && b !== null && b !== undefined && Math.abs(Math.abs(Number(a)) - Math.abs(Number(b))) <= 0.011; }
@@ -516,12 +607,22 @@
   function ApiError(status, message, data) { this.status = status; this.message = message; this.data = data; }
   ApiError.prototype = Object.create(Error.prototype);
 
-  async function api(path, opts) {
-    opts = opts || {};
-    var headers = Object.assign({}, opts.headers || {});
+  function apiHeaders(extra) {
+    var headers = Object.assign({}, extra || {});
     headers['X-Requested-With'] = 'XMLHttpRequest';   // behind IAP an ended session then answers 401 instead of redirecting
     var who = currentName();
     if (who) headers['X-Dashboard-User'] = who;
+    return headers;
+  }
+  // A 401 means the session ended: show the gate, and hand back the error the call fails with.
+  function sessionEnded(data) {
+    if (passwordMode()) showGate(state.me ? 'Your session has ended. Enter the password to continue.' : 'Enter the dashboard password to continue.', true);
+    else showGate(state.me ? 'Your Google session has ended. Reload the page to sign in again.' : ((data && data.error) || 'Sign in with your superhairpieces.com Google account.'));
+    return new ApiError(401, (data && data.error) || 'sign in required', data);
+  }
+  async function api(path, opts) {
+    opts = opts || {};
+    var headers = apiHeaders(opts.headers);
     var res;
     try {
       res = await fetch(path, Object.assign({}, opts, { headers: headers, cache: 'no-store' }));
@@ -530,13 +631,35 @@
     }
     var data = null;
     try { data = await res.json(); } catch (e) { data = null; }
-    if (res.status === 401) {
-      if (passwordMode()) showGate(state.me ? 'Your session has ended. Enter the password to continue.' : 'Enter the dashboard password to continue.', true);
-      else showGate(state.me ? 'Your Google session has ended. Reload the page to sign in again.' : ((data && data.error) || 'Sign in with your superhairpieces.com Google account.'));
-      throw new ApiError(401, (data && data.error) || 'sign in required', data);
-    }
+    if (res.status === 401) throw sessionEnded(data);
     if (!res.ok) throw new ApiError(res.status, (data && (data.error || data.message)) || (res.status + ' ' + res.statusText), data);
     return data;
+  }
+  // api() for a POST of a FormData, through XMLHttpRequest because fetch cannot report upload progress.
+  // onProgress gets 0-100 as the bytes go out. Fails with status 0 when the request never got an answer.
+  function apiUpload(path, formData, onProgress) {
+    return new Promise(function (resolve, reject) {
+      var xhr = new XMLHttpRequest(), headers = apiHeaders();
+      xhr.open('POST', path);
+      Object.keys(headers).forEach(function (k) { xhr.setRequestHeader(k, headers[k]); });
+      xhr.timeout = 180000;                        // a dead connection must not hold the sheet for ever
+      if (onProgress && xhr.upload) {
+        xhr.upload.onprogress = function (ev) { if (ev.lengthComputable && ev.total) onProgress(Math.min(100, Math.round(100 * ev.loaded / ev.total))); };
+        xhr.upload.onload = function () { onProgress(100); };
+      }
+      xhr.onload = function () {
+        var data = null;
+        try { data = JSON.parse(xhr.responseText); } catch (e) { data = null; }
+        if (xhr.status === 401) { reject(sessionEnded(data)); return; }
+        if (xhr.status < 200 || xhr.status >= 300) {
+          reject(new ApiError(xhr.status, (data && (data.error || data.message)) || (xhr.status + ' ' + xhr.statusText), data));
+          return;
+        }
+        resolve(data);
+      };
+      xhr.onerror = xhr.ontimeout = xhr.onabort = function () { reject(new ApiError(0, 'Network error: no answer from the server', null)); };
+      xhr.send(formData);
+    });
   }
   // The server runs one job at a time and answers 409 while another is going; wait and try again.
   async function apiRetryBusy(path, opts, onWait) {
@@ -912,28 +1035,31 @@
     var cardsHere = {};
     state.txns.forEach(function (t) { cardsHere[t.card_last4] = true; });
     if (state.card && !cardsHere[state.card]) state.card = '';
+    if (!state.card) state.view = '';            // the receipts list is always for one card
     renderMonth();
   }
 
   // ---------------------------------------------------------------------------
-  // Routing: #/YYYY/MM?card=1610
+  // Routing: #/YYYY/MM?card=1610, and #/YYYY/MM?card=4421&view=receipts for the receipts list
+  // (the Chat card's "Add receipts" lands there through /receipts/<last4>/<YYYY>/<MM>).
   // ---------------------------------------------------------------------------
   function parseHash() {
     var m = location.hash.match(/^#\/(\d{4})\/(\d{1,2})(?:\?(.*))?$/);
     if (!m) return null;
     var params = new URLSearchParams(m[3] || '');
     var c = params.get('card') || '';
-    return { year: Number(m[1]), month: Number(m[2]), card: /^\d{4}$/.test(c) ? c : '' };
+    return { year: Number(m[1]), month: Number(m[2]), card: /^\d{4}$/.test(c) ? c : '',
+             view: params.get('view') === 'receipts' ? 'receipts' : '' };
   }
-  function hashFor(year, month, card) {
-    return '#/' + year + '/' + pad2(month) + (card ? '?card=' + encodeURIComponent(card) : '');
+  function hashFor(year, month, card, view) {
+    return '#/' + year + '/' + pad2(month) + (card ? '?card=' + encodeURIComponent(card) + (view === 'receipts' ? '&view=receipts' : '') : '');
   }
   function findMonth(y, m) {
     for (var i = 0; i < state.months.length; i++) if (state.months[i].year === y && state.months[i].month === m) return state.months[i];
     return null;
   }
-  function navigate(year, month, card) {
-    var h = hashFor(year, month, card);
+  function navigate(year, month, card, view) {
+    var h = hashFor(year, month, card, view);
     if (location.hash === h) applyRoute(); else location.hash = h;
   }
   var routing = null;
@@ -944,18 +1070,26 @@
       if (!state.months.length) { showEmpty(); return; }
       var r = parseHash();
       var target = (r && findMonth(r.year, r.month)) ? r : null;
+      var wantsReceipts = !!(r && r.view === 'receipts');
       if (!target) {
         var newest = state.months[0];
-        target = { year: newest.year, month: newest.month, card: '' };
+        target = { year: newest.year, month: newest.month, card: '', view: '' };
         history.replaceState(null, '', hashFor(newest.year, newest.month, ''));
       }
       var entry = findMonth(target.year, target.month);
+      var askedCard = target.card;
       if (target.card && entry && entry.cards && !entry.cards[target.card]) target.card = '';
-      var normalised = hashFor(target.year, target.month, target.card || '');
+      target.view = wantsReceipts && target.card && receiptsOn(target.card) ? 'receipts' : '';
+      if (wantsReceipts && !target.view) {
+        toast(askedCard && !target.card
+          ? 'Card ' + askedCard + ' has no purchases in ' + monthLabel(target.year, target.month) + '; showing all purchases.'
+          : 'The receipts list is only for cards with receipt upload; showing all purchases.');
+      }
+      var normalised = hashFor(target.year, target.month, target.card || '', target.view);
       if (location.hash !== normalised) history.replaceState(null, '', normalised);
       var changed = state.year !== target.year || state.month !== target.month;
-      var prev = { year: state.year, month: state.month, card: state.card };
-      state.year = target.year; state.month = target.month; state.card = target.card || '';
+      var prev = { year: state.year, month: state.month, card: state.card, view: state.view };
+      state.year = target.year; state.month = target.month; state.card = target.card || ''; state.view = target.view;
       $('#emptyState').classList.add('hidden');
       $('#monthView').classList.remove('hidden');
       restoreApPanel();
@@ -964,8 +1098,8 @@
         try { await loadMonth(); } catch (e) {
           report(e, 'Could not load the month');
           // Roll back so the page and the URL agree, and a second click on the month tries again.
-          state.year = prev.year; state.month = prev.month; state.card = prev.card;
-          if (prev.year) history.replaceState(null, '', hashFor(prev.year, prev.month, prev.card)); else state.loaded = true;
+          state.year = prev.year; state.month = prev.month; state.card = prev.card; state.view = prev.view;
+          if (prev.year) history.replaceState(null, '', hashFor(prev.year, prev.month, prev.card, prev.view)); else state.loaded = true;
           renderSidebar();
         }
       } else {
@@ -1009,6 +1143,17 @@
     for (var i = 0; i < state.cards.length; i++) if (state.cards[i].last4 === last4) return state.cards[i].label || ('Card ending ' + last4);
     return 'Card ending ' + last4;
   }
+  // Receipt upload is switched on per card on the server (RECEIPT_UPLOAD_CARDS); card_view says which.
+  function receiptsOn(last4) {
+    for (var i = 0; i < state.cards.length; i++) if (state.cards[i].last4 === last4) return !!state.cards[i].receipt_upload;
+    return false;
+  }
+  // Rows linked by Add receipt… carry this note (the server sets it and Remove… checks it).
+  var UPLOAD_NOTE = 'receipt uploaded by ';
+  function uploadedBy(t) { var n = String((t && t.match_note) || ''); return n.indexOf(UPLOAD_NOTE) === 0 ? n.slice(UPLOAD_NOTE.length) : ''; }
+  function isPurchase(t) { return !t.type || t.type === 'purchase'; }
+  function warnChecks(t) { return (t.checks || []).filter(function (c) { return c && c.level === 'warn'; }); }
+  function infoChecks(t) { return (t.checks || []).filter(function (c) { return c && c.level !== 'warn'; }); }
   function scopeTxns() { return state.card ? state.txns.filter(function (t) { return t.card_last4 === state.card; }) : state.txns; }
   function matchesStatus(t, status) {
     if (status === 'all') return true;
@@ -1049,10 +1194,17 @@
   // What the table shows: the chosen columns, minus Card while one card is picked (every row is that card).
   function shownColumns() { return visibleColumns().filter(function (c) { return !(c.key === 'card' && state.card); }); }
   // How far each column may give way when the window is narrow, before the table scrolls sideways.
-  // The invoice column keeps room for its three buttons on one line (Link…, No invoice, Rematch).
+  // The invoice column keeps room for its three buttons on one line (Add receipt… or Link…, No invoice,
+  // Rematch): 250px while a card with receipt upload is in the month, since Add receipt… is the wider one
+  // (with every column at its minimum the table then still fits a 1280px laptop screen).
   // Date and Updated by keep room for "posted May 10" and "May 10, 00:00"; Amount for "-CAD 12,345.67".
   var MIN_WIDTH = { date: 98, card: 84, desc: 140, amount: 116, invoice: 232, cost: 112, usage: 100, by: 98 };
-  function colWidth(c) { return Math.max(60, Number(cols.widths[c.key]) || c.width); }
+  function minWidth(key) {
+    if (key === 'invoice' && state.txns.some(function (t) { return receiptsOn(t.card_last4); })) return 250;
+    return MIN_WIDTH[key];
+  }
+  // Never narrower than the minimum by default (250 also becomes the invoice column's default then).
+  function colWidth(c) { return Math.max(60, Number(cols.widths[c.key]) || Math.max(c.width, minWidth(c.key) || 0)); }
   // Exact pixel widths; whatever room is left in the card goes to the description column.
   function renderCols() {
     var vis = shownColumns(), table = $('table.txns'), wrap = $('.table-wrap');
@@ -1073,7 +1225,7 @@
       // can spare, down to MIN_WIDTH. A hand-sized column keeps its width (the table scrolls sideways if it
       // must).
       if (avail && sum > avail) {
-        var spare = vis.map(function (c, i) { return cols.widths[c.key] ? 0 : Math.max(0, widths[i] - (MIN_WIDTH[c.key] || widths[i])); });
+        var spare = vis.map(function (c, i) { return cols.widths[c.key] ? 0 : Math.max(0, widths[i] - (minWidth(c.key) || widths[i])); });
         var room = spare.reduce(function (n, w) { return n + w; }, 0);
         if (room > 0) {
           var take = Math.min(sum - avail, room);
@@ -1252,6 +1404,7 @@
     renderToolbar();
     renderTable();
     renderLists();
+    renderReceiptsView();
   }
 
   function renderKpis() {
@@ -1299,6 +1452,7 @@
       return '<button type="button" data-status="' + f[0] + '" class="' + (state.status === f[0] ? 'active' : '') + '">' + f[1] + '<span class="n">' + n + '</span></button>';
     }).join('');
     if (document.activeElement !== $('#search') && $('#search').value !== state.q) $('#search').value = state.q;
+    $('#receiptsBtn').classList.toggle('hidden', !(state.card && receiptsOn(state.card)));
   }
 
   function invoiceCell(t) {
@@ -1307,6 +1461,9 @@
     var tip = t.match_note ? ' title="' + esc(t.match_note) + '"' : '';
     var html = '<span class="pill ' + (STATUS_PILL[st] || 'pill-grey') + '"' + tip + '>' + esc(t.status_label || st) + '</span>';
     if (t.match_confidence !== null && t.match_confidence !== undefined && st === 'possible') html += ' <span class="conf">' + Math.round(Number(t.match_confidence) * 100) + '%</span>';
+    // The server compares an uploaded or hand-linked receipt with the charge every time it serves the row.
+    var warns = warnChecks(t), infos = infoChecks(t);
+    if (warns.length) html += ' <span class="pill pill-warn" title="' + esc((t.checks || []).map(function (c) { return c.text; }).join(' ')) + '">check receipt</span>';
     var inv = t.invoice;
     if (inv) {
       var text = (inv.vendor || inv.vendor_folder || inv.file_name || 'invoice') + (inv.invoice_date ? ' · ' + fmtDate(inv.invoice_date) : '');
@@ -1314,6 +1471,16 @@
       html += '<div class="mt-1 truncate" style="max-width: 260px;">' + (safeUrl(inv.web_view_link)
         ? '<a class="link" href="' + esc(safeUrl(inv.web_view_link)) + '" target="_blank" rel="noopener noreferrer" title="' + esc(inv.file_name || '') + '">' + esc(text) + ' ↗</a>'
         : '<span title="' + esc(inv.file_name || '') + '">' + esc(text) + '</span>') + totalBit + '</div>';
+    }
+    var by = st === 'matched' ? uploadedBy(t) : '';
+    if (by) {
+      var when = fmtLocalDay(t.updated_at);
+      html += '<div class="sub" title="' + esc(t.match_note) + '">Uploaded by ' + esc(by.split('@')[0]) + (when ? ' · ' + esc(when) : '') + '</div>';
+    }
+    if (warns.length) html += '<div class="sub check-warn" title="' + esc(warns.map(function (c) { return c.text; }).join(' ')) + '">' + esc(warns[0].text) + '</div>';
+    if (infos.length) {
+      var infoText = infos.map(function (c) { return c.text; }).join(' ');
+      html += '<div class="sub" title="' + esc(infoText) + '">' + esc(infoText) + '</div>';
     }
     if (rematching[t.id] !== undefined) {
       var rs = rematching[t.id], known = rs.pct !== null && rs.pct !== undefined;
@@ -1329,9 +1496,16 @@
     if (st === 'possible') {
       html += '<div class="btn-row"><button class="btn btn-primary btn-xs" data-action="confirm"' + dis + '>Confirm</button><button class="btn btn-secondary btn-xs" data-action="unlink"' + dis + '>Not this</button>' + again + '</div>';
     } else if (st === 'missing') {
-      html += '<div class="btn-row"><button class="btn btn-secondary btn-xs" data-action="pick"' + dis + '>Link…</button><button class="btn btn-ghost btn-xs" data-action="waive"' + dis + '>No invoice</button>' + again + '</div>';
+      // Cards with receipt upload get Add receipt… in place of Link… (the dialog still offers Link…).
+      var add = receiptsOn(t.card_last4)
+        ? '<button class="btn btn-secondary btn-xs" data-action="receipt"' + (ed ? ' title="Take a photo or upload the receipt; it is saved in the Invoice folder on Drive and linked to this purchase"' : dis) + '>Add receipt…</button>'
+        : '<button class="btn btn-secondary btn-xs" data-action="pick"' + dis + '>Link…</button>';
+      html += '<div class="btn-row">' + add + '<button class="btn btn-ghost btn-xs" data-action="waive"' + dis + '>No invoice</button>' + again + '</div>';
     } else if (st === 'waived') {
       html += '<div class="btn-row"><button class="btn btn-secondary btn-xs" data-action="unwaive"' + dis + '>Undo</button></div>';
+    } else if (st === 'matched' && by) {
+      html += '<div class="btn-row"><button class="btn btn-ghost btn-xs" data-action="remove-receipt"' + (ed ? ' title="Unlink this receipt and move its file to the Drive trash"' : dis) + '>Remove…</button>' +
+        '<button class="btn btn-ghost btn-xs" data-action="unlink"' + (ed ? ' title="Keep the file in Drive but say it is not this purchase\'s receipt"' : dis) + '>Unlink</button>' + again + '</div>';
     } else if (st === 'matched') {
       html += '<div class="btn-row"><button class="btn btn-ghost btn-xs" data-action="unlink"' + dis + '>Unlink</button>' + again + '</div>';
     }
@@ -1452,6 +1626,7 @@
       }
     }
     refreshCounts();
+    if (state.view === 'receipts') renderReceiptsView();
   }
   // After a single-row change the month's counts are recomputed here instead of reloading everything.
   function refreshCounts() {
@@ -1523,7 +1698,9 @@
     else text = 'Checking Drive for new invoices…';
     return { text: text, pct: pct };
   }
-  function rematchMessage(r) {
+  // last4: the purchase's card; on a card with receipt upload the advice is Add receipt… instead of Link… or Drive.
+  function rematchMessage(r, last4) {
+    var upload = receiptsOn(last4);
     var inv = r.invoice, what = inv ? (inv.vendor || inv.file_name || 'an invoice') + (inv.total !== null && inv.total !== undefined ? ' ' + money(inv.total, inv.currency || '') : '') : '';
     var read = r.invoices_read ? ' ' + count(r.invoices_read, 'new invoice was', 'new invoices were') + ' read first.' : '';
     var possible = r.status === 'possible' ? ' Confirm it or click Not this.' : '';
@@ -1537,10 +1714,10 @@
     if (r.read_errors) {
       var names = (r.read_error_files || []).filter(Boolean).join(', ');
       return 'No invoice found. ' + count(r.read_errors, 'new file', 'new files') + ' in Drive could not be read' +
-        (names ? ' (' + names + ')' : '') + '. Check the file, or use Link… to pick the invoice by hand.' + read;
+        (names ? ' (' + names + ')' : '') + (upload ? '. Check the file, or use Add receipt… to photograph or upload it.' : '. Check the file, or use Link… to pick the invoice by hand.') + read;
     }
-    if (r.read_skipped) return 'No invoice found. New files in Drive were not read (invoice reading is switched off); use Link… to pick the invoice by hand.';
-    return 'No invoice found yet.' + read + ' File it in the Invoice folder on Drive, then click Rematch again.';
+    if (r.read_skipped) return 'No invoice found. New files in Drive were not read (invoice reading is switched off); ' + (upload ? 'use Add receipt… to photograph or upload it.' : 'use Link… to pick the invoice by hand.');
+    return 'No invoice found yet.' + read + (upload ? ' Use Add receipt… to photograph or upload it.' : ' File it in the Invoice folder on Drive, then click Rematch again.');
   }
   // The job's row is a snapshot from its end; take only the invoice fields from it, so a cost
   // centre or usage saved on this row in the meantime is not shown as undone.
@@ -1571,8 +1748,9 @@
       await sleep(250);                                  // let the bar reach the end before the row changes
       delete rematching[id];
       if (result.transaction) replaceTxn(mergeRematchedRow(result.transaction), at); else restoreRow(id);
-      toast(rematchMessage(result), result.status === 'missing' || result.outcome === 'conflict' ? '' : 'ok', 7000);
-      say(rematchMessage(result));
+      var card = (result.transaction && result.transaction.card_last4) || (txnById(id) || {}).card_last4;
+      toast(rematchMessage(result, card), result.status === 'missing' || result.outcome === 'conflict' ? '' : 'ok', 7000);
+      say(rematchMessage(result, card));
     } catch (e) {
       delete rematching[id];
       restoreRow(id);
@@ -1628,6 +1806,8 @@
     var tr = btn.closest('tr');
     var action = btn.dataset.action;
     if (action === 'pick') { openLinkModal(txnById(tr.dataset.id)); return; }
+    if (action === 'receipt') { openReceiptSheet(txnById(tr.dataset.id)); return; }
+    if (action === 'remove-receipt') { removeReceipt(txnById(tr.dataset.id)); return; }
     if (action === 'rematch') { rematchRow(tr.dataset.id); return; }
     rowAction(tr, action);
   });
@@ -1674,9 +1854,12 @@
     navigate(state.year, state.month, chip.dataset.card);
   });
   $('#cardSelect').addEventListener('change', function (ev) { navigate(state.year, state.month, ev.target.value); });
+  // On a phone the month drop-down is the only month picker: the receipts list stays the receipts list.
   $('#monthSelect').addEventListener('change', function (ev) {
-    var p = ev.target.value.split('-'); if (p.length === 2) navigate(Number(p[0]), Number(p[1]), '');
+    var p = ev.target.value.split('-'), keep = state.view === 'receipts';
+    if (p.length === 2) navigate(Number(p[0]), Number(p[1]), keep ? state.card : '', keep ? 'receipts' : '');
   });
+  $('#receiptsBtn').addEventListener('click', function () { navigate(state.year, state.month, state.card, 'receipts'); });
   $('#gateReload').addEventListener('click', function () { location.reload(); });
   $('#offscreenClose').addEventListener('click', function () { offscreenDismissed = true; $('#offscreen').classList.add('hidden'); });
   checkOffscreen();
@@ -1724,16 +1907,33 @@
   // ---------------------------------------------------------------------------
   // Modal
   // ---------------------------------------------------------------------------
+  // modalGuard: set by a dialog holding unsaved work; closing (✕, backdrop, Escape, closeModal()) asks it
+  // first, and false keeps the dialog open. modalCleanup: runs once when that dialog goes away, closed or
+  // replaced by another one.
+  var modalGuard = null, modalCleanup = null;
+  function endModal() {
+    var done = modalCleanup;
+    modalGuard = null; modalCleanup = null;
+    if (done) { try { done(); } catch (e) { console.error(e); } }
+  }
   function openModal(title, bodyHtml, wide) {
+    endModal();
     $('#modalTitle').textContent = title;
     var old = $('#modalBody'), body = old.cloneNode(false);   // drops the previous open's listeners
     old.parentNode.replaceChild(body, old);
+    body.className = 'modal-body';                             // and any class a dialog added
     body.innerHTML = bodyHtml;
     $('#modalBox').classList.toggle('wide', !!wide);
+    $('#modalBox').classList.remove('rcpt-sheet');
     $('#modal').classList.remove('hidden');
     return body;
   }
-  function closeModal() { $('#modal').classList.add('hidden'); $('#modalBody').innerHTML = ''; }
+  function closeModal() {
+    if (modalGuard && !$('#modal').classList.contains('hidden') && modalGuard() === false) return false;
+    endModal();
+    $('#modal').classList.add('hidden'); $('#modalBody').innerHTML = '';
+    return true;
+  }
   $('#modalClose').addEventListener('click', closeModal);
   $('#modal').addEventListener('click', function (ev) { if (ev.target === $('#modal')) closeModal(); });
   document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape' && !$('#modal').classList.contains('hidden')) closeModal(); });
@@ -1797,6 +1997,612 @@
       }
     });
   }
+
+  // -- Add a receipt -------------------------------------------------------------
+  // On cards with receipt upload the holder photographs or uploads the receipt; the server saves it in
+  // the Invoice folder on Drive (month folder › vendor folder) and links it to the purchase. Several
+  // photos of one long receipt are saved as one PDF. Photos are drawn again here first: smaller, upright,
+  // and without their EXIF or GPS data.
+  var RCPT_MAX_PAGES = 10, RCPT_IMAGE_MAX = 7 * 1024 * 1024, RCPT_PDF_MAX = 15 * 1024 * 1024;
+  var RCPT_PIXELS = 4.5e6, RCPT_SIDE = 4096, RCPT_REENCODE = 3 * 1024 * 1024;
+  var CAMERA_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>';
+  var FILE_ICON = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4"/></svg>';
+  var sheet = null;          // the open Add a receipt dialog
+  var savesInFlight = 0;     // uploads still on their way, also from a dialog closed meanwhile
+  var pageSeq = 0;
+
+  function isTouch() { return !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches); }
+  function isPdfFile(f) { return f.type === 'application/pdf' || /\.pdf$/i.test(f.name || ''); }
+  // A type the browser names that is neither a photo nor a PDF. An unnamed type (HEIC on Windows) is tried.
+  function notPhotoOrPdf(f) { return !!f.type && !/^image\//i.test(f.type) && f.type !== 'application/pdf'; }
+  function newUploadId() {
+    var c = window.crypto;
+    if (c && c.randomUUID) return c.randomUUID();
+    var bytes = new Uint8Array(16);
+    if (c && c.getRandomValues) c.getRandomValues(bytes); else for (var i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256);
+    return Array.prototype.map.call(bytes, function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+  }
+  // File inputs stay hidden; a label stands in as the button (it opens the camera or the file chooser
+  // without script, which phones require) and answers Enter and Space like one.
+  function fileInput(id, multi, extra) {
+    return '<input type="file" id="' + id + '" class="rc-file" tabindex="-1" aria-hidden="true" ' +
+      (multi ? 'accept="image/*,application/pdf" multiple' : 'accept="image/*" capture="environment"') + (extra || '') + ' />';
+  }
+  function fileLabel(inputId, cls, inner, aria, extra) {
+    return '<label for="' + inputId + '" class="' + cls + '" role="button" tabindex="0" data-file-btn' + (aria ? ' aria-label="' + esc(aria) + '"' : '') + (extra || '') + '>' + inner + '</label>';
+  }
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key !== 'Enter' && ev.key !== ' ') return;
+    var l = ev.target && ev.target.closest ? ev.target.closest('label[data-file-btn]') : null;
+    if (!l || l.classList.contains('is-disabled')) return;
+    ev.preventDefault();
+    l.click();                                     // the label's own click handlers run, then it opens its input
+  });
+
+  // Decodes the photo through an <img> (the browser turns it upright from its EXIF orientation) and
+  // draws it on a white canvas of at most 4.5 megapixels and 4096px on the long side, never enlarged: a
+  // pixel cap rather than a side cap keeps a long, thin receipt legible. JPEG at 0.82, or at 0.7 when that
+  // is over 3 MB. Rejects when this browser cannot decode the file (HEIC on Windows Chrome).
+  function prepareImage(file) {
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file), img = new Image();
+      function done() { URL.revokeObjectURL(url); img.onload = img.onerror = null; }
+      img.onerror = function () { done(); reject(new Error('this browser cannot decode the photo')); };
+      img.onload = function () {
+        var w = img.naturalWidth, h = img.naturalHeight;
+        if (!w || !h) { done(); reject(new Error('the photo is empty')); return; }
+        var scale = Math.min(1, Math.sqrt(RCPT_PIXELS / (w * h)), RCPT_SIDE / Math.max(w, h));
+        var canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.floor(w * scale));
+        canvas.height = Math.max(1, Math.floor(h * scale));
+        var ctx = canvas.getContext('2d');
+        try {
+          ctx.fillStyle = '#fff';                                    // a transparent PNG gets a white page
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        } catch (e) { done(); reject(e); return; }
+        done();
+        function free() { canvas.width = canvas.height = 0; }      // phones run short of canvas memory
+        toJpeg(canvas, 0.82)
+          .then(function (blob) { return blob.size > RCPT_REENCODE ? toJpeg(canvas, 0.7) : blob; })
+          .then(function (blob) { free(); resolve(blob); }, function (e) { free(); reject(e); });
+      };
+      img.src = url;
+    });
+  }
+  function toJpeg(canvas, quality) {
+    return new Promise(function (resolve, reject) {
+      if (!canvas.toBlob) { reject(new Error('this browser cannot encode a JPEG')); return; }
+      canvas.toBlob(function (blob) { if (blob && blob.size) resolve(blob); else reject(new Error('the photo could not be encoded')); }, 'image/jpeg', quality);
+    });
+  }
+
+  function purchaseLine(t) {
+    return esc(fmtDate(t.txn_date)) + ' · ' + esc(cardLabel(t.card_last4)) + ' · <b>' + esc(money(t.amount, t.currency)) + '</b>' +
+      (t.source_amount !== null && t.source_amount !== undefined && t.source_currency ? ' (' + esc(money(t.source_amount, t.source_currency)) + ')' : '');
+  }
+  function receiptSheetHtml(s) {
+    var pick = s.touch
+      ? '<div class="rc-big">' + fileLabel('rcptCamera', 'btn btn-primary', CAMERA_ICON + '<span>Take photo</span>') + fileLabel('rcptFiles', 'btn btn-secondary', 'Choose photo or PDF') + '</div>'
+      : fileLabel('rcptFiles', 'dropzone rc-drop', '<div class="dz-text"><b>Drop the receipt here</b>, or click to choose a photo or PDF</div>');
+    return '<div class="rc-purchase"><div class="rc-desc">' + esc(s.t.description) + '</div><div class="sub">' + purchaseLine(s.t) + '</div></div>' +
+      fileInput('rcptCamera', false) + fileInput('rcptFiles', true) +
+      '<div id="rcptPick" class="rc-pick">' + pick + '</div>' +
+      '<div id="rcptPagesWrap" class="hidden"><div id="rcptStrip" class="rc-strip" role="list" aria-label="Pages of the receipt"></div>' +
+      '<div class="sub mt-1">Long receipt? Add a photo of each part, top to bottom; they are saved together as one PDF.</div></div>' +
+      '<div id="rcptDestWrap" class="rc-dest"><span id="rcptDest">Finding the folder…</span> ' +
+      '<button type="button" id="rcptChange" class="btn-link hidden" data-rc="change" aria-expanded="false" aria-controls="rcptChangeBox">Change</button>' +
+      '<div id="rcptChangeBox" class="rc-change hidden"><label for="rcptFolder">Vendor folder</label>' +
+      '<input class="inp" id="rcptFolder" list="rcptFolders" maxlength="60" autocomplete="off" aria-describedby="rcptFolderHelp" /><datalist id="rcptFolders"></datalist>' +
+      '<div class="sub" id="rcptFolderHelp">Pick the folder this vendor\'s receipts go in, or type a new name.</div></div></div>' +
+      '<div id="rcptDone" class="hidden"><div id="rcptSaved" class="rc-saved"></div><div id="rcptRead" class="rc-read hidden" role="status" aria-live="polite"></div></div>' +
+      '<div id="rcptFoot" class="rc-foot"><div id="rcptStatus" class="rc-status" role="status" aria-live="polite"></div>' +
+      '<div id="rcptFootSave" class="grid gap-1"><button type="button" id="rcptSave" class="btn btn-primary rc-save" data-rc="save" disabled>Save receipt</button>' +
+      '<button type="button" id="rcptLinkInstead" class="btn-link rc-alt" data-rc="link">Already in Drive? Link a file instead</button></div>' +
+      '<div id="rcptNext" class="rc-next hidden"></div></div>';
+  }
+
+  // opts.files: pages already chosen (from the receipts list), added as the dialog opens.
+  function openReceiptSheet(t, opts) {
+    if (!t) return;
+    opts = opts || {};
+    var s = { t: t, at: { year: state.year, month: state.month }, touch: isTouch(), pages: [], preparing: 0, queue: Promise.resolve(),
+              target: null, targetFailed: false, vendor: '', uploadId: '', sending: false, saved: false, closed: false,
+              msgKind: '', body: null };
+    var body = openModal('Add a receipt', receiptSheetHtml(s));
+    $('#modalBox').classList.add('rcpt-sheet');
+    body.classList.add('rc-body');
+    s.body = body;
+    sheet = s;
+    modalGuard = function () {
+      if (s.saved || !s.pages.length) return true;
+      return window.confirm('Discard the ' + (s.pages.length > 1 ? 'photos' : 'photo') + ' you took for ' + (t.description || 'this purchase') + '?');
+    };
+    modalCleanup = function () {
+      s.closed = true;
+      s.pages.forEach(function (p) { if (p.url) URL.revokeObjectURL(p.url); });
+      if (sheet === s) sheet = null;
+    };
+    wireReceiptSheet(s);
+    loadReceiptTarget(s);
+    if (opts.files && opts.files.length) addReceiptFiles(s, opts.files);
+    renderReceiptSheet(s);
+  }
+
+  function wireReceiptSheet(s) {
+    var body = s.body;
+    body.addEventListener('change', function (ev) {
+      var input = ev.target;
+      if (!input.matches('input[type="file"]')) return;
+      var files = Array.prototype.slice.call(input.files || []);
+      input.value = '';                                          // the same photo can be chosen again
+      if (!files.length) return;
+      if (input.dataset.next) { var n = txnById(input.dataset.next); if (n) openReceiptSheet(n, { files: files }); return; }
+      addReceiptFiles(s, files);
+    });
+    body.addEventListener('click', function (ev) {
+      var b = ev.target.closest('[data-rc]'); if (!b || b.disabled) return;
+      var what = b.dataset.rc;
+      if (what === 'remove-page') removeReceiptPage(s, Number(b.dataset.page));
+      else if (what === 'change') openFolderBox(s);
+      else if (what === 'save' || what === 'retry') saveReceipt(s);
+      else if (what === 'link') {
+        if (modalGuard && modalGuard() === false) return;        // the unsaved-pages question first
+        endModal();
+        openLinkModal(txnById(s.t.id) || s.t);
+      }
+      else if (what === 'retake') removeReceipt(txnById(s.t.id) || s.t, true, b);
+      else if (what === 'next') { var n = txnById(b.dataset.id); if (n) openReceiptSheet(n); }
+      else if (what === 'close') closeModal();
+    });
+    var folder = $('#rcptFolder', body);
+    folder.addEventListener('input', function () { s.vendor = folder.value; renderReceiptDest(s); });
+    folder.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); folder.blur(); } });
+    // Desktop: a photo or PDF dropped anywhere on the dialog is added as a page.
+    function dropZone() { return $('.rc-drop', body); }
+    ['dragenter', 'dragover'].forEach(function (name) {
+      body.addEventListener(name, function (ev) {
+        if (s.sending || s.saved) return;
+        ev.preventDefault();
+        var z = dropZone(); if (z) z.classList.add('over');
+      });
+    });
+    ['dragleave', 'dragend'].forEach(function (name) {
+      body.addEventListener(name, function () { var z = dropZone(); if (z) z.classList.remove('over'); });
+    });
+    body.addEventListener('drop', function (ev) {
+      ev.preventDefault();
+      var z = dropZone(); if (z) z.classList.remove('over');
+      var files = ev.dataTransfer && ev.dataTransfer.files;
+      if (files && files.length && !s.sending && !s.saved) addReceiptFiles(s, files);
+    });
+  }
+
+  function setReceiptMsg(s, text, kind, actionHtml) {
+    s.msgKind = text ? (kind || '') : '';
+    if (s.closed) return;
+    var el = $('#rcptStatus', s.body);
+    el.className = 'rc-status' + (s.msgKind === 'err' ? ' err' : '');
+    el.innerHTML = text ? esc(text) + (actionHtml || '') : '';
+  }
+
+  // Checks first, so nothing is prepared that the server would refuse; then each photo is prepared, one
+  // at a time (a phone holds one decoded photo in memory, not ten), keeping the order they were chosen in.
+  function addReceiptFiles(s, files) {
+    if (s.closed || s.sending || s.saved) return;
+    files = Array.prototype.slice.call(files || []);
+    if (!files.length) return;
+    function refuse(msg) { setReceiptMsg(s, msg, 'err'); renderReceiptSheet(s); }
+    var pdfs = files.filter(isPdfFile), total = s.pages.length + files.length;
+    if (files.some(notPhotoOrPdf)) return refuse("That file isn't a photo or a PDF. Choose a JPEG, PNG, WebP or HEIC photo, or a PDF.");
+    if ((pdfs.length || s.pages.some(function (p) { return p.kind === 'pdf'; })) && total > 1) return refuse('Choose one PDF on its own, or photos only.');
+    if (total > RCPT_MAX_PAGES) return refuse('At most 10 pages per receipt.');
+    if (s.pages.some(function (p) { return p.kind === 'raw'; })) return refuse('This photo could not be prepared in this browser. Add it on its own, or take the photo on your phone.');
+    setReceiptMsg(s, '');
+    if (pdfs.length) {
+      if (pdfs[0].size > RCPT_PDF_MAX) return refuse('That PDF is larger than 15 MB. Save a smaller copy and try again.');
+      s.pages.push({ id: ++pageSeq, kind: 'pdf', blob: pdfs[0], name: pdfs[0].name || 'receipt.pdf' });   // sent untouched
+      receiptPagesChanged(s);
+      return;
+    }
+    files.forEach(function (file) {
+      var page = { id: ++pageSeq, kind: 'pending', name: file.name || 'photo' };
+      s.pages.push(page);
+      s.preparing++;
+      s.queue = s.queue.then(function () {
+        if (s.closed || s.pages.indexOf(page) < 0) return null;   // closed, or the page removed meanwhile
+        return prepareImage(file).then(function (blob) {
+          if (s.pages.indexOf(page) < 0) return;
+          if (blob.size > RCPT_IMAGE_MAX) { dropReceiptPage(s, page); refuse('That photo is larger than 7 MB. Take it again or save it as a JPEG.'); return; }
+          page.kind = 'jpeg'; page.blob = blob; page.url = s.closed ? '' : URL.createObjectURL(blob);
+        }, function () {
+          // Not decodable here: sent as it is (the server takes HEIC), but only on its own.
+          if (s.pages.indexOf(page) < 0) return;
+          if (s.pages.length > 1) { dropReceiptPage(s, page); refuse('This photo could not be prepared in this browser. Add it on its own, or take the photo on your phone.'); }
+          else if (file.size > RCPT_IMAGE_MAX) { dropReceiptPage(s, page); refuse('That photo is larger than 7 MB. Take it again or save it as a JPEG.'); }
+          else { page.kind = 'raw'; page.blob = file; }
+        });
+      }).then(null, function (e) { console.error(e); }).then(function () {
+        s.preparing--;
+        receiptPagesChanged(s);
+      });
+    });
+    receiptPagesChanged(s);
+  }
+  function dropReceiptPage(s, page) {
+    var i = s.pages.indexOf(page);
+    if (i >= 0) s.pages.splice(i, 1);
+    if (page.url) { URL.revokeObjectURL(page.url); page.url = ''; }
+  }
+  function removeReceiptPage(s, id) {
+    if (s.sending || s.saved) return;
+    var page = s.pages.filter(function (p) { return p.id === id; })[0];
+    if (!page) return;
+    dropReceiptPage(s, page);
+    setReceiptMsg(s, '');
+    receiptPagesChanged(s);
+  }
+  // A different set of pages is a different receipt: it gets its own upload_id when it is sent.
+  function receiptPagesChanged(s) { s.uploadId = ''; renderReceiptSheet(s); }
+
+  function receiptPagesHtml(s) {
+    var busy = s.sending;
+    var html = s.pages.map(function (p, i) {
+      var n = i + 1, thumb;
+      if (p.kind === 'jpeg' && p.url) thumb = '<img class="rc-thumb" src="' + esc(p.url) + '" alt="" />';
+      else if (p.kind === 'pending') thumb = '<div class="rc-thumb rc-tile"><span class="spinner dark" aria-hidden="true"></span></div>';
+      else thumb = '<div class="rc-thumb rc-tile" title="' + esc(p.name) + '">' + FILE_ICON + '<span class="rc-fname">' + esc(p.name) + '</span></div>';
+      return '<div class="rc-page" role="listitem" data-page-tile="' + n + '">' + thumb + '<div class="rc-cap">Page ' + n + '</div>' +
+        '<button type="button" class="rc-x" data-rc="remove-page" data-page="' + p.id + '" aria-label="Remove page ' + n + '"' + (busy ? ' disabled' : '') + '>✕</button></div>';
+    }).join('');
+    var single = s.pages.some(function (p) { return p.kind === 'pdf' || p.kind === 'raw'; });
+    if (!single && s.pages.length < RCPT_MAX_PAGES) {
+      html += '<div role="listitem">' + fileLabel(s.touch ? 'rcptCamera' : 'rcptFiles', 'rc-add', '+ Add page') + '</div>';
+    }
+    return html;
+  }
+  function renderReceiptSheet(s) {
+    if (s.closed) return;
+    var b = s.body, has = s.pages.length > 0, busy = s.sending;
+    $('#rcptPick', b).classList.toggle('hidden', has || s.saved);
+    $('#rcptPagesWrap', b).classList.toggle('hidden', !has || s.saved);
+    if (has && !s.saved) $('#rcptStrip', b).innerHTML = receiptPagesHtml(s);
+    $('#rcptDestWrap', b).classList.toggle('hidden', s.saved);
+    $('#rcptFootSave', b).classList.toggle('hidden', s.saved);
+    $('#rcptSave', b).disabled = busy || s.saved || !has || s.preparing > 0;
+    ['#rcptLinkInstead', '#rcptChange', '#rcptFolder'].forEach(function (sel) { $(sel, b).disabled = busy; });
+    $all('input[type="file"]', b).forEach(function (i) { i.disabled = busy; });
+    $all('label[data-file-btn]', b).forEach(function (l) {
+      l.classList.toggle('is-disabled', busy);
+      l.setAttribute('aria-disabled', busy ? 'true' : 'false');
+      l.tabIndex = busy ? -1 : 0;
+    });
+    if (s.preparing > 0 && s.msgKind !== 'err') setReceiptMsg(s, 'Preparing photo…', 'prep');
+    else if (!s.preparing && s.msgKind === 'prep') setReceiptMsg(s, '');
+  }
+
+  // Where it is saved: Invoice › month folder › vendor folder. The server suggests the vendor folder
+  // (GET receipt-target); Change lets the person pick another or type a new name.
+  function loadReceiptTarget(s) {
+    api('/api/transactions/' + encodeURIComponent(s.t.id) + '/receipt-target').then(function (data) {
+      if (s.closed) return;
+      s.target = data || {};
+      $('#rcptFolders', s.body).innerHTML = (s.target.folders || []).map(function (f) { return '<option value="' + esc(f) + '"></option>'; }).join('');
+      renderReceiptDest(s);
+    }, function (e) {
+      if (s.closed || e.status === 401) return;
+      s.targetFailed = true;                       // Save then sends no vendor_folder, and the server picks it
+      if (e.status === 403 && s.msgKind !== 'err') setReceiptMsg(s, e.message, 'err');
+      renderReceiptDest(s);
+    });
+  }
+  function compactName(name) { return String(name || '').toLowerCase().replace(/[^a-z0-9]/g, ''); }
+  // What the person typed under Change, else the server's suggestion.
+  function chosenVendor(s) {
+    var typed = String(s.vendor || '').replace(/\s+/g, ' ').trim();
+    return typed || (s.target ? String(s.target.vendor_folder || '') : '');
+  }
+  function renderReceiptDest(s) {
+    if (s.closed) return;
+    var el = $('#rcptDest', s.body), change = $('#rcptChange', s.body);
+    if (!s.target && !s.targetFailed) { el.textContent = 'Finding the folder…'; change.classList.add('hidden'); return; }
+    var d = String(s.t.txn_date || '');
+    var month = (s.target && s.target.month_folder) || (d.length >= 7 ? d.slice(0, 4) + ' ' + d.slice(5, 7) : '');
+    var typed = String(s.vendor || '').trim(), vendor = chosenVendor(s), isNew = false;
+    if (typed) {
+      // The server reuses a folder whose name differs only in case or punctuation ("uber" goes to "Uber").
+      var key = compactName(typed), same = ((s.target && s.target.folders) || []).filter(function (f) { return compactName(f) === key; })[0];
+      if (same) vendor = same; else isNew = !!s.target;
+    } else if (s.target) {
+      isNew = s.target.vendor_exists === false;
+    }
+    el.innerHTML = 'Saves to Invoice' + (month ? ' › ' + esc(month) : '') + (vendor ? ' › <b>' + esc(vendor) + '</b>' + (isNew ? ' (new folder)' : '') : '');
+    change.classList.remove('hidden');
+    $('#rcptFolder', s.body).placeholder = chosenVendor(s);
+  }
+  function openFolderBox(s) {
+    var box = $('#rcptChangeBox', s.body), input = $('#rcptFolder', s.body);
+    box.classList.remove('hidden');
+    $('#rcptChange', s.body).setAttribute('aria-expanded', 'true');
+    input.focus();
+  }
+
+  async function saveReceipt(s) {
+    if (s.closed || s.sending || s.saved || !s.pages.length || s.preparing) return;
+    var size = s.pages.reduce(function (n, p) { return n + (p.blob ? p.blob.size : 0); }, 0);
+    if (s.pages.length > 1 && size > RCPT_PDF_MAX) { setReceiptMsg(s, 'These pages come to more than 15 MB as one PDF; remove a page.', 'err'); return; }
+    if (!s.uploadId) s.uploadId = newUploadId();   // one per receipt: a retry is recognised, never saved twice
+    var fd = new FormData();
+    s.pages.forEach(function (p, i) { fd.append('file', p.blob, p.kind === 'jpeg' ? 'page-' + (i + 1) + '.jpg' : p.name); });
+    var vendor = chosenVendor(s);
+    if (vendor) fd.append('vendor_folder', vendor.slice(0, 60));
+    fd.append('upload_id', s.uploadId);
+    s.sending = true; savesInFlight++;
+    renderReceiptSheet(s);
+    var path = '/api/transactions/' + encodeURIComponent(s.t.id) + '/receipt', data = null, err = null;
+    var waits = [0, 2000, 5000];                     // no connection: try again after 2 s, then after 5 s
+    for (var i = 0; i < waits.length; i++) {
+      if (waits[i]) {
+        setReceiptMsg(s, 'No connection, retrying…');
+        await sleep(waits[i]);
+        if (s.closed) break;                         // discarded meanwhile
+      }
+      setReceiptMsg(s, 'Uploading… 0%');
+      try {
+        data = await apiUpload(path, fd, function (pct) { setReceiptMsg(s, pct >= 100 ? 'Saving to Drive…' : 'Uploading… ' + pct + '%'); });
+        err = null;
+        break;
+      } catch (e) {
+        err = e;
+        if (e.status !== 0) break;
+      }
+    }
+    s.sending = false; savesInFlight--;
+    if (data) { receiptSaved(s, data); return; }
+    // Not kept (the purchase changed, or already has its invoice): show the row as it is now.
+    if (err && err.data && err.data.transaction && (err.data.withdrawn || err.data.status === 'not_saved')) replaceTxn(err.data.transaction, s.at);
+    if (s.closed) { if (err && err.status && err.status !== 401) toast(err.message, 'err'); return; }
+    if (!err) return;
+    if (err.status === 0) {
+      setReceiptMsg(s, 'No connection. Your photo is still here; tap Try again when you have signal.', 'err',
+        ' <div><button type="button" class="btn btn-secondary btn-xs" data-rc="retry">Try again</button></div>');
+    } else {
+      setReceiptMsg(s, err.message, 'err');         // the server's words, as they are
+    }
+    renderReceiptSheet(s);
+  }
+
+  function receiptSaved(s, data) {
+    s.saved = true;
+    var row = data.transaction, file = data.file || {};
+    if (row) replaceTxn(row, s.at);
+    var msg = 'Saved to Invoice' + (file.folder ? ' › ' + String(file.folder).split('/').join(' › ') : '') + ' and linked to this purchase.';
+    say('Receipt saved for ' + s.t.description + '.');
+    if (data.reading && row) watchReceiptRead(s, row.id, file.id || row.invoice_id);
+    if (s.closed) { toast(msg, 'ok', 6000); return; }
+    setReceiptMsg(s, '');
+    $('#rcptSaved', s.body).textContent = msg;
+    $('#rcptDone', s.body).classList.remove('hidden');
+    if (data.reading) setReceiptRead(s, 'Reading the receipt…');
+    renderReceiptNext(s);
+    renderReceiptSheet(s);
+  }
+
+  // The server reads the receipt in the background; poll the row (every 3 s, for a minute) until it has,
+  // then say what it found. The row is refreshed even when the dialog was closed meanwhile.
+  async function watchReceiptRead(s, id, fileId) {
+    var until = Date.now() + 60000;
+    while (Date.now() < until) {
+      await sleep(3000);
+      var row;
+      try { row = (await api('/api/transactions/' + encodeURIComponent(id))).transaction; }
+      catch (e) { if (e.status === 401 || e.status === 403 || e.status === 404) return; continue; }
+      if (!row) return;
+      replaceTxn(row, s.at);
+      if (!row.invoice || (fileId && row.invoice_id !== fileId)) return;    // removed or replaced meanwhile
+      if (row.invoice.reading) continue;
+      showReceiptRead(s, row);
+      return;
+    }
+    setReceiptRead(s, "Still reading the receipt; this row updates when it's done.");
+  }
+  function showReceiptRead(s, row) {
+    var inv = row.invoice || {}, warn = warnChecks(row)[0], infos = infoChecks(row);
+    function info(kind) { return infos.filter(function (c) { return c.kind === kind; })[0]; }
+    if (warn) {
+      setReceiptRead(s, warn.text + " If it's the wrong receipt, remove it and take the right one; otherwise accounts payable will check it.", 'warn', true);
+      return;
+    }
+    var unreadable = info('unreadable'), amount = info('amount');
+    if (unreadable) setReceiptRead(s, unreadable.text);
+    else if (amount) setReceiptRead(s, amount.text + ' Kept: a tip, tax or exchange rate can explain a small difference.');
+    else if (infos.length) setReceiptRead(s, infos[0].text);
+    else {
+      var bits = [];
+      if (inv.total !== null && inv.total !== undefined) bits.push(money(inv.total, inv.currency || ''));
+      if (inv.invoice_date) bits.push(fmtDay(inv.invoice_date));
+      setReceiptRead(s, bits.length ? 'Receipt reads ' + bits.join(' · ') + '. Matches the charge.' : '');
+    }
+  }
+  function setReceiptRead(s, text, kind, retake) {
+    if (s.closed) return;
+    var el = $('#rcptRead', s.body);
+    el.className = 'rc-read' + (kind === 'warn' ? ' warn' : '') + (text ? '' : ' hidden');
+    el.innerHTML = esc(text) + (retake ? '<div><button type="button" class="btn btn-secondary btn-xs" data-rc="retake">Remove and retake</button></div>' : '');
+  }
+
+  // The receipts list's order: missing, then possible; each by date, then the larger amount first.
+  function receiptsOrder(a, b) {
+    var ra = a.invoice_status === 'possible' ? 1 : 0, rb = b.invoice_status === 'possible' ? 1 : 0;
+    if (ra !== rb) return ra - rb;
+    var da = String(a.txn_date || ''), db = String(b.txn_date || '');
+    if (da !== db) return da < db ? -1 : 1;
+    return (Number(b.amount) || 0) - (Number(a.amount) || 0);
+  }
+  function neededRows(last4) {
+    return state.txns.filter(function (t) {
+      return t.card_last4 === last4 && isPurchase(t) && (t.invoice_status === 'missing' || t.invoice_status === 'possible');
+    }).sort(receiptsOrder);
+  }
+  // The purchase after this one in the receipts list (s.t is the row as it was before it was saved).
+  function nextReceiptTxn(s) {
+    var rows = neededRows(s.t.card_last4).filter(function (r) { return r.id !== s.t.id && r.editable !== false; });
+    for (var i = 0; i < rows.length; i++) if (receiptsOrder(rows[i], s.t) > 0) return rows[i];
+    return rows[0] || null;
+  }
+  function renderReceiptNext(s) {
+    var el = $('#rcptNext', s.body), n = nextReceiptTxn(s);
+    if (!n) {
+      el.innerHTML = '<div class="rc-next-text">That was the last one for ' + esc(monthLabel(s.at.year, s.at.month)) + '. Thank you!</div>' +
+        '<button type="button" class="btn btn-secondary rc-save" data-rc="close">Close</button>';
+    } else {
+      el.innerHTML = '<div class="rc-next-text">' + esc('Next: ' + fmtDay(n.txn_date) + ' · ' + n.description + ' · ' + money(n.amount, n.currency)) + '</div>' +
+        (s.touch
+          ? fileInput('rcptNextCamera', false, ' data-next="' + esc(n.id) + '"') + fileLabel('rcptNextCamera', 'btn btn-primary rc-save', CAMERA_ICON + '<span>Take photo</span>')
+          : '<button type="button" class="btn btn-primary rc-save" data-rc="next" data-id="' + esc(n.id) + '">Add its receipt</button>');
+    }
+    el.classList.remove('hidden');
+  }
+
+  // Remove… (and Remove and retake): unlink a receipt added from the dashboard and move its file to the
+  // Drive trash. retake: the dialog opens again for the purchase afterwards.
+  async function removeReceipt(t, retake, btn) {
+    if (!t) return null;
+    if (!window.confirm(retake
+      ? 'Remove this receipt and take another? It is unlinked from the purchase and its file goes to the Drive trash, where accounts payable can restore it for 30 days.'
+      : 'Remove this receipt? It is unlinked from the purchase and its file goes to the Drive trash, where accounts payable can restore it for 30 days.')) return null;
+    var at = { year: state.year, month: state.month };
+    if (btn) btn.disabled = true;
+    setRowBusy(rowEl(t.id));
+    try {
+      var data = await api('/api/transactions/' + encodeURIComponent(t.id) + '/receipt', { method: 'DELETE' });
+      if (data.transaction) replaceTxn(data.transaction, at);
+      if (data.trashed === false) toast(data.warning || 'Receipt removed', 'err', 9000); else toast('Receipt removed', 'ok');
+      if (retake) openReceiptSheet(txnById(t.id) || data.transaction);
+      return data.transaction || null;
+    } catch (e) {
+      report(e, 'Could not remove the receipt');
+      restoreRow(t.id);
+      if (btn) btn.disabled = false;
+      return null;
+    }
+  }
+
+  // -- Receipts list ---------------------------------------------------------------
+  // One card's purchases that still need a receipt, one block each with Take photo, made for a phone:
+  // the Chat card's "Add receipts" lands here. Replaces the month's tiles, panel and table while it shows.
+  function receiptsItemHtml(t, touch) {
+    var src = t.source_amount !== null && t.source_amount !== undefined && t.source_currency ? '<div class="sub">' + esc(money(t.source_amount, t.source_currency)) + '</div>' : '';
+    var html = '<div class="rv-item" data-id="' + esc(t.id) + '"><div class="rv-top"><div class="min-w-0">' +
+      '<div class="rv-desc"><span class="rv-date">' + esc(fmtDay(t.txn_date)) + '</span> ' + esc(t.description) + '</div>' +
+      (t.city ? '<div class="sub">' + esc(t.city) + '</div>' : '') + '</div>' +
+      '<div class="rv-amt">' + esc(money(t.amount, t.currency)) + src + '</div></div>';
+    var inv = t.invoice;
+    if (t.invoice_status === 'possible' && inv) {
+      var bits = [inv.vendor || inv.vendor_folder || inv.file_name || 'an invoice'];
+      if (inv.total !== null && inv.total !== undefined) bits.push(money(inv.total, inv.currency || ''));
+      if (inv.invoice_date) bits.push(fmtDay(inv.invoice_date));
+      html += '<div class="rv-possible"><span>' + esc('Possible match: ' + bits.join(' · ')) + '</span>' +
+        (t.editable ? '<button type="button" class="btn btn-primary" data-rv="confirm">Confirm</button>' : '') + '</div>';
+    }
+    if (t.editable) {
+      var name = t.description || 'this purchase';
+      var pick = ' data-rv-pick="' + esc(t.id) + '"';
+      html += '<div class="rv-actions">' + (touch
+        ? fileLabel('rvCamera', 'btn btn-primary rv-cam', CAMERA_ICON + '<span>Take photo</span>', 'Take photo of the receipt for ' + name, pick) +
+          fileLabel('rvFiles', 'btn btn-secondary rv-up', 'Upload', 'Upload the receipt for ' + name, pick)
+        : '<button type="button" class="btn btn-primary rv-add" data-rv="add">Add receipt…</button>') + '</div>' +
+        '<button type="button" class="btn-link rv-link" data-rv="waive">No receipt for this charge</button>';
+    }
+    return html + '</div>';
+  }
+  function renderReceiptsView() {
+    var view = $('#receiptsView'), content = $('#rvContent'), monthView = $('#monthView');
+    var on = state.view === 'receipts' && !!state.card && receiptsOn(state.card);
+    var wasOn = monthView.classList.contains('rv-on');
+    monthView.classList.toggle('rv-on', on);
+    view.classList.toggle('hidden', !on);
+    if (!on) { content.innerHTML = ''; return; }
+    if (!wasOn) window.scrollTo(0, 0);
+    var last4 = state.card, label = monthLabel(state.year, state.month), touch = isTouch();
+    var rows = state.txns.filter(function (t) { return t.card_last4 === last4; });
+    var canEdit = rows.some(function (t) { return t.editable; });
+    var check = rows.filter(function (t) { return uploadedBy(t) && warnChecks(t).length; });
+    var needed = neededRows(last4);
+    var added = rows.filter(function (t) { return !!uploadedBy(t); }).sort(function (a, b) { return String(a.txn_date || '') < String(b.txn_date || '') ? -1 : 1; });
+    var openAdded = !!($('#rvAdded') && $('#rvAdded').open);    // a re-render keeps it as the person left it
+    var html = '<div class="rv-head"><div class="min-w-0 flex-1"><h1 id="rvTitle">Receipts needed</h1>' +
+      '<div class="sub">' + esc(cardLabel(last4)) + ' · ' + esc(label) + '</div></div>' +
+      (needed.length ? '<span class="pill pill-down" id="rvToGo">' + needed.length + ' to go</span>' : '') + '</div>' +
+      '<a class="link rv-all" id="rvAll" href="' + hashFor(state.year, state.month, last4) + '">All purchases ›</a>';
+    if (!canEdit && rows.length) {
+      html += '<div class="rv-banner" id="rvBanner" role="note">You can see card ' + esc(last4) + ', but only its owner or accounts payable can add receipts. Ask accounts payable (ap@superhairpieces.com) to set you as the card\'s owner.</div>';
+    }
+    if (check.length) {
+      html += '<section class="rv-group" id="rvCheck" aria-labelledby="rvCheckTitle"><h2 class="rv-group-title" id="rvCheckTitle">Check these (' + check.length + ')</h2>' +
+        check.map(function (t) {
+          return '<div class="rv-item" data-id="' + esc(t.id) + '"><div class="rv-top"><div class="min-w-0"><div class="rv-desc"><span class="rv-date">' + esc(fmtDay(t.txn_date)) + '</span> ' + esc(t.description) + '</div></div>' +
+            '<div class="rv-amt">' + esc(money(t.amount, t.currency)) + '</div></div>' +
+            '<div class="rv-check">' + esc(warnChecks(t)[0].text) + '</div>' +
+            (t.editable ? '<div class="rv-actions"><button type="button" class="btn btn-secondary rv-add" data-rv="retake">Remove and retake</button></div>' : '') + '</div>';
+        }).join('') + '</section>';
+    }
+    html += '<section class="rv-group" id="rvNeeded" aria-labelledby="rvNeededTitle"><h2 class="rv-group-title" id="rvNeededTitle">Receipts needed (' + needed.length + ')</h2>' +
+      (needed.length ? needed.map(function (t) { return receiptsItemHtml(t, touch); }).join('')
+                     : '<div class="rv-empty card" id="rvEmpty">All receipts are in for ' + esc(label) + '. Thank you!</div>') + '</section>';
+    if (added.length) {
+      html += '<details class="rv-group" id="rvAdded"' + (openAdded ? ' open' : '') + '><summary class="rv-group-title">Added (' + added.length + ')</summary>' +
+        added.map(function (t) {
+          var inv = t.invoice || {}, where = ['Invoice', inv.month_folder, inv.vendor_folder].filter(Boolean).join(' › ');
+          var line = t.description + ' · ' + money(t.amount, t.currency) + ' · ' + where;
+          var text = safeUrl(inv.web_view_link)
+            ? '<a class="link" href="' + esc(safeUrl(inv.web_view_link)) + '" target="_blank" rel="noopener noreferrer" title="Open the file in Drive">' + esc(line) + '</a>'
+            : esc(line);
+          return '<div class="rv-item rv-done" data-id="' + esc(t.id) + '"><div>✓ ' + text + '</div>' +
+            (t.editable ? '<button type="button" class="btn btn-ghost" data-rv="remove">Remove…</button>' : '') + '</div>';
+        }).join('') + '</details>';
+    }
+    var folder = safeUrl(state.config && state.config.invoice_folder_url);
+    if (folder) html += '<div class="rv-foot"><a class="link" href="' + esc(folder) + '" target="_blank" rel="noopener noreferrer">Invoice folder on Drive ↗</a></div>';
+    content.innerHTML = html;
+  }
+  // Choosing photos on a block opens the dialog already holding them. Take photo and Upload are labels of
+  // the two shared inputs; the block tapped last says which purchase the photos are for.
+  var rvPicked = '';
+  $('#receiptsView').addEventListener('change', function (ev) {
+    var input = ev.target;
+    if (input.id !== 'rvCamera' && input.id !== 'rvFiles') return;
+    var files = Array.prototype.slice.call(input.files || []);
+    input.value = '';                              // the same photo can be chosen again
+    var t = txnById(rvPicked);
+    if (t && files.length) openReceiptSheet(t, { files: files });
+  });
+  $('#receiptsView').addEventListener('click', async function (ev) {
+    var pick = ev.target.closest('label[data-rv-pick]');
+    if (pick) { rvPicked = pick.dataset.rvPick; return; }   // the label then opens the camera or chooser
+    var b = ev.target.closest('button[data-rv]'); if (!b || b.disabled) return;
+    var item = b.closest('[data-id]'), t = item && txnById(item.dataset.id);
+    if (!t) return;
+    var what = b.dataset.rv;
+    if (what === 'add') { openReceiptSheet(t); return; }
+    if (what === 'remove') { removeReceipt(t, false, b); return; }
+    if (what === 'retake') { removeReceipt(t, true, b); return; }
+    if (what === 'waive' && !window.confirm('Mark ' + (t.description || 'this purchase') + ' (' + money(t.amount, t.currency) + ') as having no receipt?')) return;
+    b.disabled = true;
+    try {
+      if (what === 'waive') await patchTxn(t.id, { action: 'waive', reason: 'no receipt (receipts list)' }, 'Marked as having no invoice');
+      else if (what === 'confirm') await patchTxn(t.id, { action: 'confirm' }, 'Invoice confirmed');
+    } catch (e) {
+      report(e, 'Could not update');
+      b.disabled = false;
+    }
+  });
+  // Leaving the page with photos not saved yet, or while one is being sent.
+  window.addEventListener('beforeunload', function (ev) {
+    if (!savesInFlight && !(sheet && sheet.pages.length && !sheet.saved)) return;
+    ev.preventDefault();
+    ev.returnValue = '';
+  });
 
   // -- Cards settings ------------------------------------------------------------
   function cardsModalHtml() {

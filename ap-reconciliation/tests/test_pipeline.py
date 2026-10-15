@@ -42,7 +42,7 @@ import invoices  # noqa: E402
 import main  # noqa: E402
 import matching  # noqa: E402
 import statements  # noqa: E402
-from drive import EXPORT_AS_PDF, FOLDER, SHORTCUT  # noqa: E402
+from drive import EXPORT_AS_PDF, FOLDER, SHORTCUT, DriveError  # noqa: E402
 from store import MemoryStore  # noqa: E402
 
 main.app.testing = True
@@ -99,16 +99,46 @@ class FakeDrive:
     tree: {folder id: [child dicts]} with the fields Drive.list_children returns.
     Shortcuts are resolved the way the real client does it (the target's record
     under the shortcut's name) and a dangling shortcut is skipped. `files_by_id`
-    holds shortcut targets that live outside the tree."""
+    holds shortcut targets that live outside the tree.
 
-    def __init__(self, tree, files_by_id=None, contents=None):
+    The writing side works on the same tree: ensure_folder and upload add entries
+    (uploaded bytes become downloadable), trash takes them out, get finds them.
+    `calls` names every call in order; `on_upload(entry)`, when set, runs after a
+    file is added, before upload returns."""
+
+    def __init__(self, tree, files_by_id=None, contents=None, on_upload=None):
         self.tree = tree
         self.files_by_id = files_by_id or {}
         self.contents = contents or {}
         self.downloads = []
+        self.on_upload = on_upload
+        self.calls, self.created_folders, self.uploads, self.trashed = [], [], [], []
+        self._seq = 0
         self._lock = threading.Lock()
 
+    def _record(self, name):
+        with self._lock:
+            self.calls.append(name)
+
+    def _next_id(self, prefix):
+        with self._lock:
+            self._seq += 1
+            return f"{prefix}_{self._seq}"
+
+    def _find(self, file_id):
+        """(parent id, entry) of a file or folder in the tree, else (None, None)."""
+        for parent, children in self.tree.items():
+            for f in children:
+                if f.get("id") == file_id:
+                    return parent, f
+        return None, None
+
+    @staticmethod
+    def _not_found(method, file_id):
+        return DriveError(f"Drive {method} files/{file_id} -> 404 File not found: {file_id}.")
+
     def list_children(self, folder_id):
+        self._record("list_children")
         out = []
         for f in self.tree.get(folder_id, []):
             f = dict(f)
@@ -123,6 +153,7 @@ class FakeDrive:
         return out
 
     def download(self, file):
+        self._record("download")
         with self._lock:
             self.downloads.append(file["id"])
         mime = file.get("mimeType", "")
@@ -131,10 +162,58 @@ class FakeDrive:
         return self.contents.get(file["id"], b"%PDF-1.4 " + file["id"].encode()), mime
 
     def find_child_folder(self, parent_id, name):
+        self._record("find_child_folder")
         for f in self.tree.get(parent_id, []):
             if f.get("mimeType") == FOLDER and f.get("name") == name:
                 return f["id"]
         return None
+
+    def ensure_folder(self, parent_id, name):
+        self._record("ensure_folder")
+        found = self.find_child_folder(parent_id, name)
+        if found:
+            return found
+        fid = self._next_id("fld")
+        self.tree.setdefault(parent_id, []).append(folder(fid, name))
+        self.tree[fid] = []
+        self.created_folders.append({"id": fid, "parent": parent_id, "name": name})
+        return fid
+
+    def upload(self, parent_id, name, data, mime_type, description=None, app_properties=None):
+        self._record("upload")
+        fid = self._next_id("up")
+        entry = dict(file_(fid, name, mime_type, modified="2026-10-15T12:00:00.000Z", size=len(data)))
+        if description:
+            entry["description"] = description
+        if app_properties:
+            entry["appProperties"] = dict(app_properties)
+        self.tree.setdefault(parent_id, []).append(entry)
+        self.contents[fid] = data
+        self.uploads.append({"id": fid, "parent": parent_id, "name": name, "mime": mime_type, "data": data,
+                             "description": description, "appProperties": dict(app_properties or {})})
+        if self.on_upload:
+            self.on_upload(entry)
+        return {k: entry[k] for k in ("id", "name", "mimeType", "modifiedTime", "size", "webViewLink")}
+
+    def get(self, file_id, fields=None):
+        self._record("get")
+        _, entry = self._find(file_id)
+        if entry is None:
+            entry = self.files_by_id.get(file_id)
+        if entry is None and file_id in self.tree:           # a root folder that is nobody's child
+            entry = {"id": file_id, "name": file_id, "mimeType": FOLDER}
+        if entry is None:
+            raise self._not_found("GET", file_id)
+        return dict(entry)
+
+    def trash(self, file_id):
+        self._record("trash")
+        parent, entry = self._find(file_id)
+        if entry is None:
+            raise self._not_found("PATCH", file_id)
+        self.tree[parent].remove(entry)
+        self.trashed.append(file_id)
+        return {"id": file_id, "trashed": True}
 
 
 # ---------------------------------------------------------------------------

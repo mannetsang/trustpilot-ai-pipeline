@@ -45,10 +45,10 @@ Invoice/
   travels with every file as a matching hint, so a receipt under
   `2026 09/Amazon` is treated as an Amazon charge from around
   September even when the document itself is hard to read.
-- PDF, PNG, JPEG, WebP, GIF, HEIC and plain-text files are read; Google
+- PDF, PNG, JPEG, WebP, HEIC and plain-text files are read; Google
   Docs, Sheets and Slides are exported as PDF first; shortcuts are followed.
-  Word, Excel, zip and e-mail files are **not** read: save them as PDF.
-  Files over 15 MB are skipped.
+  Word, Excel, zip, GIF and e-mail files are **not** read: save them as PDF.
+  PDFs over 15 MB and images over 7 MB are skipped.
 - The service reads the folder as the AP user, with the user OAuth refresh
   token in Secret Manager `google-workspace-ap-*` (the Business Profile
   scripts use the same mechanism). When those three values are missing it
@@ -58,6 +58,33 @@ Invoice/
 A file is read **once**: the result is stored by Drive file id and the file
 is only re-read when its `modifiedTime` changes. Moving or renaming a file
 updates its folder hints without another model call.
+
+**Receipts added from the dashboard** (*Add receipt...*, on the cards in
+`RECEIPT_UPLOAD_CARDS`, today card 4421) land in the same layout:
+
+- The month folder is the purchase's transaction month. An existing folder
+  is reused however it is spelt (`2026 09`, `2026-09`); only when there is
+  none is `YYYY MM` created.
+- The vendor folder is suggested from the charge: an existing folder of
+  that month whose every word appears in the description (`Uber* Trip` goes
+  to `Uber`, never `Uber Eats`), else a folder of the last twelve months,
+  else a cleaned name (`Sq *coffee Shop Toronto` becomes `Coffee Shop`,
+  `Air Can*` becomes `Air Canada`). The person sees *Saves to Invoice ›
+  2026 09 › Uber* and can change it; a typed name snaps to an existing
+  folder of the same letters (`uber` stays `Uber`), and a name that is a
+  path or a month is refused in favour of the suggestion.
+- The file is `<date> <vendor> receipt.jpg` (or `.pdf`), with `(2)`, `(3)`
+  when taken. Never the amount or card digits: the file name is a hint
+  the reader sees. Several photos of one receipt are saved as **one PDF**
+  (each photo kept as is), so the pages of one receipt never become
+  separate invoices. The browser shrinks photos to at most 4.5 megapixels
+  (JPEG, which also drops the photo's location data) before sending.
+- Who and why ride in the file's Drive description and app properties
+  (purchase id, uploader), which the reader never sees.
+- The purchase is linked at once (`matched`, by hand, *receipt uploaded
+  by ...*), then the file is read in the background; when its total, card
+  digits or date disagree with the charge the row shows *check receipt*
+  with the reason, and the link stays until a person decides.
 
 ## Pipeline
 
@@ -138,7 +165,12 @@ dropped, and one that is off by more than 2% can only be `possible`. The
 
 **Manual actions** (the `action` field of `PATCH /api/transactions/<id>`):
 `confirm` a possible match, `link` an invoice chosen from the picker,
-`unlink`, `waive` (no invoice exists, with a reason) and `unwaive`.
+`unlink`, `waive` (no invoice exists, with a reason) and `unwaive`. A
+receipt added with *Add receipt...* is a manual link too: matching never
+moves it; *Remove...* (which also sends the file to the Drive trash) or
+*Unlink* undoes it. The month-wide matcher writes each row only if nobody
+changed it while it ran (compare and set), so an upload or a *Link* made
+during a run is kept; the result counts such rows as `skipped`.
 
 ## Access and roles
 
@@ -155,7 +187,7 @@ domain to be in `ALLOWED_DOMAINS` and derives the role:
 | Role | Who | May |
 |---|---|---|
 | `ap` | the addresses in `AP_EMAILS` (`ap@`, `manne@`); everyone, in password and open mode | upload, index, match, notify, edit cards, edit every transaction |
-| `member` | anyone else in the domain (IAP mode only) | read everything; edit only the transactions of cards whose **owner e-mail** (set by AP under *Cards...*) is theirs. `/api/transactions` returns an `editable` flag per row and the page disables the rest |
+| `member` | anyone else in the domain (IAP mode only) | read everything; edit only the transactions of cards whose **owner e-mail** (set by AP under *Cards...*) is theirs, which includes *Add receipt...* on cards with receipt upload. `/api/transactions` returns an `editable` flag per row and the page disables the rest. **Card 4421 has no owner e-mail yet**: until AP enters Bo Li's address under *Cards...*, only AP can add its receipts |
 
 In IAP mode nothing on the dashboard service is reachable without IAP: it
 has no `allUsers` invoker, only IAP's service agent, and the app answers 401
@@ -319,6 +351,24 @@ Two other modes exist, one edit of the deploy workflow away (step 5):
 - **Invoice picker** (from *Link...*): every invoice of the surrounding
   month folders, searchable by vendor, file, folder and amount; ones already
   linked elsewhere are greyed out.
+- **Add receipt...** replaces *Link...* on the missing purchases of cards
+  with receipt upload (`RECEIPT_UPLOAD_CARDS`, today 4421). The dialog takes
+  photos (*Take photo* opens the phone's camera) or files (*Choose photo or
+  PDF*; a drop zone on a computer), several photos for a long receipt, shows
+  where the file will go with *Change*, and saves with *Save receipt*: the
+  file goes to the Invoice folder (above) and is linked to the purchase.
+  *Already in Drive? Link a file instead* opens the picker. A dropped
+  connection is retried with the same upload id, so a receipt is never
+  saved twice. After saving, the dialog shows what the reader found and
+  offers the next purchase. Uploaded rows show *Uploaded by* with
+  *Remove...*; a disagreement shows *check receipt*.
+- **Receipts list** (`#/YYYY/MM?card=4421&view=receipts`, the Chat card's
+  *Add receipts* button, or *Receipts list* in the toolbar while that card
+  is picked): a phone-sized list of the card's purchases still needing a
+  receipt, each with *Take photo* and *Upload*, *No receipt for this
+  charge*, possible matches with *Confirm*, uploads to check, and the ones
+  added. Someone who may only read the card sees the list with a note to
+  ask AP to set them as the owner.
 - **Uploads this month** and **Last notifications** lists for AP.
 
 ## Chat reminders per card
@@ -341,6 +391,13 @@ space in Google Chat, click the space name, **Apps & integrations**,
 reconciliation`, save and copy the URL. Cards that are inactive (the flag
 under *Cards...*) are never notified.
 
+On cards with receipt upload (`RECEIPT_UPLOAD_CARDS`, today 4421) the card's
+*Invoice folder* button is replaced by **Add receipts**, first and blue,
+linking to `<dashboard>/receipts/<last4>/<YYYY>/<MM>`. That path (not a
+`#` link, which a Google sign-in on the way can drop) redirects to the
+receipts list, so the card holder can photograph each receipt from the
+phone. Chat cards posted before keep their old button until the next send.
+
 ## Endpoints
 
 *Auth* is what the app checks: behind IAP (the live deployment) "signed in" means a valid assertion for an allowed account; in password mode it means the session cookie a `POST /api/login` set, and every caller is `ap`; in open mode it means anyone.
@@ -358,6 +415,11 @@ under *Cards...*) are never notified.
 | `PATCH /api/transactions/<id>` | signed in, AP or the card's owner | body: `cost_center`, `usage`, `note`, and/or `action` (`waive` with `reason`, `unwaive`, `confirm`, `link` with `invoice_id`, `unlink`) |
 | `POST /api/ask?year&month[&card]` | signed in | voice mode: `{"question": "..."}` (up to 500 characters; `card` is four digits) answered as `{"answer", "source": "gemini" \| "summary"}` for the browser to read aloud; read only |
 | `POST /api/transactions/<id>/rematch` | signed in, AP or the card's owner | *Rematch*: reads new invoices for the purchase's months, then looks for its invoice again, as a background job (202 with the job, polled through `/api/jobs/current?id=`; 409 while another job runs; 400 for a waived, non-purchase or hand-linked row). The job's result has `outcome` (`found`, `same`, `kept`, `none` or `conflict`), the status and invoice the row now has, `changed`, `invoices_read`, `read_errors` with `read_error_files`, and the updated row; its progress has `stage` and `percent` |
+| `GET /api/transactions/<id>` | signed in | one row as the table shows it (with `checks` and `invoice.reading`); the receipt dialog polls it while the file is read |
+| `GET /api/transactions/<id>/receipt-target` | signed in, AP or the card's owner, card with receipt upload | where *Save receipt* would put the file: `month_folder`, `month_exists`, `vendor_folder`, `vendor_exists`, `source` (`this_month`, `earlier_month` or `new`), the month's `folders`, `limits`. Creates nothing |
+| `POST /api/transactions/<id>/receipt` | signed in, AP or the card's owner, card with receipt upload | multipart: one to ten `file` parts (photos; or one PDF), optional `vendor_folder` and `upload_id`. Saves to Drive and links the purchase: `201 {"status": "saved", "file", "transaction", "reading"}`; the same `upload_id` again answers `200` with `"replayed": true`; `409 not_saved` when the purchase already has its invoice, is waived or changed meanwhile (the file is then trashed); 413 too large, 415 not a photo or PDF, 429 more than 40 in ten minutes |
+| `DELETE /api/transactions/<id>/receipt` | signed in, AP or the card's owner | *Remove...*: unlinks a receipt added from the dashboard and sends its file to the Drive trash |
+| `GET /receipts/<last4>/<YYYY>/<MM>` | signed in | the Chat card's *Add receipts*: redirects to the receipts list |
 | `GET /api/invoices?year&month` | signed in | invoices of month-1..month+1 with a `linked` flag (the picker) |
 | `GET /api/cards` | signed in | cards |
 | `POST /api/cards` | AP | `{"last4", "label", "holder_name", "owner_email", "chat_space", "active"}` |
@@ -396,6 +458,7 @@ Job endpoints answer `409 {"status": "busy"}` while another job runs and
 | `GEMINI_EXTRACT_MODEL` / `GEMINI_MATCH_MODEL` | see `main.py` | the reading and judging models |
 | `AI_DISABLED` | | `1` skips every model call: no invoice reading, rules only, no PDF statements |
 | `INDEX_BATCH` / `INDEX_WORKERS` | `30` / `4` | files per index call and download threads |
+| `RECEIPT_UPLOAD_CARDS` | `4421` | cards (comma-separated last four digits, or `all`) whose rows get *Add receipt...* and whose Chat card gets *Add receipts*. The default lives in `main.py`, so the service and the weekly job agree; when setting it in the workflow, set it on both |
 
 ## Secrets
 
@@ -657,6 +720,10 @@ next idle period, or at once with *Run workflow*.
 | Deploy fails with *Permission denied on secret* or *secret not found* | step 6 (grant) or steps 3-4 (create) were skipped for that secret |
 | Deploy fails on `--iap` (*IAP API has not been used*, service agent missing) | the first two IAP commands in step 5 were not run |
 | The weekly reminder never runs, or the scheduler run fails with 403 | the scheduler job was not created, or the compute account may not start the Cloud Run job: step 8 |
+| *Add receipt...* is greyed out, or the receipts list says only the owner or AP can add receipts | the signed-in person is not the card's owner: AP enters their address as *Owner email* under *Cards...* |
+| *The receipt was not kept* (409) after *Save receipt* | someone linked, confirmed or waived the purchase while the file was saving; the file went to the Drive trash. Reload and check the row |
+| *This photo could not be prepared in this browser* | usually an iPhone HEIC photo on a Windows computer: add it on its own (it is sent as is), or take the photo on the phone |
+| The Chat card's button still says *Invoice folder* for card 4421 | the card was posted before receipt upload; *Send reminders* posts a new one |
 | Upload reports `new: 0` | the same lines are already stored (ids are deterministic); nothing is lost. Legacy `.xls` is refused: save as `.xlsx` |
 | Everything stays `missing` although invoices are filed | the invoices are not indexed yet (`AI_DISABLED`, or `remaining` > 0), are filed under a month folder outside month-1..month+1, or have no readable total (`extraction_error` in the picker) |
 | A Chat card's *Open dashboard* button opens the wrong host, or the header has no *Sign out* | `DASHBOARD_URL` or `LOGIN_URL` is not set on the dashboard: the workflow's *Point DASHBOARD_URL and LOGIN_URL at the services* step, which runs straight after the dashboard deploy, failed; or, on the sign-in page's very first deploy, one of the two steps after it failed (if *Deploy the sign-in page* itself failed there is no page yet, and a hidden *Sign out* is expected). Re-run the workflow, or set both by hand: `gcloud run services update ap-reconciliation --region us-central1 --project shp-ai-bot-2026 --update-env-vars DASHBOARD_URL=<dashboard url>,LOGIN_URL=<sign-in page url>` |

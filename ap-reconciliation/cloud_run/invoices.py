@@ -115,8 +115,25 @@ def gemini_mime(record):
     return EXT_MIME.get(ext, "")
 
 
-def extract_invoice(gemini, drive, record):
-    """Download one file and ask Gemini for its facts. Returns the row to store."""
+def upload_placeholder(record):
+    """The invoices row of a receipt just uploaded from the dashboard, before it is read.
+
+    It exists so the transaction can be linked at once (transactions.invoice_id references
+    invoices.id). total stays None, so no match job pairs it with another purchase, and
+    modified_time stays None, so index_invoices reads the file on its next run if the
+    background read does not finish. record: id, file_name, mime_type, web_view_link,
+    folder_path, month_folder, vendor_folder and size."""
+    row = {k: None for k in INVOICE_FIELDS}
+    row.update({k: record.get(k) for k in ("id", "file_name", "mime_type", "web_view_link", "folder_path",
+                                           "month_folder", "vendor_folder", "size")})
+    return row
+
+
+def extract_invoice(gemini, drive, record, content=None):
+    """Download one file and ask Gemini for its facts. Returns the row to store.
+
+    content=(bytes, mime type) reads bytes already in hand (a receipt just uploaded) instead of
+    downloading the file again."""
     # Every row carries the same keys (PostgREST rejects bulk payloads whose objects differ).
     row = {k: None for k in INVOICE_FIELDS}
     row.update({k: record[k] for k in ("id", "file_name", "mime_type", "web_view_link", "folder_path",
@@ -133,7 +150,7 @@ def extract_invoice(gemini, drive, record):
         row["is_invoice"] = False
         return row
     try:
-        data, actual = drive.download(record["_file"])
+        data, actual = content if content is not None else drive.download(record["_file"])
         if actual in EXPORT_AS_PDF:
             actual = "application/pdf"
         actual = MIME_ALIASES.get(actual, actual)
@@ -186,6 +203,8 @@ def index_invoices(store, drive, gemini, root_id, month_folders=None, limit=40, 
     todo, retry, moved = [], [], []
     for rec in files:
         prior = known.get(rec["id"])
+        if prior and str(prior.get("extraction_error") or "").startswith("upload withdrawn"):
+            continue           # a dashboard upload taken back (its trash failed): never a candidate
         if prior is None or (prior.get("modified_time") or "") != rec["modified_time"]:
             todo.append(rec)
         elif prior.get("extraction_error") and not str(prior["extraction_error"]).startswith("unsupported"):
@@ -197,11 +216,13 @@ def index_invoices(store, drive, gemini, root_id, month_folders=None, limit=40, 
                                                       "month_folder", "vendor_folder")}, removed_at=None)
                                for r in moved])
     walked = set(month_folders) if month_folders else None
-    gone = [{"id": fid, "removed_at": now_iso()} for fid, prior in known.items()
+    gone = [fid for fid, prior in known.items()
             if fid not in seen and not prior.get("removed_at")
             and (walked is None or prior.get("month_folder") in walked)]
     if gone:
-        store.upsert_invoices(gone)
+        # A PATCH, not an upsert: Postgres checks NOT NULL (file_name) on the row an upsert proposes
+        # to insert before it looks for the conflict, so {"id", "removed_at"} rows would be refused.
+        store.update_invoices(gone, {"removed_at": now_iso()})
         log(f"{len(gone)} indexed file(s) no longer in Drive; marked removed")
     batch = todo[:limit] + retry[:max(limit - len(todo), 0)]
     rows, errors = [], []

@@ -7,7 +7,9 @@ Invoice/YYYY MM/<vendor>/ to read every new invoice with Gemini, pairs
 purchases with invoices (rules first, Gemini judge for the rest), posts one
 "invoices needed" card to each credit card's Google Chat space, and serves the
 dashboard where card owners add the cost centre and usage of their charges,
-link or waive invoices, month by month.
+link or waive invoices, month by month. On cards in RECEIPT_UPLOAD_CARDS the
+holder can also photograph or upload a receipt from the dashboard: it is saved
+to Invoice/YYYY MM/<vendor>/ and linked to the purchase.
 
 Storage is a dedicated Supabase project (schema in ../schema.sql), reached
 with the service-role key from this server only. STORE=memory runs everything
@@ -29,8 +31,14 @@ Endpoints
   GET  /api/me                   who am I, role (ap | member), cards I own
   GET  /api/months               year/month navigation with per-card counts
   GET  /api/transactions?year&month[&card]
+  GET  /api/transactions/<id>    one row (the page polls it while an uploaded receipt is being read)
   PATCH /api/transactions/<id>   cost_center, usage, note, action=waive|unwaive|confirm|link|unlink
   POST /api/transactions/<id>/rematch  read new invoices, then look for this purchase's invoice again (202, a job)
+  GET  /api/transactions/<id>/receipt-target  where Add receipt… would save: month and vendor folder, folders
+  POST /api/transactions/<id>/receipt   multipart file (1-10 pages), vendor_folder, upload_id: save the
+                                 receipt in Drive and link it (201; 200 for a retried upload_id)
+  DELETE /api/transactions/<id>/receipt  Remove…: unlink a receipt added from the dashboard, trash its file
+  GET  /receipts/<last4>/<YYYY>/<MM>  the Chat card's Add receipts: redirects to that card's receipts list
   POST /api/ask?year&month[&card]  voice mode: {"question"} -> a short answer to read aloud (read only)
   GET  /api/invoices?year&month[&all=1]  invoices of the surrounding month folders (link picker)
   GET  /api/cards  POST /api/cards (AP)     card labels, owners, Chat space names
@@ -48,22 +56,24 @@ Env: SUPABASE_URL, SUPABASE_SERVICE_KEY, INVOICE_FOLDER_ID, STATEMENTS_FOLDER_ID
 GOOGLE_WORKSPACE_AP_CLIENT_ID/_CLIENT_SECRET/_REFRESH_TOKEN (Drive as ap@; ADC when unset),
 CARD_WEBHOOKS_JSON, GCHAT_WEBHOOK_URL, IAP_AUDIENCE, ALLOWED_DOMAINS,
 AP_EMAILS, DASHBOARD_URL, LOGIN_URL, GEMINI_EXTRACT_MODEL, GEMINI_MATCH_MODEL, AI_DISABLED, AUTH_DISABLED,
-DASHBOARD_PASSWORD, DASHBOARD_SESSION_DAYS, STORE.
+DASHBOARD_PASSWORD, DASHBOARD_SESSION_DAYS, RECEIPT_UPLOAD_CARDS (default 4421; "all" for every card), STORE.
 """
 
 import calendar
+import concurrent.futures
 import datetime as dt
 import hashlib
 import hmac
 import json
 import os
+import re
 import sys
 import threading
 import time
 import uuid
 from collections import OrderedDict
 
-from flask import Flask, g, jsonify, request, send_from_directory
+from flask import Flask, abort, g, jsonify, redirect, request, send_from_directory
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -80,8 +90,9 @@ import assistant  # noqa: E402
 import chat  # noqa: E402
 import invoices as invoice_index  # noqa: E402
 import matching  # noqa: E402
+import receipts  # noqa: E402
 import statements  # noqa: E402
-from drive import Drive, DriveError  # noqa: E402
+from drive import FOLDER, Drive, DriveError  # noqa: E402
 from gemini import Gemini, GeminiError  # noqa: E402
 from store import MemoryStore, StoreError, SupabaseStore, month_folder_name, neighbouring_months, now_iso  # noqa: E402
 
@@ -149,6 +160,17 @@ INDEX_BATCH = int(os.environ.get("INDEX_BATCH", "30"))
 INDEX_WORKERS = int(os.environ.get("INDEX_WORKERS", "4"))
 MAX_INDEX_ROUNDS = 100
 SERVICE = "ap-reconciliation"
+# Cards whose holders add receipts from the dashboard (Add receipt…, the receipts list, the Chat
+# card's Add receipts button). A code default, so the service and the weekly job agree without a
+# deploy change; "all" (or "*") switches it on for every card.
+RECEIPT_UPLOAD_CARDS = set(_csv("RECEIPT_UPLOAD_CARDS", "4421"))
+RECEIPT_WINDOW = 600            # receipt saves are counted over this many seconds...
+RECEIPT_MAX = 40                # ...per person
+
+
+def receipt_upload_enabled(last4):
+    return bool(RECEIPT_UPLOAD_CARDS & {"all", "*"}) or str(last4) in RECEIPT_UPLOAD_CARDS
+
 
 def auth_mode():
     """open: anyone who reaches the URL; password: the shared password first; iap: Google sign-in."""
@@ -568,7 +590,71 @@ def folder_url(folder_id):
     return f"https://drive.google.com/drive/folders/{folder_id}" if folder_id else ""
 
 
-_month_folder_ids = {}
+_month_folder_ids = {}         # "YYYY MM" -> id of that month's folder under Invoice
+_month_folder_names = {}       # folder id -> its name in Drive, when a person named it "2026-09" or "2026_9"
+
+
+def resolve_month_folder(drive, year, month, create):
+    """(id of the month's folder under Invoice, or None; created). The cache first (shared with
+    month_folder_url), then the root's folders: the exact "2026 09" wins, else a folder a person named
+    another way ("2026-09", "2026_9") that the index reads as the same month, else, when create is
+    set, a new "2026 09"."""
+    name = month_folder_name(year, month)
+    if name in _month_folder_ids:
+        folder_id = _month_folder_ids[name]
+        if not create or _folder_alive(drive, folder_id):
+            return folder_id, False
+        print(f"receipt: month folder {name} ({folder_id}) was deleted or trashed in Drive; looking it up again")
+        _month_folder_ids.pop(name, None)
+    folders = [f for f in drive.list_children(INVOICE_FOLDER_ID) if f.get("mimeType") == FOLDER]
+    found = next((f for f in folders if f.get("name") == name), None) or next(
+        (f for f in folders if invoice_index.parse_month_folder(f.get("name") or "") == name), None)
+    if found:
+        folder_id, created = found["id"], False
+        _month_folder_names[folder_id] = found.get("name") or name
+    elif create:
+        folder_id, created = drive.ensure_folder(INVOICE_FOLDER_ID, name), True
+    else:
+        return None, False
+    _month_folder_ids[name] = folder_id
+    return folder_id, created
+
+
+def _folder_alive(drive, folder_id):
+    """A cached folder before a file is saved into it: still there and not in the Drive trash (a
+    trashed folder still answers, and a file saved into it would be lost with it)."""
+    try:
+        return not drive.get(folder_id, fields="id,trashed").get("trashed")
+    except DriveError as exc:
+        if _drive_404(exc):
+            return False
+        raise
+
+
+def month_folder_label(folder_id, year, month):
+    """The month folder's name as it is in Drive (what the person sees there)."""
+    return _month_folder_names.get(folder_id) or month_folder_name(year, month)
+
+
+def _drive_404(exc):
+    return isinstance(exc, DriveError) and "-> 404" in str(exc)
+
+
+def in_month_folder(drive, year, month, create, work):
+    """work(month folder id or None, created), under the month's folder. A cached id that Drive no
+    longer knows (404: someone deleted the folder since) is forgotten and looked up once more."""
+    name = month_folder_name(year, month)
+    cached = name in _month_folder_ids
+    folder_id, created = resolve_month_folder(drive, year, month, create)
+    try:
+        return work(folder_id, created)
+    except DriveError as exc:
+        if not (cached and _drive_404(exc)):
+            raise
+        print(f"receipt: month folder {name} ({folder_id}) is gone from Drive; looking it up again")
+        _month_folder_ids.pop(name, None)
+        folder_id, created = resolve_month_folder(drive, year, month, create)
+        return work(folder_id, created)
 
 
 def month_folder_url(year, month):
@@ -741,8 +827,13 @@ def notify_month(year, month, card=None, sent_by="", dry_run=False, dashboard=No
         if card_info.get("active") is False:
             results.append({"card": last4, "sent": False, "detail": "card inactive"})
             continue
+        # Cards with receipt upload get "Add receipts" (a server path: it survives the Google sign-in,
+        # a #fragment would not) instead of the Invoice folder button.
+        receipts_url = (f"{base.rstrip('/')}/receipts/{last4}/{year}/{month:02d}"
+                        if base and receipt_upload_enabled(last4) else "")
         payload = chat.missing_invoices_card(card_info, year, month, bucket["missing"], bucket["possible"],
-                                             base, folder, bucket["uncoded"])
+                                             base, "" if receipts_url else folder, bucket["uncoded"],
+                                             receipts_url=receipts_url)
         if dry_run:
             results.append({"card": last4, "sent": False, "detail": "dry run", "missing": len(bucket["missing"]),
                             "possible": len(bucket["possible"]), "payload": payload})
@@ -778,16 +869,32 @@ def process_statement_sync(file_name, data, mime_type, uploaded_by, notify=True)
 # ---------------------------------------------------------------------------
 # Response shaping
 # ---------------------------------------------------------------------------
+def linked_by_hand(t):
+    """A receipt added from the dashboard, or an invoice picked with Link…: no matcher vouched for it."""
+    note = t.get("match_note") or ""
+    return t.get("match_method") == "manual" and note.startswith(("receipt uploaded by ", "linked by "))
+
+
 def with_invoices(store, txns):
     ids = sorted({t["invoice_id"] for t in txns if t.get("invoice_id")})
     invoices = {i["id"]: i for i in store.list_invoices(ids=ids)} if ids else {}
+    with _reading_lock:
+        reading = set(_reading)
     out = []
     for t in txns:
         row = {k: v for k, v in t.items() if k != "raw"}
         inv = invoices.get(t.get("invoice_id"))
         row["invoice"] = ({k: inv.get(k) for k in ("id", "file_name", "web_view_link", "vendor", "invoice_number",
-                                                   "invoice_date", "total", "currency", "vendor_folder", "month_folder")}
+                                                   "invoice_date", "total", "currency", "vendor_folder", "month_folder",
+                                                   "card_last4", "is_invoice", "extraction_error", "extracted_at",
+                                                   "summary")}
                           if inv else None)
+        if inv:
+            row["invoice"]["reading"] = inv["id"] in reading
+        # What the receipt says against the charge, worked out each time from the stored facts: a
+        # disagreement is shown, never turned into a status (the link stays as the person made it).
+        row["checks"] = (matching.invoice_checks(t, inv, reading=inv["id"] in reading)
+                         if inv and linked_by_hand(t) else [])
         row["status_label"] = STATUS_LABELS.get(t.get("invoice_status"), t.get("invoice_status"))
         out.append(row)
     return out
@@ -814,7 +921,322 @@ def card_view(c):
             "holder_name": c.get("holder_name") or "", "owner_email": c.get("owner_email") or "",
             "chat_space": c.get("chat_space") or "", "active": c.get("active", True) is not False,
             "webhook_configured": bool(CARD_WEBHOOKS.get(c["last4"])),
-            "webhook_default": bool(chat.webhook_for(CARD_WEBHOOKS, c["last4"]))}
+            "webhook_default": bool(chat.webhook_for(CARD_WEBHOOKS, c["last4"])),
+            "receipt_upload": receipt_upload_enabled(c["last4"])}
+
+
+# ---------------------------------------------------------------------------
+# Receipts added from the dashboard (cards in RECEIPT_UPLOAD_CARDS)
+#
+# The holder photographs or uploads the receipt of one purchase; it is saved to
+# Invoice/<YYYY MM of the purchase>/<vendor>/ and linked to it as a manual match,
+# which no matcher touches. Write order: Drive upload, a placeholder invoice row
+# (no total, so no match job can pair it; it also satisfies the foreign key), the
+# link (compare and set), then Gemini reads the bytes in the background. A link
+# that loses the race, or a placeholder that cannot be stored, trashes its own
+# file, so no orphan joins the matching pool.
+# ---------------------------------------------------------------------------
+_folder_lock = threading.Lock()        # month and vendor folders: find or create, one request at a time
+_reading = set()                       # invoice ids being read in the background
+_reading_lock = threading.Lock()
+_receipt_pool = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="receipt-read")
+_receipt_times = {}                    # email -> [time of each receipt save in the window]
+_receipt_lock = threading.Lock()
+WITHDRAWN = "upload withdrawn: the purchase changed while it was saving"
+
+
+def receipt_access(user, txn, need_enabled=True):
+    """AuthError(403) unless the card has receipt upload (when need_enabled) and the user may edit it."""
+    last4 = txn["card_last4"]
+    if need_enabled and not receipt_upload_enabled(last4):
+        raise AuthError(403, f"Receipt upload isn't switched on for card {last4}.")
+    if not may_edit(user, last4):
+        raise AuthError(403, f"Only the card's owner or accounts payable can add receipts to card {last4}.")
+
+
+def receipt_throttled(email):
+    """Counts this save; True when the person has saved RECEIPT_MAX in the last RECEIPT_WINDOW seconds
+    (a stuck retry loop on a phone, or a script). In-process, like the password counters: one instance."""
+    now = time.time()
+    with _receipt_lock:
+        for who in [w for w, times in _receipt_times.items() if not any(t > now - RECEIPT_WINDOW for t in times)]:
+            _receipt_times.pop(who, None)
+        mine = [t for t in _receipt_times.get(email, []) if t > now - RECEIPT_WINDOW]
+        throttled = len(mine) >= RECEIPT_MAX
+        if not throttled:
+            mine.append(now)
+        _receipt_times[email] = mine
+        return throttled
+
+
+def vendor_choice(drive, store, txn, month_id, requested, children=None):
+    """(vendor folder, its id when it already exists in the month folder, source) for txn's receipt.
+
+    requested (what the person typed under Change) is made safe and snapped to an existing spelling;
+    when nothing usable is left, or nothing was typed, the folder is suggested from the descriptor.
+    children: the month folder's listing when the caller has it already."""
+    year, month = int(txn["year"]), int(txn["month"])
+    if children is None:
+        children = drive.list_children(month_id) if month_id else []
+    this_month = {}
+    for f in children:
+        if f.get("mimeType") == FOLDER and f.get("name"):
+            this_month.setdefault(f["name"], f["id"])
+    # Other months' folders, from the index: the live listing above already covers this month.
+    current, earlier = month_folder_name(year, month), {}
+    months = [month_folder_name(y, m) for y, m in neighbouring_months(year, month, 12, 1)]
+    for inv in store.list_invoices(month_folders=months):
+        name = inv.get("vendor_folder")
+        if inv.get("removed_at") or not name or inv.get("month_folder") == current:
+            continue
+        files, latest = earlier.get(name, (0, ""))
+        earlier[name] = (files + 1, max(latest, inv.get("month_folder") or ""))
+    safe = receipts.safe_folder_name(requested) if requested else None
+    if safe:
+        name, in_month = receipts.snap_folder_name(safe, list(this_month), list(earlier))
+        source = "this_month" if in_month else ("earlier_month" if name in earlier else "new")
+    else:
+        name, source = receipts.suggest_vendor_folder(txn, list(this_month), earlier)
+    return name, (this_month.get(name) if source == "this_month" else None), source
+
+
+def receipt_target(txn):
+    """Where Add receipt… would save txn's receipt, for the dialog to show. Never creates anything."""
+    drive, store = get_drive(), get_store()
+    year, month = int(txn["year"]), int(txn["month"])
+
+    def look(month_id, _created):
+        children = drive.list_children(month_id) if month_id else []
+        name, existing, source = vendor_choice(drive, store, txn, month_id, None, children=children)
+        folders = {f["name"] for f in children if f.get("mimeType") == FOLDER and f.get("name")}
+        return {"month_folder": month_folder_label(month_id, year, month), "month_exists": bool(month_id),
+                "vendor_folder": name, "vendor_exists": bool(existing), "source": source,
+                "folders": sorted(folders, key=str.casefold),
+                "limits": {"max_pages": receipts.MAX_PAGES, "max_image_mb": receipts.MAX_IMAGE_BYTES // (1024 * 1024),
+                           "max_pdf_mb": receipts.MAX_PDF_BYTES // (1024 * 1024)}}
+
+    return in_month_folder(drive, year, month, False, look)
+
+
+def transaction_row(store, txn, editable=True):
+    row = with_invoices(store, [txn])[0]
+    row["editable"] = editable
+    return row
+
+
+def _trash_quietly(drive, file_id, why):
+    """Best effort: (moved to the Drive trash, error text)."""
+    try:
+        drive.trash(file_id)
+        return True, ""
+    except Exception as exc:  # noqa: BLE001
+        print(f"receipt: could not trash {file_id} ({why}): {exc}")
+        return False, str(exc)[:300]
+
+
+def _not_saved(store, txn, error):
+    return {"status": "not_saved", "error": error, "transaction": transaction_row(store, txn)}
+
+
+def _invoice_label(inv, txn):
+    """' (Uber · CAD 23.45)' for the invoice a purchase already has, '' when there is nothing to name."""
+    if not inv:
+        return ""
+    bits = [b for b in [inv.get("vendor") or inv.get("vendor_folder") or inv.get("file_name")] if b]
+    if inv.get("total") is not None:
+        bits.append(chat.money(inv["total"], inv.get("currency") or txn.get("currency") or "CAD"))
+    return f" ({' · '.join(bits)})" if bits else ""
+
+
+def _uploaded_with(drive, file_id):
+    """The upload_id a dashboard upload stored with the Drive file ('' when none or unreadable)."""
+    try:
+        meta = drive.get(file_id, fields="id,appProperties")
+    except DriveError as exc:
+        print(f"receipt: could not read {file_id} for a replay check: {exc}")
+        return ""
+    return (meta.get("appProperties") or {}).get("apUpload") or ""
+
+
+def _saved_body(store, txn, file_info, reading, replayed):
+    return {"status": "saved", "replayed": replayed, "reading": reading, "file": file_info,
+            "transaction": transaction_row(store, txn)}
+
+
+def save_receipt(user, txn_id, parts, vendor_text, upload_id):
+    """Save the receipt of one purchase from the dashboard. -> (HTTP status, body).
+
+    parts: [(client file name, bytes)] in page order. vendor_text: the folder the person typed (or the
+    suggestion the page showed); upload_id: one per receipt, so a retry after a lost response is
+    recognised instead of saved twice. Everything that can refuse the request does so before any
+    Drive call."""
+    store = get_store()
+    txn = store.get_transaction(txn_id)
+    if not txn:
+        return 404, {"error": "transaction not found"}
+    receipt_access(user, txn)
+    email = user["email"]
+    if receipt_throttled(email):
+        raise AuthError(429, "Too many receipts in ten minutes; wait a few minutes and try again.")
+    if upload_id and not receipts.UPLOAD_ID_RE.fullmatch(upload_id):
+        raise receipts.ReceiptError(400, "upload_id is malformed.")
+    data, mime, ext, pages = receipts.prepare_upload(parts)
+    drive = get_drive()
+
+    status = txn.get("invoice_status")
+    if txn.get("type") != "purchase":
+        return 409, _not_saved(store, txn, "Only purchases need a receipt.")
+    if status == "waived":
+        return 409, _not_saved(store, txn, "This purchase is marked as having no invoice; undo that first.")
+    if status == "matched":
+        if (upload_id and txn.get("invoice_id") and txn.get("match_note") == f"receipt uploaded by {email}"
+                and _uploaded_with(drive, txn["invoice_id"]) == upload_id):
+            # The same receipt again: the first save went through but its answer was lost.
+            inv = store.get_invoice(txn["invoice_id"]) or {}
+            with _reading_lock:
+                reading = txn["invoice_id"] in _reading
+            file_info = {"id": txn["invoice_id"], "name": inv.get("file_name"),
+                         "folder": str(inv.get("folder_path") or "").strip("/"), "folder_created": False,
+                         "web_view_link": inv.get("web_view_link"), "pages": pages, "size": len(data),
+                         "mime_type": inv.get("mime_type") or mime}
+            return 200, _saved_body(store, txn, file_info, reading, True)
+        inv = store.get_invoice(txn["invoice_id"]) if txn.get("invoice_id") else None
+        return 409, _not_saved(store, txn, f"This purchase already has its invoice{_invoice_label(inv, txn)}; "
+                                           "nothing was saved.")
+    if status not in ("missing", "possible"):
+        return 409, _not_saved(store, txn, "This purchase needs no invoice; nothing was saved.")
+
+    year, month = int(txn["year"]), int(txn["month"])
+
+    def place(month_id, month_created):
+        name, vendor_id, _source = vendor_choice(drive, store, txn, month_id, vendor_text,
+                                                 children=[] if month_created else None)
+        created = vendor_id is None
+        if created:
+            vendor_id = drive.ensure_folder(month_id, name)
+        taken = [] if created else [f.get("name") for f in drive.list_children(vendor_id)]
+        file_name = receipts.receipt_file_name(txn.get("txn_date"), name, ext, taken)
+        return month_id, name, vendor_id, created, file_name
+
+    with _folder_lock:     # two uploads never make two "2026 11" or "Uber" folders
+        month_id, vendor, vendor_id, folder_created, file_name = in_month_folder(drive, year, month, True, place)
+    month_label = month_folder_label(month_id, year, month)
+
+    # appProperties hold at most 124 bytes per key and value; an open-mode name can be long.
+    by = email.encode("utf-8")[:110].decode("utf-8", "ignore")
+    meta = drive.upload(vendor_id, file_name, data, mime,
+                        description=receipts.drive_description(txn, email, now_iso()),
+                        app_properties={"apTxn": txn_id, "apBy": by, "apUpload": upload_id or ""})
+    record = {"id": meta["id"], "file_name": meta.get("name") or file_name, "mime_type": meta.get("mimeType") or mime,
+              "web_view_link": meta.get("webViewLink") or "", "folder_path": f"/{month_label}/{vendor}",
+              "month_folder": month_folder_name(year, month), "vendor_folder": vendor, "size": len(data)}
+    try:
+        store.upsert_invoices([invoice_index.upload_placeholder(record)])
+    except StoreError:
+        _trash_quietly(drive, meta["id"], "its invoice row could not be stored")
+        raise
+
+    rejected = list(txn.get("rejected_invoice_ids") or [])
+    if status == "possible" and txn.get("invoice_id") and txn["invoice_id"] not in rejected:
+        rejected.append(txn["invoice_id"])      # the person's receipt replaces the proposal
+    patch = {"invoice_status": "matched", "invoice_id": meta["id"], "match_confidence": 1.0,
+             "match_method": "manual", "match_note": f"receipt uploaded by {email}",
+             "rejected_invoice_ids": rejected, "updated_by": email, "updated_at": now_iso()}
+    expect = {"invoice_status": status, "invoice_id": txn.get("invoice_id"), "match_method": txn.get("match_method")}
+    try:
+        linked = store.update_transaction(txn_id, patch, expect=expect)
+    except StoreError as exc:                   # the unique index: that id is linked elsewhere
+        print(f"receipt: link of {meta['id']} to {txn_id} refused: {exc}")
+        linked = None
+    if linked is None:
+        # The purchase changed while the file went up (a match job, a Link, a waive): take the
+        # upload back so no stray copy joins the matching pool.
+        _trash_quietly(drive, meta["id"], "the purchase changed while it was saving")
+        store.update_invoices([meta["id"]], {"removed_at": now_iso(), "extraction_error": WITHDRAWN})
+        current = store.get_transaction(txn_id)
+        status_now = (current or {}).get("invoice_status")
+        label = STATUS_LABELS.get(status_now, status_now) if current else "removed"
+        print(f"receipt: {email} {txn_id} withdrawn ({meta['id']}): the purchase is now {label}")
+        return 409, {"status": "not_saved", "withdrawn": True,
+                     "error": f"This purchase changed while your receipt was saving (now: {label}), so the receipt "
+                              "was not kept. Reload to see it.",
+                     "transaction": transaction_row(store, current) if current else None}
+
+    reading = False
+    if get_gemini() is not None:
+        record.update({"modified_time": meta.get("modifiedTime"), "size": len(data), "_file": meta})
+        with _reading_lock:
+            _reading.add(meta["id"])
+        try:
+            _receipt_pool.submit(read_receipt, record, data, mime)
+            reading = True
+        except RuntimeError as exc:             # the pool is closing with the instance; the index reads it
+            with _reading_lock:
+                _reading.discard(meta["id"])
+            print(f"receipt: background read of {meta['id']} not started: {exc}")
+    print(f"receipt: {email} {txn_id} card {txn['card_last4']} -> {month_label}/{vendor}/{record['file_name']} "
+          f"({pages} page(s), {len(data)} bytes{', new folder' if folder_created else ''})")
+    file_info = {"id": meta["id"], "name": record["file_name"], "folder": f"{month_label}/{vendor}",
+                 "folder_created": folder_created, "web_view_link": record["web_view_link"], "pages": pages,
+                 "size": len(data), "mime_type": record["mime_type"]}
+    return 201, _saved_body(store, linked, file_info, reading, False)
+
+
+def read_receipt(record, data, mime):
+    """The receipt pool: Gemini reads the receipt just uploaded, from the bytes in hand (no download).
+
+    Writes only the invoice row, never the transaction, so it races with nothing. removed_at is left
+    out of the row, so a Remove made during the read stands. On any failure the index retries the
+    file (modified_time unset, or the stored extraction_error)."""
+    try:
+        row = invoice_index.extract_invoice(get_gemini(), get_drive(), record, content=(data, mime))
+        row.pop("removed_at", None)
+        get_store().upsert_invoices([row])
+        print(f"receipt read {record['id']}: " + (f"error {row['extraction_error']}" if row.get("extraction_error")
+              else f"{row.get('vendor')} {row.get('total')} {row.get('currency')} {row.get('invoice_date')}"))
+    except Exception as exc:  # noqa: BLE001
+        print(f"receipt read {record.get('id')} failed: {exc}")
+    finally:
+        with _reading_lock:
+            _reading.discard(record.get("id"))
+
+
+def remove_receipt(user, txn_id):
+    """Remove…: unlink a receipt added from the dashboard and move its file to the Drive trash.
+    -> (HTTP status, body). Not gated on RECEIPT_UPLOAD_CARDS, so an upload can still be taken back
+    after a card is switched off. The id is not added to rejected_invoice_ids: the file is gone."""
+    store = get_store()
+    txn = store.get_transaction(txn_id)
+    if not txn:
+        return 404, {"error": "transaction not found"}
+    receipt_access(user, txn, need_enabled=False)
+    invoice_id = txn.get("invoice_id")
+    not_uploaded = "This invoice wasn't added with Add receipt…; use Unlink."
+    if not (invoice_id and txn.get("match_method") == "manual"
+            and str(txn.get("match_note") or "").startswith("receipt uploaded by ")):
+        return 409, {"error": not_uploaded}
+    drive = get_drive()
+    try:
+        meta = drive.get(invoice_id, fields="id,appProperties")
+    except DriveError as exc:
+        if not _drive_404(exc):
+            raise
+        meta = None                             # already gone from Drive
+    if meta is not None and (meta.get("appProperties") or {}).get("apTxn") != txn_id:
+        return 409, {"error": not_uploaded}
+    patch = {"invoice_status": "missing", "invoice_id": None, "match_confidence": None, "match_method": None,
+             "match_note": None, "updated_by": user["email"], "updated_at": now_iso()}
+    updated = store.update_transaction(txn_id, patch, expect={"invoice_id": invoice_id, "match_method": "manual"})
+    if updated is None:
+        return 409, {"error": "This purchase changed meanwhile; reload."}
+    trashed, error = _trash_quietly(drive, invoice_id, "Remove") if meta is not None else (True, "")
+    store.update_invoices([invoice_id], {"removed_at": now_iso()})
+    print(f"receipt: {user['email']} removed {invoice_id} from {txn_id}"
+          + ("" if trashed else f" (not trashed: {error})"))
+    body = {"transaction": transaction_row(store, updated), "trashed": trashed}
+    if not trashed:
+        body["warning"] = f"Unlinked, but the file could not be moved to the Drive trash: {error}"
+    return 200, body
 
 
 # ---------------------------------------------------------------------------
@@ -828,6 +1250,11 @@ def _auth_error(exc):
 @app.errorhandler(statements.StatementError)
 def _statement_error(exc):
     return jsonify({"error": str(exc)}), 400
+
+
+@app.errorhandler(receipts.ReceiptError)
+def _receipt_error(exc):
+    return jsonify({"error": exc.message}), exc.status
 
 
 @app.errorhandler(StoreError)
@@ -983,6 +1410,18 @@ def api_transactions():
                     "notifications": store.list_notifications(year, month)[:20]})
 
 
+@app.route("/api/transactions/<txn_id>", methods=["GET"])
+def api_transaction_get(txn_id):
+    """One row as the table shows it (checks, invoice.reading): the page polls it while an uploaded
+    receipt is being read."""
+    user = require_user()
+    store = get_store()
+    txn = store.get_transaction(txn_id)
+    if not txn:
+        return jsonify({"error": "transaction not found"}), 404
+    return jsonify({"transaction": transaction_row(store, txn, may_edit(user, txn["card_last4"]))})
+
+
 @app.route("/api/transactions/<txn_id>", methods=["PATCH", "POST"])
 def api_transaction_update(txn_id):
     user = require_user()
@@ -1062,6 +1501,48 @@ def api_transaction_rematch(txn_id):
     if status == 202:
         payload["job"] = job_view(_jobs[payload["job"]["id"]])
     return jsonify(payload), status
+
+
+@app.route("/api/transactions/<txn_id>/receipt-target")
+def api_receipt_target(txn_id):
+    """Where Add receipt… would save this purchase's receipt: the month folder, the suggested vendor
+    folder and the month's folders to pick from. Creates nothing."""
+    user = require_user()
+    txn = get_store().get_transaction(txn_id)
+    if not txn:
+        return jsonify({"error": "transaction not found"}), 404
+    receipt_access(user, txn)
+    return jsonify(receipt_target(txn))
+
+
+@app.route("/api/transactions/<txn_id>/receipt", methods=["POST"])
+def api_receipt_save(txn_id):
+    """Add receipt…: multipart 'file' parts (one photo or PDF, or up to 10 photos of one receipt, in page
+    order), optional vendor_folder and upload_id. 201 saved, 200 the same upload_id again, 409 not kept."""
+    user = require_user()
+    parts = [(f.filename or "", f.read()) for f in request.files.getlist("file")]
+    status, body = save_receipt(user, txn_id, parts, request.form.get("vendor_folder") or "",
+                                request.form.get("upload_id") or "")
+    return jsonify(body), status
+
+
+@app.route("/api/transactions/<txn_id>/receipt", methods=["DELETE"])
+def api_receipt_remove(txn_id):
+    """Remove…: unlink a receipt added from the dashboard and move its file to the Drive trash."""
+    user = require_user()
+    status, body = remove_receipt(user, txn_id)
+    return jsonify(body), status
+
+
+@app.route("/receipts/<last4>/<year>/<month>")
+def receipts_link(last4, year, month):
+    """The Chat card's Add receipts button: on to that card's receipts list. A server path because a
+    #fragment does not survive IAP's interactive sign-in. No require_user: IAP already guards the path
+    and nothing but the redirect is returned."""
+    if not (re.fullmatch(r"[0-9]{4}", last4) and re.fullmatch(r"[0-9]{4}", year) and 2000 <= int(year) <= 2100
+            and re.fullmatch(r"[0-9]{1,2}", month) and 1 <= int(month) <= 12):
+        abort(404)
+    return redirect(f"/#/{year}/{int(month):02d}?card={last4}&view=receipts", 302)
 
 
 ASK_SLOTS = 2

@@ -259,7 +259,16 @@ class SupabaseStore:
         return rows[0] if rows else None
 
     def upsert_invoices(self, rows):
+        """Full rows only. Postgres checks NOT NULL (file_name) on the row an upsert proposes to
+        insert before it finds the conflict, so a partial row fails even when the id exists:
+        stamp known rows with update_invoices instead."""
         self.upsert("invoices", rows, "id")
+
+    def update_invoices(self, ids, patch):
+        """Set the same columns on existing invoices (removed_at, extraction_error)."""
+        ids = list(ids)
+        for start in range(0, len(ids), 100):     # keep each URL short
+            self._req("PATCH", "invoices", {"id": self._in(ids[start:start + 100])}, patch, prefer="return=minimal")
 
     # -- misc ---------------------------------------------------------------
     def log_notification(self, row):
@@ -414,6 +423,12 @@ class MemoryStore:
         with self.lock:
             for r in rows:
                 self.invoices.setdefault(r["id"], {}).update(r)
+
+    def update_invoices(self, ids, patch):
+        with self.lock:
+            for i in ids:
+                if i in self.invoices:
+                    self.invoices[i].update(patch)
 
     def log_notification(self, row):
         self.notifications.append(dict(row))
