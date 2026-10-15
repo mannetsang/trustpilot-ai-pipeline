@@ -12,6 +12,7 @@ reset is a few seconds away. Tokens come from getTokens with the SKUVAULT_EMAIL 
 login and are kept for the life of the instance.
 """
 
+import re
 import threading
 import time
 
@@ -24,6 +25,19 @@ MAX_THROTTLE_WAIT = 20          # seconds: a longer wait fails the call instead 
 
 class SkuVaultError(Exception):
     pass
+
+
+_CONTAINER = re.compile(r"^[^\[\]]*\[([^\[\]]+)\]$")
+
+
+def removal_code(location):
+    """The code removeItem wants for a bin. getInventoryByLocation lists a bin inside a location as
+    "Z1[Z1A03]" (location Z1, bin Z1A03) but removeItem takes the bin's own code, "Z1A03"; a plain
+    location such as "Z1" or "GCE" is sent as it is. (Checked 2026-10-15 against 521 successful
+    removals by the Walmart/Amazon bridge in the data warehouse's skuvault_removals: none sent the
+    bracketed form.)"""
+    match = _CONTAINER.match(location or "")
+    return match.group(1) if match else location
 
 
 class NotEnoughStock(SkuVaultError):
@@ -128,7 +142,9 @@ class SkuVaultClient:
 
     # -- writes -------------------------------------------------------------------------------
     def remove(self, sku, warehouse_id, location_code, qty, reason):
-        data = self._post("inventory/removeItem", {"Sku": sku, "WarehouseId": warehouse_id, "LocationCode": location_code,
+        """location_code as getInventoryByLocation lists it; sent as removal_code(location_code)."""
+        data = self._post("inventory/removeItem", {"Sku": sku, "WarehouseId": warehouse_id,
+                                                   "LocationCode": removal_code(location_code),
                                                    "Quantity": qty, "Reason": reason})
         status = data.get("RemoveItemStatus")
         if status != "Success":

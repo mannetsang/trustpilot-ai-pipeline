@@ -329,6 +329,12 @@ class SkuVaultFlowTests(ApiTestCase):
 
 
 class SkuVaultClientTests(unittest.TestCase):
+    def test_bins_inside_a_location_are_removed_by_their_own_code(self):
+        # As the bridge sends them (data warehouse skuvault_removals): W1[W103] -> W103, Z1 -> Z1.
+        for listed, sent in (("Z1[Z1A03]", "Z1A03"), ("W1[W103]", "W103"), ("Z1[Z120-1]", "Z120-1"),
+                             ("RCE", "RCE"), ("GCE", "GCE"), ("ZCE[ZCE13-1]", "ZCE13-1"), ("", "")):
+            self.assertEqual(skuvault.removal_code(listed), sent)
+
     def test_plan_least_stock_first(self):
         bins = [{"warehouse_code": "WH1", "location_code": "B", "quantity": 78},
                 {"warehouse_code": "WH1", "location_code": "A", "quantity": 2},
@@ -372,7 +378,7 @@ class SkuVaultClientTests(unittest.TestCase):
             c.remove("SKU-1", 1, "Z1[Z1A03]", 2, "Sample")
         sent = session.post.call_args_list[2].kwargs["json"]
         self.assertEqual((sent["Sku"], sent["WarehouseId"], sent["LocationCode"], sent["Quantity"], sent["Reason"], sent["TenantToken"]),
-                         ("SKU-1", 1, "Z1[Z1A03]", 2, "Sample", "t"))
+                         ("SKU-1", 1, "Z1A03", 2, "Sample", "t"))
         with self.assertRaises(skuvault.SkuVaultError):
             c.remove("SKU-1", 1, "Z1[Z1A03]", 2, "Sample")
 
