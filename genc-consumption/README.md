@@ -6,6 +6,13 @@ lines. Live since 2026-10-15 at
 <https://genc-consumption-eqr4wko2oa-nn.a.run.app> (Google sign-in,
 `superhairpieces.com` accounts only).
 
+The page has two tabs under one row of filters (year, month, reason, requester,
+status, source, search), which apply to both: **Transactions** (the first, and
+the default) lists every line, with 拿货 / 出库 ticks, edit and CSV download;
+**Charts** has the totals, spend by month (chart or table), and spend by reason,
+requester and SKU. The open tab is kept in the address (`#transactions`,
+`#charts`), so a reload or a shared link opens the same one.
+
 | | |
 |---|---|
 | Google Cloud project | `genc-consumption-2026` (number `83164121214`), billing `014EEF-576861-01E7C3` |

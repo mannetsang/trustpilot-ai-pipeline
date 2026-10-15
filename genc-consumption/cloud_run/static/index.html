@@ -88,6 +88,14 @@ a { color: var(--accent); }
   border-radius: 8px; padding: 10px 12px; margin: 0 0 12px; display: flex; gap: 10px; align-items: flex-start; }
 .notice.error { border-left-color: var(--critical); }
 
+/* Tabs */
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--grid); margin: 0 0 14px; overflow-x: auto; }
+.tabs button { border: 0; background: transparent; padding: 9px 14px; cursor: pointer; color: var(--ink-2); font-weight: 500;
+  border-bottom: 2px solid transparent; margin-bottom: -1px; border-radius: 6px 6px 0 0; white-space: nowrap; }
+.tabs button:hover { color: var(--ink); background: var(--surface-2); }
+.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+.tabs .count { color: var(--muted); font-weight: 400; margin-left: 6px; font-size: 12px; font-variant-numeric: tabular-nums; }
+
 /* Filters */
 .filters { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: end; margin: 4px 0 16px; }
 .filters label { display: grid; gap: 3px; font-size: 12px; color: var(--muted); }
@@ -263,6 +271,11 @@ footer a { color: var(--muted); }
 
   <div id="notices"></div>
 
+  <nav class="tabs" role="tablist" aria-label="Views" id="tabs">
+    <button type="button" role="tab" id="tab-transactions" aria-controls="panel-transactions" aria-selected="true">Transactions<span class="count" id="tab-count"></span></button>
+    <button type="button" role="tab" id="tab-charts" aria-controls="panel-charts" aria-selected="false" tabindex="-1">Charts</button>
+  </nav>
+
   <section class="filters" aria-label="Filters">
     <label>Year <select id="f-year"></select></label>
     <label>Month <select id="f-month"></select></label>
@@ -283,48 +296,52 @@ footer a { color: var(--muted); }
   </section>
 
   <main id="main">
-    <section class="tiles" id="tiles" aria-label="Totals"></section>
-
-    <section class="card">
-      <div class="card-head">
-        <h2>Spend by month</h2>
-        <span class="sub" id="month-sub"></span>
-        <span class="spacer"></span>
-        <div class="seg" role="group" aria-label="View">
-          <button type="button" id="v-chart" aria-pressed="true">Chart</button>
-          <button type="button" id="v-table" aria-pressed="false">Table</button>
+    <div role="tabpanel" id="panel-transactions" aria-labelledby="tab-transactions">
+      <section class="card">
+        <div class="card-head">
+          <h2 id="lines-title">Transactions</h2>
+          <span class="sub" id="lines-sub"></span>
+          <span class="spacer"></span>
+          <button class="btn small" id="csv-btn" type="button">Download CSV</button>
         </div>
-      </div>
-      <div class="legend" id="month-legend"></div>
-      <div class="chart" id="month-chart" style="margin-top:8px"></div>
-      <div class="table-wrap" id="month-table" hidden></div>
-    </section>
+        <div class="table-wrap"><table id="lines"></table></div>
+        <div class="more" id="more" hidden><button class="btn small" type="button" id="more-btn">Show more</button></div>
+      </section>
+    </div>
 
-    <section class="grid3">
-      <div class="card">
-        <div class="card-head"><h2>By reason</h2><span class="sub">click to filter</span></div>
-        <div class="bars" id="by-reason"></div>
-      </div>
-      <div class="card">
-        <div class="card-head"><h2>By requester</h2><span class="sub">top 8</span></div>
-        <div class="bars" id="by-who"></div>
-      </div>
-      <div class="card">
-        <div class="card-head"><h2>Top SKUs</h2><span class="sub">by cost</span></div>
-        <div class="bars" id="by-sku"></div>
-      </div>
-    </section>
+    <div role="tabpanel" id="panel-charts" aria-labelledby="tab-charts" hidden>
+      <section class="tiles" id="tiles" aria-label="Totals"></section>
 
-    <section class="card">
-      <div class="card-head">
-        <h2>Lines</h2>
-        <span class="sub" id="lines-sub"></span>
-        <span class="spacer"></span>
-        <button class="btn small" id="csv-btn" type="button">Download CSV</button>
-      </div>
-      <div class="table-wrap"><table id="lines"></table></div>
-      <div class="more" id="more" hidden><button class="btn small" type="button" id="more-btn">Show more</button></div>
-    </section>
+      <section class="card">
+        <div class="card-head">
+          <h2>Spend by month</h2>
+          <span class="sub" id="month-sub"></span>
+          <span class="spacer"></span>
+          <div class="seg" role="group" aria-label="View">
+            <button type="button" id="v-chart" aria-pressed="true">Chart</button>
+            <button type="button" id="v-table" aria-pressed="false">Table</button>
+          </div>
+        </div>
+        <div class="legend" id="month-legend"></div>
+        <div class="chart" id="month-chart" style="margin-top:8px"></div>
+        <div class="table-wrap" id="month-table" hidden></div>
+      </section>
+
+      <section class="grid3">
+        <div class="card">
+          <div class="card-head"><h2>By reason</h2><span class="sub">click to filter</span></div>
+          <div class="bars" id="by-reason"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2>By requester</h2><span class="sub">top 8</span></div>
+          <div class="bars" id="by-who"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2>Top SKUs</h2><span class="sub">by cost</span></div>
+          <div class="bars" id="by-sku"></div>
+        </div>
+      </section>
+    </div>
   </main>
 
   <footer id="footer"></footer>
@@ -378,7 +395,7 @@ const $ = (id) => document.getElementById(id);
 
 const state = {
   data: null, reasons: [], user: null, config: null,
-  view: "chart", sort: { key: "entry_date", dir: -1 }, shown: PAGE,
+  view: "chart", tab: "transactions", sort: { key: "entry_date", dir: -1 }, shown: PAGE,
   f: { year: "", month: "", reason: "", who: "", status: "", source: "", q: "" },
 };
 
@@ -529,6 +546,12 @@ function setFilter(key, value) {
   if (key === "status") $("f-status").value = state.f.status;
   filtersChanged();
 }
+function showWaiting() {
+  state.f.status = "waiting";
+  $("f-status").value = "waiting";
+  filtersChanged();
+  setTab("transactions", true);
+}
 function filtersChanged() {
   state.shown = PAGE;
   try { sessionStorage.setItem("gc-filters", JSON.stringify(state.f)); } catch (e) { /* private mode */ }
@@ -546,6 +569,24 @@ function matches(r, skipMonth) {
   if (f.status === "done" && r._waiting) return false;
   if (f.q) { for (const w of f.q.toLowerCase().split(/\s+/)) if (w && !r._search.includes(w)) return false; }
   return true;
+}
+
+// ---------- tabs ----------
+const TABS = ["transactions", "charts"];
+function setTab(name, focus) {
+  if (!TABS.includes(name)) name = "transactions";
+  state.tab = name;
+  for (const t of TABS) {
+    const on = t === name;
+    $(`tab-${t}`).setAttribute("aria-selected", String(on));
+    $(`tab-${t}`).tabIndex = on ? 0 : -1;
+    $(`panel-${t}`).hidden = !on;
+  }
+  if (focus) $(`tab-${name}`).focus();
+  // The address keeps the tab, so a reload or a shared link opens the same view.
+  if (location.hash !== `#${name}`) history.replaceState(null, "", `#${name}`);
+  hideTip();
+  render();
 }
 
 // ---------- render ----------
@@ -594,8 +635,7 @@ function renderTiles(rows, yearRows) {
     el("span", { class: "value" }, String(waiting)),
     waiting
       ? el("span", { class: "foot status wait" }, el("span", { class: "ic", "aria-hidden": "true" }, "!"),
-          el("button", { class: "linkish", type: "button", onclick: () => setFilter("status", "waiting") },
-            state.f.status === "waiting" ? "Showing these" : "Show these lines"))
+          el("button", { class: "linkish", type: "button", onclick: showWaiting }, "Show these lines"))
       : el("span", { class: "foot status ok" }, el("span", { class: "ic", "aria-hidden": "true" }, "✓"), "All picked up and stocked out"));
   $("tiles").replaceChildren(
     el("div", { class: "card tile hero" },
@@ -670,6 +710,7 @@ function roundedTop(x, y, w, h, r) {
 
 function drawColumns(reasons, m) {
   const box = $("month-chart");
+  if (!box.clientWidth) return;           // its tab is hidden: drawn when the tab opens
   const W = Math.max(box.clientWidth, 280);
   const plotH = 240, top = 20, axisH = 26, left = 48, right = 8;
   const H = top + plotH + axisH;
@@ -829,7 +870,9 @@ function sortRows(rows) {
 function renderLines(rows) {
   const sorted = sortRows(rows);
   const shown = sorted.slice(0, state.shown);
-  $("lines-sub").textContent = `${num.format(rows.length)} line${rows.length === 1 ? "" : "s"} · ${periodName()}`;
+  const waiting = rows.filter((r) => r._waiting).length;
+  $("lines-sub").textContent = `${num.format(rows.length)} line${rows.length === 1 ? "" : "s"} · ${fmtMoney(sum(rows))} · ${waiting} waiting for 拿货 / 出库 · ${periodName()}`;
+  $("tab-count").textContent = num.format(rows.length);
   const head = el("tr", {}, ...COLS.map((c) => {
     const th = el("th", { class: (c.num ? "num " : "") + "sortable", tabindex: 0, scope: "col",
       "aria-sort": state.sort.key === c.key ? (state.sort.dir > 0 ? "ascending" : "descending") : null }, c.label);
@@ -1102,6 +1145,15 @@ async function removeLine() {
 
 // ---------- wiring ----------
 $("add-btn").addEventListener("click", openAdd);
+for (const t of TABS) $(`tab-${t}`).addEventListener("click", () => setTab(t));
+$("tabs").addEventListener("keydown", (ev) => {
+  const i = TABS.indexOf(state.tab);
+  const next = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: TABS.length - 1 }[ev.key];
+  if (next === undefined) return;
+  ev.preventDefault();
+  setTab(TABS[(next + TABS.length) % TABS.length], true);
+});
+window.addEventListener("hashchange", () => { const t = location.hash.slice(1); if (t !== state.tab) setTab(t); });
 $("e-add-line").addEventListener("click", () => { const l = itemLine({}); $("e-items").append(l); updateTotals(); l.querySelector("input").focus(); });
 $("e-cancel").addEventListener("click", () => dlg.close());
 $("e-delete").addEventListener("click", removeLine);
@@ -1111,10 +1163,11 @@ $("v-table").addEventListener("click", () => { state.view = "table"; render(); }
 $("more-btn").addEventListener("click", () => { state.shown += PAGE; render(); });
 $("csv-btn").addEventListener("click", downloadCsv);
 let resizeTimer = null;
-new ResizeObserver(() => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { if (state.data && state.view === "chart") renderMonthly(state.data.rows.filter((r) => r._date && matches(r, true))); }, 80); }).observe($("month-chart"));
+new ResizeObserver(() => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { if (state.data && state.tab === "charts" && state.view === "chart") renderMonthly(state.data.rows.filter((r) => r._date && matches(r, true))); }, 80); }).observe($("month-chart"));
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && state.data && !dlg.open) load(false); });
 
 (async () => {
+  setTab(location.hash.slice(1));
   try { state.config = await api("GET", "/api/config"); } catch (e) { state.config = null; }
   await load(true);
 })();
