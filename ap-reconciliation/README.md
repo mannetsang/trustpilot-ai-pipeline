@@ -362,12 +362,21 @@ Two other modes exist, one edit of the deploy workflow away (step 5):
   saved twice. After saving, the dialog shows what the reader found and
   offers the next purchase. Uploaded rows show *Uploaded by* with
   *Remove...*; a disagreement shows *check receipt*.
+- **On a phone** (640px and narrower) the table becomes one block per
+  purchase: date, description and amount, then the status (*Invoice
+  missing*, *Invoice found* with the linked file, *Possible match*) and its
+  buttons, then cost centre and usage; a coloured edge (red missing, amber
+  possible, green found) shows the status while scrolling. The status
+  filters above (*Missing*, *Matched*, ...) work as on a computer.
 - **Receipts list** (`#/YYYY/MM?card=4421&view=receipts`, the Chat card's
   *Add receipts* button, or *Receipts list* in the toolbar while that card
   is picked): a phone-sized list of the card's purchases still needing a
   receipt, each with *Take photo* and *Upload*, *No receipt for this
-  charge*, possible matches with *Confirm*, uploads to check, and the ones
-  added. Someone who may only read the card sees the list with a note to
+  charge*, possible matches with *Confirm*, uploads to check; a summary
+  at the top (*33 missing*, *2 found*, *1 no receipt*) and, below, every
+  purchase that has its invoice (*Invoice found*: the file, and whether it
+  was found automatically, linked by hand or added from the dashboard) and
+  the ones marked as having no receipt (with *Undo*). Someone who may only read the card sees the list with a note to
   ask AP to set them as the owner.
 - **Uploads this month** and **Last notifications** lists for AP.
 

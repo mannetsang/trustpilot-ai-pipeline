@@ -201,6 +201,39 @@
     table.txns tbody tr:hover td { background: #fbfcfc; }
     table.txns tr.row-muted td { color: var(--text-mute); }
     table.txns tr.row-muted .amt { color: var(--text-mute); font-weight: 400; }
+    /* Phones: the table would push the Invoice column (the status) off the screen, so each purchase is a
+       block instead: date, description and amount, then the status with its file and buttons, then cost
+       centre and usage, then card and who changed it; a coloured edge says the status at a glance. */
+    @media (max-width: 640px) {
+      .table-wrap { overflow-x: visible; }
+      table.txns { display: block; width: 100% !important; font-size: 13px; }
+      table.txns thead, table.txns colgroup { display: none; }
+      table.txns tbody { display: block; }
+      table.txns tr[data-id] { display: grid; grid-template-columns: 54px minmax(0, 1fr) minmax(0, 1fr) auto;
+        grid-template-areas: "date desc desc amount" "inv inv inv inv" "cost cost usage usage" "card card by by";
+        column-gap: 10px; row-gap: 6px; padding: 10px 12px 12px 16px; border-bottom: 1px solid var(--border-subtle); position: relative; }
+      table.txns tr[data-id] > td { display: block; padding: 0; border: 0; min-width: 0; overflow: visible; background: none !important; }
+      table.txns tr[data-id]::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 12px; width: 4px; border-radius: 0 3px 3px 0; background: var(--border); }
+      table.txns tr.st-missing::before { background: var(--down); }
+      table.txns tr.st-possible::before { background: var(--warn-text); }
+      table.txns tr.st-matched::before { background: var(--up-ink); }
+      table.txns td[data-col="date"] { grid-area: date; white-space: normal !important; }
+      table.txns td[data-col="date"] .sub { display: none; }      /* the posting date: no room, and rarely needed */
+      table.txns td[data-col="desc"] { grid-area: desc; }
+      table.txns td[data-col="desc"] .desc { white-space: normal; overflow-wrap: anywhere; font-weight: 600; }
+      table.txns td[data-col="amount"] { grid-area: amount; }
+      table.txns td[data-col="invoice"] { grid-area: inv; }
+      table.txns td[data-col="invoice"] .pill { font-size: 12px; }
+      table.txns td[data-col="invoice"] .truncate { white-space: normal; max-width: none !important; overflow-wrap: anywhere; }
+      table.txns td[data-col="invoice"] .btn-row .btn-xs { min-height: 32px; padding-left: 10px; padding-right: 10px; }
+      table.txns td[data-col="cost"] { grid-area: cost; }
+      table.txns td[data-col="usage"] { grid-area: usage; }
+      table.txns td[data-col="card"] { grid-area: card; }
+      table.txns td[data-col="by"] { grid-area: by; text-align: right; font-size: 11.5px; color: var(--text-mute); }
+      table.txns td[data-col="by"] > div { display: inline; }
+      table.txns td[data-col="by"] .truncate + .sub::before { content: " · "; }
+      table.txns .inp { height: 34px; font-size: 13px; width: 100%; }
+    }
     .amt { font-weight: 600; white-space: nowrap; text-align: right; }
     .td-right { text-align: right; }
     .td-desc .desc { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -356,6 +389,13 @@
     .rv-check { margin-top: 6px; color: var(--warn-text); font-size: 14px; }
     .rv-done { display: flex; align-items: center; gap: 10px; }
     .rv-done > div { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .rv-done .rv-desc { font-weight: 500; }
+    .rv-done-amt { color: var(--text-mid); font-weight: 600; white-space: nowrap; }
+    .rv-found { margin-top: 4px; font-size: 14px; color: var(--up-ink); }
+    .rv-status { margin-top: 6px; }
+    .rv-status .pill { font-size: 12.5px; }
+    .rv-summary { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .rv-summary .pill { font-size: 12.5px; }
     .rv-empty { text-align: center; padding: 28px 16px; color: var(--text-mid); }
     .rv-foot { margin: 22px 0 8px; text-align: center; font-size: 14px; }
   </style>
@@ -1556,8 +1596,9 @@
     },
   };
   function rowHtml(t) {
-    return '<tr data-id="' + esc(t.id) + '" class="' + (t.type !== 'purchase' ? 'row-muted' : '') + '">' +
-      shownColumns().map(function (c) { return CELLS[c.key](t); }).join('') + '</tr>';
+    // The status class and each cell's data-col drive the phone layout (one block per purchase).
+    return '<tr data-id="' + esc(t.id) + '" class="st-' + esc(t.invoice_status || 'missing') + (t.type !== 'purchase' ? ' row-muted' : '') + '">' +
+      shownColumns().map(function (c) { return CELLS[c.key](t).replace(/^<td/, '<td data-col="' + c.key + '"'); }).join('') + '</tr>';
   }
 
   function renderTable() {
@@ -2495,7 +2536,7 @@
     var src = t.source_amount !== null && t.source_amount !== undefined && t.source_currency ? '<div class="sub">' + esc(money(t.source_amount, t.source_currency)) + '</div>' : '';
     var html = '<div class="rv-item" data-id="' + esc(t.id) + '"><div class="rv-top"><div class="min-w-0">' +
       '<div class="rv-desc"><span class="rv-date">' + esc(fmtDay(t.txn_date)) + '</span> ' + esc(t.description) + '</div>' +
-      (t.city ? '<div class="sub">' + esc(t.city) + '</div>' : '') + '</div>' +
+      (t.city ? '<div class="sub">' + esc(t.city) + '</div>' : '') + rvStatusPill(t) + '</div>' +
       '<div class="rv-amt">' + esc(money(t.amount, t.currency)) + src + '</div></div>';
     var inv = t.invoice;
     if (t.invoice_status === 'possible' && inv) {
@@ -2516,6 +2557,33 @@
     }
     return html + '</div>';
   }
+  function rvStatusPill(t) {
+    var st = t.invoice_status || 'missing';
+    return '<div class="rv-status"><span class="pill ' + (STATUS_PILL[st] || 'pill-grey') + '">' + esc(t.status_label || st) + '</span></div>';
+  }
+  // A purchase that has its invoice: what was linked (vendor, total, folder; the file opens in Drive) and how.
+  function rvFoundHtml(t) {
+    var inv = t.invoice || {}, by = uploadedBy(t);
+    var what = [inv.vendor || inv.vendor_folder || inv.file_name || 'Invoice'];
+    if (inv.total !== null && inv.total !== undefined) what.push(money(inv.total, inv.currency || ''));
+    var where = ['Invoice', inv.month_folder, inv.vendor_folder].filter(Boolean).join(' › ');
+    var file = safeUrl(inv.web_view_link)
+      ? '<a class="link" href="' + esc(safeUrl(inv.web_view_link)) + '" target="_blank" rel="noopener noreferrer" title="Open the file in Drive">' + esc(what.join(' · ')) + ' ↗</a>'
+      : esc(what.join(' · '));
+    var how = by ? 'Added from the dashboard by ' + by.split('@')[0] : (t.match_method === 'manual' ? 'Linked by hand' : 'Found automatically');
+    return '<div class="rv-item rv-done" data-id="' + esc(t.id) + '"><div class="min-w-0">' +
+      '<div class="rv-desc"><span class="rv-date">' + esc(fmtDay(t.txn_date)) + '</span> ' + esc(t.description) + ' <span class="rv-done-amt">' + esc(money(t.amount, t.currency)) + '</span></div>' +
+      '<div class="rv-found">✓ ' + file + '</div><div class="sub">' + esc(how + (where !== 'Invoice' ? ' · ' + where : '')) + '</div></div>' +
+      (by && t.editable ? '<button type="button" class="btn btn-ghost" data-rv="remove">Remove…</button>' : '') + '</div>';
+  }
+  function rvWaivedHtml(t) {
+    var why = String(t.match_note || '').replace(/^waived:\s*/, '');
+    return '<div class="rv-item rv-done" data-id="' + esc(t.id) + '"><div class="min-w-0">' +
+      '<div class="rv-desc"><span class="rv-date">' + esc(fmtDay(t.txn_date)) + '</span> ' + esc(t.description) + ' <span class="rv-done-amt">' + esc(money(t.amount, t.currency)) + '</span></div>' +
+      '<div class="sub">No receipt' + (why ? ': ' + esc(why) : '') + '</div></div>' +
+      (t.editable ? '<button type="button" class="btn btn-ghost" data-rv="unwaive">Undo</button>' : '') + '</div>';
+  }
+  var rvOpen = { found: true, waived: false };       // the groups stay as the person left them across re-renders
   function renderReceiptsView() {
     var view = $('#receiptsView'), content = $('#rvContent'), monthView = $('#monthView');
     var on = state.view === 'receipts' && !!state.card && receiptsOn(state.card);
@@ -2529,11 +2597,20 @@
     var canEdit = rows.some(function (t) { return t.editable; });
     var check = rows.filter(function (t) { return uploadedBy(t) && warnChecks(t).length; });
     var needed = neededRows(last4);
-    var added = rows.filter(function (t) { return !!uploadedBy(t); }).sort(function (a, b) { return String(a.txn_date || '') < String(b.txn_date || '') ? -1 : 1; });
-    var openAdded = !!($('#rvAdded') && $('#rvAdded').open);    // a re-render keeps it as the person left it
+    var byDate = function (a, b) { return String(a.txn_date || '') < String(b.txn_date || '') ? -1 : 1; };
+    var found = rows.filter(function (t) { return isPurchase(t) && t.invoice_status === 'matched'; }).sort(byDate);
+    var waived = rows.filter(function (t) { return isPurchase(t) && t.invoice_status === 'waived'; }).sort(byDate);
+    if ($('#rvFound')) rvOpen.found = $('#rvFound').open;
+    if ($('#rvWaived')) rvOpen.waived = $('#rvWaived').open;
+    var missingN = needed.filter(function (t) { return t.invoice_status === 'missing'; }).length, possibleN = needed.length - missingN;
+    var summary = [missingN ? '<span class="pill pill-down">' + missingN + ' missing</span>' : '',
+                   possibleN ? '<span class="pill pill-warn">' + possibleN + ' to confirm</span>' : '',
+                   found.length ? '<span class="pill pill-up">' + found.length + ' found</span>' : '',
+                   waived.length ? '<span class="pill pill-grey">' + waived.length + ' no receipt</span>' : ''].filter(Boolean).join('');
     var html = '<div class="rv-head"><div class="min-w-0 flex-1"><h1 id="rvTitle">Receipts needed</h1>' +
       '<div class="sub">' + esc(cardLabel(last4)) + ' · ' + esc(label) + '</div></div>' +
       (needed.length ? '<span class="pill pill-down" id="rvToGo">' + needed.length + ' to go</span>' : '') + '</div>' +
+      (summary ? '<div class="rv-summary" id="rvSummary">' + summary + '</div>' : '') +
       '<a class="link rv-all" id="rvAll" href="' + hashFor(state.year, state.month, last4) + '">All purchases ›</a>';
     if (!canEdit && rows.length) {
       html += '<div class="rv-banner" id="rvBanner" role="note">You can see card ' + esc(last4) + ', but only its owner or accounts payable can add receipts. Ask accounts payable (ap@superhairpieces.com) to set you as the card\'s owner.</div>';
@@ -2550,17 +2627,13 @@
     html += '<section class="rv-group" id="rvNeeded" aria-labelledby="rvNeededTitle"><h2 class="rv-group-title" id="rvNeededTitle">Receipts needed (' + needed.length + ')</h2>' +
       (needed.length ? needed.map(function (t) { return receiptsItemHtml(t, touch); }).join('')
                      : '<div class="rv-empty card" id="rvEmpty">All receipts are in for ' + esc(label) + '. Thank you!</div>') + '</section>';
-    if (added.length) {
-      html += '<details class="rv-group" id="rvAdded"' + (openAdded ? ' open' : '') + '><summary class="rv-group-title">Added (' + added.length + ')</summary>' +
-        added.map(function (t) {
-          var inv = t.invoice || {}, where = ['Invoice', inv.month_folder, inv.vendor_folder].filter(Boolean).join(' › ');
-          var line = t.description + ' · ' + money(t.amount, t.currency) + ' · ' + where;
-          var text = safeUrl(inv.web_view_link)
-            ? '<a class="link" href="' + esc(safeUrl(inv.web_view_link)) + '" target="_blank" rel="noopener noreferrer" title="Open the file in Drive">' + esc(line) + '</a>'
-            : esc(line);
-          return '<div class="rv-item rv-done" data-id="' + esc(t.id) + '"><div>✓ ' + text + '</div>' +
-            (t.editable ? '<button type="button" class="btn btn-ghost" data-rv="remove">Remove…</button>' : '') + '</div>';
-        }).join('') + '</details>';
+    if (found.length) {
+      html += '<details class="rv-group" id="rvFound"' + (rvOpen.found ? ' open' : '') + '><summary class="rv-group-title">Invoice found (' + found.length + ')</summary>' +
+        found.map(rvFoundHtml).join('') + '</details>';
+    }
+    if (waived.length) {
+      html += '<details class="rv-group" id="rvWaived"' + (rvOpen.waived ? ' open' : '') + '><summary class="rv-group-title">No receipt (' + waived.length + ')</summary>' +
+        waived.map(rvWaivedHtml).join('') + '</details>';
     }
     var folder = safeUrl(state.config && state.config.invoice_folder_url);
     if (folder) html += '<div class="rv-foot"><a class="link" href="' + esc(folder) + '" target="_blank" rel="noopener noreferrer">Invoice folder on Drive ↗</a></div>';
@@ -2592,6 +2665,7 @@
     try {
       if (what === 'waive') await patchTxn(t.id, { action: 'waive', reason: 'no receipt (receipts list)' }, 'Marked as having no invoice');
       else if (what === 'confirm') await patchTxn(t.id, { action: 'confirm' }, 'Invoice confirmed');
+      else if (what === 'unwaive') await patchTxn(t.id, { action: 'unwaive' }, 'Back to missing');
     } catch (e) {
       report(e, 'Could not update');
       b.disabled = false;
