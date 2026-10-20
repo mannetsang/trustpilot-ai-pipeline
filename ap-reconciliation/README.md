@@ -193,7 +193,7 @@ domain to be in `ALLOWED_DOMAINS` and derives the role:
 
 | Role | Who | May |
 |---|---|---|
-| `ap` | the addresses in `AP_EMAILS` (`ap@`, `manne@`); everyone, in password and open mode | upload, index, match, notify, edit cards, edit every transaction |
+| `ap` | the addresses in `AP_EMAILS` (`ap@`, `manne@`, `snow@`, added 2026-10-20); everyone, in password and open mode | upload, index, match, notify, edit cards, edit every transaction |
 | `member` | anyone else in the domain (IAP mode only) | read everything; edit only the transactions of cards whose **owner e-mail** (set by AP under *Cards...*; one address or several, separated by commas) is theirs, which includes *Add receipt...* on cards with receipt upload. `/api/transactions` returns an `editable` flag per row and the page disables the rest. Card 4421's owner is `anais@superhairpieces.com` (2026-10-15); add Bo Li's address next to it to let Bo Li add receipts too |
 
 In IAP mode nothing on the dashboard service is reachable without IAP: it
@@ -464,7 +464,7 @@ Job endpoints answer `409 {"status": "busy"}` while another job runs and
 | `GCHAT_WEBHOOK_URL` | empty | optional single fallback webhook |
 | `IAP_AUDIENCE` | | IAP mode only: what the assertion's audience must be, `/projects/304363458561/locations/us-central1/services/ap-reconciliation`; required on Cloud Run when `AUTH_DISABLED` is not set |
 | `ALLOWED_DOMAINS` | `superhairpieces.com` | comma-separated e-mail domains allowed in, on top of IAP's access list |
-| `AP_EMAILS` | `ap@superhairpieces.com,manne@superhairpieces.com` | addresses with the `ap` role |
+| `AP_EMAILS` | `ap@superhairpieces.com,manne@superhairpieces.com,snow@superhairpieces.com` | addresses with the `ap` role; the workflow sets the same list, so change both |
 | `AUTH_DISABLED` | | `1` turns Google sign-in off and makes every caller `ap`: with `DASHBOARD_PASSWORD` the page asks for that password first (password mode), without it the dashboard is open to anyone who can reach it (the 2026-10-12 decision; local runs) |
 | `DASHBOARD_PASSWORD` | | the shared password (Secret Manager `ap-reconciliation-dashboard-password`); surrounding whitespace is ignored. Only takes effect with `AUTH_DISABLED=1` (the weekly job gets it through the shared `SECRETS` list and ignores it). Set but blank, the service refuses to start rather than open up |
 | `DASHBOARD_SESSION_DAYS` | `30` | how long the password cookie lasts |

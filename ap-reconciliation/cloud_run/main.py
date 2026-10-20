@@ -123,7 +123,7 @@ IAP_CERTS_URL = "https://www.gstatic.com/iap/verify/public_key"
 IAP_ISSUER = "https://cloud.google.com/iap"
 DASHBOARD_USER_HEADER = "X-Dashboard-User"     # open mode: the name typed into the page
 ALLOWED_DOMAINS = set(_csv("ALLOWED_DOMAINS", "superhairpieces.com"))
-AP_EMAILS = set(_csv("AP_EMAILS", "ap@superhairpieces.com,manne@superhairpieces.com"))
+AP_EMAILS = set(_csv("AP_EMAILS", "ap@superhairpieces.com,manne@superhairpieces.com,snow@superhairpieces.com"))
 AUTH_DISABLED = os.environ.get("AUTH_DISABLED") == "1"
 # Shared password (Secret Manager ap-reconciliation-dashboard-password). With AUTH_DISABLED=1 and
 # this set, the page asks for it once and keeps a signed cookie; whoever knows it is AP. Stripped
