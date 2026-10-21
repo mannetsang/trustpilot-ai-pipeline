@@ -19,7 +19,14 @@ from google.shopping.merchant_accounts_v1 import (
     RegisterGcpRequest,
 )
 
-from merchant_api import GCP_PROJECT, account_parent, add_account_argument, explain_api_error, resolve_account
+from merchant_api import (
+    GCP_PROJECT,
+    GCP_PROJECT_NUMBER,
+    account_parent,
+    add_account_argument,
+    explain_api_error,
+    resolve_account,
+)
 
 
 def main(argv=None):
@@ -42,13 +49,23 @@ def main(argv=None):
         sys.exit(f"error: {explain_api_error(exc)}")
 
     print(f"registration: {reg.name}")
-    # The API reports project *numbers* (e.g. 304363458561), not project ids.
-    print(f"registered GCP project numbers: {list(reg.gcp_ids) or '(none)'}")
-    if not reg.gcp_ids:
-        print("warning: nothing registered yet; allow ~5 minutes and re-run with --check")
+    # The API reports project *numbers* (e.g. 304363458561), not project ids, and it
+    # lists every project registered against the account - an agency's or an app's as
+    # readily as ours. A non-empty list is therefore not the same as "we are in it":
+    # account 289630622 is registered to project 40060666568 and not to us.
+    registered = list(reg.gcp_ids)
+    print(f"registered GCP project numbers: {registered or '(none)'}")
+    if GCP_PROJECT_NUMBER in registered:
+        print(f"ok: {GCP_PROJECT} ({GCP_PROJECT_NUMBER}) is registered with this account "
+              "(allow ~5 minutes before other calls)")
+        return 0
+    if registered:
+        print(f"warning: this account is registered to {', '.join(registered)}, which does not "
+              f"include {GCP_PROJECT} ({GCP_PROJECT_NUMBER}). Reads may still work, but writes "
+              "will be rejected with GCP_NOT_REGISTERED. Re-run without --check to register.")
     else:
-        print(f"ok: {GCP_PROJECT} is registered with this account (allow ~5 minutes before other calls)")
-    return 0
+        print("warning: nothing registered yet; allow ~5 minutes and re-run with --check")
+    return 1
 
 
 if __name__ == "__main__":

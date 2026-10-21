@@ -24,6 +24,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lib.secrets import load_dotenv  # noqa: E402
 
 GCP_PROJECT = "shp-ai-bot-2026"
+# Merchant Center reports developer registrations by project *number*, never by
+# project id, so a registration check has to compare against this.
+GCP_PROJECT_NUMBER = "304363458561"
 
 # One primary product data source per storefront. Merchant Center requires a
 # separate data source for every (feed label, content language) pair, so the
