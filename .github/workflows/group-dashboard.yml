@@ -1,0 +1,81 @@
+name: Group dashboard
+
+# Rebuilds the six-storefront dashboard and redeploys it. Reads Search Console,
+# the BigCommerce catalogue and orders, and Merchant Center; writes nothing
+# anywhere. Credentials: the claude-sessions service account through Workload
+# Identity Federation, which must be a user on each Search Console property and
+# can read the BigCommerce tokens from Secret Manager.
+
+on:
+  schedule:
+    - cron: '0 10 * * *'   # 10:00 UTC = 06:00 Toronto, after the Merchant sync
+  workflow_dispatch:
+    inputs:
+      store:
+        description: 'Market keys to include (space separated); blank means all six'
+        required: false
+        default: ''
+      no_sales:
+        description: 'Skip the order pull'
+        type: boolean
+        default: false
+      deploy:
+        description: 'Deploy to Cloud Run'
+        type: boolean
+        default: true
+
+concurrency:
+  group: group-dashboard
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/304363458561/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: claude-sessions@shp-ai-bot-2026.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Install dependencies
+        run: pip install --quiet -r google-merchant/requirements.txt
+
+      - name: Collect
+        env:
+          GCP_PROJECT: shp-ai-bot-2026
+        run: |
+          set -o pipefail
+          python3 group-dashboard/collect.py \
+            ${{ inputs.store && format('--store {0}', inputs.store) || '' }} \
+            ${{ inputs.no_sales && '--no-sales' || '' }} \
+            --print | tee group.log
+          python3 group-dashboard/build_site.py
+          {
+            echo "## Group dashboard"
+            echo '```'
+            cat group.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Deploy to Cloud Run
+        if: ${{ inputs.deploy != false }}
+        run: |
+          gcloud run deploy group-dashboard \
+            --source ./group-dashboard \
+            --region us-central1 \
+            --project shp-ai-bot-2026 \
+            --allow-unauthenticated \
+            --quiet

@@ -1,0 +1,410 @@
+<title>Superhairpieces Group Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{color-scheme:light;
+  --ground:#f3f5f7;--surface:#fff;--surface-2:#e9edf1;--ink:#1a2430;--ink-2:#4d5b69;--muted:#7a8794;--rule:#d5dbe1;--rule-soft:#e6eaee;
+  --accent:#1c5cab;--accent-soft:#e3edfa;--s1:#2a78d6;--s2:#eb6834;--good:#008300;--warn:#b26a00;--crit:#c0392b;--good-soft:#e2f2e2;--warn-soft:#fbefd9;--crit-soft:#fbe3e0;
+  --m-ca:#2a78d6;--m-com:#1b9e77;--m-nl:#eb6834;--m-fr:#7570b3;--m-es:#d4a106;--m-de:#c0392b;
+  --sans:"IBM Plex Sans","Helvetica Neue",Arial,sans-serif;--mono:"IBM Plex Mono",Menlo,Consolas,monospace}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;
+  --ground:#14181c;--surface:#1d2227;--surface-2:#262d34;--ink:#e7ebef;--ink-2:#b4bec8;--muted:#8a96a2;--rule:#343d47;--rule-soft:#2a323a;
+  --accent:#7fb2f0;--accent-soft:#1f2f45;--s1:#3987e5;--s2:#d95926;--good:#5cc25c;--warn:#e0a24a;--crit:#ef7b6f;--good-soft:#1c3320;--warn-soft:#3a2d13;--crit-soft:#3d1f1c;
+  --m-ca:#5a9ae8;--m-com:#35c196;--m-nl:#f0814f;--m-fr:#9d97d8;--m-es:#e8bf3a;--m-de:#e8705f}}
+:root[data-theme="dark"]{color-scheme:dark;
+  --ground:#14181c;--surface:#1d2227;--surface-2:#262d34;--ink:#e7ebef;--ink-2:#b4bec8;--muted:#8a96a2;--rule:#343d47;--rule-soft:#2a323a;
+  --accent:#7fb2f0;--accent-soft:#1f2f45;--s1:#3987e5;--s2:#d95926;--good:#5cc25c;--warn:#e0a24a;--crit:#ef7b6f;--good-soft:#1c3320;--warn-soft:#3a2d13;--crit-soft:#3d1f1c;
+  --m-ca:#5a9ae8;--m-com:#35c196;--m-nl:#f0814f;--m-fr:#9d97d8;--m-es:#e8bf3a;--m-de:#e8705f}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
+header{position:sticky;top:0;z-index:5;background:var(--ground);border-bottom:1px solid var(--rule);padding:0 24px}
+.hbar{max-width:1320px;margin:0 auto;display:flex;align-items:center;gap:18px;height:54px}
+.hbar h1{font-size:15px;font-weight:600;margin:0;letter-spacing:-.01em;white-space:nowrap}
+.hbar .sub{font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap}
+nav{display:flex;gap:2px;margin-left:auto;flex-wrap:wrap}
+nav a{padding:8px 12px;border-radius:5px;text-decoration:none;color:var(--ink-2);font-weight:500;font-size:13px}
+nav a:hover{background:var(--surface-2);color:var(--ink)}
+main{max-width:1320px;margin:0 auto;padding:18px 24px 80px}
+section{scroll-margin-top:62px;padding-top:12px;margin-bottom:34px}
+.sec-h{display:flex;align-items:baseline;gap:14px;margin-bottom:12px;flex-wrap:wrap}
+.sec-h h2{font-size:18px;font-weight:600;margin:0;letter-spacing:-.01em}
+.sec-h .hint{color:var(--muted);font-size:12.5px}
+.controls{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;padding:8px 0 14px}
+.seg{display:inline-flex;background:var(--surface);border:1px solid var(--rule);border-radius:6px;overflow:hidden;flex-wrap:wrap}
+.seg button{border:0;background:transparent;color:var(--ink-2);font:inherit;font-size:12.5px;padding:6px 11px;cursor:pointer;border-right:1px solid var(--rule-soft)}
+.seg button:last-child{border-right:0} .seg button.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.seg button:disabled{opacity:.45;cursor:not-allowed}
+.lbl{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-right:6px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+.tile{background:var(--surface);border:1px solid var(--rule-soft);border-radius:6px;padding:12px 14px;min-height:92px;display:flex;flex-direction:column;justify-content:space-between}
+.tile .l{font-size:12px;color:var(--ink-2);line-height:1.3} .tile .v{font-weight:600;font-size:23px;letter-spacing:-.02em;line-height:1;margin-top:8px} .tile .d{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:4px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px} @media(max-width:980px){.grid2{grid-template-columns:1fr}}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px} @media(max-width:1100px){.grid3{grid-template-columns:1fr 1fr}} @media(max-width:700px){.grid3{grid-template-columns:1fr}}
+.card{background:var(--surface);border:1px solid var(--rule-soft);border-radius:6px;padding:14px 16px 10px}
+.card .cap{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:8px}
+.card .cap b{font-weight:500;font-size:13.5px} .card .cap span.s{color:var(--muted);font-size:12px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:7px 9px;text-align:left;border-bottom:1px solid var(--rule-soft);vertical-align:top}
+th{font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500;white-space:nowrap}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--mono);font-size:12.5px}
+tbody tr:last-child td{border-bottom:0}
+svg.chart{width:100%;display:block;overflow:visible} svg.chart text{font-family:var(--mono);font-size:10.5px;fill:var(--muted)}
+svg.chart .grid{stroke:var(--rule-soft)} svg.chart .axis{stroke:var(--rule)} svg.chart .lb{fill:var(--ink);font-family:var(--sans);font-size:11.5px}
+.legend{display:flex;gap:12px;font-size:11.5px;color:var(--ink-2);font-family:var(--mono);flex-wrap:wrap}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.legend button{border:0;background:transparent;color:inherit;font:inherit;cursor:pointer;padding:0;opacity:1} .legend button.off{opacity:.35;text-decoration:line-through}
+.pill{display:inline-block;font-family:var(--mono);font-size:10.5px;padding:1px 7px;border-radius:999px;white-space:nowrap}
+.pill.good{background:var(--good-soft);color:var(--good)} .pill.warn{background:var(--warn-soft);color:var(--warn)} .pill.crit{background:var(--crit-soft);color:var(--crit)} .pill.neutral{background:var(--surface-2);color:var(--ink-2)}
+.flag{font-family:var(--mono);font-size:11px;font-weight:500;padding:1px 6px;border-radius:3px;background:var(--surface-2);color:var(--ink-2)}
+.note{font-size:12.5px;color:var(--muted);margin-top:8px}
+.mut{color:var(--muted)}
+code{font-family:var(--mono);font-size:11.5px;background:var(--surface-2);padding:1px 5px;border-radius:3px;overflow-wrap:anywhere}
+.tip{position:fixed;pointer-events:none;background:var(--ink);color:var(--ground);font-family:var(--mono);font-size:11.5px;line-height:1.4;padding:6px 9px;border-radius:4px;opacity:0;transform:translate(-50%,-110%);white-space:nowrap;z-index:9;transition:opacity .08s}
+.wrap{overflow-x:auto}
+.cov td{vertical-align:middle} .cov .fix{font-size:11.5px;color:var(--muted);display:block;margin-top:2px}
+a{color:var(--accent)}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<header><div class="hbar"><h1>Superhairpieces · Group</h1><span class="sub" id="stamp"></span>
+<nav><a href="#group">Group</a><a href="#organic">Organic search</a><a href="#catalogue">Catalogue</a><a href="#sales">Sales</a><a href="#coverage">Coverage</a></nav></div></header>
+
+<main>
+<section id="group">
+  <div class="sec-h"><h2>Six storefronts</h2><span class="hint" id="group-hint"></span></div>
+  <div class="tiles" id="group-tiles"></div>
+  <div class="card" style="margin-top:14px"><div class="cap"><b>Every market, side by side</b><span class="s">revenue stays in each store's own currency</span></div>
+    <div class="wrap"><table id="market-table"><thead><tr>
+      <th>Market</th><th class="n">Organic clicks</th><th class="n">Impressions</th><th class="n">Avg position</th>
+      <th class="n">Products</th><th class="n">Orders, 12 mo</th><th class="n">Revenue, 12 mo</th><th class="n">AOV</th><th>Shopping feed</th>
+    </tr></thead><tbody></tbody></table></div>
+    <p class="note" id="market-note"></p></div>
+  <div class="grid2" style="margin-top:14px">
+    <div class="card"><div class="cap"><b>Organic reach by market</b><span class="s">16 months</span></div>
+      <div class="lbl" style="margin:2px 0 2px">Clicks</div><svg id="g-clicks" class="chart"></svg>
+      <div class="lbl" style="margin:10px 0 2px">Impressions</div><svg id="g-impr" class="chart"></svg>
+      <div class="lbl" style="margin:10px 0 2px">Products listed</div><svg id="g-products" class="chart"></svg></div>
+    <div class="card"><div class="cap"><b>Revenue by currency</b><span class="s">12 months · never added across currencies</span></div><div id="g-revenue"></div></div>
+  </div>
+</section>
+
+<section id="organic">
+  <div class="sec-h"><h2>Organic search</h2><span class="hint" id="organic-hint"></span></div>
+  <div class="controls">
+    <span class="lbl">Metric</span><div class="seg" id="o-metric"><button data-k="clicks" class="on">Clicks</button><button data-k="impr">Impressions</button><button data-k="pos">Average position</button></div>
+    <span class="lbl">Range</span><div class="seg" id="o-range"><button data-d="90">3 months</button><button data-d="365" class="on">12 months</button><button data-d="480">16 months</button></div>
+  </div>
+  <div class="card"><div class="cap"><b id="o-title">Clicks</b><div class="legend" id="o-legend"></div></div><svg id="o-chart" class="chart" viewBox="0 0 900 280"></svg></div>
+  <div class="grid2" style="margin-top:14px">
+    <div class="card"><div class="cap"><b>Top queries across the group</b><span class="s">each market's share of the clicks</span></div>
+      <div class="wrap" style="max-height:420px;overflow-y:auto"><table id="o-queries"><thead><tr><th>Query</th><th>Markets</th><th class="n">Clicks</th><th class="n">Impressions</th><th class="n">Position</th></tr></thead><tbody></tbody></table></div></div>
+    <div class="card"><div class="cap"><b>Where the searches happen</b><span class="s">top countries, all markets combined</span></div>
+      <div class="wrap" style="max-height:420px;overflow-y:auto"><table id="o-countries"><thead><tr><th>Country</th><th class="n">Clicks</th><th class="n">Impressions</th><th class="n">CTR</th></tr></thead><tbody></tbody></table></div></div>
+  </div>
+  <div class="card" style="margin-top:14px"><div class="cap"><b>Per market</b><span class="s">devices, search surfaces and sitemaps</span></div>
+    <div class="wrap"><table id="o-markets"><thead><tr><th>Market</th><th>Property</th><th class="n">Clicks</th><th class="n">CTR</th><th class="n">Position</th><th>Devices</th><th>Surfaces with data</th><th class="n">Sitemaps</th><th class="n">URLs</th></tr></thead><tbody></tbody></table></div></div>
+</section>
+
+<section id="catalogue">
+  <div class="sec-h"><h2>Catalogue</h2><span class="hint" id="cat-hint"></span></div>
+  <div class="card"><div class="cap"><b>Products per market</b><span class="s">visible on the storefront vs hidden</span></div>
+    <div class="wrap"><table id="cat-table"><thead><tr><th>Market</th><th class="n">Products</th><th class="n">Visible</th><th class="n">Hidden</th><th class="n">Variants</th><th class="n">Out of stock</th><th class="n">On sale</th><th>Top brand</th><th>Biggest category</th></tr></thead><tbody></tbody></table></div></div>
+  <div class="controls"><span class="lbl">Market</span><div class="seg" id="cat-market"></div></div>
+  <div class="grid3">
+    <div class="card"><div class="cap"><b>Price bands</b><span class="s">visible products</span></div><svg id="cat-bands" class="chart"></svg></div>
+    <div class="card"><div class="cap"><b>Brands</b><span class="s">visible products</span></div><svg id="cat-brands" class="chart"></svg></div>
+    <div class="card"><div class="cap"><b>Categories</b><span class="s">top-level</span></div><svg id="cat-cats" class="chart"></svg></div>
+  </div>
+  <div class="card" style="margin-top:14px"><div class="cap"><b>Best sellers</b><span class="s" id="cat-best-note"></span></div>
+    <div class="wrap"><table id="cat-best"><thead><tr><th>Product</th><th>SKU</th><th class="n">Price</th><th class="n">Units sold</th><th class="n">Page views</th></tr></thead><tbody></tbody></table></div></div>
+</section>
+
+<section id="sales">
+  <div class="sec-h"><h2>Sales</h2><span class="hint" id="sales-hint"></span></div>
+  <div class="tiles" id="sales-tiles"></div>
+  <div class="card" style="margin-top:14px"><div class="cap"><b>Revenue by month</b><span class="s">each market on its own scale and currency · faded bars are part months</span></div>
+    <div class="grid3" id="sales-charts"></div></div>
+  <div class="grid2" style="margin-top:14px">
+    <div class="card"><div class="cap"><b>Order status</b><span class="s">12 months · Incomplete, Cancelled and Declined are not revenue</span></div>
+      <div class="wrap"><table id="sales-status"><thead><tr><th>Status</th><th class="n" id="st-h1"></th><th class="n" id="st-h2"></th><th class="n" id="st-h3"></th></tr></thead><tbody></tbody></table></div></div>
+    <div class="card"><div class="cap"><b>How customers pay</b><span class="s">normalised; card labels merged</span></div>
+      <div class="controls" style="padding:0 0 8px"><div class="seg" id="pay-market"></div></div>
+      <div class="wrap"><table id="sales-pay"><thead><tr><th>Method</th><th class="n">Orders</th><th class="n">Revenue</th><th class="n">Share</th></tr></thead><tbody></tbody></table></div></div>
+  </div>
+  <p class="note" id="sales-note"></p>
+</section>
+
+<section id="coverage">
+  <div class="sec-h"><h2>Coverage</h2><span class="hint">every market against every source this dashboard can read</span></div>
+  <div class="card"><div class="wrap"><table class="cov" id="cov-table"><thead><tr><th>Market</th><th>Organic search</th><th>Catalogue</th><th>Orders</th><th>Shopping feed</th></tr></thead><tbody></tbody></table></div>
+  <p class="note">A cell reads <span class="pill good">connected</span> only when this build actually read data from it today. Anything else names the reason and what to do about it.</p></div>
+  <div class="card" style="margin-top:14px"><div class="cap"><b>Merchant Center accounts</b></div>
+    <table id="cov-accounts"><thead><tr><th>Account</th><th>Id</th><th>Covers</th><th>Status</th></tr></thead><tbody></tbody></table></div>
+  <div class="card" style="margin-top:14px"><div class="cap"><b>What is not here</b></div><div id="cov-gaps"></div></div>
+</section>
+</main>
+<div class="tip" id="tip"></div>
+
+<script>
+const D = __DATA__;
+const fmt = n => (n==null?"–":Math.round(n).toLocaleString("en-CA"));
+const money = (n,c) => n==null?"–":`${c} ${Math.round(n).toLocaleString("en-CA")}`;
+const pct = (a,b,d=2) => b ? (a/b*100).toFixed(d)+"%" : "–";
+const frac = v => v==null?"–":(v*100).toFixed(2)+"%";
+const pos = v => v==null?"–":v.toFixed(1);
+const $ = s => document.querySelector(s);
+const NS="http://www.w3.org/2000/svg";
+const el=(t,a,p)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e};
+const tip=$("#tip"); const showTip=(e,h)=>{tip.innerHTML=h;tip.style.left=e.clientX+"px";tip.style.top=(e.clientY-8)+"px";tip.style.opacity=1}; const hideTip=()=>tip.style.opacity=0;
+const niceMax=v=>{if(v<=0)return 1;const p=Math.pow(10,Math.floor(Math.log10(v)));const m=v/p;return (m<=1?1:m<=2?2:m<=2.5?2.5:m<=5?5:10)*p};
+const steps=max=>max<=4?Math.max(1,Math.round(max)):4;
+const mon=s=>["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][+s.slice(5,7)-1];
+const addDays=(s,n)=>{const d=new Date(s+"T00:00:00Z");d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10)};
+const weekOf=s=>{const d=new Date(s+"T00:00:00Z");const w=(d.getUTCDay()+6)%7;d.setUTCDate(d.getUTCDate()-w);return d.toISOString().slice(0,10)};
+
+const STORES=D.stores, SEARCH=D.search||{properties:[]};
+const LABEL={ca:"CA",com:"US",nl:"NL",fr:"FR",es:"ES",de:"DE"};
+const COLOR=k=>`var(--m-${k})`;
+const prop=k=>(SEARCH.properties||[]).find(p=>p.key===k)||{};
+const store=k=>STORES.find(s=>s.key===k)||{};
+const live=STORES.filter(s=>s.catalogue||s.sales||prop(s.key).available);
+
+$("#stamp").textContent=`${STORES.length} storefronts · data ${D.generated}`;
+
+// ---------------------------------------------------------------- Group
+(function group(){
+  const scOK=STORES.filter(s=>prop(s.key).available);
+  const clicks=scOK.reduce((n,s)=>n+prop(s.key).totals.clicks,0);
+  const impr=scOK.reduce((n,s)=>n+prop(s.key).totals.impr,0);
+  const products=STORES.reduce((n,s)=>n+((s.catalogue&&s.catalogue.products)||0),0);
+  const withSales=STORES.filter(s=>s.sales);
+  const orders=withSales.reduce((n,s)=>n+s.sales.orders_counted,0);
+  const byCur={}; withSales.forEach(s=>{byCur[s.sales.currency]=(byCur[s.sales.currency]||0)+s.sales.revenue});
+  $("#group-hint").textContent=`organic from Search Console · catalogue and orders from BigCommerce · ${D.sales_since} onwards for sales`;
+  $("#group-tiles").innerHTML=[
+    ["Organic clicks","16 months, "+scOK.length+" properties",fmt(clicks)],
+    ["Organic impressions","16 months",fmt(impr)],
+    ["Products listed",STORES.length+" storefronts",fmt(products)],
+    ["Orders counted","12 months, "+withSales.length+" stores",fmt(orders)],
+    ...Object.entries(byCur).map(([c,v])=>["Revenue "+c,"12 months, "+withSales.filter(s=>s.sales.currency===c).map(s=>LABEL[s.key]).join(" "),money(v,c)]),
+  ].map(([l,d,v])=>`<div class="tile"><div class="l">${l}</div><div><div class="v">${v}</div><div class="d">${d}</div></div></div>`).join("");
+
+  const mcOK=new Set(D.coverage.filter(c=>c.merchant_center.ok).map(c=>c.market));
+  $("#market-table tbody").innerHTML=STORES.map(s=>{
+    const p=prop(s.key), c=s.catalogue, sa=s.sales;
+    const feed=mcOK.has(s.key)?'<span class="pill good">connected</span>':'<span class="pill neutral">not connected</span>';
+    return `<tr><td><span class="flag" style="color:${COLOR(s.key)}">${LABEL[s.key]}</span> ${s.domain}</td>
+      <td class="n">${p.available?fmt(p.totals.clicks):"–"}</td><td class="n">${p.available?fmt(p.totals.impr):"–"}</td><td class="n">${p.available?pos(p.totals.pos):"–"}</td>
+      <td class="n">${c?fmt(c.products):"–"}</td>
+      <td class="n">${sa?fmt(sa.orders_counted):'<span class="mut">no access</span>'}</td>
+      <td class="n">${sa?money(sa.revenue,sa.currency):"–"}${sa&&sa.refunded?`<div class="d mut" style="font-family:var(--mono);font-size:10.5px">less ${money(sa.refunded,sa.currency)} refunded</div>`:""}</td>
+      <td class="n">${sa&&sa.aov?money(sa.aov,sa.currency):"–"}</td><td>${feed}</td></tr>`;}).join("");
+  const noOrders=STORES.filter(s=>!s.sales).map(s=>LABEL[s.key]);
+  $("#market-note").innerHTML=`Organic figures cover the API's full 16-month retention; orders and revenue cover the 12 months from ${D.sales_since}.`
+    +(noOrders.length?` ${noOrders.join(", ")} show no orders because those API tokens carry catalogue scope only — see Coverage.`:"");
+
+  hbars($("#g-clicks"),scOK.map(s=>({k:LABEL[s.key],v:prop(s.key).totals.clicks,c:COLOR(s.key)})),{unit:"clicks"});
+  hbars($("#g-impr"),scOK.map(s=>({k:LABEL[s.key],v:prop(s.key).totals.impr,c:COLOR(s.key)})),{unit:"impressions"});
+  hbars($("#g-products"),STORES.filter(s=>s.catalogue).map(s=>({k:LABEL[s.key],v:s.catalogue.products,c:COLOR(s.key)})),{unit:"products"});
+  $("#g-revenue").innerHTML=Object.entries(byCur).map(([c,v])=>{
+    const rows=withSales.filter(s=>s.sales.currency===c);
+    return `<div style="margin:6px 0 14px"><div class="lbl">${c}</div><div style="font-size:21px;font-weight:600;letter-spacing:-.02em">${money(v,c)}</div>
+      <table style="margin-top:6px"><tbody>${rows.map(s=>`<tr><td><span class="flag" style="color:${COLOR(s.key)}">${LABEL[s.key]}</span> ${s.domain}</td><td class="n">${money(s.sales.revenue,c)}</td><td class="n">${fmt(s.sales.orders_counted)} orders</td></tr>`).join("")}</tbody></table></div>`;
+  }).join("")+`<p class="note">Three stores are missing from this because their tokens cannot read orders, so no EUR figure here is a group total.</p>`;
+})();
+
+function hbars(svg,items,{unit="",H_=null}={}){
+  svg.innerHTML=""; const W=600,rowH=26,padL=58,padT=6,H=padT+items.length*rowH+8; svg.setAttribute("viewBox",`0 0 ${W} ${H}`);
+  const max=niceMax(Math.max(1,...items.map(i=>i.v))), xw=W-padL-78;
+  items.forEach((it,i)=>{const y=padT+i*rowH, w=xw*it.v/max;
+    el("text",{x:padL-10,y:y+rowH/2+4,"text-anchor":"end",class:"lb"},svg).textContent=it.k;
+    const r=el("rect",{x:padL,y:y+5,width:Math.max(w,2),height:rowH-10,rx:3,fill:it.c||"var(--s1)"},svg);
+    el("text",{x:padL+w+7,y:y+rowH/2+4,class:"lb"},svg).textContent=fmt(it.v);
+    r.addEventListener("mousemove",e=>showTip(e,`<b>${it.k}</b><br>${fmt(it.v)} ${unit}`)); r.addEventListener("mouseleave",hideTip);});
+}
+
+// ---------------------------------------------------------------- Organic search
+let oState={metric:"clicks",days:365,off:new Set()};
+(function organic(){
+  const ok=STORES.filter(s=>prop(s.key).available);
+  $("#organic-hint").textContent=ok.length?`${ok.length} properties · ${SEARCH.auth||""}`:"no property is connected";
+  $("#o-legend").innerHTML=ok.map(s=>`<button data-k="${s.key}"><i style="background:${COLOR(s.key)}"></i>${LABEL[s.key]}</button>`).join("");
+  $("#o-legend").addEventListener("click",e=>{const b=e.target.closest("button"); if(!b)return;
+    const k=b.dataset.k; oState.off.has(k)?oState.off.delete(k):oState.off.add(k); b.classList.toggle("off",oState.off.has(k)); drawOrganic();});
+  seg("#o-metric",b=>{oState.metric=b.dataset.k; drawOrganic();});
+  seg("#o-range",b=>{oState.days=+b.dataset.d; drawOrganic();});
+
+  // queries seen in more than one market are the interesting ones
+  const agg={};
+  ok.forEach(s=>{(prop(s.key).dimensions.full.query||[]).forEach(r=>{
+    const a=agg[r.k]||(agg[r.k]={k:r.k,clicks:0,impr:0,posSum:0,markets:new Set()});
+    a.clicks+=r.clicks; a.impr+=r.impr; a.posSum+=(r.pos||0)*r.impr; a.markets.add(s.key);});});
+  const rows=Object.values(agg).sort((a,b)=>b.clicks-a.clicks).slice(0,120);
+  $("#o-queries tbody").innerHTML=rows.map(r=>`<tr><td>${r.k}</td><td>${[...r.markets].map(k=>`<span class="flag" style="color:${COLOR(k)}">${LABEL[k]}</span>`).join(" ")}</td><td class="n">${fmt(r.clicks)}</td><td class="n">${fmt(r.impr)}</td><td class="n">${pos(r.impr?r.posSum/r.impr:null)}</td></tr>`).join("")
+    ||'<tr><td colspan="5" class="mut">No query data.</td></tr>';
+
+  const CTRY={can:"Canada",usa:"United States",nld:"Netherlands",fra:"France",esp:"Spain",deu:"Germany",gbr:"United Kingdom",aus:"Australia",ind:"India",irl:"Ireland",nzl:"New Zealand",zaf:"South Africa",phl:"Philippines",mex:"Mexico",bra:"Brazil",ita:"Italy",bel:"Belgium",che:"Switzerland",aut:"Austria",swe:"Sweden",nor:"Norway",dnk:"Denmark",pol:"Poland",prt:"Portugal",tur:"Turkey",are:"United Arab Emirates",jpn:"Japan",kor:"South Korea",sgp:"Singapore",mys:"Malaysia"};
+  const cagg={};
+  ok.forEach(s=>{(prop(s.key).dimensions.full.country||[]).forEach(r=>{
+    const a=cagg[r.k]||(cagg[r.k]={k:r.k,clicks:0,impr:0}); a.clicks+=r.clicks; a.impr+=r.impr;});});
+  $("#o-countries tbody").innerHTML=Object.values(cagg).sort((a,b)=>b.clicks-a.clicks).slice(0,40)
+    .map(r=>`<tr><td>${CTRY[r.k]||r.k.toUpperCase()} <span class="mut">${r.k}</span></td><td class="n">${fmt(r.clicks)}</td><td class="n">${fmt(r.impr)}</td><td class="n">${pct(r.clicks,r.impr)}</td></tr>`).join("")
+    ||'<tr><td colspan="4" class="mut">No country data.</td></tr>';
+
+  $("#o-markets tbody").innerHTML=STORES.map(s=>{const p=prop(s.key);
+    if(!p.available) return `<tr><td><span class="flag" style="color:${COLOR(s.key)}">${LABEL[s.key]}</span> ${s.domain}</td><td colspan="8" class="mut">${p.reason||"not connected"}</td></tr>`;
+    const dev=(p.dimensions.full.device||[]).map(d=>`${d.k.slice(0,3)} ${pct(d.clicks,p.totals.clicks,0)}`).join(" · ");
+    const surf=Object.entries(p.types||{}).filter(([,v])=>v.impr).map(([k])=>k).join(", ")||"–";
+    const urls=(p.sitemaps||[]).reduce((n,m)=>n+(m.contents||[]).reduce((x,c)=>x+c.submitted,0),0);
+    return `<tr><td><span class="flag" style="color:${COLOR(s.key)}">${LABEL[s.key]}</span> ${s.domain}</td><td><code>${p.site_url}</code></td>
+      <td class="n">${fmt(p.totals.clicks)}</td><td class="n">${frac(p.totals.ctr)}</td><td class="n">${pos(p.totals.pos)}</td>
+      <td>${dev||"–"}</td><td>${surf}</td><td class="n">${(p.sitemaps||[]).length}</td><td class="n">${urls?fmt(urls):"–"}</td></tr>`;}).join("");
+  drawOrganic();
+})();
+
+function drawOrganic(){
+  const svg=$("#o-chart"); svg.innerHTML="";
+  const ok=STORES.filter(s=>prop(s.key).available&&!oState.off.has(s.key));
+  const W=900,H=280,padL=58,padR=14,padT=14,padB=30;
+  const ends=ok.map(s=>{const d=prop(s.key).daily; return d.length?d[d.length-1].d:null}).filter(Boolean);
+  if(!ok.length||!ends.length){ el("text",{x:W/2,y:H/2,"text-anchor":"middle",class:"lb"},svg).textContent="Nothing selected"; return; }
+  const end=ends.sort().pop(), start=addDays(end,-oState.days+1);
+  const weekly=oState.days>120;
+  const series=ok.map(s=>{
+    let rows=prop(s.key).daily.filter(r=>r.d>=start);
+    if(weekly){ const m=new Map(); rows.forEach(r=>{const k=weekOf(r.d); if(!m.has(k))m.set(k,{k,clicks:0,impr:0,_p:0,days:0}); const g=m.get(k); g.clicks+=r.clicks; g.impr+=r.impr; g._p+=(r.pos||0)*r.impr; g.days++;});
+      rows=[...m.values()].map(g=>({k:g.k,clicks:g.clicks,impr:g.impr,pos:g.impr?g._p/g.impr:null,days:g.days}));
+      if(rows.length&&rows[rows.length-1].days<7) rows.pop();   // the week in progress is not a drop
+      if(rows.length&&rows[0].days<7) rows.shift(); }
+    else rows=rows.map(r=>({k:r.d,...r}));
+    return {key:s.key,rows};});
+  const keys=[...new Set(series.flatMap(s=>s.rows.map(r=>r.k)))].sort();
+  const metric=oState.metric;
+  $("#o-title").textContent={clicks:"Clicks",impr:"Impressions",pos:"Average position"}[metric]+(weekly?", weekly":", daily");
+  const vals=series.flatMap(s=>s.rows.map(r=>r[metric]).filter(v=>v!=null&&(metric!=="pos"||v>0)));
+  if(!vals.length){ el("text",{x:W/2,y:H/2,"text-anchor":"middle",class:"lb"},svg).textContent="No data in this range"; return; }
+  const invert=metric==="pos";
+  const max=invert?Math.max(10,Math.ceil(Math.max(...vals)/5)*5):niceMax(Math.max(...vals));
+  const n=keys.length, xs=i=>n>1?padL+(W-padL-padR)*i/(n-1):W/2;
+  const ys=v=>invert?padT+(H-padT-padB)*((v-1)/(max-1)):padT+(H-padT-padB)*(1-v/max);
+  const st=invert?4:steps(max);
+  for(let i=0;i<=st;i++){ const v=invert?1+(max-1)*i/st:max*i/st, y=ys(v);
+    el("line",{x1:padL,x2:W-padR,y1:y,y2:y,class:i&&!invert?"grid":(invert&&i?"grid":"axis")},svg);
+    el("text",{x:padL-8,y:y+4,"text-anchor":"end"},svg).textContent=invert?v.toFixed(0):fmt(v); }
+  const idx=new Map(keys.map((k,i)=>[k,i]));
+  series.forEach(s=>{ let d="",open=false;
+    s.rows.forEach(r=>{ const v=r[metric]; const i=idx.get(r.k);
+      if(v==null||(invert&&!v)){ open=false; return; }
+      d+=(open?"L":"M")+xs(i)+","+ys(v); open=true; });
+    if(d) el("path",{d,fill:"none",stroke:COLOR(s.key),"stroke-width":1.8,"stroke-linejoin":"round"},svg); });
+  let last="",lastX=-99; keys.forEach((k,i)=>{ const m=k.slice(0,7); if(m!==last&&xs(i)-lastX>=28){ el("text",{x:xs(i),y:H-padB+16,"text-anchor":"middle"},svg).textContent=mon(k)+(k.slice(5,7)==="01"?" "+k.slice(2,4):""); lastX=xs(i); } last=m;});
+  const hit=el("rect",{x:padL,y:padT,width:W-padL-padR,height:H-padT-padB,fill:"transparent"},svg);
+  const cross=el("line",{y1:padT,y2:H-padB,stroke:"var(--ink)",opacity:0},svg);
+  hit.addEventListener("mousemove",e=>{ const r=svg.getBoundingClientRect(); const px=(e.clientX-r.left)*(W/r.width);
+    let i=n>1?Math.round((px-padL)/((W-padL-padR)/(n-1))):0; i=Math.max(0,Math.min(n-1,i)); const k=keys[i];
+    cross.setAttribute("x1",xs(i)); cross.setAttribute("x2",xs(i)); cross.setAttribute("opacity",1);
+    showTip(e,`<b>${weekly?"Week of ":""}${k}</b><br>`+series.map(s=>{const row=s.rows.find(r=>r.k===k); return row?`${LABEL[s.key]}: ${metric==="pos"?pos(row.pos):fmt(row[metric])}`:null;}).filter(Boolean).join("<br>"));});
+  hit.addEventListener("mouseleave",()=>{cross.setAttribute("opacity",0);hideTip();});
+}
+
+// ---------------------------------------------------------------- Catalogue
+let catKey=null;
+(function catalogue(){
+  const withCat=STORES.filter(s=>s.catalogue);
+  $("#cat-hint").textContent=`${withCat.length} of ${STORES.length} storefronts readable · from the BigCommerce catalogue API`;
+  $("#cat-table tbody").innerHTML=STORES.map(s=>{const c=s.catalogue;
+    if(!c) return `<tr><td><span class="flag" style="color:${COLOR(s.key)}">${LABEL[s.key]}</span> ${s.domain}</td><td colspan="8" class="mut">${s.catalogue_error||s.error||"unavailable"}</td></tr>`;
+    return `<tr><td><span class="flag" style="color:${COLOR(s.key)}">${LABEL[s.key]}</span> ${s.domain}</td>
+      <td class="n">${fmt(c.products)}</td><td class="n">${fmt(c.visible)}</td><td class="n">${c.hidden?fmt(c.hidden):"–"}</td>
+      <td class="n">${c.variants==null?"–":fmt(c.variants)}</td><td class="n">${c.out_of_stock?`<span class="pill warn">${fmt(c.out_of_stock)}</span>`:"–"}</td>
+      <td class="n">${c.on_sale?fmt(c.on_sale):"–"}</td><td>${(c.brands[0]||{}).name||"–"}</td><td>${(c.categories[0]||{}).name||"–"}</td></tr>`;}).join("");
+  if(!withCat.length) return;
+  catKey=withCat[0].key;
+  $("#cat-market").innerHTML=withCat.map(s=>`<button data-k="${s.key}"${s.key===catKey?' class="on"':""}>${LABEL[s.key]}</button>`).join("");
+  seg("#cat-market",b=>{catKey=b.dataset.k; drawCatalogue();});
+  drawCatalogue();
+})();
+function drawCatalogue(){
+  const s=store(catKey), c=s.catalogue; if(!c) return;
+  hbars($("#cat-bands"),c.price_bands.map(b=>({k:b.band,v:b.products,c:COLOR(catKey)})),{unit:"products"});
+  hbars($("#cat-brands"),c.brands.slice(0,8).map(b=>({k:b.name.length>18?b.name.slice(0,17)+"…":b.name,v:b.products,c:COLOR(catKey)})),{unit:"products"});
+  hbars($("#cat-cats"),c.categories.slice(0,8).map(b=>({k:b.name.length>18?b.name.slice(0,17)+"…":b.name,v:b.products,c:COLOR(catKey)})),{unit:"products"});
+  $("#cat-best-note").textContent=`${s.domain} · lifetime units sold`;
+  $("#cat-best tbody").innerHTML=c.best_sellers.map(p=>`<tr><td>${p.name}</td><td><code>${p.sku||"–"}</code></td><td class="n">${money(p.price,s.currency)}</td><td class="n">${fmt(p.sold)}</td><td class="n">${fmt(p.views)}</td></tr>`).join("");
+}
+
+// ---------------------------------------------------------------- Sales
+let payKey=null;
+(function sales(){
+  const withSales=STORES.filter(s=>s.sales);
+  const missing=STORES.filter(s=>!s.sales);
+  $("#sales-hint").textContent=withSales.length?`${withSales.length} of ${STORES.length} storefronts · orders since ${D.sales_since}`:"no store's token can read orders";
+  if(!withSales.length){ $("#sales-note").textContent="Every token is catalogue-scoped; see Coverage."; return; }
+
+  $("#sales-tiles").innerHTML=withSales.flatMap(s=>{const a=s.sales;
+    const r=a.refunded?` · ${money(a.refunded,a.currency)} refunded`:"";
+    return [[`${LABEL[s.key]} revenue`,`${fmt(a.orders_counted)} orders · AOV ${money(a.aov,a.currency)}${r}`,money(a.revenue,a.currency)]];})
+    .map(([l,d,v])=>`<div class="tile"><div class="l">${l}</div><div><div class="v">${v}</div><div class="d">${d}</div></div></div>`).join("");
+
+  $("#sales-charts").innerHTML=withSales.map(s=>`<div><div class="lbl" style="margin-bottom:4px"><span style="color:${COLOR(s.key)}">${LABEL[s.key]}</span> · ${s.sales.currency}</div><svg id="sc-${s.key}" class="chart" viewBox="0 0 400 180"></svg></div>`).join("");
+  withSales.forEach(s=>monthBars($(`#sc-${s.key}`),s));
+
+  const heads=withSales.slice(0,3);
+  heads.forEach((s,i)=>{const h=$(`#st-h${i+1}`); if(h) h.textContent=LABEL[s.key];});
+  const ids=[...new Set(withSales.flatMap(s=>s.sales.statuses.map(x=>x.id)))].sort((a,b)=>a-b);
+  const names={}; withSales.forEach(s=>s.sales.statuses.forEach(x=>names[x.id]=x.name));
+  const NONREV=new Set([0,5,6]);
+  $("#sales-status tbody").innerHTML=ids.map(id=>`<tr><td>${names[id]} ${NONREV.has(id)?'<span class="pill neutral">not revenue</span>':""}</td>`
+    +heads.map(s=>{const row=s.sales.statuses.find(x=>x.id===id); return `<td class="n">${row?fmt(row.orders):"–"}</td>`;}).join("")+"</tr>").join("");
+
+  payKey=withSales[0].key;
+  $("#pay-market").innerHTML=withSales.map(s=>`<button data-k="${s.key}"${s.key===payKey?' class="on"':""}>${LABEL[s.key]}</button>`).join("");
+  seg("#pay-market",b=>{payKey=b.dataset.k; drawPay();});
+  drawPay();
+  $("#sales-note").innerHTML=`Revenue is <code>total_inc_tax</code> less <code>refunded_amount</code>, on orders that are not Incomplete, Cancelled or Declined — a refunded order keeps its original total in the API, so counting it whole would overstate the month. Payment methods are normalised: the three card labels BigCommerce records are merged, and free-text entries (service-request and contract numbers) are grouped as one row rather than invented into categories.`
+    +(missing.length?` ${missing.map(s=>LABEL[s.key]).join(", ")} are absent: their API tokens have no order scope.`:"");
+})();
+function monthBars(svg,s){
+  svg.innerHTML=""; const rows=s.sales.monthly.filter(m=>m.m!=="unknown"); const W=400,H=180,padL=48,padR=8,padT=10,padB=26;
+  if(!rows.length){ el("text",{x:W/2,y:H/2,"text-anchor":"middle",class:"lb"},svg).textContent="No orders"; return; }
+  const max=niceMax(Math.max(...rows.map(r=>r.revenue))), bw=(W-padL-padR)/rows.length;
+  for(let i=0;i<=3;i++){ const v=max*i/3, y=padT+(H-padT-padB)*(1-v/max);
+    el("line",{x1:padL,x2:W-padR,y1:y,y2:y,class:i?"grid":"axis"},svg);
+    el("text",{x:padL-6,y:y+4,"text-anchor":"end"},svg).textContent=v>=1000?Math.round(v/1000)+"k":fmt(v); }
+  const partial=new Set([rows[0].m,rows[rows.length-1].m]);   // the window cuts both ends mid-month
+  rows.forEach((r,i)=>{ const h=(H-padT-padB)*r.revenue/max, x=padL+i*bw+1; const part=partial.has(r.m);
+    const rect=el("rect",{x,y:H-padB-h,width:Math.max(bw-2,1),height:Math.max(h,1),rx:2,fill:COLOR(s.key),"fill-opacity":part?0.45:1},svg);
+    rect.addEventListener("mousemove",e=>showTip(e,`<b>${r.m}</b>${part?" <i>part month</i>":""}<br>${money(r.revenue,s.sales.currency)}<br>${fmt(r.orders)} orders`));
+    rect.addEventListener("mouseleave",hideTip);
+    if(i===0||r.m.slice(5)==="01"||i===rows.length-1) el("text",{x:x+bw/2,y:H-padB+15,"text-anchor":"middle"},svg).textContent=mon(r.m+"-01"); });
+}
+function drawPay(){
+  const s=store(payKey); if(!s||!s.sales) return;
+  const total=s.sales.payments.reduce((n,p)=>n+p.revenue,0);
+  $("#sales-pay tbody").innerHTML=s.sales.payments.map(p=>`<tr><td>${p.method}</td><td class="n">${fmt(p.orders)}</td><td class="n">${money(p.revenue,s.sales.currency)}</td><td class="n">${pct(p.revenue,total,1)}</td></tr>`).join("");
+}
+
+// ---------------------------------------------------------------- Coverage
+(function coverage(){
+  const cell=c=>c.ok?`<span class="pill good">connected</span><span class="fix">${c.detail}</span>`
+    :`<span class="pill crit">missing</span><span class="fix">${c.detail}${c.fix?" — "+c.fix:""}</span>`;
+  $("#cov-table tbody").innerHTML=D.coverage.map(r=>`<tr><td><span class="flag" style="color:${COLOR(r.market)}">${LABEL[r.market]}</span> ${r.domain}</td>
+    <td>${cell(r.search_console)}</td><td>${cell(r.catalogue)}</td><td>${cell(r.orders)}</td><td>${cell(r.merchant_center)}</td></tr>`).join("");
+  $("#cov-accounts tbody").innerHTML=(D.merchant_accounts||[]).map(a=>`<tr><td>${a.name}</td><td><code>${a.id}</code></td>
+    <td>${(a.covers||[]).map(k=>`<span class="flag" style="color:${COLOR(k)}">${LABEL[k]}</span>`).join(" ")||'<span class="mut">—</span>'}</td>
+    <td>${a.connected?'<span class="pill good">connected</span>':'<span class="pill crit">not granted</span><span class="fix">the service account is not a user on this account</span>'}</td></tr>`).join("");
+  const gaps=[];
+  const noOrders=D.coverage.filter(c=>!c.orders.ok);
+  if(noOrders.length) gaps.push(`<b>Orders for ${noOrders.map(c=>LABEL[c.market]).join(", ")}</b> — those API tokens carry catalogue scope only, so there is no revenue, no order count and no payment mix for those markets. BigCommerce → Settings → API accounts → edit the token → Orders: read-only.`);
+  const noMC=D.coverage.filter(c=>!c.merchant_center.ok);
+  if(noMC.length) gaps.push(`<b>Shopping feed health for ${noMC.map(c=>LABEL[c.market]).join(", ")}</b> — Merchant Center account 289630622 has not been shared with the service account, so the feed, disapprovals and Shopping performance for five storefronts are invisible here.`);
+  gaps.push(`<b>Google Business Profile and Trustpilot</b> — the salon listings and review pipelines run on their own credentials and are not pulled into this page yet.`);
+  gaps.push(`<b>Bing</b> — <code>bing-indexing/</code> submits sitemaps and URLs; Bing Webmaster performance data is a separate API that is not connected.`);
+  gaps.push(`<b>Advertising spend</b> — Google Ads cost sits outside the Merchant API, so every figure here is organic or total revenue, never return on ad spend.`);
+  $("#cov-gaps").innerHTML=gaps.map(g=>`<p class="sdef" style="font-size:12.5px;margin:0 0 8px">${g}</p>`).join("");
+})();
+
+function seg(sel,fn){ const node=$(sel); if(!node) return;
+  node.addEventListener("click",e=>{const b=e.target.closest("button"); if(!b||b.disabled)return;
+    node.querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b)); fn(b);}); }
+</script>
