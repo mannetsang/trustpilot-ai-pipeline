@@ -98,6 +98,22 @@ token is **not** — it is `business.manage` only and 403s after a successful
 token call. Properties are exact: `https://superhairpieces.ca/` with the
 trailing slash, and `.com` is the **www** host.
 
+### Group dashboard
+
+`group-dashboard/` builds one page across all six storefronts (Cloud Run
+`group-dashboard`, rebuilt daily): organic search from Search Console,
+catalogue and sales from BigCommerce, Shopping feed status from Merchant
+Center, and a Coverage tab naming every gap and its fix. `lib/stores.py` is the
+shared six-store registry it uses - hash, canonical host, currency, market and
+token ids - and new code should prefer it over the per-module copies in
+`bing-indexing/`, `google-merchant/` and `google-search-console/`.
+
+Reachable today: catalogue and Search Console for all six; **orders only for
+.ca, .com and .es** (the .nl, .fr and .de API tokens carry catalogue scope and
+answer 403 on `/v2/orders`); Merchant Center only for `5298296396`. Revenue is
+`total_inc_tax` less `refunded_amount`, excluding statuses 0/5/6, and is never
+added across currencies.
+
 ### Google Business Profile
 
 Driven by the scripts in `google-business/` through the Business Profile APIs.
