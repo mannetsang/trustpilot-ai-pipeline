@@ -100,10 +100,12 @@ trailing slash, and `.com` is the **www** host.
 
 ### Group dashboard
 
-`group-dashboard/` builds one page across all six storefronts (Cloud Run
-`group-dashboard`, rebuilt daily): organic search from Search Console,
-catalogue and sales from BigCommerce, Shopping feed status from Merchant
-Center, and a Coverage tab naming every gap and its fix. `lib/stores.py` is the
+`group-dashboard/` builds **the** dashboard — one page across all six
+storefronts (Cloud Run `group-dashboard`, rebuilt daily): organic search from
+Search Console, catalogue and sales from BigCommerce, the .ca Merchant Center
+feed and its action plan (via `google-merchant/dashboard/build_data.py`), and a
+Coverage tab naming every gap and its fix. The older `merchant-dashboard`
+service now redirects here; there is one URL, not two. `lib/stores.py` is the
 shared six-store registry it uses - hash, canonical host, currency, market and
 token ids - and new code should prefer it over the per-module copies in
 `bing-indexing/`, `google-merchant/` and `google-search-console/`.

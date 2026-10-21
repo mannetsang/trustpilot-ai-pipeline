@@ -86,6 +86,14 @@ python google-merchant/products.py delete --account 5298296396 --label CA --offe
 top-level `offerId`; `products.py --help` shows a minimal example. Useful for
 one-off tests; the catalogue itself is pushed by the sync below.
 
+## The dashboard moved
+
+`dashboard/build_data.py` still builds the .ca feed data every night, but it is
+now called by `group-dashboard/collect.py` and rendered as the **Shopping
+feed** tab there. The old `merchant-dashboard` Cloud Run service redirects to
+it (`dashboard/redirect/`), so one URL covers the whole business instead of two
+covering overlapping parts of it.
+
 ## Catalogue sync from BigCommerce
 
 `sync_bigcommerce.py` rebuilds the whole feed from the BigCommerce catalogue

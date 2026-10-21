@@ -62,12 +62,25 @@ code{font-family:var(--mono);font-size:11.5px;background:var(--surface-2);paddin
 .tip{position:fixed;pointer-events:none;background:var(--ink);color:var(--ground);font-family:var(--mono);font-size:11.5px;line-height:1.4;padding:6px 9px;border-radius:4px;opacity:0;transform:translate(-50%,-110%);white-space:nowrap;z-index:9;transition:opacity .08s}
 .wrap{overflow-x:auto}
 .cov td{vertical-align:middle} .cov .fix{font-size:11.5px;color:var(--muted);display:block;margin-top:2px}
+th.sort{cursor:pointer} th.sort:hover{color:var(--ink)} th.sort.on{color:var(--accent)}
+.filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:6px 0 10px}
+.filters input,.filters select{font:inherit;font-size:12.5px;background:var(--surface);border:1px solid var(--rule);color:var(--ink);border-radius:5px;padding:5px 8px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:24px;margin:4px 0 8px}
+.chip{background:var(--accent-soft);color:var(--accent);border-radius:999px;padding:2px 10px;font-size:12px;cursor:pointer} .chip:hover{text-decoration:line-through}
+.pager{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:10px 0 0;font-size:12.5px;color:var(--muted)}
+.pager button{font:inherit;font-size:12.5px;background:var(--surface);border:1px solid var(--rule);color:var(--ink-2);border-radius:5px;padding:4px 10px;cursor:pointer} .pager button:disabled{opacity:.4;cursor:default}
+.drawer{position:fixed;top:0;right:0;height:100vh;width:min(460px,100vw);background:var(--surface);border-left:1px solid var(--rule);box-shadow:-12px 0 32px rgba(0,0,0,.12);transform:translateX(100%);transition:transform .18s;z-index:30;overflow:auto;padding:18px 20px 40px}
+.drawer.open{transform:none} .drawer .x{position:absolute;top:10px;right:12px;border:0;background:var(--surface-2);color:var(--ink);border-radius:50%;width:30px;height:30px;cursor:pointer;font-size:16px}
+.drawer img{width:100%;max-height:260px;object-fit:contain;background:var(--surface-2);border-radius:6px;margin:10px 0}
+.drawer h3{margin:8px 0 2px;font-size:16px;line-height:1.3} .drawer .kv{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;margin:12px 0;font-size:13px} .drawer .kv div span{display:block;font-family:var(--mono);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.drawer ul{padding-left:1.1em;margin:6px 0} .drawer a{color:var(--accent)} .drawer .lbl{display:block;margin-top:10px}
+.plan .row td:first-child{font-weight:500} .plan input{width:16px;height:16px;cursor:pointer;accent-color:var(--accent)} .plan tr.done td{color:var(--muted);text-decoration:line-through} .plan tr.done td:last-child,.plan tr.done td:nth-child(1){text-decoration:none}
 a{color:var(--accent)}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 
 <header><div class="hbar"><h1>Superhairpieces · Group</h1><span class="sub" id="stamp"></span>
-<nav><a href="#group">Group</a><a href="#organic">Organic search</a><a href="#catalogue">Catalogue</a><a href="#sales">Sales</a><a href="#coverage">Coverage</a></nav></div></header>
+<nav><a href="#group">Group</a><a href="#organic">Organic search</a><a href="#catalogue">Catalogue</a><a href="#sales">Sales</a><a href="#feed">Shopping feed</a><a href="#plan">Action plan</a><a href="#coverage">Coverage</a></nav></div></header>
 
 <main>
 <section id="group">
@@ -134,6 +147,45 @@ a{color:var(--accent)}
   <p class="note" id="sales-note"></p>
 </section>
 
+<section id="feed">
+  <div class="sec-h"><h2>Shopping feed</h2><span class="hint" id="feed-hint">superhairpieces.ca · Merchant Center 5298296396 · the only account shared with us</span></div>
+  <div id="feed-missing" class="card" hidden><p style="margin:2px 0;color:var(--ink-2)" id="feed-why"></p></div>
+  <div id="feed-live" hidden>
+    <div class="tiles" id="htiles"></div>
+    <div class="grid2" style="margin-top:14px">
+      <div class="card"><div class="cap"><b>Disapproval reasons</b><span class="s">offers affected · faded bars are temporary · click to filter the products below</span></div><svg id="c-iss" class="chart"></svg></div>
+      <div class="card"><div class="cap"><b>Warnings that do not block</b><span class="s">offers affected</span></div><svg id="c-warn" class="chart"></svg></div>
+    </div>
+    <div class="grid2" style="margin-top:14px">
+      <div class="card"><div class="cap"><b>How Google categorised the offers</b><div class="legend"><span><i style="background:var(--s1)"></i>Acceptable</span><span><i style="background:var(--s2)"></i>Mis-filed</span></div></div><svg id="c-gcat" class="chart"></svg></div>
+      <div class="card"><div class="cap"><b>Offers by store category</b><span class="s">approved vs disapproved vs out of stock</span></div><svg id="c-root" class="chart"></svg></div>
+    </div>
+    <div class="card" style="margin-top:14px">
+      <div class="cap"><b>Product explorer</b><span class="s" id="pcount"></span></div>
+      <div class="filters">
+        <input type="search" id="q" placeholder="Search name or SKU">
+        <select id="f-root"><option value="">All store categories</option></select>
+        <select id="f-gcat"><option value="">All Google categories</option></select>
+        <select id="f-status"><option value="">Any status</option><option value="dis">Has disapproved variants</option><option value="ok">All variants approved</option></select>
+        <select id="f-stock"><option value="">Any stock</option><option value="oos">Has out-of-stock variants</option><option value="alloos">All variants out of stock</option></select>
+        <select id="f-flag"><option value="">Any flag</option><option value="internal">Internal or under $3</option><option value="noweight">Missing weight</option><option value="nogtin">Third-party brand, no GTIN</option><option value="noclicks">Top seller, zero Google clicks</option><option value="many">Over 50 variants</option></select>
+        <button class="chip" id="clear" style="display:none">Clear all</button>
+      </div>
+      <div class="chips" id="chips"></div>
+      <div class="wrap"><table id="tbl"><thead><tr>
+        <th class="sort" data-k="name">Product</th><th class="sort" data-k="root">Store category</th><th class="sort" data-k="gcat">Google category</th><th class="sort n" data-k="price">Price</th><th class="sort n" data-k="offers">Variants</th><th class="sort n" data-k="oos">Out of stock</th><th class="sort n" data-k="disapproved">Disapproved</th><th class="sort n on" data-k="sold">Sold</th><th class="sort n" data-k="views">Views</th><th class="sort n" data-k="gclicks">Google clicks</th><th class="sort n" data-k="margin">Margin</th>
+      </tr></thead><tbody></tbody></table></div>
+      <div class="pager"><span id="pinfo"></span><span><button id="prev">Previous</button> <button id="next">Next</button></span></div>
+    </div>
+  </div>
+</section>
+
+<section id="plan">
+  <div class="sec-h"><h2>Action plan</h2><span class="hint">from the Google Shopping review · ticks are saved in this browser only</span></div>
+  <div class="card" style="padding:0"><div class="wrap"><table class="plan"><thead><tr><th></th><th>#</th><th>Action</th><th>Evidence</th><th>Impact</th><th>Effort</th><th>Where</th></tr></thead><tbody id="plan-body"></tbody></table></div></div>
+  <p class="note">Actions 2, 3 and 7 can be done in the sync script alone. Actions 4, 6, 10 and 11 are BigCommerce catalogue data work.</p>
+</section>
+
 <section id="coverage">
   <div class="sec-h"><h2>Coverage</h2><span class="hint">every market against every source this dashboard can read</span></div>
   <div class="card"><div class="wrap"><table class="cov" id="cov-table"><thead><tr><th>Market</th><th>Organic search</th><th>Catalogue</th><th>Orders</th><th>Shopping feed</th></tr></thead><tbody></tbody></table></div>
@@ -144,6 +196,7 @@ a{color:var(--accent)}
 </section>
 </main>
 <div class="tip" id="tip"></div>
+<aside class="drawer" id="drawer"><button class="x" id="dx" aria-label="Close">×</button><div id="dbody"></div></aside>
 
 <script>
 const D = __DATA__;
@@ -404,6 +457,80 @@ function drawPay(){
   gaps.push(`<b>Advertising spend</b> — Google Ads cost sits outside the Merchant API, so every figure here is organic or total revenue, never return on ad spend.`);
   $("#cov-gaps").innerHTML=gaps.map(g=>`<p class="sdef" style="font-size:12.5px;margin:0 0 8px">${g}</p>`).join("");
 })();
+
+// ---------------------------------------------------------------- Shopping feed (.ca)
+const M = D.merchant && D.merchant.available ? D.merchant : null;
+if(!M){ $("#feed-missing").hidden=false;
+  $("#feed-why").textContent=(D.merchant&&D.merchant.reason)?`The Merchant Center feed could not be read this run: ${D.merchant.reason}`:"The Merchant Center feed was not collected in this build.";
+} else { $("#feed-live").hidden=false;
+  $("#feed-hint").textContent=`superhairpieces.ca · Merchant Center 5298296396 · ${fmt(M.variants.offers)} offers · feed data ${M.generated}`;
+  // ---- Feed health
+  const P=M.products; const totOffers=P.reduce((s,p)=>s+p.offers,0), totDis=P.reduce((s,p)=>s+p.disapproved,0), totOOS=P.reduce((s,p)=>s+p.oos,0), totApp=P.reduce((s,p)=>s+p.approved,0);
+  $("#htiles").innerHTML=[["Offers in feed",fmt(totOffers),`${fmt(P.length)} products`],["Approved",pct(totApp,totOffers,1),fmt(totApp)+" offers"],["Disapproved",fmt(totDis),`${P.filter(p=>p.disapproved).length} products`],["Out of stock",pct(totOOS,totOffers,1),fmt(totOOS)+" offers"],["Internal or under $3",fmt(P.filter(p=>p.internal).length),"products in feed"],["Third-party brands with a GTIN",`${M.gtin.third_party_with_gtin} / ${M.gtin.third_party_offers}`,"offers"]]
+   .map(([l,v,d])=>`<div class="tile"><div class="l">${l}</div><div><div class="v">${v}</div><div class="d">${d}</div></div></div>`).join("");
+  function hbars(svg, items, {labelKey,valueKey,colorFn,muteFn,onClick,rowH=26,padL=230}){ svg.innerHTML=""; const W=600,padT=6,H=padT+items.length*rowH+6; svg.setAttribute("viewBox",`0 0 ${W} ${H}`); const max=niceMax(Math.max(1,...items.map(i=>i[valueKey]))); const xw=W-padL-64;
+    items.forEach((it,i)=>{const y=padT+i*rowH,w=xw*it[valueKey]/max; const t=el("text",{x:padL-10,y:y+rowH/2+4,"text-anchor":"end",class:"lb"},svg); t.textContent=it[labelKey].length>34?it[labelKey].slice(0,33)+"…":it[labelKey];
+      const r=el("rect",{x:padL,y:y+5,width:Math.max(w,2),height:rowH-10,rx:3,class:"bar",fill:colorFn?colorFn(it):"var(--s1)","fill-opacity":muteFn&&muteFn(it)?.35:1},svg); el("text",{x:padL+w+7,y:y+rowH/2+4,class:"lb"},svg).textContent=fmt(it[valueKey]);
+      r.addEventListener("mousemove",e=>showTip(e,`<b>${it[labelKey]}</b><br>${fmt(it[valueKey])} offers`+(onClick?"<br><i>click to filter products</i>":""))); r.addEventListener("mouseleave",hideTip); if(onClick) r.addEventListener("click",()=>onClick(it)); }); }
+  // count offers per issue code from products (approximate by disapproved offers per product when single issue; use offer-level counts embedded)
+  const issOffers={}, warnOffers={}; P.forEach(p=>{ p.issues.forEach(c=>issOffers[c]=(issOffers[c]||0)+p.offers); p.warnings.forEach(c=>warnOffers[c]=(warnOffers[c]||0)+p.offers); });
+  // Prefer exact offer counts from report data where available
+  const exactIss={attribute_pending_review:660,image_unwanted_overlays:159,missing_shipping_weight:127,personal_hardships_policy_violation:67,violated_discovery_ads_policy_experiment2:13,attribute_violated_discovery_ads_policy:13,healthcare_pet_pharma_policy_violation:12,price_mismatch:9,healthcare_pdt_policy_violation:6,image_link_pending_crawl:3,image_link_internal_error:2,tobacco_policy_violation:1};
+  const exactWarn={availability_updated:676,image_link_internal_error:576,image_too_small_for_high_resolution:57,price_updated:32,description_short:27,title_all_caps:3,image_link_internal_error_fallback:2,utf8_encoding_error:1,low_image_quality:1,image_too_small:1};
+  const issItems=(M.issue_counts?M.issue_counts.map(x=>[x.code,x.offers]):Object.entries(exactIss)).map(([c,n])=>({code:c,name:M.issue_names[c]||c,offers:n,temp:/temporary/.test(M.issue_names[c]||"")})); const warnItems=(M.warning_counts?M.warning_counts.map(x=>[x.code,x.offers]):Object.entries(exactWarn)).map(([c,n])=>({code:c,name:M.issue_names[c]||c,offers:n}));
+  hbars($("#c-iss"),issItems,{labelKey:"name",valueKey:"offers",muteFn:i=>i.temp,onClick:i=>{setFilter("issue",i.code,i.name);}});
+  hbars($("#c-warn"),warnItems,{labelKey:"name",valueKey:"offers",onClick:i=>{setFilter("warn",i.code,i.name);}});
+  const bad=new Set(["Hats","Computer Components","First Aid","Shirts & Tops","Cosmetics","(no category)"]);
+  hbars($("#c-gcat"),M.google_categories,{labelKey:"category",valueKey:"offers",colorFn:c=>bad.has(c.category)?"var(--s2)":"var(--s1)",onClick:c=>{$("#f-gcat").value=c.category;applyFilters();}});
+  const rootAgg={}; P.forEach(p=>{const r=rootAgg[p.root]||(rootAgg[p.root]={root:p.root,offers:0,dis:0,oos:0}); r.offers+=p.offers;r.dis+=p.disapproved;r.oos+=p.oos;});
+  (function(){ const items=Object.values(rootAgg).sort((a,b)=>b.offers-a.offers).slice(0,9); const svg=$("#c-root"); svg.innerHTML=""; const W=600,rowH=26,padL=230,padT=6,H=padT+items.length*rowH+6; svg.setAttribute("viewBox",`0 0 ${W} ${H}`); const max=niceMax(Math.max(...items.map(i=>i.offers))); const xw=W-padL-64;
+    items.forEach((it,i)=>{const y=padT+i*rowH; el("text",{x:padL-10,y:y+rowH/2+4,"text-anchor":"end",class:"lb"},svg).textContent=it.root.length>34?it.root.slice(0,33)+"…":it.root; const segs=[["approved",it.offers-it.dis-it.oos,"var(--s1)"],["out of stock",it.oos,"var(--s1)"],["disapproved",it.dis,"var(--s2)"]]; let x=padL;
+      segs.forEach(([n,v,c],k)=>{ if(v<=0) return; const w=xw*v/max; const r=el("rect",{x:x,y:y+5,width:Math.max(w-2,1),height:rowH-10,rx:2,class:"bar",fill:c,"fill-opacity":n==="out of stock"?.4:1},svg); r.addEventListener("mousemove",e=>showTip(e,`<b>${it.root}</b><br>${n}: ${fmt(v)} offers<br>total ${fmt(it.offers)}`)); r.addEventListener("mouseleave",hideTip); r.addEventListener("click",()=>{$("#f-root").value=it.root; $("#f-status").value=n==="disapproved"?"dis":""; $("#f-stock").value=n==="out of stock"?"oos":""; applyFilters();}); x+=w; });
+      el("text",{x:padL+xw*it.offers/max+7,y:y+rowH/2+4,class:"lb"},svg).textContent=fmt(it.offers); }); })();
+  
+  // ---- Product explorer
+  const roots=[...new Set(P.map(p=>p.root))].sort(), gcats=[...new Set(P.map(p=>p.gcat))].sort();
+  $("#f-root").innerHTML+=roots.map(r=>`<option>${r}</option>`).join(""); $("#f-gcat").innerHTML+=gcats.map(r=>`<option>${r}</option>`).join("");
+  let extra={}; let sort={k:"sold",dir:-1}; let page=0; const PAGE=25; let view=[];
+  function setFilter(kind,code,name){ extra={kind,code,name}; page=0; applyFilters(); document.getElementById("products").scrollIntoView({behavior:"smooth"}); }
+  function applyFilters(){ const q=$("#q").value.trim().toLowerCase(), root=$("#f-root").value, gcat=$("#f-gcat").value, st=$("#f-status").value, stock=$("#f-stock").value, flag=$("#f-flag").value;
+    view=P.filter(p=> (!q||p.name.toLowerCase().includes(q)||(p.sku||"").toLowerCase().includes(q)) && (!root||p.root===root) && (!gcat||p.gcat===gcat) && (!st||(st==="dis"?p.disapproved>0:p.disapproved===0)) && (!stock||(stock==="oos"?p.oos>0:p.oos===p.offers))
+      && (!flag|| (flag==="internal"?p.internal: flag==="noweight"?!p.weight: flag==="nogtin"?(p.brand.toLowerCase()!=="superhairpieces"&&!p.gtin): flag==="noclicks"?(p.sold>=500&&p.gclicks===0&&!p.internal): p.offers>50))
+      && (!extra.kind || (extra.kind==="issue"?p.issues.includes(extra.code):p.warnings.includes(extra.code))));
+    view.sort((a,b)=>{let x=a[sort.k],y=b[sort.k]; if(x==null)x=-Infinity; if(y==null)y=-Infinity; return (typeof x==="string"? x.localeCompare(y): x-y)*sort.dir;});
+    page=Math.min(page,Math.max(0,Math.ceil(view.length/PAGE)-1)); renderTable();
+    const chips=[]; if(q)chips.push(["q",`Search: ${q}`]); if(root)chips.push(["f-root",`Store: ${root}`]); if(gcat)chips.push(["f-gcat",`Google: ${gcat}`]); if(st)chips.push(["f-status",$("#f-status").selectedOptions[0].text]); if(stock)chips.push(["f-stock",$("#f-stock").selectedOptions[0].text]); if(flag)chips.push(["f-flag",$("#f-flag").selectedOptions[0].text]); if(extra.kind)chips.push(["extra",`${extra.kind==="issue"?"Issue":"Warning"}: ${extra.name}`]);
+    $("#chips").innerHTML=chips.map(([k,l])=>`<span class="chip" data-k="${k}" title="Remove">${l} ×</span>`).join(""); $("#clear").style.display=chips.length?"":"none";
+    $("#pcount").textContent=`${fmt(view.length)} of ${fmt(P.length)} products · ${fmt(view.reduce((s,p)=>s+p.offers,0))} offers`; }
+  $("#chips").addEventListener("click",e=>{const c=e.target.closest(".chip");if(!c)return;const k=c.dataset.k; if(k==="extra")extra={}; else if(k==="q")$("#q").value=""; else $("#"+k).value=""; applyFilters();});
+  $("#clear").addEventListener("click",()=>{extra={};$("#q").value="";["f-root","f-gcat","f-status","f-stock","f-flag"].forEach(k=>$("#"+k).value="");applyFilters();});
+  ["q","f-root","f-gcat","f-status","f-stock","f-flag"].forEach(k=>$("#"+k).addEventListener("input",()=>{page=0;applyFilters();}));
+  document.querySelectorAll("th.sort").forEach(th=>th.addEventListener("click",()=>{const k=th.dataset.k; if(sort.k===k)sort.dir*=-1; else {sort={k,dir:(k==="name"||k==="root"||k==="gcat")?1:-1};} document.querySelectorAll("th.sort").forEach(x=>x.classList.toggle("on",x===th)); applyFilters();}));
+  function renderTable(){ const rows=view.slice(page*PAGE,(page+1)*PAGE); $("#tbl tbody").innerHTML=rows.map(p=>`<tr class="row" data-id="${p.id}"><td>${p.name}${p.internal?' <span class="pill crit">internal</span>':''}</td><td>${p.root}</td><td>${bad.has(p.gcat)?`<span class="pill warn">${p.gcat}</span>`:p.gcat}</td><td class="n">$${fmt(p.price)}${p.pmax>p.price?"–"+fmt(p.pmax):""}</td><td class="n">${p.offers}</td><td class="n">${p.oos?p.oos:"–"}</td><td class="n">${p.disapproved?`<span class="pill crit">${p.disapproved}</span>`:"–"}</td><td class="n">${fmt(p.sold)}</td><td class="n">${fmt(p.views)}</td><td class="n">${p.gclicks?fmt(p.gclicks):'<span class="pill neutral">0</span>'}</td><td class="n">${p.margin==null?"–":p.margin+"%"}</td></tr>`).join("");
+    const pages=Math.max(1,Math.ceil(view.length/PAGE)); $("#pinfo").textContent=`Page ${page+1} of ${pages}`; $("#prev").disabled=page===0; $("#next").disabled=page>=pages-1; }
+  $("#prev").addEventListener("click",()=>{page--;renderTable();}); $("#next").addEventListener("click",()=>{page++;renderTable();});
+  $("#tbl tbody").addEventListener("click",e=>{const tr=e.target.closest("tr.row");if(!tr)return;openDrawer(P.find(p=>p.id==tr.dataset.id));});
+  function openDrawer(p){ const pill=(n,c)=>`<span class="pill ${c}">${n}</span>`;
+    $("#dbody").innerHTML=`<div class="lbl">${p.root} · SKU ${p.sku||"–"}</div><h3>${p.name}</h3><img src="${p.img}" alt="" onerror="this.style.display='none'">
+    <div class="kv"><div><span>Price</span>$${fmt(p.price)}${p.pmax>p.price?" – $"+fmt(p.pmax):""}</div><div><span>Margin</span>${p.margin==null?"unknown":p.margin+"%"}</div><div><span>Variants in feed</span>${p.offers}</div><div><span>Out of stock</span>${p.oos}</div><div><span>Approved</span>${p.approved}</div><div><span>Disapproved</span>${p.disapproved}</div><div><span>Units sold, lifetime</span>${fmt(p.sold)}</div><div><span>Page views, lifetime</span>${fmt(p.views)}</div><div><span>Google clicks, 12 mo</span>${fmt(p.gclicks)}</div><div><span>Google impressions, 12 mo</span>${fmt(p.gimpr)}</div><div><span>Google category</span>${bad.has(p.gcat)?pill(p.gcat,"warn"):p.gcat}</div><div><span>Brand</span>${p.brand}</div></div>
+    <div class="lbl">Blocking issues</div>${p.issues.length?"<ul>"+p.issues.map(c=>`<li>${M.issue_names[c]||c}</li>`).join("")+"</ul>":"<p style='margin:4px 0'>None</p>"}
+    <div class="lbl" style="margin-top:10px">Warnings</div>${p.warnings.length?"<ul>"+p.warnings.map(c=>`<li>${M.issue_names[c]||c}</li>`).join("")+"</ul>":"<p style='margin:4px 0'>None</p>"}
+    <div class="lbl" style="margin-top:10px">Flags</div><p style="margin:4px 0">${[p.internal&&pill("internal item","crit"),!p.weight&&pill("missing weight","warn"),(p.brand.toLowerCase()!=="superhairpieces"&&!p.gtin)&&pill("no GTIN","warn"),p.offers>50&&pill(p.offers+" variants","neutral"),(p.sold>=500&&p.gclicks===0)&&pill("top seller, no Google clicks","crit")].filter(Boolean).join(" ")||"None"}</p>
+    <p style="margin-top:14px"><a href="${p.url}" target="_blank" rel="noopener">Open product page</a> · <a href="https://merchants.google.com/mc/items?a=5298296396" target="_blank" rel="noopener">Open Merchant Center products</a></p>`;
+    $("#drawer").classList.add("open"); }
+  $("#dx").addEventListener("click",()=>$("#drawer").classList.remove("open")); document.addEventListener("keydown",e=>{if(e.key==="Escape")$("#drawer").classList.remove("open");});
+  
+  // ---- Action plan
+  const PLAN=[["Keep the daily sync running and watch the first week of runs","Two-month blackout","High","Done","GitHub Actions, live since 6 Sep"],["Exclude internal and office items from the feed, then hide them on the storefront","57 approved junk offers","High","Hours","Sync rule; BigCommerce visibility"],["Send Google product categories mapped from BigCommerce categories","Hats, First Aid, Computer Components","High","Hours","Sync mapping table"],["Enter shipping weights for the 68 products missing them, starting with Six Teeth Comb Clips","127 disapproved offers, 42,963 units sold","High","Hours","BigCommerce product data"],["Opt in to price competitiveness, price insights and best sellers","Empty market-insight reports","Medium","Minutes","Merchant Center, Growth"],["Replace overlay images on the 8 extension and topper products","159 disapproved offers","Medium","Days","Marketing, BigCommerce images"],["Rewrite titles: searched phrase first, then length, colour, weight; drop 'hair loss' and 'medical' from titles","Extension invisibility, personal-hardships policy","High","Days","BigCommerce names, or a title rule in the sync"],["Track consultation bookings and phone orders as Google conversions","Hairpiece conversions invisible","High","Days","GA4 and Merchant Center conversion settings"],["Launch a paid Shopping campaign on supplies and the top four men's toupee models","2.1% supplies conversion; M101 and HD111 impressions","High","Days + budget","Google Ads"],["Fix third-party barcodes in BigCommerce and send GTINs","5 of 691 supplies offers have a GTIN","Medium","Days","BigCommerce import"],["Prune permanently unavailable extension variants; make page and feed availability agree","1,066 extension variants out of stock; 676 auto-corrected","Medium","Days","BigCommerce variants"],["Push Stamped.io and Trustpilot reviews as a product review data source","No ratings on listings","Medium","Days","Merchant API, new script"],["Send sale prices and a promotions data source for seasonal offers","Zero sale prices in feed","Medium","Days","BigCommerce sale price; Merchant API"],["Connect the .com and EU Merchant Center account and repeat the setup","17 of 6,798 clicks from outside Canada","High","Weeks","Account 289630622"]];
+  let done={}; try{done=JSON.parse(localStorage.getItem("shp-gmc-plan")||"{}");}catch(e){}
+  const effC=e=>e==="Done"||e==="Minutes"||e==="Hours"?"good":e==="Weeks"?"crit":"warn";
+  $("#plan-body").innerHTML=PLAN.map((r,i)=>`<tr class="row ${done[i]?"done":""}" data-i="${i}"><td><input type="checkbox" ${done[i]?"checked":""}></td><td class="n">${i+1}</td><td>${r[0]}</td><td>${r[1]}</td><td><span class="pill ${r[2]==="High"?"good":"warn"}">${r[2]}</span></td><td><span class="pill ${effC(r[3])}">${r[3]}</span></td><td>${r[4]}</td></tr>`).join("");
+  $("#plan-body").addEventListener("change",e=>{const tr=e.target.closest("tr");if(!tr)return;done[tr.dataset.i]=e.target.checked;tr.classList.toggle("done",e.target.checked);try{localStorage.setItem("shp-gmc-plan",JSON.stringify(done));}catch(err){}});
+  
+  applyFilters();   // the explorer starts populated, not waiting on a filter change
+
+}
+
 
 function seg(sel,fn){ const node=$(sel); if(!node) return;
   node.addEventListener("click",e=>{const b=e.target.closest("button"); if(!b||b.disabled)return;

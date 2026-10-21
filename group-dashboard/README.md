@@ -3,10 +3,12 @@
 One page for the whole business: six storefronts, every source this repo can
 read, and — just as deliberately — every source it cannot.
 
-The Shopping dashboard next door (`google-merchant/dashboard/`) is deep on one
-market: superhairpieces.ca, its Merchant Center feed and its product catalogue.
-This one is wide. It answers "how is the group doing" rather than "what is
-wrong with the .ca feed".
+**This is the only dashboard.** It began as a second one beside the Shopping
+dashboard, which was deep on superhairpieces.ca alone, and the two overlapped
+on organic search and gave the business two URLs for one question. The .ca
+Merchant Center tabs now live here as **Shopping feed** and **Action plan**,
+and the `merchant-dashboard` service redirects here
+(`google-merchant/dashboard/redirect/`).
 
 Live at the `group-dashboard` Cloud Run service, rebuilt daily.
 
@@ -24,6 +26,8 @@ python group-dashboard/build_site.py                   # renders site/index.html
 | **Organic search** | Six markets on one chart, switchable between clicks, impressions and average position. Queries that appear in more than one market, where in the world the searches happen, and per-market device and surface mix. |
 | **Catalogue** | Products, visibility, variants, stock and sale coverage per market, then price bands, brands, categories and best sellers for the market you pick. |
 | **Sales** | Revenue by month per market, order-status mix, and how customers pay. |
+| **Shopping feed** | superhairpieces.ca's Merchant Center feed: approval rate, every disapproval and warning, how Google categorised the offers, and a filterable explorer over all 1,014 products. |
+| **Action plan** | The fourteen ranked actions from the Google Shopping review, ticked off in your browser. |
 | **Coverage** | Every market against every source, with the exact fix for each gap. |
 
 ## What it reads, and what it cannot
@@ -33,7 +37,7 @@ python group-dashboard/build_site.py                   # renders site/index.html
 | Search Console | all six | Needs the service account on each property; see `google-search-console/README.md`. |
 | BigCommerce catalogue | all six | |
 | BigCommerce orders | ca, com, es | The .nl, .fr and .de tokens carry catalogue scope only and answer 403 on `/v2/orders`. |
-| Merchant Center | ca | Account `289630622` (.com and EU) has not been shared with the service account. |
+| Merchant Center | ca | Pulled by calling `google-merchant/dashboard/build_data.py`, which is the thing the nightly sync already exercises. Account `289630622` (.com and EU) has not been shared with the service account. |
 
 Nothing here guesses around a gap. A market with no order scope shows "no
 access" in the revenue column and a row in Coverage naming the fix; it never
@@ -70,6 +74,7 @@ list.
 | Search Console | ~14 per property | seconds |
 | Catalogue | ~6 per store | seconds |
 | Orders | 1 + one per 250 orders | the bulk of it |
+| .ca Merchant feed | the Shopping dashboard's own build | about two minutes |
 
 The 12-month order window is about 190 pages across the three readable stores,
 fetched four at a time. BigCommerce reports millions of requests left in its
