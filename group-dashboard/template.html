@@ -56,6 +56,11 @@ svg.chart .grid{stroke:var(--rule-soft)} svg.chart .axis{stroke:var(--rule)} svg
 .pill{display:inline-block;font-family:var(--mono);font-size:10.5px;padding:1px 7px;border-radius:999px;white-space:nowrap}
 .pill.good{background:var(--good-soft);color:var(--good)} .pill.warn{background:var(--warn-soft);color:var(--warn)} .pill.crit{background:var(--crit-soft);color:var(--crit)} .pill.neutral{background:var(--surface-2);color:var(--ink-2)}
 .flag{font-family:var(--mono);font-size:11px;font-weight:500;padding:1px 6px;border-radius:3px;background:var(--surface-2);color:var(--ink-2)}
+svg.fl{width:16px;height:10.67px;display:inline-block;vertical-align:-1px;border-radius:1.5px;box-shadow:0 0 0 .5px rgba(0,0,0,.22);flex:none}
+.flag.ico{padding:0;background:none;display:inline-flex;align-items:center;line-height:0}
+.flags{display:inline-flex;gap:4px;align-items:center;flex-wrap:nowrap}
+.seg button svg.fl,.legend button svg.fl{margin-right:5px}
+.seg button,.legend button{display:inline-flex;align-items:center}
 .note{font-size:12.5px;color:var(--muted);margin-top:8px}
 .mut{color:var(--muted)}
 #o-queries thead th,#o-countries thead th{position:sticky;top:0;background:var(--surface);z-index:1}
@@ -233,6 +238,27 @@ const weekOf=s=>{const d=new Date(s+"T00:00:00Z");const w=(d.getUTCDay()+6)%7;d.
 
 const STORES=D.stores, SEARCH=D.search||{properties:[]};
 const LABEL={ca:"CA",com:"US",nl:"NL",fr:"FR",es:"ES",de:"DE"};
+const NAME={ca:"Canada",com:"United States",nl:"Netherlands",fr:"France",es:"Spain",de:"Germany"};
+// Inline SVG, not emoji: Windows renders regional-indicator pairs as the bare
+// letters "CA", "US", so an emoji flag would show nothing on half the machines
+// that open this page. Drawn at 3:2 and scaled by CSS.
+const FLAG={
+  ca:'<rect width="3" height="2" fill="#fff"/><rect width=".75" height="2" fill="#D52B1E"/><rect x="2.25" width=".75" height="2" fill="#D52B1E"/>'
+    +'<path fill="#D52B1E" transform="translate(1.14 .26) scale(.0072)" d="M100 0l12 26q2 4 6 2l14-8-4 28q0 4 4 4l20-2-8 18q-2 4 2 6l26 12-26 20q-4 2-2 6l4 10-28-2q-4 0-4 4l2 26-16-14q-4-2-4 2l2 36h-8l2-36q0-4-4-2l-16 14 2-26q0-4-4-4l-28 2 4-10q2-4-2-6L-28 96l26-12q4-2 2-6l-8-18 20 2q4 0 4-4l-4-28 14 8q4 2 6-2z"/>',
+  com:'<rect width="3" height="2" fill="#fff"/>'
+    +[0,1,2,3,4,5,6].map(i=>`<rect y="${(i*2/6.5).toFixed(4)}" width="3" height="${(2/13).toFixed(4)}" fill="#B22234"/>`).join("")
+    +'<rect width="1.2" height="1.0769" fill="#3C3B6E"/>',
+  nl:'<rect width="3" height="2" fill="#21468B"/><rect width="3" height="1.3333" fill="#fff"/><rect width="3" height=".6667" fill="#AE1C28"/>',
+  fr:'<rect width="3" height="2" fill="#ED2939"/><rect width="2" height="2" fill="#fff"/><rect width="1" height="2" fill="#002395"/>',
+  es:'<rect width="3" height="2" fill="#AA151B"/><rect y=".5" width="3" height="1" fill="#F1BF00"/>',
+  de:'<rect width="3" height="2" fill="#FFCE00"/><rect width="3" height="1.3333" fill="#DD0000"/><rect width="3" height=".6667" fill="#000"/>',
+};
+const svgFlag=k=>FLAG[k]?`<svg class="fl" viewBox="0 0 3 2" role="img" aria-label="${NAME[k]||k}"><title>${NAME[k]||k}</title>${FLAG[k]}</svg>`:"";
+// A badge beside a domain or a market name: the flag carries it, no letters.
+const flag=k=>`<span class="flag ico" title="${NAME[k]||k}">${svgFlag(k)}</span>`;
+// A picker button: the flag plus its code, because six tricolours with no text
+// is a guessing game - NL, ES and DE are all horizontal bands at this size.
+const flagBtn=k=>`${svgFlag(k)}<span>${LABEL[k]}</span>`;
 const COLOR=k=>`var(--m-${k})`;
 const prop=k=>(SEARCH.properties||[]).find(p=>p.key===k)||{};
 const store=k=>STORES.find(s=>s.key===k)||{};
@@ -262,7 +288,7 @@ $("#stamp").textContent=`${STORES.length} storefronts · data ${D.generated}`;
   $("#market-table tbody").innerHTML=STORES.map(s=>{
     const p=prop(s.key), c=s.catalogue, sa=s.sales;
     const feed=mcOK.has(s.key)?'<span class="pill good">connected</span>':'<span class="pill neutral">not connected</span>';
-    return `<tr><td><span class="flag" style="color:${COLOR(s.key)}">${LABEL[s.key]}</span> ${s.domain}</td>
+    return `<tr><td>${flag(s.key)} ${s.domain}</td>
       <td class="n">${p.available?fmt(p.totals.clicks):"–"}</td><td class="n">${p.available?fmt(p.totals.impr):"–"}</td><td class="n">${p.available?pos(p.totals.pos):"–"}</td>
       <td class="n">${c?fmt(c.products):"–"}</td>
       <td class="n">${sa?fmt(sa.orders_counted):'<span class="mut">no access</span>'}</td>
@@ -278,7 +304,7 @@ $("#stamp").textContent=`${STORES.length} storefronts · data ${D.generated}`;
   $("#g-revenue").innerHTML=Object.entries(byCur).map(([c,v])=>{
     const rows=withSales.filter(s=>s.sales.currency===c);
     return `<div style="margin:6px 0 14px"><div class="lbl">${c}</div><div style="font-size:21px;font-weight:600;letter-spacing:-.02em">${money(v,c)}</div>
-      <table style="margin-top:6px"><tbody>${rows.map(s=>`<tr><td><span class="flag" style="color:${COLOR(s.key)}">${LABEL[s.key]}</span> ${s.domain}</td><td class="n">${money(s.sales.revenue,c)}</td><td class="n">${fmt(s.sales.orders_counted)} orders</td></tr>`).join("")}</tbody></table></div>`;
+      <table style="margin-top:6px"><tbody>${rows.map(s=>`<tr><td>${flag(s.key)} ${s.domain}</td><td class="n">${money(s.sales.revenue,c)}</td><td class="n">${fmt(s.sales.orders_counted)} orders</td></tr>`).join("")}</tbody></table></div>`;
   }).join("")+`<p class="note">Three stores are missing from this because their tokens cannot read orders, so no EUR figure here is a group total.</p>`;
 })();
 
@@ -298,7 +324,7 @@ let oq={market:"all",win:"full"};
 (function organic(){
   const ok=STORES.filter(s=>prop(s.key).available);
   $("#organic-hint").textContent=ok.length?`${ok.length} properties · ${SEARCH.auth||""}`:"no property is connected";
-  $("#o-legend").innerHTML=ok.map(s=>`<button data-k="${s.key}"><i style="background:${COLOR(s.key)}"></i>${LABEL[s.key]}</button>`).join("");
+  $("#o-legend").innerHTML=ok.map(s=>`<button data-k="${s.key}"><i style="background:${COLOR(s.key)}"></i>${flagBtn(s.key)}</button>`).join("");
   $("#o-legend").addEventListener("click",e=>{const b=e.target.closest("button"); if(!b)return;
     const k=b.dataset.k; oState.off.has(k)?oState.off.delete(k):oState.off.add(k); b.classList.toggle("off",oState.off.has(k)); drawOrganic();});
   seg("#o-metric",b=>{oState.metric=b.dataset.k; drawOrganic();});
@@ -306,17 +332,17 @@ let oq={market:"all",win:"full"};
 
   // One control drives both tables: the whole group, or one market on its own.
   $("#oq-market").innerHTML='<button data-m="all" class="on">All markets</button>'
-    + ok.map(x=>`<button data-m="${x.key}">${LABEL[x.key]}</button>`).join("");
+    + ok.map(x=>`<button data-m="${x.key}">${flagBtn(x.key)}</button>`).join("");
   seg("#oq-market",b=>{oq.market=b.dataset.m; drawQueryTables();});
   seg("#oq-win",b=>{oq.win=b.dataset.w; drawQueryTables();});
   drawQueryTables();
 
   $("#o-markets tbody").innerHTML=STORES.map(s=>{const p=prop(s.key);
-    if(!p.available) return `<tr><td><span class="flag" style="color:${COLOR(s.key)}">${LABEL[s.key]}</span> ${s.domain}</td><td colspan="8" class="mut">${p.reason||"not connected"}</td></tr>`;
+    if(!p.available) return `<tr><td>${flag(s.key)} ${s.domain}</td><td colspan="8" class="mut">${p.reason||"not connected"}</td></tr>`;
     const dev=(p.dimensions.full.device||[]).map(d=>`${d.k.slice(0,3)} ${pct(d.clicks,p.totals.clicks,0)}`).join(" · ");
     const surf=Object.entries(p.types||{}).filter(([,v])=>v.impr).map(([k])=>k).join(", ")||"–";
     const urls=(p.sitemaps||[]).reduce((n,m)=>n+(m.contents||[]).reduce((x,c)=>x+c.submitted,0),0);
-    return `<tr><td><span class="flag" style="color:${COLOR(s.key)}">${LABEL[s.key]}</span> ${s.domain}</td><td><code>${p.site_url}</code></td>
+    return `<tr><td>${flag(s.key)} ${s.domain}</td><td><code>${p.site_url}</code></td>
       <td class="n">${fmt(p.totals.clicks)}</td><td class="n">${frac(p.totals.ctr)}</td><td class="n">${pos(p.totals.pos)}</td>
       <td>${dev||"–"}</td><td>${surf}</td><td class="n">${(p.sitemaps||[]).length}</td><td class="n">${urls?fmt(urls):"–"}</td></tr>`;}).join("");
   drawOrganic();
@@ -338,7 +364,7 @@ function drawQueryTables(){
       const a=agg[r.k]||(agg[r.k]={k:r.k,clicks:0,impr:0,posSum:0,markets:new Set()});
       a.clicks+=r.clicks; a.impr+=r.impr; a.posSum+=(r.pos||0)*r.impr; a.markets.add(x.key);});});
     const rows=Object.values(agg).sort((a,b)=>b.clicks-a.clicks).slice(0,150);
-    $("#o-queries tbody").innerHTML=rows.map(r=>`<tr><td>${r.k}</td><td>${[...r.markets].map(k=>`<span class="flag" style="color:${COLOR(k)}">${LABEL[k]}</span>`).join(" ")}</td><td class="n">${fmt(r.clicks)}</td><td class="n">${fmt(r.impr)}</td><td class="n">${pos(r.impr?r.posSum/r.impr:null)}</td></tr>`).join("")
+    $("#o-queries tbody").innerHTML=rows.map(r=>`<tr><td>${r.k}</td><td><span class="flags">${[...r.markets].map(k=>`${flag(k)}`).join("")}</span></td><td class="n">${fmt(r.clicks)}</td><td class="n">${fmt(r.impr)}</td><td class="n">${pos(r.impr?r.posSum/r.impr:null)}</td></tr>`).join("")
       ||'<tr><td colspan="5" class="mut">No query data.</td></tr>';
   } else {
     const x=picked[0], p=prop(x.key);
@@ -411,15 +437,15 @@ let catKey=null;
   const withCat=STORES.filter(s=>s.catalogue);
   $("#cat-hint").textContent=`${withCat.length} of ${STORES.length} storefronts readable · from the BigCommerce catalogue API`;
   $("#cat-table tbody").innerHTML=STORES.map(s=>{const c=s.catalogue;
-    if(!c) return `<tr><td><span class="flag" style="color:${COLOR(s.key)}">${LABEL[s.key]}</span> ${s.domain}</td><td colspan="9" class="mut">${s.catalogue_error||s.error||"unavailable"}</td></tr>`;
-    return `<tr><td><span class="flag" style="color:${COLOR(s.key)}">${LABEL[s.key]}</span> ${s.domain}</td>
+    if(!c) return `<tr><td>${flag(s.key)} ${s.domain}</td><td colspan="9" class="mut">${s.catalogue_error||s.error||"unavailable"}</td></tr>`;
+    return `<tr><td>${flag(s.key)} ${s.domain}</td>
       <td class="n">${fmt(c.products)}</td><td class="n">${fmt(c.visible)}</td><td class="n">${c.hidden?fmt(c.hidden):"–"}</td>
       <td class="n">${c.internal?`<span class="pill neutral">${fmt(c.internal)}</span>`:"–"}</td>
       <td class="n">${c.variants==null?"–":fmt(c.variants)}</td><td class="n">${c.out_of_stock?`<span class="pill warn">${fmt(c.out_of_stock)}</span>`:"–"}</td>
       <td class="n">${c.on_sale?fmt(c.on_sale):"–"}</td><td>${(c.brands[0]||{}).name||"–"}</td><td>${(c.categories[0]||{}).name||"–"}</td></tr>`;}).join("");
   if(!withCat.length) return;
   catKey=withCat[0].key;
-  $("#cat-market").innerHTML=withCat.map(s=>`<button data-k="${s.key}"${s.key===catKey?' class="on"':""}>${LABEL[s.key]}</button>`).join("");
+  $("#cat-market").innerHTML=withCat.map(s=>`<button data-k="${s.key}"${s.key===catKey?' class="on"':""}>${flagBtn(s.key)}</button>`).join("");
   seg("#cat-market",b=>{catKey=b.dataset.k; drawCatalogue();});
   drawCatalogue();
 })();
@@ -457,7 +483,7 @@ let payKey=null;
     +heads.map(s=>{const row=s.sales.statuses.find(x=>x.id===id); return `<td class="n">${row?fmt(row.orders):"–"}</td>`;}).join("")+"</tr>").join("");
 
   payKey=withSales[0].key;
-  $("#pay-market").innerHTML=withSales.map(s=>`<button data-k="${s.key}"${s.key===payKey?' class="on"':""}>${LABEL[s.key]}</button>`).join("");
+  $("#pay-market").innerHTML=withSales.map(s=>`<button data-k="${s.key}"${s.key===payKey?' class="on"':""}>${flagBtn(s.key)}</button>`).join("");
   seg("#pay-market",b=>{payKey=b.dataset.k; drawPay();});
   drawPay();
   $("#sales-note").innerHTML=`Revenue is <code>total_inc_tax</code> less <code>refunded_amount</code>, on orders that are not Incomplete, Cancelled or Declined — a refunded order keeps its original total in the API, so counting it whole would overstate the month. Payment methods are normalised: the three card labels BigCommerce records are merged, and free-text entries (service-request and contract numbers) are grouped as one row rather than invented into categories.`
@@ -487,7 +513,7 @@ function drawPay(){
 (function coverage(){
   const cell=c=>c.ok?`<span class="pill good">connected</span><span class="fix">${c.detail}</span>`
     :`<span class="pill crit">missing</span><span class="fix">${c.detail}${c.fix?" — "+c.fix:""}</span>`;
-  $("#cov-table tbody").innerHTML=D.coverage.map(r=>`<tr><td><span class="flag" style="color:${COLOR(r.market)}">${LABEL[r.market]}</span> ${r.domain}</td>
+  $("#cov-table tbody").innerHTML=D.coverage.map(r=>`<tr><td>${flag(r.market)} ${r.domain}</td>
     <td>${cell(r.search_console)}</td><td>${cell(r.catalogue)}</td><td>${cell(r.orders)}</td><td>${cell(r.merchant_center)}</td></tr>`).join("");
   $("#cov-accounts tbody").innerHTML=(D.merchant_accounts||[]).map(a=>{
     const off=(a.catalogue||{}).offers;
@@ -495,7 +521,7 @@ function drawPay(){
     // offers serve none of our storefronts is connected, not covering.
     const serves=(a.markets||[]).filter(k=>(D.merchant_markets||{})[k]);
     return `<tr><td>${a.name}</td><td><code>${a.id}</code></td>
-    <td>${serves.map(k=>`<span class="flag" style="color:${COLOR(k)}">${LABEL[k]}</span>`).join(" ")||'<span class="mut">—</span>'}</td>
+    <td><span class="flags">${serves.map(k=>`${flag(k)}`).join("")||'<span class="mut">—</span>'}</span></td>
     <td>${a.connected?`<span class="pill good">readable</span><span class="fix">${off?fmt(off)+" offers":"no offers"}</span>`
       :`<span class="pill crit">not granted</span><span class="fix">${a.reason||"the service account is not a user on this account"}</span>`}</td></tr>`;}).join("");
   const gaps=[];
@@ -529,7 +555,7 @@ function drawPay(){
     // Never one money number: each currency is its own figure.
     const val=(perf.value||[]).map(v=>`${v.currency} ${fmt(Math.round(v.amount))}`).join(" · ")||'<span class="mut">none tracked</span>';
     return `<tr><td>${a.name}<br><code>${a.id}</code></td>
-      <td>${serves.map(k=>`<span class="flag" style="color:${COLOR(k)}">${LABEL[k]}</span>`).join(" ")||'<span class="mut">a separate brand</span>'}</td>
+      <td><span class="flags">${serves.map(k=>`${flag(k)}`).join("")||'<span class="mut">a separate brand</span>'}</span></td>
       <td>${src?`${src.how}`:'<span class="mut">—</span>'}</td>
       <td class="n">${fmt(cat.offers||0)}</td>
       <td class="n">${cat.offers?pct(live,cat.offers,1):"–"}</td>
