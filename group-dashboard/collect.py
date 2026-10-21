@@ -34,9 +34,11 @@ sys.path.insert(0, os.path.join(REPO, "google-search-console"))
 import bigcommerce as bc  # noqa: E402
 from lib.stores import STORES, select  # noqa: E402
 
-# Search Console rows are trimmed here rather than at the source: the Shopping
-# dashboard's own tab wants the deeper lists, and this page carries six markets.
-GROUP_TOP = {"query": 100, "page": 100, "country": 60, "device": 10, "searchAppearance": 20}
+# Search Console rows are trimmed here rather than at the source, to keep one
+# page carrying six markets to a sane size. "query" holds the source's full
+# 250 because the Organic tab can now show a single market on its own, and
+# 100 was a ceiling sized for a table that merged all six.
+GROUP_TOP = {"query": 250, "page": 100, "country": 60, "device": 10, "searchAppearance": 20}
 SALES_DAYS = 365
 
 

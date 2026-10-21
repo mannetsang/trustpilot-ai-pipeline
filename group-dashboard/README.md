@@ -23,7 +23,7 @@ python group-dashboard/build_site.py                   # renders site/index.html
 | Tab | What it answers |
 |---|---|
 | **Group** | Every market on one row: organic clicks, catalogue size, orders, revenue in its own currency, whether its Shopping feed is connected. |
-| **Organic search** | Six markets on one chart, switchable between clicks, impressions and average position. Queries that appear in more than one market, where in the world the searches happen, and per-market device and surface mix. |
+| **Organic search** | Six markets on one chart, switchable between clicks, impressions and average position. Then top queries and the countries they come from, for the whole group or one market on its own, over the full history or the last 28 days. Across the group a query carries the markets it appears in and an impression-weighted position; inside one market it carries that market's own CTR. Per-market device and surface mix below. |
 | **Catalogue** | Products, visibility, variants, stock and sale coverage per market, then price bands, brands, categories and best sellers for the market you pick. |
 | **Sales** | Revenue by month per market, order-status mix, and how customers pay. |
 | **Shopping feed** | superhairpieces.ca's Merchant Center feed: approval rate, every disapproval and warning, how Google categorised the offers, and a filterable explorer over all 1,014 products. |

@@ -58,6 +58,7 @@ svg.chart .grid{stroke:var(--rule-soft)} svg.chart .axis{stroke:var(--rule)} svg
 .flag{font-family:var(--mono);font-size:11px;font-weight:500;padding:1px 6px;border-radius:3px;background:var(--surface-2);color:var(--ink-2)}
 .note{font-size:12.5px;color:var(--muted);margin-top:8px}
 .mut{color:var(--muted)}
+#o-queries thead th,#o-countries thead th{position:sticky;top:0;background:var(--surface);z-index:1}
 code{font-family:var(--mono);font-size:11.5px;background:var(--surface-2);padding:1px 5px;border-radius:3px;overflow-wrap:anywhere}
 .tip{position:fixed;pointer-events:none;background:var(--ink);color:var(--ground);font-family:var(--mono);font-size:11.5px;line-height:1.4;padding:6px 9px;border-radius:4px;opacity:0;transform:translate(-50%,-110%);white-space:nowrap;z-index:9;transition:opacity .08s}
 .wrap{overflow-x:auto}
@@ -108,10 +109,14 @@ a{color:var(--accent)}
     <span class="lbl">Range</span><div class="seg" id="o-range"><button data-d="90">3 months</button><button data-d="365" class="on">12 months</button><button data-d="480">16 months</button></div>
   </div>
   <div class="card"><div class="cap"><b id="o-title">Clicks</b><div class="legend" id="o-legend"></div></div><svg id="o-chart" class="chart" viewBox="0 0 900 280"></svg></div>
-  <div class="grid2" style="margin-top:14px">
-    <div class="card"><div class="cap"><b>Top queries across the group</b><span class="s">each market's share of the clicks</span></div>
-      <div class="wrap" style="max-height:420px;overflow-y:auto"><table id="o-queries"><thead><tr><th>Query</th><th>Markets</th><th class="n">Clicks</th><th class="n">Impressions</th><th class="n">Position</th></tr></thead><tbody></tbody></table></div></div>
-    <div class="card"><div class="cap"><b>Where the searches happen</b><span class="s">top countries, all markets combined</span></div>
+  <div class="controls" style="padding:14px 0 10px">
+    <span class="lbl">Tables below</span><div class="seg" id="oq-market"></div>
+    <div class="seg" id="oq-win"><button data-w="full" class="on">Full history</button><button data-w="recent">Last 28 days</button></div>
+  </div>
+  <div class="grid2">
+    <div class="card"><div class="cap"><b id="oq-title">Top queries across the group</b><span class="s" id="oq-note"></span></div>
+      <div class="wrap" style="max-height:420px;overflow-y:auto"><table id="o-queries"><thead id="oq-head"></thead><tbody></tbody></table></div></div>
+    <div class="card"><div class="cap"><b>Where the searches happen</b><span class="s" id="oc-note"></span></div>
       <div class="wrap" style="max-height:420px;overflow-y:auto"><table id="o-countries"><thead><tr><th>Country</th><th class="n">Clicks</th><th class="n">Impressions</th><th class="n">CTR</th></tr></thead><tbody></tbody></table></div></div>
   </div>
   <div class="card" style="margin-top:14px"><div class="cap"><b>Per market</b><span class="s">devices, search surfaces and sitemaps</span></div>
@@ -278,6 +283,7 @@ function hbars(svg,items,{unit="",H_=null}={}){
 
 // ---------------------------------------------------------------- Organic search
 let oState={metric:"clicks",days:365,off:new Set()};
+let oq={market:"all",win:"full"};
 (function organic(){
   const ok=STORES.filter(s=>prop(s.key).available);
   $("#organic-hint").textContent=ok.length?`${ok.length} properties · ${SEARCH.auth||""}`:"no property is connected";
@@ -287,22 +293,12 @@ let oState={metric:"clicks",days:365,off:new Set()};
   seg("#o-metric",b=>{oState.metric=b.dataset.k; drawOrganic();});
   seg("#o-range",b=>{oState.days=+b.dataset.d; drawOrganic();});
 
-  // queries seen in more than one market are the interesting ones
-  const agg={};
-  ok.forEach(s=>{(prop(s.key).dimensions.full.query||[]).forEach(r=>{
-    const a=agg[r.k]||(agg[r.k]={k:r.k,clicks:0,impr:0,posSum:0,markets:new Set()});
-    a.clicks+=r.clicks; a.impr+=r.impr; a.posSum+=(r.pos||0)*r.impr; a.markets.add(s.key);});});
-  const rows=Object.values(agg).sort((a,b)=>b.clicks-a.clicks).slice(0,120);
-  $("#o-queries tbody").innerHTML=rows.map(r=>`<tr><td>${r.k}</td><td>${[...r.markets].map(k=>`<span class="flag" style="color:${COLOR(k)}">${LABEL[k]}</span>`).join(" ")}</td><td class="n">${fmt(r.clicks)}</td><td class="n">${fmt(r.impr)}</td><td class="n">${pos(r.impr?r.posSum/r.impr:null)}</td></tr>`).join("")
-    ||'<tr><td colspan="5" class="mut">No query data.</td></tr>';
-
-  const CTRY={can:"Canada",usa:"United States",nld:"Netherlands",fra:"France",esp:"Spain",deu:"Germany",gbr:"United Kingdom",aus:"Australia",ind:"India",irl:"Ireland",nzl:"New Zealand",zaf:"South Africa",phl:"Philippines",mex:"Mexico",bra:"Brazil",ita:"Italy",bel:"Belgium",che:"Switzerland",aut:"Austria",swe:"Sweden",nor:"Norway",dnk:"Denmark",pol:"Poland",prt:"Portugal",tur:"Turkey",are:"United Arab Emirates",jpn:"Japan",kor:"South Korea",sgp:"Singapore",mys:"Malaysia"};
-  const cagg={};
-  ok.forEach(s=>{(prop(s.key).dimensions.full.country||[]).forEach(r=>{
-    const a=cagg[r.k]||(cagg[r.k]={k:r.k,clicks:0,impr:0}); a.clicks+=r.clicks; a.impr+=r.impr;});});
-  $("#o-countries tbody").innerHTML=Object.values(cagg).sort((a,b)=>b.clicks-a.clicks).slice(0,40)
-    .map(r=>`<tr><td>${CTRY[r.k]||r.k.toUpperCase()} <span class="mut">${r.k}</span></td><td class="n">${fmt(r.clicks)}</td><td class="n">${fmt(r.impr)}</td><td class="n">${pct(r.clicks,r.impr)}</td></tr>`).join("")
-    ||'<tr><td colspan="4" class="mut">No country data.</td></tr>';
+  // One control drives both tables: the whole group, or one market on its own.
+  $("#oq-market").innerHTML='<button data-m="all" class="on">All markets</button>'
+    + ok.map(x=>`<button data-m="${x.key}">${LABEL[x.key]}</button>`).join("");
+  seg("#oq-market",b=>{oq.market=b.dataset.m; drawQueryTables();});
+  seg("#oq-win",b=>{oq.win=b.dataset.w; drawQueryTables();});
+  drawQueryTables();
 
   $("#o-markets tbody").innerHTML=STORES.map(s=>{const p=prop(s.key);
     if(!p.available) return `<tr><td><span class="flag" style="color:${COLOR(s.key)}">${LABEL[s.key]}</span> ${s.domain}</td><td colspan="8" class="mut">${p.reason||"not connected"}</td></tr>`;
@@ -314,6 +310,44 @@ let oState={metric:"clicks",days:365,off:new Set()};
       <td>${dev||"–"}</td><td>${surf}</td><td class="n">${(p.sitemaps||[]).length}</td><td class="n">${urls?fmt(urls):"–"}</td></tr>`;}).join("");
   drawOrganic();
 })();
+
+function drawQueryTables(){
+  const ok=STORES.filter(x=>prop(x.key).available);
+  const picked=oq.market==="all"?ok:ok.filter(x=>x.key===oq.market);
+  const label=oq.win==="recent"?"last 28 days":"full 16 months";
+  const window_=picked.length?(prop(picked[0].key).windows||{})[oq.win]:null;
+  const span=window_?`${window_[0]} to ${window_[1]}`:label;
+
+  if(oq.market==="all"){
+    $("#oq-title").textContent="Top queries across the group";
+    $("#oq-note").textContent=`${span} · a query counts once per market it appears in`;
+    $("#oq-head").innerHTML='<tr><th>Query</th><th>Markets</th><th class="n">Clicks</th><th class="n">Impressions</th><th class="n">Position</th></tr>';
+    const agg={};
+    picked.forEach(x=>{((prop(x.key).dimensions[oq.win]||{}).query||[]).forEach(r=>{
+      const a=agg[r.k]||(agg[r.k]={k:r.k,clicks:0,impr:0,posSum:0,markets:new Set()});
+      a.clicks+=r.clicks; a.impr+=r.impr; a.posSum+=(r.pos||0)*r.impr; a.markets.add(x.key);});});
+    const rows=Object.values(agg).sort((a,b)=>b.clicks-a.clicks).slice(0,150);
+    $("#o-queries tbody").innerHTML=rows.map(r=>`<tr><td>${r.k}</td><td>${[...r.markets].map(k=>`<span class="flag" style="color:${COLOR(k)}">${LABEL[k]}</span>`).join(" ")}</td><td class="n">${fmt(r.clicks)}</td><td class="n">${fmt(r.impr)}</td><td class="n">${pos(r.impr?r.posSum/r.impr:null)}</td></tr>`).join("")
+      ||'<tr><td colspan="5" class="mut">No query data.</td></tr>';
+  } else {
+    const x=picked[0], p=prop(x.key);
+    $("#oq-title").innerHTML=`Top queries · <span style="color:${COLOR(x.key)}">${x.domain}</span>`;
+    $("#oq-note").textContent=`${span} · top ${fmt(((p.dimensions[oq.win]||{}).query||[]).length)} by clicks · Google withholds rare queries entirely`;
+    $("#oq-head").innerHTML='<tr><th>Query</th><th class="n">Clicks</th><th class="n">Impressions</th><th class="n">CTR</th><th class="n">Position</th></tr>';
+    const rows=((p.dimensions[oq.win]||{}).query||[]);
+    $("#o-queries tbody").innerHTML=rows.map(r=>`<tr><td>${r.k}</td><td class="n">${fmt(r.clicks)}</td><td class="n">${fmt(r.impr)}</td><td class="n">${frac(r.ctr)}</td><td class="n">${pos(r.pos)}</td></tr>`).join("")
+      ||'<tr><td colspan="5" class="mut">No query data for this market.</td></tr>';
+  }
+
+  const CTRY={can:"Canada",usa:"United States",nld:"Netherlands",fra:"France",esp:"Spain",deu:"Germany",gbr:"United Kingdom",aus:"Australia",ind:"India",irl:"Ireland",nzl:"New Zealand",zaf:"South Africa",phl:"Philippines",mex:"Mexico",bra:"Brazil",ita:"Italy",bel:"Belgium",che:"Switzerland",aut:"Austria",swe:"Sweden",nor:"Norway",dnk:"Denmark",pol:"Poland",prt:"Portugal",tur:"Turkey",are:"United Arab Emirates",jpn:"Japan",kor:"South Korea",sgp:"Singapore",mys:"Malaysia"};
+  const cagg={};
+  picked.forEach(x=>{((prop(x.key).dimensions[oq.win]||{}).country||[]).forEach(r=>{
+    const a=cagg[r.k]||(cagg[r.k]={k:r.k,clicks:0,impr:0}); a.clicks+=r.clicks; a.impr+=r.impr;});});
+  $("#oc-note").textContent=oq.market==="all"?`all markets combined · ${span}`:`${picked[0].domain} · ${span}`;
+  $("#o-countries tbody").innerHTML=Object.values(cagg).sort((a,b)=>b.clicks-a.clicks).slice(0,40)
+    .map(r=>`<tr><td>${CTRY[r.k]||r.k.toUpperCase()} <span class="mut">${r.k}</span></td><td class="n">${fmt(r.clicks)}</td><td class="n">${fmt(r.impr)}</td><td class="n">${pct(r.clicks,r.impr)}</td></tr>`).join("")
+    ||'<tr><td colspan="4" class="mut">No country data.</td></tr>';
+}
 
 function drawOrganic(){
   const svg=$("#o-chart"); svg.innerHTML="";
