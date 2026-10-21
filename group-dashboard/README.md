@@ -39,6 +39,17 @@ Nothing here guesses around a gap. A market with no order scope shows "no
 access" in the revenue column and a row in Coverage naming the fix; it never
 shows a zero, because a zero would read as "sold nothing".
 
+## Internal items
+
+The storefronts double as an internal ordering system — office coffee, sugar,
+garbage bags, thermal paper, surcharges, services, deposits. They are real
+products with real order counts: **"Extra Charge" is the single best-selling
+item on .ca by units**, ahead of every hairpiece. `lib/catalogue.py` holds the
+patterns that identify them, first written to keep garbage bags out of Google
+Shopping. The Catalogue tab counts them in their own column and leaves them out
+of the best-seller ranking, where they would otherwise be the whole top of the
+list.
+
 ## Money
 
 - **Revenue is never added across currencies.** The Group tab subtotals by

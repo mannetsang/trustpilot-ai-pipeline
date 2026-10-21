@@ -107,8 +107,8 @@ a{color:var(--accent)}
 
 <section id="catalogue">
   <div class="sec-h"><h2>Catalogue</h2><span class="hint" id="cat-hint"></span></div>
-  <div class="card"><div class="cap"><b>Products per market</b><span class="s">visible on the storefront vs hidden</span></div>
-    <div class="wrap"><table id="cat-table"><thead><tr><th>Market</th><th class="n">Products</th><th class="n">Visible</th><th class="n">Hidden</th><th class="n">Variants</th><th class="n">Out of stock</th><th class="n">On sale</th><th>Top brand</th><th>Biggest category</th></tr></thead><tbody></tbody></table></div></div>
+  <div class="card"><div class="cap"><b>Products per market</b><span class="s">internal items are office stock, surcharges and services, counted but never ranked</span></div>
+    <div class="wrap"><table id="cat-table"><thead><tr><th>Market</th><th class="n">Products</th><th class="n">Visible</th><th class="n">Hidden</th><th class="n">Internal</th><th class="n">Variants</th><th class="n">Out of stock</th><th class="n">On sale</th><th>Top brand</th><th>Biggest category</th></tr></thead><tbody></tbody></table></div></div>
   <div class="controls"><span class="lbl">Market</span><div class="seg" id="cat-market"></div></div>
   <div class="grid3">
     <div class="card"><div class="cap"><b>Price bands</b><span class="s">visible products</span></div><svg id="cat-bands" class="chart"></svg></div>
@@ -313,9 +313,10 @@ let catKey=null;
   const withCat=STORES.filter(s=>s.catalogue);
   $("#cat-hint").textContent=`${withCat.length} of ${STORES.length} storefronts readable · from the BigCommerce catalogue API`;
   $("#cat-table tbody").innerHTML=STORES.map(s=>{const c=s.catalogue;
-    if(!c) return `<tr><td><span class="flag" style="color:${COLOR(s.key)}">${LABEL[s.key]}</span> ${s.domain}</td><td colspan="8" class="mut">${s.catalogue_error||s.error||"unavailable"}</td></tr>`;
+    if(!c) return `<tr><td><span class="flag" style="color:${COLOR(s.key)}">${LABEL[s.key]}</span> ${s.domain}</td><td colspan="9" class="mut">${s.catalogue_error||s.error||"unavailable"}</td></tr>`;
     return `<tr><td><span class="flag" style="color:${COLOR(s.key)}">${LABEL[s.key]}</span> ${s.domain}</td>
       <td class="n">${fmt(c.products)}</td><td class="n">${fmt(c.visible)}</td><td class="n">${c.hidden?fmt(c.hidden):"–"}</td>
+      <td class="n">${c.internal?`<span class="pill neutral">${fmt(c.internal)}</span>`:"–"}</td>
       <td class="n">${c.variants==null?"–":fmt(c.variants)}</td><td class="n">${c.out_of_stock?`<span class="pill warn">${fmt(c.out_of_stock)}</span>`:"–"}</td>
       <td class="n">${c.on_sale?fmt(c.on_sale):"–"}</td><td>${(c.brands[0]||{}).name||"–"}</td><td>${(c.categories[0]||{}).name||"–"}</td></tr>`;}).join("");
   if(!withCat.length) return;
@@ -329,7 +330,7 @@ function drawCatalogue(){
   hbars($("#cat-bands"),c.price_bands.map(b=>({k:b.band,v:b.products,c:COLOR(catKey)})),{unit:"products"});
   hbars($("#cat-brands"),c.brands.slice(0,8).map(b=>({k:b.name.length>18?b.name.slice(0,17)+"…":b.name,v:b.products,c:COLOR(catKey)})),{unit:"products"});
   hbars($("#cat-cats"),c.categories.slice(0,8).map(b=>({k:b.name.length>18?b.name.slice(0,17)+"…":b.name,v:b.products,c:COLOR(catKey)})),{unit:"products"});
-  $("#cat-best-note").textContent=`${s.domain} · lifetime units sold`;
+  $("#cat-best-note").textContent=`${s.domain} · lifetime units sold · internal items excluded`;
   $("#cat-best tbody").innerHTML=c.best_sellers.map(p=>`<tr><td>${p.name}</td><td><code>${p.sku||"–"}</code></td><td class="n">${money(p.price,s.currency)}</td><td class="n">${fmt(p.sold)}</td><td class="n">${fmt(p.views)}</td></tr>`).join("");
 }
 

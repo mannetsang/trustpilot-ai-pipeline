@@ -19,6 +19,8 @@ import urllib.request
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
+from lib.catalogue import is_internal
+
 TIMEOUT = 60
 PAGE = 250
 
@@ -115,7 +117,14 @@ def catalogue(client):
     fields = "name,sku,price,sale_price,categories,brand_id,inventory_level,inventory_tracking,is_visible,total_sold,view_count,date_created"
     products = list(client.pages("/v3/catalog/products", include_fields=fields))
 
+    # The storefront doubles as an internal ordering system, and its office
+    # stock outsells the hairpieces. Count it, then leave it out of anything
+    # that ranks the catalogue.
+    for p in products:
+        p["_internal"] = is_internal(p.get("name"), p.get("sku"),
+                                     [roots.get(c, "") for c in p.get("categories", [])])
     visible = [p for p in products if p.get("is_visible")]
+    merch = [p for p in visible if not p["_internal"]]
     out_of_stock = [p for p in visible
                     if p.get("inventory_tracking") != "none" and not (p.get("inventory_level") or 0)]
     by_brand = Counter(brands.get(p.get("brand_id"), "(no brand)") for p in visible)
@@ -127,11 +136,12 @@ def catalogue(client):
     except (StoreError, KeyError, TypeError):
         variants = None
 
-    best = sorted(visible, key=lambda p: -(p.get("total_sold") or 0))[:15]
+    best = sorted(merch, key=lambda p: -(p.get("total_sold") or 0))[:15]
     return {
         "products": len(products),
         "visible": len(visible),
         "hidden": len(products) - len(visible),
+        "internal": sum(1 for p in products if p["_internal"]),
         "variants": variants,
         "out_of_stock": len(out_of_stock),
         "on_sale": sum(1 for p in visible if p.get("sale_price")),
