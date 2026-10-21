@@ -4,17 +4,24 @@ Scripts that drive Merchant Center through the **Merchant API** (the successor
 to the Content API for Shopping): register the GCP project, create one product
 data source per storefront, and push products into them.
 
-| Merchant Center account | ID | Storefronts | Service account | Our project registered | Offers |
+| Merchant Center account | ID | Storefronts | Service account | Holds our registration | Offers |
 |---|---|---|---|---|---|
-| Superhairpieces.ca | `5298296396` | superhairpieces.ca | yes | yes | 11,818, pushed by `sync_bigcommerce.py` |
-| Superhairpieces | `289630622` | `.com` only, in practice | yes | **no** — `40060666568` | 1,084, autofeed |
-| Gen'C Beauty | `670525760` | gencbeauty.com | yes | **no** — none | 4,333, autofeed |
+| Superhairpieces.ca | `5298296396` | superhairpieces.ca | yes | yes — and it covers all three | 11,818, pushed by `sync_bigcommerce.py` |
+| Superhairpieces | `289630622` | `.com` only, in practice | yes | no — `40060666568`, which is fine | 1,084, autofeed |
+| Gen'C Beauty | `670525760` | gencbeauty.com | yes | no — none, which is fine | 4,333, autofeed |
 
-Two separate grants, and only the first is done on all three. Being *added to
-the account* lets the scripts read it; having *our GCP project registered
-against it* lets them write. Reads work on all three today; a write to
-`289630622` or `670525760` returns `GCP_NOT_REGISTERED` until step 2 below is
-run on it.
+Being *added to the account* is what lets the scripts touch it, and that is
+done on all three. Developer registration is a separate thing and is easy to
+misread: it is per **project**, not per account. One project registers against
+exactly one Merchant Center account, and that single registration then covers
+every other account the caller can reach - see the
+[Merchant API FAQ](https://developers.google.com/merchant/api/guides/quickstart/faq).
+
+Ours lives on `5298296396`. `289630622` carries a different project's
+registration (`40060666568`) and `670525760` carries none, and reads **and
+writes** work on all three anyway; verified 2026-10-21 by watching a write to
+each reach field validation rather than an auth gate. Running step 3 against a
+second account returns `409 DUPLICATE_PROJECT_REGISTRATION` - do not.
 
 `289630622` is named for the EU storefronts but every offer in it carries feed
 label `US`: **.nl, .fr, .es and .de have no offers in Google Shopping at all.**

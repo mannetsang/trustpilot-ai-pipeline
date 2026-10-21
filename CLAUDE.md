@@ -90,12 +90,15 @@ matter more than the access:
 - **`289630622` serves `.com` only.** Every offer in it carries feed label `US`.
   The four EU storefronts have **no offers in Google Shopping at all** - treat
   "the account covers the EU" as a label, not a fact.
-- **Developer registration is per account and is not ours on two of them.**
-  `289630622` is registered to project `40060666568`; `670525760` to nothing.
-  Reads work anyway; writes return `GCP_NOT_REGISTERED`. Check with
-  `python google-merchant/register_developer.py --account <id> --email <you> --check`,
-  which compares our project *number* (`304363458561`) and exits non-zero when
-  it is absent.
+- **Developer registration is per *project*, not per account, and one is
+  enough.** A GCP project registers against exactly one Merchant Center account
+  and that registration then covers every other account the caller can reach
+  ([Merchant API FAQ](https://developers.google.com/merchant/api/guides/quickstart/faq)).
+  Ours lives on `5298296396`; `289630622` holds someone else's project
+  (`40060666568`) and `670525760` holds none, and **reads and writes work on all
+  three regardless** - verified 2026-10-21. Do not try to register a second:
+  it returns `409 DUPLICATE_PROJECT_REGISTRATION`. `register_developer.py
+  --check` reports where our registration lives; it is not a gate.
 
 ### Google Search Console
 
