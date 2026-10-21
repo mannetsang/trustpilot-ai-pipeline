@@ -84,6 +84,20 @@ Merchant Center account and the project must be registered once with
 | Superhairpieces (.com and EU storefronts) | `289630622` | no |
 | Gen'C Beauty | `670525760` | no |
 
+### Google Search Console
+
+Organic search for all six storefronts, through the **Search Console API**
+(`searchconsole.googleapis.com`) by the scripts in `google-search-console/`.
+Access is granted **per property** — Search Console has no org-wide role — so
+the `claude-sessions` service account has to be added under *Settings → Users
+and permissions* on each one before anything returns data; until then
+`sites.list` answers `{}` rather than failing. `collect.py` feeds the **Organic
+search** tab of the Shopping dashboard. A user OAuth refresh token
+(`google-search-console-*`) is the alternative; the Business Profile refresh
+token is **not** — it is `business.manage` only and 403s after a successful
+token call. Properties are exact: `https://superhairpieces.ca/` with the
+trailing slash, and `.com` is the **www** host.
+
 ### Google Business Profile
 
 Driven by the scripts in `google-business/` through the Business Profile APIs.
