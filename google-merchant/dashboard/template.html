@@ -64,12 +64,18 @@ input[type=search],select{font:inherit;font-size:13px;color:var(--ink);backgroun
 .drawer ul{padding-left:1.1em;margin:6px 0} .drawer a{color:var(--accent)}
 .plan .row td:first-child{font-weight:500} .plan input{width:16px;height:16px;cursor:pointer;accent-color:var(--accent)} .plan tr.done td{color:var(--muted);text-decoration:line-through} .plan tr.done td:last-child,.plan tr.done td:nth-child(1){text-decoration:none}
 .note{font-size:12.5px;color:var(--muted);margin-top:8px}
+.mut{color:var(--muted)}
+#sc-dim-tbl thead th{position:sticky;top:0;background:var(--surface);z-index:1}
+code{font-family:var(--mono);font-size:11.5px;background:var(--surface-2);padding:1px 5px;border-radius:3px;overflow-wrap:anywhere}
+.seg button:disabled{opacity:.45;cursor:not-allowed}
+.sdef{font-size:12.5px;margin:0 0 7px;color:var(--ink-2)} .sdef b{color:var(--ink);font-weight:500;font-family:var(--mono);font-size:11.5px}
+.sdef .v{display:block;color:var(--muted);font-family:var(--mono);font-size:11px;margin-top:1px}
 .rep{font-size:13px;color:var(--ink-2)} .rep a{color:var(--accent)}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 
 <header><div class="hbar"><h1>Superhairpieces.ca · Google Shopping</h1><span class="sub" id="datastamp">Merchant Center 5298296396</span>
-<nav><a href="#overview">Traffic</a><a href="#health">Feed health</a><a href="#products">Products</a><a href="#plan">Action plan</a></nav></div></header>
+<nav><a href="#overview">Traffic</a><a href="#health">Feed health</a><a href="#products">Products</a><a href="#search">Organic search</a><a href="#plan">Action plan</a></nav></div></header>
 
 <main>
 <p class="rep">Rebuilt daily after the catalogue sync. Filter the charts, click any bar to filter the product table, click a product for its details.</p>
@@ -121,6 +127,54 @@ input[type=search],select{font:inherit;font-size:13px;color:var(--ink);backgroun
     <th class="sort" data-k="name">Product</th><th class="sort" data-k="root">Store category</th><th class="sort" data-k="gcat">Google category</th><th class="sort n" data-k="price">Price</th><th class="sort n" data-k="offers">Variants</th><th class="sort n" data-k="oos">Out of stock</th><th class="sort n" data-k="disapproved">Disapproved</th><th class="sort n on" data-k="sold">Sold</th><th class="sort n" data-k="views">Views</th><th class="sort n" data-k="gclicks">Google clicks</th><th class="sort n" data-k="margin">Margin</th>
   </tr></thead><tbody></tbody></table></div>
   <div class="pager" style="padding:10px 12px 4px"><span id="pinfo"></span><span><button id="prev">Previous</button> <button id="next">Next</button></span></div></div>
+</section>
+
+<section id="search">
+  <div class="sec-h"><h2>Organic search</h2><span class="hint" id="sc-hint">Google Search Console · all six storefronts</span></div>
+
+  <div id="sc-setup" class="card" hidden>
+    <div class="cap"><b>No Search Console data yet</b><span class="s" id="sc-why"></span></div>
+    <p style="margin:2px 0 10px;color:var(--ink-2)">Search Console grants access one property at a time — there is no organisation-wide role — so whichever credential the nightly build uses has to be added to each of the six properties. Two ways round it:</p>
+    <div class="grid2">
+      <div><div class="lbl">A · add the service account</div>
+        <p class="note" style="margin-top:6px">In Search Console for each property: <b>Settings → Users and permissions → Add user</b>, paste <code class="mono">claude-sessions@shp-ai-bot-2026.iam.gserviceaccount.com</code>, permission <b>Full</b>. Nothing else to store: the build already authenticates as that account for the Merchant API.</p></div>
+      <div><div class="lbl">B · store a user OAuth token</div>
+        <p class="note" style="margin-top:6px">Mint a refresh token for a Google account that already manages the properties, with scope <code class="mono">webmasters.readonly</code>, and save it as <code class="mono">google-search-console-refresh-token</code>. The Business Profile token will not do: it carries <code class="mono">business.manage</code> only and fails every call after the first.</p></div>
+    </div>
+    <p class="note" id="sc-props-missing"></p>
+  </div>
+
+  <div id="sc-live" hidden>
+    <div class="controls">
+      <span class="lbl">Property</span><div class="seg sseg" id="sc-prop"></div>
+      <span class="lbl">Range</span><div class="seg sseg" id="sc-range"><button data-d="28">28 days</button><button data-d="90" class="on">3 months</button><button data-d="365">12 months</button><button data-d="480">16 months</button></div>
+    </div>
+    <div class="tiles" id="sc-tiles" style="grid-template-columns:repeat(5,1fr)"></div>
+    <div class="grid2" style="margin-top:14px">
+      <div class="card"><div class="cap"><b>Clicks and impressions</b><div class="legend"><span><i style="background:var(--s1)"></i>Clicks</span><span><i style="background:var(--s2)"></i>Impressions</span></div></div><svg id="sc-c1" class="chart" viewBox="0 0 600 240"></svg></div>
+      <div class="card"><div class="cap"><b>Average position</b><span class="s">lower is better · axis inverted</span></div><svg id="sc-c2" class="chart" viewBox="0 0 600 240"></svg></div>
+    </div>
+    <div class="card" style="margin-top:14px">
+      <div class="cap"><b>Every dimension the API returns</b><span class="s" id="sc-dim-note"></span></div>
+      <div class="controls" style="padding:4px 0 10px">
+        <div class="seg sseg" id="sc-dim"><button data-k="query" class="on">Query</button><button data-k="page">Page</button><button data-k="country">Country</button><button data-k="device">Device</button><button data-k="searchAppearance">Search appearance</button></div>
+        <div class="seg sseg" id="sc-win"><button data-w="full" class="on">Full history</button><button data-w="recent">Last 28 days</button></div>
+      </div>
+      <div style="overflow-x:auto;max-height:460px;overflow-y:auto"><table id="sc-dim-tbl"><thead><tr><th id="sc-dim-h">Value</th><th class="n">Clicks</th><th class="n">Impressions</th><th class="n">CTR</th><th class="n">Position</th></tr></thead><tbody></tbody></table></div>
+    </div>
+    <div class="grid2" style="margin-top:14px">
+      <div class="card"><div class="cap"><b>Search surfaces</b><span class="s">totals by search type</span></div>
+        <table><thead><tr><th>Type</th><th class="n">Clicks</th><th class="n">Impressions</th><th class="n">CTR</th><th class="n">Position</th></tr></thead><tbody id="sc-types"></tbody></table></div>
+      <div class="card"><div class="cap"><b>Sitemaps</b><span class="s">index files expanded to their children</span></div>
+        <div style="overflow-x:auto"><table><thead><tr><th>Sitemap</th><th>Type</th><th class="n">URLs</th><th class="n">Errors</th><th class="n">Warnings</th><th style="white-space:nowrap">Last read</th></tr></thead><tbody id="sc-sitemaps"></tbody></table></div></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <div class="cap"><b>What the Search Console API can return</b><span class="s">the whole surface, whether or not we have data for it</span></div>
+    <div class="grid2"><div id="sc-surface-a"></div><div id="sc-surface-b"></div></div>
+    <p class="note" id="sc-limits"></p>
+  </div>
 </section>
 
 <section id="plan">
@@ -175,7 +229,7 @@ function renderCharts(){ const {rows}=rangeRows(); const g=group(rows);
   const series = state.chan==="all"?["organic","ads"]:[state.chan]; const names = state.chan==="all"?["Organic","Paid"]:[state.chan==="organic"?"Organic":"Paid"]; const colors = state.chan==="ads"?["var(--s2)"]:["var(--s1)","var(--s2)"];
   $("#lg1").style.visibility = state.chan==="all"?"visible":"hidden";
   timeChart($("#c1"), g, series, {stacked:true, colors, names}); timeChart($("#c2"), g, ["np"], {names:["Non-product clicks"]}); timeChart($("#c3"), g, ["impr"], {H:200, names:["Impressions"]}); }
-document.querySelectorAll(".seg").forEach(seg=>seg.addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;seg.querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b));if(b.dataset.r)state.range=b.dataset.r;if(b.dataset.g)state.gran=b.dataset.g;if(b.dataset.c)state.chan=b.dataset.c;renderTiles();renderCharts();}));
+document.querySelectorAll(".seg:not(.sseg)").forEach(seg=>seg.addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;seg.querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b));if(b.dataset.r)state.range=b.dataset.r;if(b.dataset.g)state.gran=b.dataset.g;if(b.dataset.c)state.chan=b.dataset.c;renderTiles();renderCharts();}));
 
 const catNames={"Apparel & Accessories › Clothing Accessories":"Hairpieces, extensions, clips","Health & Beauty › Personal Care":"Shampoo, care, styling","(unclassified)":"Unclassified","Hardware › Building Consumables":"Adhesives and solvents","Business & Industrial › Retail":"Mannequins"};
 $("#t-cat").innerHTML=D.category_perf.filter(c=>c.clicks>=100).map(c=>`<tr><td>${catNames[c.cat]||c.cat}</td><td class="n">${fmt(c.clicks)}</td><td class="n">${pct(c.clicks,c.impr)}</td><td class="n">${c.conv}</td><td class="n">${pct(c.conv,c.clicks,1)}</td></tr>`).join("");
@@ -244,5 +298,115 @@ const effC=e=>e==="Done"||e==="Minutes"||e==="Hours"?"good":e==="Weeks"?"crit":"
 $("#plan-body").innerHTML=PLAN.map((r,i)=>`<tr class="row ${done[i]?"done":""}" data-i="${i}"><td><input type="checkbox" ${done[i]?"checked":""}></td><td class="n">${i+1}</td><td>${r[0]}</td><td>${r[1]}</td><td><span class="pill ${r[2]==="High"?"good":"warn"}">${r[2]}</span></td><td><span class="pill ${effC(r[3])}">${r[3]}</span></td><td>${r[4]}</td></tr>`).join("");
 $("#plan-body").addEventListener("change",e=>{const tr=e.target.closest("tr");if(!tr)return;done[tr.dataset.i]=e.target.checked;tr.classList.toggle("done",e.target.checked);try{localStorage.setItem("shp-gmc-plan",JSON.stringify(done));}catch(err){}});
 
+// ---- Organic search (Google Search Console)
+const S = D.search || null;
+const CTRY={can:"Canada",usa:"United States",nld:"Netherlands",fra:"France",esp:"Spain",deu:"Germany",gbr:"United Kingdom",aus:"Australia",ind:"India",irl:"Ireland",nzl:"New Zealand",zaf:"South Africa",phl:"Philippines",pak:"Pakistan",mex:"Mexico",bra:"Brazil",ita:"Italy",bel:"Belgium",che:"Switzerland",aut:"Austria",swe:"Sweden",nor:"Norway",dnk:"Denmark",pol:"Poland",prt:"Portugal",tur:"Turkey",are:"United Arab Emirates",sau:"Saudi Arabia",isr:"Israel",jpn:"Japan",kor:"South Korea",chn:"China",hkg:"Hong Kong",sgp:"Singapore",mys:"Malaysia",tha:"Thailand",vnm:"Vietnam",idn:"Indonesia",nga:"Nigeria",ken:"Kenya",egy:"Egypt",arg:"Argentina",chl:"Chile",col:"Colombia",per:"Peru",rou:"Romania",ukr:"Ukraine",rus:"Russia",grc:"Greece",cze:"Czechia",hun:"Hungary",fin:"Finland"};
+const scName=(dim,v)=>dim==="country"?(CTRY[v]?`${CTRY[v]} <span class="mut">${v}</span>`:v.toUpperCase()):dim==="page"?`<a href="${v}" target="_blank" rel="noopener">${v.replace(/^https?:\/\/[^/]+/,"")||"/"}</a>`:v;
+const scPct=v=>(v*100).toFixed(2)+"%";
+const scPos=v=>v==null?"–":v.toFixed(1);
+let sc={prop:null,days:90,dim:"query",win:"full"};
+
+function scProp(){ return S && S.properties.find(p=>p.key===sc.prop); }
+function scDaily(p){ const end=p.daily.length?p.daily[p.daily.length-1].d:null; if(!end) return {rows:[],prev:[]};
+  const start=addDays(end,-sc.days+1), pstart=addDays(start,-sc.days);
+  return {rows:p.daily.filter(r=>r.d>=start), prev:p.daily.filter(r=>r.d>=pstart&&r.d<start), start, end}; }
+function scAgg(rows){ const a={clicks:0,impr:0}; rows.forEach(r=>{a.clicks+=r.clicks;a.impr+=r.impr;});
+  a.ctr=a.impr?a.clicks/a.impr:0; const w=rows.reduce((s,r)=>s+r.impr,0); a.pos=w?rows.reduce((s,r)=>s+(r.pos||0)*r.impr,0)/w:null; return a; }
+
+function scChart2(svg,rows){ svg.innerHTML=""; const W=600,H=240,padL=46,padR=46,padT=12,padB=28; svg.setAttribute("viewBox",`0 0 ${W} ${H}`);
+  const g=sc.days>90?scWeeks(rows):rows.map(r=>({k:r.d,...r})); const n=g.length; if(!n){ el("text",{x:W/2,y:H/2,"text-anchor":"middle",class:"lb"},svg).textContent="No data in this range"; return; }
+  const mc=niceMax(Math.max(1,...g.map(r=>r.clicks))), mi=niceMax(Math.max(1,...g.map(r=>r.impr)));
+  const steps=Math.min(scSteps(mc),scSteps(mi));   // one grid, two scales, no repeated labels
+  const xs=i=>n>1?padL+(W-padL-padR)*i/(n-1):W/2, yc=v=>padT+(H-padT-padB)*(1-v/mc), yi=v=>padT+(H-padT-padB)*(1-v/mi);
+  for(let i=0;i<=steps;i++){ const y=yc(mc*i/steps); el("line",{x1:padL,x2:W-padR,y1:y,y2:y,class:i?"grid":"axis"},svg);
+    el("text",{x:padL-7,y:y+4,"text-anchor":"end"},svg).textContent=fmt(mc*i/steps); el("text",{x:W-padR+7,y:y+4},svg).textContent=fmt(mi*i/steps); }
+  let d=""; g.forEach((r,i)=>d+=(i?"L":"M")+xs(i)+","+yi(r.impr)); for(let i=n-1;i>=0;i--) d+="L"+xs(i)+","+yi(0);
+  el("path",{d:d+"Z",fill:"var(--s2)","fill-opacity":.18},svg);
+  let c=""; g.forEach((r,i)=>c+=(i?"L":"M")+xs(i)+","+yc(r.clicks)); for(let i=n-1;i>=0;i--) c+="L"+xs(i)+","+yc(0);
+  el("path",{d:c+"Z",fill:"var(--s1)","fill-opacity":.7},svg);
+  scXLabels(svg,g,xs,H,padB); scProvisional(svg,g,xs,padT,H,padB);
+  scHover(svg,g,xs,W,H,padL,padR,padT,padB,r=>`<b>${sc.days>90?"Week of ":""}${r.k}</b><br>Clicks: ${fmt(r.clicks)}<br>Impressions: ${fmt(r.impr)}<br>CTR: ${scPct(r.impr?r.clicks/r.impr:0)}<br>Position: ${scPos(r.pos)}`); }
+
+function scChartPos(svg,rows){ svg.innerHTML=""; const W=600,H=240,padL=46,padR=12,padT=12,padB=28; svg.setAttribute("viewBox",`0 0 ${W} ${H}`);
+  const g=(sc.days>90?scWeeks(rows):rows.map(r=>({k:r.d,...r}))).filter(r=>r.impr>0); const n=g.length;
+  if(!n){ el("text",{x:W/2,y:H/2,"text-anchor":"middle",class:"lb"},svg).textContent="No data in this range"; return; }
+  const worst=Math.max(10,Math.ceil(Math.max(...g.map(r=>r.pos||0))/5)*5); const xs=i=>n>1?padL+(W-padL-padR)*i/(n-1):W/2;
+  const ys=v=>padT+(H-padT-padB)*((v-1)/(worst-1));   // 1 at the top: lower is better
+  for(let i=0;i<=4;i++){ const v=1+(worst-1)*i/4, y=ys(v); el("line",{x1:padL,x2:W-padR,y1:y,y2:y,class:i?"grid":"axis"},svg); el("text",{x:padL-7,y:y+4,"text-anchor":"end"},svg).textContent=v.toFixed(0); }
+  let d=""; g.forEach((r,i)=>d+=(i?"L":"M")+xs(i)+","+ys(r.pos||worst)); el("path",{d,fill:"none",stroke:"var(--accent)","stroke-width":1.8},svg);
+  scXLabels(svg,g,xs,H,padB);
+  scHover(svg,g,xs,W,H,padL,padR,padT,padB,r=>`<b>${sc.days>90?"Week of ":""}${r.k}</b><br>Position: ${scPos(r.pos)}<br>Impressions: ${fmt(r.impr)}`); }
+
+const scSteps=max=>max<=4?Math.max(1,Math.round(max)):4;   // a 2-click axis gets 0/1/2, not 0/1/1/2/2
+function scWeeks(rows){ const m=new Map(); rows.forEach(r=>{const k=weekOf(r.d); if(!m.has(k))m.set(k,{k,clicks:0,impr:0,_p:0}); const w=m.get(k); w.clicks+=r.clicks; w.impr+=r.impr; w._p+=(r.pos||0)*r.impr;});
+  return [...m.values()].map(w=>({...w,pos:w.impr?w._p/w.impr:null})); }
+function scProvisional(svg,g,xs,padT,H,padB){ const p=scProp(); if(!p||!p.provisional_from) return;
+  const i=g.findIndex(r=>r.k>=p.provisional_from); if(i<1) return; const x=xs(i);
+  el("line",{x1:x,x2:x,y1:padT,y2:H-padB,stroke:"var(--ink-2)","stroke-dasharray":"3 3"},svg);
+  el("text",{x:x-5,y:padT+8,"text-anchor":"end",class:"lb"},svg).textContent="provisional"; }
+function scXLabels(svg,g,xs,H,padB){ let last=""; g.forEach((r,i)=>{ const m=r.k.slice(0,7); if(m!==last){ el("text",{x:xs(i),y:H-padB+16,"text-anchor":"middle"},svg).textContent=mon(r.k)+(r.k.slice(5,7)==="01"?" "+r.k.slice(2,4):""); last=m; } }); }
+function scHover(svg,g,xs,W,H,padL,padR,padT,padB,text){ const n=g.length;
+  const hit=el("rect",{x:padL,y:padT,width:W-padL-padR,height:H-padT-padB,fill:"transparent"},svg); const cross=el("line",{y1:padT,y2:H-padB,stroke:"var(--ink)",opacity:0},svg);
+  hit.addEventListener("mousemove",e=>{ const r=svg.getBoundingClientRect(); const px=(e.clientX-r.left)*(W/r.width); let i=n>1?Math.round((px-padL)/((W-padL-padR)/(n-1))):0; i=Math.max(0,Math.min(n-1,i));
+    cross.setAttribute("x1",xs(i)); cross.setAttribute("x2",xs(i)); cross.setAttribute("opacity",1); showTip(e,text(g[i])); });
+  hit.addEventListener("mouseleave",()=>{cross.setAttribute("opacity",0);hideTip();}); }
+
+function renderSearch(){ if(!S) return; const p=scProp(); if(!p) return;
+  const {rows,prev}=scDaily(p); const a=scAgg(rows), b=scAgg(prev);
+  const qrows=p.dimensions[sc.win].query||[]; const withClicks=qrows.filter(r=>r.clicks>0).length;
+  $("#sc-tiles").innerHTML=[["Clicks",fmt(a.clicks),delta(a.clicks,b.clicks)],["Impressions",fmt(a.impr),delta(a.impr,b.impr)],["Click-through rate",scPct(a.ctr),delta(a.ctr,b.ctr)],["Average position",scPos(a.pos),b.pos?`<div class="d ${a.pos<=b.pos?"up":"down"}">${a.pos<=b.pos?"":"+"}${(a.pos-b.pos).toFixed(1)} vs prior period</div>`:""],["Queries earning clicks",fmt(withClicks),`of ${fmt(qrows.length)} collected`]]
+    .map(([l,v,d])=>`<div class="tile"><div class="l">${l}</div><div><div class="v">${v}</div>${d||'<div class="d">&nbsp;</div>'}</div></div>`).join("");
+  scChart2($("#sc-c1"),rows); scChartPos($("#sc-c2"),rows);
+
+  const dim=sc.dim, dr=p.dimensions[sc.win][dim]||[]; const w=p.windows[sc.win];
+  $("#sc-dim-h").textContent={query:"Search term",page:"Landing page",country:"Country",device:"Device",searchAppearance:"Search appearance"}[dim];
+  $("#sc-dim-note").textContent=`${fmt(dr.length)} values · ${w[0]} to ${w[1]}` + (dim==="query"?" · rare queries are withheld by Google":dim==="page"?" · impressions counted once per page":"");
+  $("#sc-dim-tbl tbody").innerHTML=dr.length?dr.map(r=>`<tr><td>${scName(dim,r.k)}</td><td class="n">${fmt(r.clicks)}</td><td class="n">${fmt(r.impr)}</td><td class="n">${scPct(r.ctr)}</td><td class="n">${scPos(r.pos)}</td></tr>`).join("")
+    :`<tr><td colspan="5" style="color:var(--muted)">Google returned no rows for this dimension in this window.</td></tr>`;
+
+  const T=S.surface.search_types;
+  $("#sc-types").innerHTML=T.map(t=>{const v=p.types[t.name]||{clicks:0,impr:0,ctr:0,pos:null}; const off=!v.impr;
+    return `<tr${off?' style="color:var(--muted)"':''}><td>${t.name}${off?' <span class="pill neutral">no data</span>':''}<div class="mut" style="font-size:11.5px">${t.what}</div></td><td class="n">${fmt(v.clicks)}</td><td class="n">${fmt(v.impr)}</td><td class="n">${scPct(v.ctr)}</td><td class="n">${scPos(v.pos)}</td></tr>`;}).join("");
+
+  $("#sc-sitemaps").innerHTML=p.sitemaps.length?p.sitemaps.map(m=>{const sub=(m.contents||[]).reduce((s,c)=>s+c.submitted,0);
+    return `<tr><td${m.parent?' style="padding-left:22px"':""}><a href="${m.path}" target="_blank" rel="noopener">${m.path.replace(/^https?:\/\/[^/]+/,"")}</a>${m.is_index?' <span class="pill neutral">index</span>':""}${m.is_pending?' <span class="pill warn">pending</span>':""}</td><td>${m.type||"–"}</td><td class="n">${sub?fmt(sub):"–"}</td><td class="n">${m.errors?`<span class="pill crit">${m.errors}</span>`:"–"}</td><td class="n">${m.warnings?`<span class="pill warn">${m.warnings}</span>`:"–"}</td><td style="white-space:nowrap">${(m.last_downloaded||m.last_submitted||"–").slice(0,10)}</td></tr>`;}).join("")
+    :`<tr><td colspan="6" style="color:var(--muted)">No sitemap submitted for this property.</td></tr>`;
+
+  renderSurface(p); }
+
+function renderSurface(p){ const S2=S.surface; const seen=d=>new Set(((p&&p.dimensions.full[d])||[]).map(r=>r.k));
+  const dev=seen("device"), app=seen("searchAppearance"), ctry=seen("country");
+  const mark=(v,set)=>set.has(v)?`<span class="pill good">${v}</span>`:`<span class="pill neutral">${v}</span>`;
+  const block=(title,items)=>`<div class="lbl" style="margin-top:12px">${title}</div>`+items.join("");
+  const def=(name,what,values)=>`<p class="sdef"><b>${name}</b> — ${what}${values?`<span class="v">${values}</span>`:""}</p>`;
+  $("#sc-surface-a").innerHTML=
+    block("Dimensions",S2.dimensions.map(d=>def(d.name,d.what,d.name==="device"?["DESKTOP","MOBILE","TABLET"].map(v=>mark(v,dev)).join(" "):d.name==="searchAppearance"?([...app].length?[...app].map(v=>mark(v,app)).join(" "):p?"none returned for this property":d.values):d.name==="country"?(p?`${ctry.size} returned · ${d.values}`:d.values):d.values)))
+    +block("Metrics",S2.metrics.map(m=>def(m.name,m.what,"")))
+    +block("Search types",S2.search_types.map(t=>def(t.name,t.what,!p||!p.types?"":p.types[t.name]&&p.types[t.name].impr?"data for this property":"no data for this property")));
+  $("#sc-surface-b").innerHTML=
+    block("Data states",S2.data_states.map(d=>def(d.name,d.what,"")))
+    +block("Aggregation",S2.aggregation_types.map(d=>def(d.name,d.what,"")))
+    +block("Filter operators",[`<p class="sdef">${S2.filter_operators.map(o=>`<b>${o}</b>`).join(" · ")}<span class="v">on query, page, country, device and searchAppearance</span></p>`])
+    +block("Other resources",S2.resources.map(r=>def(r.name,r.what,r.values)))
+    +block("URL inspection fields",S2.inspection_fields.map(f=>def(f.name,"",f.values)));
+  $("#sc-limits").innerHTML="<b>Limits worth knowing:</b> "+S2.limits.join(" · "); }
+
+(function initSearch(){ if(!S){ $("#sc-setup").hidden=false; $("#sc-why").textContent="this dashboard build predates the Search tab"; renderSurfaceOnly(); return; }
+  const live=S.properties.filter(p=>p.available);
+  $("#sc-prop").innerHTML=S.properties.map(p=>`<button data-p="${p.key}" ${p.available?"":"disabled"} title="${p.site_url}${p.available?" · "+p.permission:" · "+(p.reason||"no access")}">${p.market}</button>`).join("");
+  $("#sc-hint").textContent=`Google Search Console · ${live.length} of ${S.properties.length} properties connected${S.auth?" · "+S.auth:""}`;
+  if(!live.length){ $("#sc-setup").hidden=false;
+    $("#sc-why").textContent=S.error?S.error:"the credential can see none of the six properties";
+    $("#sc-props-missing").textContent="Waiting on: "+S.properties.map(p=>p.site_url).join(", ");
+    renderSurfaceOnly(); return; }
+  $("#sc-live").hidden=false; sc.prop=live[0].key;
+  $("#sc-prop").querySelector(`[data-p="${sc.prop}"]`).classList.add("on");
+  $("#sc-prop").addEventListener("click",e=>{const b=e.target.closest("button"); if(!b||b.disabled)return; sc.prop=b.dataset.p; renderSearch();});
+  $("#sc-range").addEventListener("click",e=>{const b=e.target.closest("button"); if(!b)return; sc.days=+b.dataset.d; renderSearch();});
+  $("#sc-dim").addEventListener("click",e=>{const b=e.target.closest("button"); if(!b)return; sc.dim=b.dataset.k; renderSearch();});
+  $("#sc-win").addEventListener("click",e=>{const b=e.target.closest("button"); if(!b)return; sc.win=b.dataset.w; renderSearch();});
+  document.querySelectorAll(".sseg").forEach(seg=>seg.addEventListener("click",e=>{const b=e.target.closest("button"); if(!b||b.disabled)return; seg.querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b));}));
+  renderSearch(); })();
+function renderSurfaceOnly(){ if(S&&S.surface&&S.surface.dimensions) renderSurface(null); else $("#sc-surface-a").innerHTML='<p class="note">Rebuild the dashboard to populate this.</p>'; }
 renderTiles(); renderCharts(); applyFilters(); document.getElementById("datastamp").textContent="Merchant Center 5298296396 · data "+D.generated;
 </script>

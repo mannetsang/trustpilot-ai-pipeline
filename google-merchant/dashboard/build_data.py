@@ -29,6 +29,8 @@ from lib.secrets import get_secret  # noqa: E402
 from merchant_api import STOREFRONTS, account_parent, add_account_argument, display_name_for, resolve_account  # noqa: E402
 from sync_bigcommerce import STORES, BigCommerce, load_categories, offer_id_for  # noqa: E402
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)), "google-search-console"))
+
 ISSUE_NAMES = {
     "attribute_pending_review": "Image under review (temporary)", "image_unwanted_overlays": "Promotional overlay on image",
     "missing_shipping_weight": "Missing shipping weight", "personal_hardships_policy_violation": "Personal hardships policy",
@@ -77,11 +79,37 @@ def nm(x):
     return x.name if hasattr(x, "name") else str(x)
 
 
+def search_console_block(args):
+    """Search Console data for the Search tab, or a record of why there is none.
+
+    Never raises: the organic-search tab is an addition to this dashboard, not a
+    reason for the nightly build to fail. Whatever goes wrong is written into
+    the payload and shown on the tab, which is more use than a red workflow.
+    """
+    try:
+        import collect  # noqa: PLC0415 - optional, and only this one caller needs it
+    except Exception as exc:  # noqa: BLE001 - see docstring
+        print(f"search console: module unavailable ({type(exc).__name__}: {exc})")
+        return {"generated": dt.date.today().isoformat(), "auth": None, "visible_properties": 0,
+                "error": f"google-search-console not importable: {exc}", "properties": [], "surface": {}}
+
+    if args.no_search:
+        return collect.unavailable("skipped with --no-search")
+    try:
+        print("search console: pulling")
+        return collect.collect(days=args.search_days)
+    except Exception as exc:  # noqa: BLE001 - see docstring
+        print(f"search console: unavailable ({type(exc).__name__}: {exc})")
+        return collect.unavailable(f"{type(exc).__name__}: {exc}")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     add_account_argument(ap)
     ap.add_argument("--label", default="CA")
     ap.add_argument("--out", default=os.path.join(HERE, "dashboard_data.json"))
+    ap.add_argument("--no-search", action="store_true", help="Skip the Search Console pull")
+    ap.add_argument("--search-days", type=int, default=480, help="Search Console history window")
     ap.add_argument("--days", type=int, default=380, help="History window for performance data")
     args = ap.parse_args(argv)
     account = resolve_account(args)
@@ -193,9 +221,12 @@ def main(argv=None):
            "variants": {"products": len(by_prod), "offers": len(statuses), "products_over_50": sum(1 for v in by_prod.values() if len(v) > 50), "offers_in_over_50": sum(len(v) for v in by_prod.values() if len(v) > 50)},
            "issue_counts": [{"code": c, "offers": n} for c, n in Counter(code for s in statuses for code, sev in s["issues"] if sev == "DISAPPROVED").most_common()],
            "warning_counts": [{"code": c, "offers": n} for c, n in Counter(code for s in statuses for code, sev in s["issues"] if sev != "DISAPPROVED").most_common()]}
+    out["search"] = search_console_block(args)
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(out, f, separators=(",", ":"))
-    print(f"wrote {args.out}: {len(rows)} products, {len(series)} days, {len(statuses)} offers")
+    connected = sum(1 for p in out["search"]["properties"] if p["available"])
+    print(f"wrote {args.out}: {len(rows)} products, {len(series)} days, {len(statuses)} offers, "
+          f"{connected}/{len(out['search']['properties'])} Search Console properties")
 
 
 if __name__ == "__main__":
