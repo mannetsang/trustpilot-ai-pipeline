@@ -203,12 +203,19 @@ let state={range:"90",gran:"week",chan:"all"};
 
 function rangeRows(){ const start = state.range==="new" ? NEWFEED : addDays(LAST, -(+state.range)+1); return {rows:D.daily.filter(r=>r.d>=start), start}; }
 function prevRows(start){ const n = state.range==="new" ? Math.max(1, Math.round((new Date(LAST)-new Date(NEWFEED))/864e5)+1) : +state.range; const ps=addDays(start,-n); return D.daily.filter(r=>r.d>=ps && r.d<start); }
-function agg(rows){ const a={organic:0,ads:0,impr:0,conv:0,val:0,np:0,npi:0}; rows.forEach(r=>{for(const k in a)a[k]+=r[k]||0}); a.clicks = state.chan==="organic"?a.organic:state.chan==="ads"?a.ads:a.organic+a.ads; return a; }
-function group(rows){ if(state.gran==="day") return rows.map(r=>({k:r.d,...r})); const m=new Map(); rows.forEach(r=>{const k=weekOf(r.d); if(!m.has(k)) m.set(k,{k,organic:0,ads:0,impr:0,conv:0,val:0,np:0,npi:0}); const g=m.get(k); for(const f of ["organic","ads","impr","conv","val","np","npi"]) g[f]+=r[f]||0;}); return [...m.values()]; }
+// "val" is {currency: amount}, because a day's conversion value can arrive in
+// more than one currency and CAD + USD is not a number. addVal keeps them apart;
+// VALCUR is the currency the tile reports, biggest first.
+const VALCUR=(D.value_currencies||[]);
+function addVal(into,from){ for(const c in (from||{})) into[c]=(into[c]||0)+from[c]; return into; }
+function agg(rows){ const a={organic:0,ads:0,impr:0,conv:0,np:0,npi:0,val:{}}; rows.forEach(r=>{for(const k in a){ if(k==="val") addVal(a.val,r.val); else a[k]+=r[k]||0; }}); a.clicks = state.chan==="organic"?a.organic:state.chan==="ads"?a.ads:a.organic+a.ads; return a; }
+function group(rows){ if(state.gran==="day") return rows.map(r=>({k:r.d,...r})); const m=new Map(); rows.forEach(r=>{const k=weekOf(r.d); if(!m.has(k)) m.set(k,{k,organic:0,ads:0,impr:0,conv:0,np:0,npi:0,val:{}}); const g=m.get(k); for(const f of ["organic","ads","impr","conv","np","npi"]) g[f]+=r[f]||0; addVal(g.val,r.val);}); return [...m.values()]; }
+function valText(v){ const e=Object.entries(v||{}).filter(([,n])=>n).sort((a,b)=>b[1]-a[1]); return e.length?e.map(([c,n])=>`${c||"?"} ${fmt(Math.round(n))}`).join(" · "):"none tracked"; }
+function valMain(v){ const c=VALCUR[0]; return (v||{})[c]||0; }
 function delta(cur,prev){ if(!prev) return ""; const d=(cur-prev)/prev*100; return `<div class="d ${d>=0?"up":"down"}">${d>=0?"+":""}${d.toFixed(0)}% vs prior period</div>`; }
 
 function renderTiles(){ const {rows,start}=rangeRows(); const a=agg(rows), p=agg(prevRows(start)); const ctr=a.impr?a.clicks/a.impr:0, pctr=p.impr?p.clicks/p.impr:0;
-  $("#tiles").innerHTML=[["Product clicks",fmt(a.clicks),delta(a.clicks,p.clicks)],["Impressions",fmt(a.impr),delta(a.impr,p.impr)],["Click-through rate",pct(a.clicks,a.impr),delta(ctr,pctr)],["Tracked orders",a.conv.toFixed(1),delta(a.conv,p.conv)],["Tracked value",`CAD ${fmt(a.val)}`,delta(a.val,p.val)],["Non-product clicks",fmt(a.np),delta(a.np,p.np)]]
+  $("#tiles").innerHTML=[["Product clicks",fmt(a.clicks),delta(a.clicks,p.clicks)],["Impressions",fmt(a.impr),delta(a.impr,p.impr)],["Click-through rate",pct(a.clicks,a.impr),delta(ctr,pctr)],["Tracked orders",a.conv.toFixed(1),delta(a.conv,p.conv)],["Tracked value",valText(a.val),delta(valMain(a.val),valMain(p.val))],["Non-product clicks",fmt(a.np),delta(a.np,p.np)]]
   .map(([l,v,d])=>`<div class="tile"><div class="l">${l}</div><div><div class="v">${v}</div>${d||'<div class="d">&nbsp;</div>'}</div></div>`).join(""); }
 
 function timeChart(svg, groups, series, {stacked=false, H=240, colors=["var(--s1)","var(--s2)"], names=["Organic","Paid"]}){
