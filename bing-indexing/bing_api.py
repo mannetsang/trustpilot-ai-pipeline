@@ -77,6 +77,17 @@ class BingWebmaster:
         return self._call("GetUrlSubmissionQuota", params={"siteUrl": site_url}) or {}
 
     # --- writes ---------------------------------------------------------
+    def add_site(self, site_url: str):
+        """Add a property to the account. Adding does not verify it - Bing
+        returns the property in an unverified state and the verification step
+        (meta tag, DNS, XML file or Search Console import) happens in the UI."""
+        return self._call("AddSite", body={"siteUrl": site_url})
+
+    def verify_site(self, site_url: str):
+        """Ask Bing to re-check verification for a property it already knows.
+        Useful after the proof is in place; it cannot create the proof."""
+        return self._call("VerifySite", body={"siteUrl": site_url})
+
     def submit_feed(self, site_url: str, feed_url: str):
         """Register a sitemap. Idempotent: re-submitting an existing feed is a no-op."""
         return self._call("SubmitFeed", body={"siteUrl": site_url, "feedUrl": feed_url})
