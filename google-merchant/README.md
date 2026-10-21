@@ -4,15 +4,23 @@ Scripts that drive Merchant Center through the **Merchant API** (the successor
 to the Content API for Shopping): register the GCP project, create one product
 data source per storefront, and push products into them.
 
-| Merchant Center account | ID | Storefronts | Service account added? |
-|---|---|---|---|
-| Superhairpieces.ca | `5298296396` | superhairpieces.ca | yes, project registered |
-| Superhairpieces | `289630622` | .com and the EU sites | no |
-| Gen'C Beauty | `670525760` | genc | no |
+| Merchant Center account | ID | Storefronts | Service account | Our project registered | Offers |
+|---|---|---|---|---|---|
+| Superhairpieces.ca | `5298296396` | superhairpieces.ca | yes | yes | 11,818, pushed by `sync_bigcommerce.py` |
+| Superhairpieces | `289630622` | `.com` only, in practice | yes | **no** — `40060666568` | 1,084, autofeed |
+| Gen'C Beauty | `670525760` | gencbeauty.com | yes | **no** — none | 4,333, autofeed |
 
-The scripts only see accounts the service account has been added to, so
-`.com` and the EU storefronts need step 2 below repeated on `289630622`
-before anything can be created there. Account IDs are not secrets. Neither is anything else here: the scripts
+Two separate grants, and only the first is done on all three. Being *added to
+the account* lets the scripts read it; having *our GCP project registered
+against it* lets them write. Reads work on all three today; a write to
+`289630622` or `670525760` returns `GCP_NOT_REGISTERED` until step 2 below is
+run on it.
+
+`289630622` is named for the EU storefronts but every offer in it carries feed
+label `US`: **.nl, .fr, .es and .de have no offers in Google Shopping at all.**
+Creating their data sources is step 3, and it has never been run there.
+
+Account IDs are not secrets. Neither is anything else here: the scripts
 authenticate with Application Default Credentials, so there is no API key and
 nothing for Secret Manager to hold.
 

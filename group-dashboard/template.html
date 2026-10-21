@@ -58,6 +58,7 @@ svg.chart .grid{stroke:var(--rule-soft)} svg.chart .axis{stroke:var(--rule)} svg
 .flag{font-family:var(--mono);font-size:11px;font-weight:500;padding:1px 6px;border-radius:3px;background:var(--surface-2);color:var(--ink-2)}
 .note{font-size:12.5px;color:var(--muted);margin-top:8px}
 .mut{color:var(--muted)}
+#o-queries thead th,#o-countries thead th{position:sticky;top:0;background:var(--surface);z-index:1}
 code{font-family:var(--mono);font-size:11.5px;background:var(--surface-2);padding:1px 5px;border-radius:3px;overflow-wrap:anywhere}
 .tip{position:fixed;pointer-events:none;background:var(--ink);color:var(--ground);font-family:var(--mono);font-size:11.5px;line-height:1.4;padding:6px 9px;border-radius:4px;opacity:0;transform:translate(-50%,-110%);white-space:nowrap;z-index:9;transition:opacity .08s}
 .wrap{overflow-x:auto}
@@ -108,10 +109,14 @@ a{color:var(--accent)}
     <span class="lbl">Range</span><div class="seg" id="o-range"><button data-d="90">3 months</button><button data-d="365" class="on">12 months</button><button data-d="480">16 months</button></div>
   </div>
   <div class="card"><div class="cap"><b id="o-title">Clicks</b><div class="legend" id="o-legend"></div></div><svg id="o-chart" class="chart" viewBox="0 0 900 280"></svg></div>
-  <div class="grid2" style="margin-top:14px">
-    <div class="card"><div class="cap"><b>Top queries across the group</b><span class="s">each market's share of the clicks</span></div>
-      <div class="wrap" style="max-height:420px;overflow-y:auto"><table id="o-queries"><thead><tr><th>Query</th><th>Markets</th><th class="n">Clicks</th><th class="n">Impressions</th><th class="n">Position</th></tr></thead><tbody></tbody></table></div></div>
-    <div class="card"><div class="cap"><b>Where the searches happen</b><span class="s">top countries, all markets combined</span></div>
+  <div class="controls" style="padding:14px 0 10px">
+    <span class="lbl">Tables below</span><div class="seg" id="oq-market"></div>
+    <div class="seg" id="oq-win"><button data-w="full" class="on">Full history</button><button data-w="recent">Last 28 days</button></div>
+  </div>
+  <div class="grid2">
+    <div class="card"><div class="cap"><b id="oq-title">Top queries across the group</b><span class="s" id="oq-note"></span></div>
+      <div class="wrap" style="max-height:420px;overflow-y:auto"><table id="o-queries"><thead id="oq-head"></thead><tbody></tbody></table></div></div>
+    <div class="card"><div class="cap"><b>Where the searches happen</b><span class="s" id="oc-note"></span></div>
       <div class="wrap" style="max-height:420px;overflow-y:auto"><table id="o-countries"><thead><tr><th>Country</th><th class="n">Clicks</th><th class="n">Impressions</th><th class="n">CTR</th></tr></thead><tbody></tbody></table></div></div>
   </div>
   <div class="card" style="margin-top:14px"><div class="cap"><b>Per market</b><span class="s">devices, search surfaces and sitemaps</span></div>
@@ -148,7 +153,18 @@ a{color:var(--accent)}
 </section>
 
 <section id="feed">
-  <div class="sec-h"><h2>Shopping feed</h2><span class="hint" id="feed-hint">superhairpieces.ca · Merchant Center 5298296396 · the only account shared with us</span></div>
+  <div class="sec-h"><h2>Shopping feed</h2><span class="hint" id="feed-hint"></span></div>
+
+  <div class="card"><div class="cap"><b>Merchant Center accounts</b><span class="s">offers in the feed, and a year of Shopping traffic</span></div>
+    <div class="wrap"><table id="mc-accounts"><thead><tr><th>Account</th><th>Storefronts</th><th>Fed by</th>
+      <th class="n">Offers</th><th class="n">Live</th><th class="n">Blocked</th>
+      <th class="n">Ads clicks</th><th class="n">Free clicks</th><th class="n">Impressions</th><th>Tracked value</th></tr></thead><tbody></tbody></table></div>
+    <p class="note" id="mc-note"></p></div>
+
+  <div class="card" style="margin-top:14px"><div class="cap"><b>What is blocking offers</b><span class="s">the issue Google gives, and how many offers carry it</span></div>
+    <div class="wrap"><table id="mc-issues"><thead><tr><th>Account</th><th>Issue</th><th>Attribute</th><th class="n">Offers</th><th class="n">Share of feed</th></tr></thead><tbody></tbody></table></div></div>
+
+  <div class="sec-h" style="margin-top:22px"><h3 style="font-size:15px;margin:0">superhairpieces.ca in detail</h3><span class="hint">the one feed this repo pushes, joined to its BigCommerce catalogue</span></div>
   <div id="feed-missing" class="card" hidden><p style="margin:2px 0;color:var(--ink-2)" id="feed-why"></p></div>
   <div id="feed-live" hidden>
     <div class="tiles" id="htiles"></div>
@@ -278,6 +294,7 @@ function hbars(svg,items,{unit="",H_=null}={}){
 
 // ---------------------------------------------------------------- Organic search
 let oState={metric:"clicks",days:365,off:new Set()};
+let oq={market:"all",win:"full"};
 (function organic(){
   const ok=STORES.filter(s=>prop(s.key).available);
   $("#organic-hint").textContent=ok.length?`${ok.length} properties · ${SEARCH.auth||""}`:"no property is connected";
@@ -287,22 +304,12 @@ let oState={metric:"clicks",days:365,off:new Set()};
   seg("#o-metric",b=>{oState.metric=b.dataset.k; drawOrganic();});
   seg("#o-range",b=>{oState.days=+b.dataset.d; drawOrganic();});
 
-  // queries seen in more than one market are the interesting ones
-  const agg={};
-  ok.forEach(s=>{(prop(s.key).dimensions.full.query||[]).forEach(r=>{
-    const a=agg[r.k]||(agg[r.k]={k:r.k,clicks:0,impr:0,posSum:0,markets:new Set()});
-    a.clicks+=r.clicks; a.impr+=r.impr; a.posSum+=(r.pos||0)*r.impr; a.markets.add(s.key);});});
-  const rows=Object.values(agg).sort((a,b)=>b.clicks-a.clicks).slice(0,120);
-  $("#o-queries tbody").innerHTML=rows.map(r=>`<tr><td>${r.k}</td><td>${[...r.markets].map(k=>`<span class="flag" style="color:${COLOR(k)}">${LABEL[k]}</span>`).join(" ")}</td><td class="n">${fmt(r.clicks)}</td><td class="n">${fmt(r.impr)}</td><td class="n">${pos(r.impr?r.posSum/r.impr:null)}</td></tr>`).join("")
-    ||'<tr><td colspan="5" class="mut">No query data.</td></tr>';
-
-  const CTRY={can:"Canada",usa:"United States",nld:"Netherlands",fra:"France",esp:"Spain",deu:"Germany",gbr:"United Kingdom",aus:"Australia",ind:"India",irl:"Ireland",nzl:"New Zealand",zaf:"South Africa",phl:"Philippines",mex:"Mexico",bra:"Brazil",ita:"Italy",bel:"Belgium",che:"Switzerland",aut:"Austria",swe:"Sweden",nor:"Norway",dnk:"Denmark",pol:"Poland",prt:"Portugal",tur:"Turkey",are:"United Arab Emirates",jpn:"Japan",kor:"South Korea",sgp:"Singapore",mys:"Malaysia"};
-  const cagg={};
-  ok.forEach(s=>{(prop(s.key).dimensions.full.country||[]).forEach(r=>{
-    const a=cagg[r.k]||(cagg[r.k]={k:r.k,clicks:0,impr:0}); a.clicks+=r.clicks; a.impr+=r.impr;});});
-  $("#o-countries tbody").innerHTML=Object.values(cagg).sort((a,b)=>b.clicks-a.clicks).slice(0,40)
-    .map(r=>`<tr><td>${CTRY[r.k]||r.k.toUpperCase()} <span class="mut">${r.k}</span></td><td class="n">${fmt(r.clicks)}</td><td class="n">${fmt(r.impr)}</td><td class="n">${pct(r.clicks,r.impr)}</td></tr>`).join("")
-    ||'<tr><td colspan="4" class="mut">No country data.</td></tr>';
+  // One control drives both tables: the whole group, or one market on its own.
+  $("#oq-market").innerHTML='<button data-m="all" class="on">All markets</button>'
+    + ok.map(x=>`<button data-m="${x.key}">${LABEL[x.key]}</button>`).join("");
+  seg("#oq-market",b=>{oq.market=b.dataset.m; drawQueryTables();});
+  seg("#oq-win",b=>{oq.win=b.dataset.w; drawQueryTables();});
+  drawQueryTables();
 
   $("#o-markets tbody").innerHTML=STORES.map(s=>{const p=prop(s.key);
     if(!p.available) return `<tr><td><span class="flag" style="color:${COLOR(s.key)}">${LABEL[s.key]}</span> ${s.domain}</td><td colspan="8" class="mut">${p.reason||"not connected"}</td></tr>`;
@@ -314,6 +321,44 @@ let oState={metric:"clicks",days:365,off:new Set()};
       <td>${dev||"–"}</td><td>${surf}</td><td class="n">${(p.sitemaps||[]).length}</td><td class="n">${urls?fmt(urls):"–"}</td></tr>`;}).join("");
   drawOrganic();
 })();
+
+function drawQueryTables(){
+  const ok=STORES.filter(x=>prop(x.key).available);
+  const picked=oq.market==="all"?ok:ok.filter(x=>x.key===oq.market);
+  const label=oq.win==="recent"?"last 28 days":"full 16 months";
+  const window_=picked.length?(prop(picked[0].key).windows||{})[oq.win]:null;
+  const span=window_?`${window_[0]} to ${window_[1]}`:label;
+
+  if(oq.market==="all"){
+    $("#oq-title").textContent="Top queries across the group";
+    $("#oq-note").textContent=`${span} · a query counts once per market it appears in`;
+    $("#oq-head").innerHTML='<tr><th>Query</th><th>Markets</th><th class="n">Clicks</th><th class="n">Impressions</th><th class="n">Position</th></tr>';
+    const agg={};
+    picked.forEach(x=>{((prop(x.key).dimensions[oq.win]||{}).query||[]).forEach(r=>{
+      const a=agg[r.k]||(agg[r.k]={k:r.k,clicks:0,impr:0,posSum:0,markets:new Set()});
+      a.clicks+=r.clicks; a.impr+=r.impr; a.posSum+=(r.pos||0)*r.impr; a.markets.add(x.key);});});
+    const rows=Object.values(agg).sort((a,b)=>b.clicks-a.clicks).slice(0,150);
+    $("#o-queries tbody").innerHTML=rows.map(r=>`<tr><td>${r.k}</td><td>${[...r.markets].map(k=>`<span class="flag" style="color:${COLOR(k)}">${LABEL[k]}</span>`).join(" ")}</td><td class="n">${fmt(r.clicks)}</td><td class="n">${fmt(r.impr)}</td><td class="n">${pos(r.impr?r.posSum/r.impr:null)}</td></tr>`).join("")
+      ||'<tr><td colspan="5" class="mut">No query data.</td></tr>';
+  } else {
+    const x=picked[0], p=prop(x.key);
+    $("#oq-title").innerHTML=`Top queries · <span style="color:${COLOR(x.key)}">${x.domain}</span>`;
+    $("#oq-note").textContent=`${span} · top ${fmt(((p.dimensions[oq.win]||{}).query||[]).length)} by clicks · Google withholds rare queries entirely`;
+    $("#oq-head").innerHTML='<tr><th>Query</th><th class="n">Clicks</th><th class="n">Impressions</th><th class="n">CTR</th><th class="n">Position</th></tr>';
+    const rows=((p.dimensions[oq.win]||{}).query||[]);
+    $("#o-queries tbody").innerHTML=rows.map(r=>`<tr><td>${r.k}</td><td class="n">${fmt(r.clicks)}</td><td class="n">${fmt(r.impr)}</td><td class="n">${frac(r.ctr)}</td><td class="n">${pos(r.pos)}</td></tr>`).join("")
+      ||'<tr><td colspan="5" class="mut">No query data for this market.</td></tr>';
+  }
+
+  const CTRY={can:"Canada",usa:"United States",nld:"Netherlands",fra:"France",esp:"Spain",deu:"Germany",gbr:"United Kingdom",aus:"Australia",ind:"India",irl:"Ireland",nzl:"New Zealand",zaf:"South Africa",phl:"Philippines",mex:"Mexico",bra:"Brazil",ita:"Italy",bel:"Belgium",che:"Switzerland",aut:"Austria",swe:"Sweden",nor:"Norway",dnk:"Denmark",pol:"Poland",prt:"Portugal",tur:"Turkey",are:"United Arab Emirates",jpn:"Japan",kor:"South Korea",sgp:"Singapore",mys:"Malaysia"};
+  const cagg={};
+  picked.forEach(x=>{((prop(x.key).dimensions[oq.win]||{}).country||[]).forEach(r=>{
+    const a=cagg[r.k]||(cagg[r.k]={k:r.k,clicks:0,impr:0}); a.clicks+=r.clicks; a.impr+=r.impr;});});
+  $("#oc-note").textContent=oq.market==="all"?`all markets combined · ${span}`:`${picked[0].domain} · ${span}`;
+  $("#o-countries tbody").innerHTML=Object.values(cagg).sort((a,b)=>b.clicks-a.clicks).slice(0,40)
+    .map(r=>`<tr><td>${CTRY[r.k]||r.k.toUpperCase()} <span class="mut">${r.k}</span></td><td class="n">${fmt(r.clicks)}</td><td class="n">${fmt(r.impr)}</td><td class="n">${pct(r.clicks,r.impr)}</td></tr>`).join("")
+    ||'<tr><td colspan="4" class="mut">No country data.</td></tr>';
+}
 
 function drawOrganic(){
   const svg=$("#o-chart"); svg.innerHTML="";
@@ -444,26 +489,84 @@ function drawPay(){
     :`<span class="pill crit">missing</span><span class="fix">${c.detail}${c.fix?" — "+c.fix:""}</span>`;
   $("#cov-table tbody").innerHTML=D.coverage.map(r=>`<tr><td><span class="flag" style="color:${COLOR(r.market)}">${LABEL[r.market]}</span> ${r.domain}</td>
     <td>${cell(r.search_console)}</td><td>${cell(r.catalogue)}</td><td>${cell(r.orders)}</td><td>${cell(r.merchant_center)}</td></tr>`).join("");
-  $("#cov-accounts tbody").innerHTML=(D.merchant_accounts||[]).map(a=>`<tr><td>${a.name}</td><td><code>${a.id}</code></td>
-    <td>${(a.covers||[]).map(k=>`<span class="flag" style="color:${COLOR(k)}">${LABEL[k]}</span>`).join(" ")||'<span class="mut">—</span>'}</td>
-    <td>${a.connected?'<span class="pill good">connected</span>':'<span class="pill crit">not granted</span><span class="fix">the service account is not a user on this account</span>'}</td></tr>`).join("");
+  $("#cov-accounts tbody").innerHTML=(D.merchant_accounts||[]).map(a=>{
+    const off=(a.catalogue||{}).offers;
+    // Readable and useful are different things: an account we can open but whose
+    // offers serve none of our storefronts is connected, not covering.
+    const serves=(a.markets||[]).filter(k=>(D.merchant_markets||{})[k]);
+    return `<tr><td>${a.name}</td><td><code>${a.id}</code></td>
+    <td>${serves.map(k=>`<span class="flag" style="color:${COLOR(k)}">${LABEL[k]}</span>`).join(" ")||'<span class="mut">—</span>'}</td>
+    <td>${a.connected?`<span class="pill good">readable</span><span class="fix">${off?fmt(off)+" offers":"no offers"}</span>`
+      :`<span class="pill crit">not granted</span><span class="fix">${a.reason||"the service account is not a user on this account"}</span>`}</td></tr>`;}).join("");
   const gaps=[];
   const noOrders=D.coverage.filter(c=>!c.orders.ok);
   if(noOrders.length) gaps.push(`<b>Orders for ${noOrders.map(c=>LABEL[c.market]).join(", ")}</b> — those API tokens carry catalogue scope only, so there is no revenue, no order count and no payment mix for those markets. BigCommerce → Settings → API accounts → edit the token → Orders: read-only.`);
   const noMC=D.coverage.filter(c=>!c.merchant_center.ok);
-  if(noMC.length) gaps.push(`<b>Shopping feed health for ${noMC.map(c=>LABEL[c.market]).join(", ")}</b> — Merchant Center account 289630622 has not been shared with the service account, so the feed, disapprovals and Shopping performance for five storefronts are invisible here.`);
+  if(noMC.length) gaps.push(`<b>No Shopping feed for ${noMC.map(c=>LABEL[c.market]).join(", ")}</b> — all three Merchant Center accounts are readable now, and these storefronts still have no offers in any of them. Account 289630622 nominally covers the EU, but every offer in it carries feed label US. This is a missing feed, not a missing permission: those catalogues are not in Google Shopping at all.`);
+  const auto=D.coverage.filter(c=>c.merchant_center.ok&&c.merchant_center.fix);
+  if(auto.length) gaps.push(`<b>Autofeed rather than a pushed catalogue for ${auto.map(c=>LABEL[c.market]).join(", ")}</b> — Google crawls the storefront and keeps what it can parse, instead of being given the catalogue. It is why .com carries ${fmt(((D.merchant_markets||{}).com||{}).offers||0)} offers against .ca's ${fmt(((D.merchant_markets||{}).ca||{}).offers||0)}, on a larger catalogue.`);
   gaps.push(`<b>Google Business Profile and Trustpilot</b> — the salon listings and review pipelines run on their own credentials and are not pulled into this page yet.`);
   gaps.push(`<b>Bing</b> — <code>bing-indexing/</code> submits sitemaps and URLs; Bing Webmaster performance data is a separate API that is not connected.`);
   gaps.push(`<b>Advertising spend</b> — Google Ads cost sits outside the Merchant API, so every figure here is organic or total revenue, never return on ad spend.`);
   $("#cov-gaps").innerHTML=gaps.map(g=>`<p class="sdef" style="font-size:12.5px;margin:0 0 8px">${g}</p>`).join("");
 })();
 
-// ---------------------------------------------------------------- Shopping feed (.ca)
+// ---------------------------------------------------------------- Shopping: every account
+// Three Merchant Center accounts, all readable. Clicks and impressions add up
+// across them; tracked value does not, so it stays per currency throughout.
+(function shopping(){
+  const A=(D.merchant_accounts||[]).filter(a=>a.connected);
+  const MK=D.merchant_markets||{};
+  const BLOCKED=new Set(["NOT_ELIGIBLE_OR_DISAPPROVED","ELIGIBLE_LIMITED"]);
+  const statusCount=(a,pred)=>((a.catalogue||{}).by_status||[]).filter(r=>pred(r.status)).reduce((n,r)=>n+r.offers,0);
+  const methodClicks=(a,m)=>(((a.performance||{}).by_method)||[]).filter(r=>r.method===m).reduce((n,r)=>n+r.clicks,0);
+
+  $("#mc-accounts tbody").innerHTML=A.map(a=>{
+    const cat=a.catalogue||{}, perf=a.performance||{};
+    const live=statusCount(a,st=>st==="ELIGIBLE"), blocked=statusCount(a,st=>BLOCKED.has(st));
+    const serves=(a.markets||[]).filter(k=>MK[k]);
+    const src=(a.sources||[]).find(x=>x.primary);
+    // Never one money number: each currency is its own figure.
+    const val=(perf.value||[]).map(v=>`${v.currency} ${fmt(Math.round(v.amount))}`).join(" · ")||'<span class="mut">none tracked</span>';
+    return `<tr><td>${a.name}<br><code>${a.id}</code></td>
+      <td>${serves.map(k=>`<span class="flag" style="color:${COLOR(k)}">${LABEL[k]}</span>`).join(" ")||'<span class="mut">a separate brand</span>'}</td>
+      <td>${src?`${src.how}`:'<span class="mut">—</span>'}</td>
+      <td class="n">${fmt(cat.offers||0)}</td>
+      <td class="n">${cat.offers?pct(live,cat.offers,1):"–"}</td>
+      <td class="n">${blocked?fmt(blocked):"–"}</td>
+      <td class="n">${fmt(methodClicks(a,"ADS"))}</td>
+      <td class="n">${fmt(methodClicks(a,"ORGANIC"))}</td>
+      <td class="n">${fmt(perf.impressions||0)}</td>
+      <td>${val}</td></tr>`;}).join("")||'<tr><td colspan="10" class="mut">No Merchant Center account could be read.</td></tr>';
+
+  const clicks=A.reduce((n,a)=>n+((a.performance||{}).clicks||0),0);
+  const win=(A.find(a=>a.performance)||{}).performance;
+  $("#mc-note").innerHTML=`${fmt(clicks)} Shopping clicks across ${A.length} account${A.length===1?"":"s"}`
+    +(win&&win.window?` over ${win.window[0]} to ${win.window[1]}`:"")
+    +`. Clicks and impressions add across accounts; tracked value does not, so each currency is listed on its own.`
+    +` <b>Blocked</b> counts offers Google marks disapproved or limited — they are in the feed but not fully serving.`;
+
+  const rows=[];
+  A.forEach(a=>{const total=(a.catalogue||{}).offers||0;
+    ((a.catalogue||{}).issues||[]).filter(i=>i.severity==="DISAPPROVED").slice(0,6)
+      .forEach(i=>rows.push({a,i,total}));});
+  rows.sort((x,y)=>y.i.offers-x.i.offers);
+  $("#mc-issues tbody").innerHTML=rows.map(({a,i,total})=>`<tr>
+    <td><span class="mut">${a.name}</span></td><td><code>${i.code}</code></td>
+    <td>${i.attribute?`<code>${i.attribute}</code>`:'<span class="mut">—</span>'}</td>
+    <td class="n">${fmt(i.offers)}</td><td class="n">${total?pct(i.offers,total,1):"–"}</td></tr>`).join("")
+    ||'<tr><td colspan="5" class="mut">Nothing is blocking offers in any account.</td></tr>';
+
+  const noFeed=STORES.filter(x=>!MK[x.key]);
+  $("#feed-hint").innerHTML=`${A.length} accounts · ${fmt(A.reduce((n,a)=>n+((a.catalogue||{}).offers||0),0))} offers`
+    +(noFeed.length?` · <b>no feed for ${noFeed.map(x=>LABEL[x.key]).join(", ")}</b>`:"");
+})();
+
+// ---------------------------------------------------------------- superhairpieces.ca in detail
 const M = D.merchant && D.merchant.available ? D.merchant : null;
 if(!M){ $("#feed-missing").hidden=false;
   $("#feed-why").textContent=(D.merchant&&D.merchant.reason)?`The Merchant Center feed could not be read this run: ${D.merchant.reason}`:"The Merchant Center feed was not collected in this build.";
 } else { $("#feed-live").hidden=false;
-  $("#feed-hint").textContent=`superhairpieces.ca · Merchant Center 5298296396 · ${fmt(M.variants.offers)} offers · feed data ${M.generated}`;
   // ---- Feed health
   const P=M.products; const totOffers=P.reduce((s,p)=>s+p.offers,0), totDis=P.reduce((s,p)=>s+p.disapproved,0), totOOS=P.reduce((s,p)=>s+p.oos,0), totApp=P.reduce((s,p)=>s+p.approved,0);
   $("#htiles").innerHTML=[["Offers in feed",fmt(totOffers),`${fmt(P.length)} products`],["Approved",pct(totApp,totOffers,1),fmt(totApp)+" offers"],["Disapproved",fmt(totDis),`${P.filter(p=>p.disapproved).length} products`],["Out of stock",pct(totOOS,totOffers,1),fmt(totOOS)+" offers"],["Internal or under $3",fmt(P.filter(p=>p.internal).length),"products in feed"],["Third-party brands with a GTIN",`${M.gtin.third_party_with_gtin} / ${M.gtin.third_party_offers}`,"offers"]]

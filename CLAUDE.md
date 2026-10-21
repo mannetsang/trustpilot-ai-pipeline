@@ -78,11 +78,24 @@ Credentials, so the calling service account must be an Admin user on the
 Merchant Center account and the project must be registered once with
 `register_developer.py`. Account IDs are not secrets:
 
-| Merchant Center account | ID | Service account added? |
-|---|---|---|
-| Superhairpieces.ca (standalone, CA only) | `5298296396` | yes, project registered |
-| Superhairpieces (.com and EU storefronts) | `289630622` | no |
-| Gen'C Beauty | `670525760` | no |
+| Merchant Center account | ID | Readable | Offers | Fed by |
+|---|---|---|---|---|
+| Superhairpieces.ca (standalone, CA only) | `5298296396` | yes, project registered | 11,818 | this repo's API feed |
+| Superhairpieces (.com; EU **in name only**) | `289630622` | yes | 1,084 | autofeed |
+| Gen'C Beauty (separate brand) | `670525760` | yes | 4,333 | autofeed |
+
+All three were shared with the service account on 2026-10-21. Two caveats that
+matter more than the access:
+
+- **`289630622` serves `.com` only.** Every offer in it carries feed label `US`.
+  The four EU storefronts have **no offers in Google Shopping at all** - treat
+  "the account covers the EU" as a label, not a fact.
+- **Developer registration is per account and is not ours on two of them.**
+  `289630622` is registered to project `40060666568`; `670525760` to nothing.
+  Reads work anyway; writes return `GCP_NOT_REGISTERED`. Check with
+  `python google-merchant/register_developer.py --account <id> --email <you> --check`,
+  which compares our project *number* (`304363458561`) and exits non-zero when
+  it is absent.
 
 ### Google Search Console
 
@@ -112,9 +125,12 @@ token ids - and new code should prefer it over the per-module copies in
 
 Reachable today: catalogue and Search Console for all six; **orders only for
 .ca, .com and .es** (the .nl, .fr and .de API tokens carry catalogue scope and
-answer 403 on `/v2/orders`); Merchant Center only for `5298296396`. Revenue is
-`total_inc_tax` less `refunded_amount`, excluding statuses 0/5/6, and is never
-added across currencies.
+answer 403 on `/v2/orders`); all three Merchant Center accounts, though only
+`.ca` and `.com` have a feed - **.nl, .fr, .es and .de have no offers in Google
+Shopping**. Revenue is `total_inc_tax` less `refunded_amount`, excluding statuses
+0/5/6, and is never added across currencies. Nor is Shopping conversion value:
+the Merchant API returns it per row with its own currency code, and `.ca` alone
+returns both CAD and USD.
 
 ### Google Business Profile
 

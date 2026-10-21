@@ -47,7 +47,27 @@ INTERNAL = re.compile(r"extra charge|coffee|sugar|battery|catalog|price list|han
 
 
 def money(p):
-    return int(p.get("amount_micros", 0)) / 1e6 if p else 0.0
+    """Amount and its currency, never just the amount.
+
+    The Merchant API ships conversion value as a Price: amount_micros alongside
+    currency_code. Reading only the amount loses the one fact that makes it
+    addable, and this account returns two currencies - a year of .ca is CAD
+    2,577 plus USD 1,489, which summed to a number that was neither.
+
+    currency_code cannot be hoisted into the SELECT; the API rejects it as an
+    unknown field. It is only reachable here, on the Price itself.
+    """
+    if not p:
+        return 0.0, ""
+    return int(p.get("amount_micros", 0)) / 1e6, p.get("currency_code") or ""
+
+
+def add_money(bucket, price):
+    """Accumulate into {currency: amount}. Two currencies stay two numbers."""
+    amount, currency = money(price)
+    if amount:
+        bucket[currency or "?"] = round(bucket.get(currency or "?", 0.0) + amount, 2)
+    return bucket
 
 
 def retry(fn, what, attempts=5):
@@ -197,24 +217,40 @@ def main(argv=None):
                      "gtin": any(o["gtin"] for o in offers), "weight": all(o["weight"] for o in offers),
                      "internal": bool(INTERNAL.search(p["name"])) or min(prices) < 3 or "Office Supplies" in leaf, "img": offers[0]["image"]})
 
-    daily = defaultdict(lambda: {"organic": 0, "ads": 0, "impr": 0, "conv": 0.0, "val": 0.0, "np": 0, "npi": 0})
+    # "val" is a {currency: amount} mapping, not a number: a day's conversion
+    # value can arrive in more than one currency and they are not the same unit.
+    daily = defaultdict(lambda: {"organic": 0, "ads": 0, "impr": 0, "conv": 0.0, "val": {}, "np": 0, "npi": 0})
     for r in perf_daily:
         d = f"{r['date']['year']}-{r['date']['month']:02d}-{r['date']['day']:02d}"
         daily[d]["organic" if r.get("marketing_method") == "ORGANIC" else "ads"] += int(r.get("clicks", 0)); daily[d]["impr"] += int(r.get("impressions", 0))
-        daily[d]["conv"] += float(r.get("conversions", 0)); daily[d]["val"] += money(r.get("conversion_value"))
+        daily[d]["conv"] += float(r.get("conversions", 0)); add_money(daily[d]["val"], r.get("conversion_value"))
     for r in nonp:
         d = f"{r['date']['year']}-{r['date']['month']:02d}-{r['date']['day']:02d}"
         daily[d]["np"] += int(r.get("clicks", 0)); daily[d]["npi"] += int(r.get("impressions", 0))
     series = [{"d": d, **{k: (round(v, 2) if isinstance(v, float) else v) for k, v in daily[d].items()}} for d in sorted(daily)]
+    value_currencies = sorted({c for row in series for c in row["val"]},
+                              key=lambda c: -sum(row["val"].get(c, 0) for row in series))
 
     gcats = Counter((r.get("category_l3") or r.get("category_l2") or r.get("category_l1") or "(no category)") for r in pv)
-    cat_perf = [{"cat": (r.get("category_l1") or "(unclassified)") + (" › " + r["category_l2"] if r.get("category_l2") else ""), "clicks": int(r.get("clicks", 0)), "impr": int(r.get("impressions", 0)), "conv": round(float(r.get("conversions", 0)), 1), "val": round(money(r.get("conversion_value")))} for r in sorted(perf_cat, key=lambda x: -int(x.get("clicks", 0)))[:8]]
-    agg = defaultdict(lambda: {"clicks": 0, "impr": 0, "conv": 0.0, "val": 0.0, "title": ""})
+    # product_performance_view returns one row per (category, currency bucket), so
+    # the same category arrives up to three times. Slicing the raw rows listed it
+    # repeatedly and indistinguishably, and the top rows were all the currency-less
+    # bucket - which is why this column used to read zero throughout.
+    cats = defaultdict(lambda: {"clicks": 0, "impr": 0, "conv": 0.0, "val": {}})
+    for r in perf_cat:
+        key = (r.get("category_l1") or "(unclassified)") + (" › " + r["category_l2"] if r.get("category_l2") else "")
+        c = cats[key]
+        c["clicks"] += int(r.get("clicks", 0)); c["impr"] += int(r.get("impressions", 0))
+        c["conv"] += float(r.get("conversions", 0)); add_money(c["val"], r.get("conversion_value"))
+    cat_perf = [{"cat": k, "clicks": v["clicks"], "impr": v["impr"], "conv": round(v["conv"], 1), "val": v["val"]}
+                for k, v in sorted(cats.items(), key=lambda kv: -kv[1]["clicks"])[:8]]
+    agg = defaultdict(lambda: {"clicks": 0, "impr": 0, "conv": 0.0, "val": {}, "title": ""})
     for r in perf_offer:
-        a = agg[r["offer_id"]]; a["title"] = r.get("title", ""); a["clicks"] += int(r.get("clicks", 0)); a["impr"] += int(r.get("impressions", 0)); a["conv"] += float(r.get("conversions", 0)); a["val"] += money(r.get("conversion_value"))
-    top_clicked = [dict(title=a["title"][:70], clicks=a["clicks"], impr=a["impr"], conv=round(a["conv"], 1), val=round(a["val"])) for a in sorted(agg.values(), key=lambda a: -a["clicks"])[:12]]
+        a = agg[r["offer_id"]]; a["title"] = r.get("title", ""); a["clicks"] += int(r.get("clicks", 0)); a["impr"] += int(r.get("impressions", 0)); a["conv"] += float(r.get("conversions", 0)); add_money(a["val"], r.get("conversion_value"))
+    top_clicked = [dict(title=a["title"][:70], clicks=a["clicks"], impr=a["impr"], conv=round(a["conv"], 1), val=a["val"]) for a in sorted(agg.values(), key=lambda a: -a["clicks"])[:12]]
     third = [s for s in statuses if s["brand"].lower() != store["brand_default"].lower()]
-    out = {"generated": today.isoformat(), "products": rows, "daily": series, "issue_names": ISSUE_NAMES, "category_perf": cat_perf, "top_clicked": top_clicked,
+    out = {"generated": today.isoformat(), "account": account, "feed_label": label,
+           "storefront": storefront[0], "value_currencies": value_currencies, "products": rows, "daily": series, "issue_names": ISSUE_NAMES, "category_perf": cat_perf, "top_clicked": top_clicked,
            "google_categories": [{"category": k, "offers": v} for k, v in gcats.most_common(12)],
            "gtin": {"third_party_offers": len(third), "third_party_with_gtin": sum(1 for s in third if s["gtin"]), "all_with_gtin": sum(1 for s in statuses if s["gtin"])},
            "reviews": {"products_with_reviews": sum(1 for p in prods if p["is_visible"] and p.get("reviews_count")), "reviews": sum(p.get("reviews_count", 0) for p in prods if p["is_visible"])},
