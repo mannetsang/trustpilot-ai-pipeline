@@ -41,11 +41,14 @@
         ],
         "url": {
           "raw": "https://oauth2.googleapis.com/token",
-          "host": [
-            "oauth2.googleapis.com"
-          ],
           "path": [
             "token"
+          ],
+          "protocol": "https",
+          "host": [
+            "oauth2",
+            "googleapis",
+            "com"
           ]
         },
         "description": "Exchanges a long-lived refresh token for a ~1 hour access token and saves it to {{accessToken}}. Form-encoded, which is what Google's token endpoint expects.",
@@ -106,13 +109,13 @@
         ],
         "url": {
           "raw": "{{baseUrl}}/webmasters/v3/sites",
-          "host": [
-            "{{baseUrl}}"
-          ],
           "path": [
             "webmasters",
             "v3",
             "sites"
+          ],
+          "host": [
+            "{{baseUrl}}"
           ]
         },
         "description": "Every property this credential can see, with its permission level. Run this first: the console output gives you the exact siteUrl strings to paste into the siteUrl variable, which removes all guesswork about www and trailing slashes.",
@@ -160,14 +163,14 @@
         ],
         "url": {
           "raw": "{{baseUrl}}/webmasters/v3/sites/{{siteUrlEnc}}",
-          "host": [
-            "{{baseUrl}}"
-          ],
           "path": [
             "webmasters",
             "v3",
             "sites",
             "{{siteUrlEnc}}"
+          ],
+          "host": [
+            "{{baseUrl}}"
           ]
         },
         "description": "Confirms a property exists and what permission level you hold on it.",
@@ -196,15 +199,15 @@
         ],
         "url": {
           "raw": "{{baseUrl}}/webmasters/v3/sites/{{siteUrlEnc}}/sitemaps",
-          "host": [
-            "{{baseUrl}}"
-          ],
           "path": [
             "webmasters",
             "v3",
             "sites",
             "{{siteUrlEnc}}",
             "sitemaps"
+          ],
+          "host": [
+            "{{baseUrl}}"
           ]
         },
         "description": "THE check for 'is my sitemap submitted'. An empty response means nothing is registered on this property. Per sitemap you get path, lastDownloaded, isPending, errors, warnings and submitted/indexed counts; the test script prints one line each.",
@@ -268,9 +271,6 @@
         ],
         "url": {
           "raw": "{{baseUrl}}/webmasters/v3/sites/{{siteUrlEnc}}/sitemaps/{{feedpathEnc}}",
-          "host": [
-            "{{baseUrl}}"
-          ],
           "path": [
             "webmasters",
             "v3",
@@ -278,6 +278,9 @@
             "{{siteUrlEnc}}",
             "sitemaps",
             "{{feedpathEnc}}"
+          ],
+          "host": [
+            "{{baseUrl}}"
           ]
         },
         "description": "Detail for a single sitemap, including per-content-type counts. For a sitemap index this reports the index itself; its child sitemaps appear separately in request 4.",
@@ -306,9 +309,6 @@
         ],
         "url": {
           "raw": "{{baseUrl}}/webmasters/v3/sites/{{siteUrlEnc}}/sitemaps/{{feedpathEnc}}",
-          "host": [
-            "{{baseUrl}}"
-          ],
           "path": [
             "webmasters",
             "v3",
@@ -316,6 +316,9 @@
             "{{siteUrlEnc}}",
             "sitemaps",
             "{{feedpathEnc}}"
+          ],
+          "host": [
+            "{{baseUrl}}"
           ]
         },
         "description": "Registers a sitemap. No request body, returns 204, and is idempotent - re-submitting an existing sitemap is harmless. Needs the read-write webmasters scope. This is the API equivalent of typing the path into the 'Add a new sitemap' box.",
@@ -344,9 +347,6 @@
         ],
         "url": {
           "raw": "{{baseUrl}}/webmasters/v3/sites/{{siteUrlEnc}}/sitemaps/{{feedpathEnc}}",
-          "host": [
-            "{{baseUrl}}"
-          ],
           "path": [
             "webmasters",
             "v3",
@@ -354,6 +354,9 @@
             "{{siteUrlEnc}}",
             "sitemaps",
             "{{feedpathEnc}}"
+          ],
+          "host": [
+            "{{baseUrl}}"
           ]
         },
         "description": "Unregisters a sitemap; returns 204. Does not stop Google crawling one it auto-discovered from robots.txt.",
@@ -386,9 +389,6 @@
         ],
         "url": {
           "raw": "{{baseUrl}}/webmasters/v3/sites/{{siteUrlEnc}}/searchAnalytics/query",
-          "host": [
-            "{{baseUrl}}"
-          ],
           "path": [
             "webmasters",
             "v3",
@@ -396,6 +396,9 @@
             "{{siteUrlEnc}}",
             "searchAnalytics",
             "query"
+          ],
+          "host": [
+            "{{baseUrl}}"
           ]
         },
         "description": "Clicks, impressions, CTR and average position. Data starts ~2 days back, which is why endDate is not today. rowLimit maxes at 25000; page with startRow. Add a dimensionFilterGroups block to filter by country, device or query.",
@@ -437,13 +440,13 @@
         ],
         "url": {
           "raw": "{{baseUrl}}/v1/urlInspection/index:inspect",
-          "host": [
-            "{{baseUrl}}"
-          ],
           "path": [
             "v1",
             "urlInspection",
             "index:inspect"
+          ],
+          "host": [
+            "{{baseUrl}}"
           ]
         },
         "description": "Index status for one URL: coverage verdict, the canonical Google chose, last crawl, mobile usability, and which sitemaps reference it. Quota is tight (~2000/day) so this is for spot checks, not bulk auditing. inspectionUrl must sit inside siteUrl.",
