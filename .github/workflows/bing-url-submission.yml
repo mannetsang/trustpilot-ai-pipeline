@@ -1,0 +1,78 @@
+name: Bing URL submission
+
+# Pushes recently-changed product URLs to Bing so price, stock and new-product
+# changes are picked up in minutes instead of waiting for the next crawl.
+#
+# Transport is the Bing Webmaster URL Submission API, not IndexNow: IndexNow
+# needs a key file at the web root and BigCommerce-hosted storefronts cannot
+# serve one. See bing-indexing/README.md.
+#
+# Stateless by design — each run looks back a fixed window rather than reading
+# a watermark file, so nothing has to persist between runs. The 20-minute
+# lookback against a 15-minute schedule leaves 5 minutes of overlap to absorb
+# the delay GitHub's scheduler can add. A run that is skipped outright loses
+# its window; the daily sitemap crawl is the backstop for that.
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      store:
+        description: 'Single store to submit (blank = all six)'
+        type: choice
+        default: ''
+        options: ['', ca, com, nl, fr, es, de]
+      since_minutes:
+        description: 'Look-back window in minutes'
+        default: '20'
+      dry_run:
+        description: 'List what would be submitted, send nothing'
+        type: boolean
+        default: false
+
+concurrency:
+  group: bing-url-submission
+  cancel-in-progress: false
+
+# Keyless Google Cloud auth (Workload Identity Federation), same as the other
+# jobs here: the Bing API key and the six BigCommerce tokens come from Secret
+# Manager, so no credential is stored in GitHub.
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  submit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/304363458561/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: claude-sessions@shp-ai-bot-2026.iam.gserviceaccount.com
+
+      - name: Install dependencies
+        run: pip install --quiet -r bing-indexing/requirements.txt
+
+      - name: Submit changed URLs
+        env:
+          GCP_PROJECT: shp-ai-bot-2026
+        run: |
+          set -o pipefail
+          python bing-indexing/ping_changed.py \
+            --since-minutes "${{ inputs.since_minutes || '20' }}" \
+            ${{ inputs.store && format('--store {0}', inputs.store) || '' }} \
+            ${{ inputs.dry_run && ' ' || '--submit' }} | tee bing.log
+          {
+            echo "## Bing URL submission"
+            echo '```'
+            cat bing.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

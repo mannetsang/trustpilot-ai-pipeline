@@ -54,11 +54,18 @@ Each storefront is a separate BigCommerce store with its own hash, so a report
 must be run once per store and the results combined. Revenue is **never** summed
 across currencies.
 
-| Store hash | Storefront | Currency |
-|---|---|---|
-| `gmosz3ja` | superhairpieces.ca | CAD |
-| _(unknown)_ | superhairpieces.com | USD |
-| _(unknown)_ | .nl / .fr / .es / .de | EUR |
+| Store hash | Storefront | Canonical host | Currency |
+|---|---|---|---|
+| `gmosz3ja` | superhairpieces.ca | non-www | CAD |
+| `cavofu` | superhairpieces.com | **www** | USD |
+| `1f8t0plkkw` | superhairpieces.nl | non-www | EUR |
+| `1tqjsol232` | superhairpieces.fr | non-www | EUR |
+| `qet21urb3p` | superhairpieces.es | non-www | EUR |
+| `34amlu9gm` | superhairpieces.de | non-www | EUR |
+
+`.com` 301-redirects to www; the other five are non-www. Tokens for all six are
+in the project-root `.env` (`<MARKET>_BIGCOMMERCE_<hash>_ACCESS_TOKEN`, except
+`.es` which uses `ES_BIGCOMMERCE_PRODUCT_*`).
 
 Secrets follow `BIGCOMMERCE_<store_hash>_<CREDENTIAL>`, e.g.
 `BIGCOMMERCE_gmosz3ja_ACCESS_TOKEN`. The store hash itself is not sensitive.

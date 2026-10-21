@@ -1,0 +1,3 @@
+state/watermarks.json
+state/*.tmp
+__pycache__/
