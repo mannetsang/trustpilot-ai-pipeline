@@ -1,9 +1,12 @@
 name: Group dashboard
 
 # Rebuilds the six-storefront dashboard and redeploys it. Reads Search Console,
-# the BigCommerce catalogue and orders, and Merchant Center; writes nothing
-# anywhere. Credentials: the claude-sessions service account through Workload
-# Identity Federation, which must be a user on each Search Console property and
+# the BigCommerce catalogue and orders, and the .ca Merchant Center feed
+# (through google-merchant/dashboard/build_data.py); writes nothing anywhere.
+# This is the only dashboard: the old merchant-dashboard service redirects here.
+#
+# Credentials: the claude-sessions service account through Workload Identity
+# Federation, which must be a user on each Search Console property and
 # can read the BigCommerce tokens from Secret Manager.
 
 on:
@@ -17,6 +20,10 @@ on:
         default: ''
       no_sales:
         description: 'Skip the order pull'
+        type: boolean
+        default: false
+      no_feed:
+        description: 'Skip the .ca Merchant Center feed pull'
         type: boolean
         default: false
       deploy:
@@ -61,6 +68,7 @@ jobs:
           python3 group-dashboard/collect.py \
             ${{ inputs.store && format('--store {0}', inputs.store) || '' }} \
             ${{ inputs.no_sales && '--no-sales' || '' }} \
+            ${{ inputs.no_feed && '--no-feed' || '' }} \
             --print | tee group.log
           python3 group-dashboard/build_site.py
           {

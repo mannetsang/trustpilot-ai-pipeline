@@ -106,6 +106,40 @@ def store_block(store, since_iso, want_sales, verbose):
     return entry
 
 
+def merchant_feed(verbose):
+    """The .ca Merchant Center feed, from the Shopping dashboard's own builder.
+
+    build_data.py already pulls the performance reports, every offer's status
+    and the BigCommerce join, and it is the thing under test every night. Call
+    it rather than reimplementing it; --no-search stops it repeating the Search
+    Console pull this script has already done.
+    """
+    import importlib.util  # noqa: PLC0415
+    import tempfile  # noqa: PLC0415
+
+    dashboard = os.path.join(REPO, "google-merchant", "dashboard")
+    sys.path.insert(0, dashboard)
+    sys.path.insert(0, os.path.join(REPO, "google-merchant"))
+    spec = importlib.util.spec_from_file_location("merchant_build_data", os.path.join(dashboard, "build_data.py"))
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+        with tempfile.NamedTemporaryFile("r+", suffix=".json", delete=False) as fh:
+            module.main(["--account", "5298296396", "--label", "CA", "--no-search", "--out", fh.name])
+            data = json.load(open(fh.name, encoding="utf-8"))
+        os.unlink(fh.name)
+    except Exception as exc:  # noqa: BLE001 - one market's feed must not end the build
+        if verbose:
+            print(f"  merchant feed unavailable ({type(exc).__name__}: {exc})")
+        return {"available": False, "reason": f"{type(exc).__name__}: {exc}"}
+
+    data.pop("search", None)   # this script collects that itself, for all six
+    data["available"] = True
+    if verbose:
+        print(f"  merchant feed: {len(data['products'])} products, {data['variants']['offers']} offers")
+    return data
+
+
 def merchant_centre(verbose):
     """Merchant Center reach, per account. Only .ca has been granted to us."""
     accounts = [
@@ -133,7 +167,7 @@ def merchant_centre(verbose):
     return accounts
 
 
-def collect(stores=None, days=480, want_sales=True, verbose=True):
+def collect(stores=None, days=480, want_sales=True, want_merchant_feed=True, verbose=True):
     stores = stores or list(STORES)
     today = dt.date.today()
     since_iso = (today - dt.timedelta(days=SALES_DAYS)).isoformat() + "T00:00:00Z"
@@ -150,6 +184,7 @@ def collect(stores=None, days=480, want_sales=True, verbose=True):
     if verbose:
         print("merchant center:")
     accounts = merchant_centre(verbose)
+    feed = merchant_feed(verbose) if want_merchant_feed else {"available": False, "reason": "skipped"}
 
     return {
         "generated": today.isoformat(),
@@ -157,6 +192,7 @@ def collect(stores=None, days=480, want_sales=True, verbose=True):
         "search": search,
         "stores": store_data,
         "merchant_accounts": accounts,
+        "merchant": feed,
         "coverage": coverage(store_data, search, accounts),
     }
 
@@ -212,11 +248,13 @@ def main(argv=None):
     ap.add_argument("--store", nargs="+", help="Market keys; default all six")
     ap.add_argument("--days", type=int, default=480, help="Search Console history window")
     ap.add_argument("--no-sales", action="store_true", help="Skip the order pull (much faster)")
+    ap.add_argument("--no-feed", action="store_true", help="Skip the .ca Merchant Center feed pull")
     ap.add_argument("--out", default=os.path.join(HERE, "group_data.json"))
     ap.add_argument("--print", action="store_true", dest="show")
     args = ap.parse_args(argv)
 
-    data = collect(select(args.store), days=args.days, want_sales=not args.no_sales)
+    data = collect(select(args.store), days=args.days, want_sales=not args.no_sales,
+                   want_merchant_feed=not args.no_feed)
     with open(args.out, "w", encoding="utf-8") as fh:
         json.dump(data, fh, separators=(",", ":"))
     size = os.path.getsize(args.out) / 1024
