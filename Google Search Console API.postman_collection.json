@@ -1,8 +1,83 @@
 {
   "info": {
     "name": "Google Search Console API",
-    "description": "Search Console API v3 (sites, sitemaps, search analytics) plus URL Inspection v1.\n\n## Auth\nEvery request sends `Bearer {{accessToken}}`. Two ways to fill it:\n\n**A. Paste an access token in (fastest).** Go to the OAuth 2.0 Playground, authorise\n`https://www.googleapis.com/auth/webmasters.readonly`, exchange for an access token and\nput it in `accessToken`. Lasts ~1 hour, needs no new stored credential, and is the right\nchoice for a one-off check across the six properties. Skip request 1 entirely.\n\n**B. Run request 1.** Needs the OAuth client id, client secret and refresh token of a\nGoogle user with access to the properties. Request 1 saves the access token into the\ncollection automatically.\n\n> **Do not reuse the `google-business-profile-*` credential for this.** That refresh token\n> is granted `https://www.googleapis.com/auth/business.manage` only. Request 1 would still\n> return 200 and a valid-looking access token, and every request after it would fail with\n> `403 insufficientPermissions` - the first request succeeding is what makes this\n> misleading. Search Console needs its own refresh token minted with a webmasters scope.\n> Doing so against the same OAuth client is fine and leaves the Business Profile token\n> working; Google allows many refresh tokens per user and client.\n\n**C. Service account.** Add it under Settings -> Users and permissions on **each property**\n- Search Console grants no org-wide access - then mint a token with the webmasters scope.\n\nScopes: `.../auth/webmasters.readonly` to read, `.../auth/webmasters` to submit or delete.\n\n## The one gotcha\n`siteUrl` goes in the URL *path*, so it must be percent-encoded. A collection pre-request\nscript derives `{{siteUrlEnc}}` and `{{feedpathEnc}}` for you - edit only the readable\n`siteUrl` and `feedpath` variables. Un-encoded values are the usual cause of a 404 here.\n\nProperty identity is exact: `https://superhairpieces.ca/` (trailing slash),\n`https://www.superhairpieces.com/` (www is a separate property from non-www), or\n`sc-domain:superhairpieces.ca` for a Domain property.\n\n## Superhairpieces properties\nImport the companion environment file for all six storefronts. `.com` is **www**; `.ca`,\n`.nl`, `.fr`, `.es` and `.de` are non-www. Every store serves a BigCommerce-generated\nsitemap index at `/xmlsitemap.php`.",
+    "description": "Search Console API v3 (sites, sitemaps, search analytics) plus URL Inspection v1.\n\n## Auth\nThe collection is configured for OAuth 2.0 and every request inherits it, so Postman can\nmint and renew tokens itself. Three ways to work, in order of how much setup they need:\n\n**A. Let Postman do it (no pasting, renews itself).** One-time Google Cloud Console step:\nopen the OAuth client (type **Web application**) and add\n`https://oauth.pstmn.io/v1/callback` under Authorised redirect URIs. Put the client id\nand secret in the `clientId` / `clientSecret` variables, then Authorization tab ->\n**Get New Access Token** -> consent in the browser -> **Use Token**. The auth URL already\ncarries `access_type=offline&prompt=consent`, so Google returns a refresh token and\nPostman renews silently from then on.\n\n**B. Paste an access token in.** OAuth 2.0 Playground, authorise the scope, exchange for\nan access token, put it in the `accessToken` variable. ~1 hour, no setup, no stored\ncredential. Good for a one-off check; note that **Get New Access Token** overwrites the\n`{{accessToken}}` reference in the auth config when you use it.\n\n**C. Run request 1.** For an existing refresh token. It opts out of collection auth and\nsaves the resulting access token to `accessToken` itself.\n\n> **Do not reuse the `google-business-profile-*` credential for this.** That refresh token\n> is granted `https://www.googleapis.com/auth/business.manage` only. Request 1 would still\n> return 200 and a valid-looking access token, and every request after it would fail with\n> `403 insufficientPermissions` - the first request succeeding is what makes this\n> misleading. Search Console needs its own refresh token minted with a webmasters scope.\n> Doing so against the same OAuth client is fine and leaves the Business Profile token\n> working; Google allows many refresh tokens per user and client.\n\n**C. Service account.** Add it under Settings -> Users and permissions on **each property**\n- Search Console grants no org-wide access - then mint a token with the webmasters scope.\n\nThe `scope` variable is read-only by default. Change it to\n`https://www.googleapis.com/auth/webmasters` before using requests 6 and 7, and get a\nnew token - widening the scope does not retrofit a token already issued.\n\n## The one gotcha\n`siteUrl` goes in the URL *path*, so it must be percent-encoded. A collection pre-request\nscript derives `{{siteUrlEnc}}` and `{{feedpathEnc}}` for you - edit only the readable\n`siteUrl` and `feedpath` variables. Un-encoded values are the usual cause of a 404 here.\n\nProperty identity is exact: `https://superhairpieces.ca/` (trailing slash),\n`https://www.superhairpieces.com/` (www is a separate property from non-www), or\n`sc-domain:superhairpieces.ca` for a Domain property.\n\n## Superhairpieces properties\nImport the companion environment file for all six storefronts. `.com` is **www**; `.ca`,\n`.nl`, `.fr`, `.es` and `.de` are non-www. Every store serves a BigCommerce-generated\nsitemap index at `/xmlsitemap.php`.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "oauth2",
+    "oauth2": [
+      {
+        "key": "grant_type",
+        "value": "authorization_code",
+        "type": "string"
+      },
+      {
+        "key": "authUrl",
+        "value": "https://accounts.google.com/o/oauth2/v2/auth?access_type=offline&prompt=consent",
+        "type": "string"
+      },
+      {
+        "key": "accessTokenUrl",
+        "value": "https://oauth2.googleapis.com/token",
+        "type": "string"
+      },
+      {
+        "key": "refreshTokenUrl",
+        "value": "https://oauth2.googleapis.com/token",
+        "type": "string"
+      },
+      {
+        "key": "clientId",
+        "value": "{{clientId}}",
+        "type": "string"
+      },
+      {
+        "key": "clientSecret",
+        "value": "{{clientSecret}}",
+        "type": "string"
+      },
+      {
+        "key": "scope",
+        "value": "{{scope}}",
+        "type": "string"
+      },
+      {
+        "key": "redirect_uri",
+        "value": "https://oauth.pstmn.io/v1/callback",
+        "type": "string"
+      },
+      {
+        "key": "useBrowser",
+        "value": true,
+        "type": "boolean"
+      },
+      {
+        "key": "client_authentication",
+        "value": "body",
+        "type": "string"
+      },
+      {
+        "key": "addTokenTo",
+        "value": "header",
+        "type": "string"
+      },
+      {
+        "key": "tokenName",
+        "value": "Search Console token",
+        "type": "string"
+      },
+      {
+        "key": "accessToken",
+        "value": "{{accessToken}}",
+        "type": "string"
+      },
+      {
+        "key": "autoRefreshToken",
+        "value": true,
+        "type": "boolean"
+      }
+    ]
   },
   "event": [
     {
@@ -52,6 +127,9 @@
           ]
         },
         "description": "Exchanges a long-lived refresh token for a ~1 hour access token and saves it to {{accessToken}}. Form-encoded, which is what Google's token endpoint expects.",
+        "auth": {
+          "type": "noauth"
+        },
         "body": {
           "mode": "urlencoded",
           "urlencoded": [
@@ -118,17 +196,7 @@
             "{{baseUrl}}"
           ]
         },
-        "description": "Every property this credential can see, with its permission level. Run this first: the console output gives you the exact siteUrl strings to paste into the siteUrl variable, which removes all guesswork about www and trailing slashes.",
-        "auth": {
-          "type": "bearer",
-          "bearer": [
-            {
-              "key": "token",
-              "value": "{{accessToken}}",
-              "type": "string"
-            }
-          ]
-        }
+        "description": "Every property this credential can see, with its permission level. Run this first: the console output gives you the exact siteUrl strings to paste into the siteUrl variable, which removes all guesswork about www and trailing slashes."
       },
       "response": [],
       "event": [
@@ -173,17 +241,7 @@
             "{{baseUrl}}"
           ]
         },
-        "description": "Confirms a property exists and what permission level you hold on it.",
-        "auth": {
-          "type": "bearer",
-          "bearer": [
-            {
-              "key": "token",
-              "value": "{{accessToken}}",
-              "type": "string"
-            }
-          ]
-        }
+        "description": "Confirms a property exists and what permission level you hold on it."
       },
       "response": []
     },
@@ -210,17 +268,7 @@
             "{{baseUrl}}"
           ]
         },
-        "description": "THE check for 'is my sitemap submitted'. An empty response means nothing is registered on this property. Per sitemap you get path, lastDownloaded, isPending, errors, warnings and submitted/indexed counts; the test script prints one line each.",
-        "auth": {
-          "type": "bearer",
-          "bearer": [
-            {
-              "key": "token",
-              "value": "{{accessToken}}",
-              "type": "string"
-            }
-          ]
-        }
+        "description": "THE check for 'is my sitemap submitted'. An empty response means nothing is registered on this property. Per sitemap you get path, lastDownloaded, isPending, errors, warnings and submitted/indexed counts; the test script prints one line each."
       },
       "response": [],
       "event": [
@@ -283,17 +331,7 @@
             "{{baseUrl}}"
           ]
         },
-        "description": "Detail for a single sitemap, including per-content-type counts. For a sitemap index this reports the index itself; its child sitemaps appear separately in request 4.",
-        "auth": {
-          "type": "bearer",
-          "bearer": [
-            {
-              "key": "token",
-              "value": "{{accessToken}}",
-              "type": "string"
-            }
-          ]
-        }
+        "description": "Detail for a single sitemap, including per-content-type counts. For a sitemap index this reports the index itself; its child sitemaps appear separately in request 4."
       },
       "response": []
     },
@@ -321,17 +359,7 @@
             "{{baseUrl}}"
           ]
         },
-        "description": "Registers a sitemap. No request body, returns 204, and is idempotent - re-submitting an existing sitemap is harmless. Needs the read-write webmasters scope. This is the API equivalent of typing the path into the 'Add a new sitemap' box.",
-        "auth": {
-          "type": "bearer",
-          "bearer": [
-            {
-              "key": "token",
-              "value": "{{accessToken}}",
-              "type": "string"
-            }
-          ]
-        }
+        "description": "Registers a sitemap. No request body, returns 204, and is idempotent - re-submitting an existing sitemap is harmless. Needs the read-write webmasters scope. This is the API equivalent of typing the path into the 'Add a new sitemap' box."
       },
       "response": []
     },
@@ -359,17 +387,7 @@
             "{{baseUrl}}"
           ]
         },
-        "description": "Unregisters a sitemap; returns 204. Does not stop Google crawling one it auto-discovered from robots.txt.",
-        "auth": {
-          "type": "bearer",
-          "bearer": [
-            {
-              "key": "token",
-              "value": "{{accessToken}}",
-              "type": "string"
-            }
-          ]
-        }
+        "description": "Unregisters a sitemap; returns 204. Does not stop Google crawling one it auto-discovered from robots.txt."
       },
       "response": []
     },
@@ -402,16 +420,6 @@
           ]
         },
         "description": "Clicks, impressions, CTR and average position. Data starts ~2 days back, which is why endDate is not today. rowLimit maxes at 25000; page with startRow. Add a dimensionFilterGroups block to filter by country, device or query.",
-        "auth": {
-          "type": "bearer",
-          "bearer": [
-            {
-              "key": "token",
-              "value": "{{accessToken}}",
-              "type": "string"
-            }
-          ]
-        },
         "body": {
           "mode": "raw",
           "raw": "{\n  \"startDate\": \"{{startDate}}\",\n  \"endDate\": \"{{endDate}}\",\n  \"dimensions\": [\n    \"query\",\n    \"page\"\n  ],\n  \"type\": \"web\",\n  \"rowLimit\": 100,\n  \"startRow\": 0\n}",
@@ -450,16 +458,6 @@
           ]
         },
         "description": "Index status for one URL: coverage verdict, the canonical Google chose, last crawl, mobile usability, and which sitemaps reference it. Quota is tight (~2000/day) so this is for spot checks, not bulk auditing. inspectionUrl must sit inside siteUrl.",
-        "auth": {
-          "type": "bearer",
-          "bearer": [
-            {
-              "key": "token",
-              "value": "{{accessToken}}",
-              "type": "string"
-            }
-          ]
-        },
         "body": {
           "mode": "raw",
           "raw": "{\n  \"inspectionUrl\": \"{{inspectUrl}}\",\n  \"siteUrl\": \"{{siteUrl}}\",\n  \"languageCode\": \"en-US\"\n}",
@@ -487,16 +485,22 @@
       "description": "Filled automatically by request 1, or paste one in. ~1 hour lifetime."
     },
     {
+      "key": "scope",
+      "value": "https://www.googleapis.com/auth/webmasters.readonly",
+      "type": "string",
+      "description": "Swap .readonly for the plain webmasters scope to submit or delete sitemaps, then fetch a new token."
+    },
+    {
       "key": "clientId",
       "value": "",
       "type": "string",
-      "description": "OAuth client id of the developer-owned project. Request 1 only."
+      "description": "OAuth client id, type Web application, with https://oauth.pstmn.io/v1/callback as an authorised redirect URI."
     },
     {
       "key": "clientSecret",
       "value": "",
       "type": "string",
-      "description": "OAuth client secret. Request 1 only - do not commit a real value."
+      "description": "OAuth client secret - do not commit a real value."
     },
     {
       "key": "refreshToken",
