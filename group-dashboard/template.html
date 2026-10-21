@@ -153,7 +153,18 @@ a{color:var(--accent)}
 </section>
 
 <section id="feed">
-  <div class="sec-h"><h2>Shopping feed</h2><span class="hint" id="feed-hint">superhairpieces.ca · Merchant Center 5298296396 · the only account shared with us</span></div>
+  <div class="sec-h"><h2>Shopping feed</h2><span class="hint" id="feed-hint"></span></div>
+
+  <div class="card"><div class="cap"><b>Merchant Center accounts</b><span class="s">offers in the feed, and a year of Shopping traffic</span></div>
+    <div class="wrap"><table id="mc-accounts"><thead><tr><th>Account</th><th>Storefronts</th><th>Fed by</th>
+      <th class="n">Offers</th><th class="n">Live</th><th class="n">Blocked</th>
+      <th class="n">Ads clicks</th><th class="n">Free clicks</th><th class="n">Impressions</th><th>Tracked value</th></tr></thead><tbody></tbody></table></div>
+    <p class="note" id="mc-note"></p></div>
+
+  <div class="card" style="margin-top:14px"><div class="cap"><b>What is blocking offers</b><span class="s">the issue Google gives, and how many offers carry it</span></div>
+    <div class="wrap"><table id="mc-issues"><thead><tr><th>Account</th><th>Issue</th><th>Attribute</th><th class="n">Offers</th><th class="n">Share of feed</th></tr></thead><tbody></tbody></table></div></div>
+
+  <div class="sec-h" style="margin-top:22px"><h3 style="font-size:15px;margin:0">superhairpieces.ca in detail</h3><span class="hint">the one feed this repo pushes, joined to its BigCommerce catalogue</span></div>
   <div id="feed-missing" class="card" hidden><p style="margin:2px 0;color:var(--ink-2)" id="feed-why"></p></div>
   <div id="feed-live" hidden>
     <div class="tiles" id="htiles"></div>
@@ -478,26 +489,84 @@ function drawPay(){
     :`<span class="pill crit">missing</span><span class="fix">${c.detail}${c.fix?" — "+c.fix:""}</span>`;
   $("#cov-table tbody").innerHTML=D.coverage.map(r=>`<tr><td><span class="flag" style="color:${COLOR(r.market)}">${LABEL[r.market]}</span> ${r.domain}</td>
     <td>${cell(r.search_console)}</td><td>${cell(r.catalogue)}</td><td>${cell(r.orders)}</td><td>${cell(r.merchant_center)}</td></tr>`).join("");
-  $("#cov-accounts tbody").innerHTML=(D.merchant_accounts||[]).map(a=>`<tr><td>${a.name}</td><td><code>${a.id}</code></td>
-    <td>${(a.covers||[]).map(k=>`<span class="flag" style="color:${COLOR(k)}">${LABEL[k]}</span>`).join(" ")||'<span class="mut">—</span>'}</td>
-    <td>${a.connected?'<span class="pill good">connected</span>':'<span class="pill crit">not granted</span><span class="fix">the service account is not a user on this account</span>'}</td></tr>`).join("");
+  $("#cov-accounts tbody").innerHTML=(D.merchant_accounts||[]).map(a=>{
+    const off=(a.catalogue||{}).offers;
+    // Readable and useful are different things: an account we can open but whose
+    // offers serve none of our storefronts is connected, not covering.
+    const serves=(a.markets||[]).filter(k=>(D.merchant_markets||{})[k]);
+    return `<tr><td>${a.name}</td><td><code>${a.id}</code></td>
+    <td>${serves.map(k=>`<span class="flag" style="color:${COLOR(k)}">${LABEL[k]}</span>`).join(" ")||'<span class="mut">—</span>'}</td>
+    <td>${a.connected?`<span class="pill good">readable</span><span class="fix">${off?fmt(off)+" offers":"no offers"}</span>`
+      :`<span class="pill crit">not granted</span><span class="fix">${a.reason||"the service account is not a user on this account"}</span>`}</td></tr>`;}).join("");
   const gaps=[];
   const noOrders=D.coverage.filter(c=>!c.orders.ok);
   if(noOrders.length) gaps.push(`<b>Orders for ${noOrders.map(c=>LABEL[c.market]).join(", ")}</b> — those API tokens carry catalogue scope only, so there is no revenue, no order count and no payment mix for those markets. BigCommerce → Settings → API accounts → edit the token → Orders: read-only.`);
   const noMC=D.coverage.filter(c=>!c.merchant_center.ok);
-  if(noMC.length) gaps.push(`<b>Shopping feed health for ${noMC.map(c=>LABEL[c.market]).join(", ")}</b> — Merchant Center account 289630622 has not been shared with the service account, so the feed, disapprovals and Shopping performance for five storefronts are invisible here.`);
+  if(noMC.length) gaps.push(`<b>No Shopping feed for ${noMC.map(c=>LABEL[c.market]).join(", ")}</b> — all three Merchant Center accounts are readable now, and these storefronts still have no offers in any of them. Account 289630622 nominally covers the EU, but every offer in it carries feed label US. This is a missing feed, not a missing permission: those catalogues are not in Google Shopping at all.`);
+  const auto=D.coverage.filter(c=>c.merchant_center.ok&&c.merchant_center.fix);
+  if(auto.length) gaps.push(`<b>Autofeed rather than a pushed catalogue for ${auto.map(c=>LABEL[c.market]).join(", ")}</b> — Google crawls the storefront and keeps what it can parse, instead of being given the catalogue. It is why .com carries ${fmt(((D.merchant_markets||{}).com||{}).offers||0)} offers against .ca's ${fmt(((D.merchant_markets||{}).ca||{}).offers||0)}, on a larger catalogue.`);
   gaps.push(`<b>Google Business Profile and Trustpilot</b> — the salon listings and review pipelines run on their own credentials and are not pulled into this page yet.`);
   gaps.push(`<b>Bing</b> — <code>bing-indexing/</code> submits sitemaps and URLs; Bing Webmaster performance data is a separate API that is not connected.`);
   gaps.push(`<b>Advertising spend</b> — Google Ads cost sits outside the Merchant API, so every figure here is organic or total revenue, never return on ad spend.`);
   $("#cov-gaps").innerHTML=gaps.map(g=>`<p class="sdef" style="font-size:12.5px;margin:0 0 8px">${g}</p>`).join("");
 })();
 
-// ---------------------------------------------------------------- Shopping feed (.ca)
+// ---------------------------------------------------------------- Shopping: every account
+// Three Merchant Center accounts, all readable. Clicks and impressions add up
+// across them; tracked value does not, so it stays per currency throughout.
+(function shopping(){
+  const A=(D.merchant_accounts||[]).filter(a=>a.connected);
+  const MK=D.merchant_markets||{};
+  const BLOCKED=new Set(["NOT_ELIGIBLE_OR_DISAPPROVED","ELIGIBLE_LIMITED"]);
+  const statusCount=(a,pred)=>((a.catalogue||{}).by_status||[]).filter(r=>pred(r.status)).reduce((n,r)=>n+r.offers,0);
+  const methodClicks=(a,m)=>(((a.performance||{}).by_method)||[]).filter(r=>r.method===m).reduce((n,r)=>n+r.clicks,0);
+
+  $("#mc-accounts tbody").innerHTML=A.map(a=>{
+    const cat=a.catalogue||{}, perf=a.performance||{};
+    const live=statusCount(a,st=>st==="ELIGIBLE"), blocked=statusCount(a,st=>BLOCKED.has(st));
+    const serves=(a.markets||[]).filter(k=>MK[k]);
+    const src=(a.sources||[]).find(x=>x.primary);
+    // Never one money number: each currency is its own figure.
+    const val=(perf.value||[]).map(v=>`${v.currency} ${fmt(Math.round(v.amount))}`).join(" · ")||'<span class="mut">none tracked</span>';
+    return `<tr><td>${a.name}<br><code>${a.id}</code></td>
+      <td>${serves.map(k=>`<span class="flag" style="color:${COLOR(k)}">${LABEL[k]}</span>`).join(" ")||'<span class="mut">a separate brand</span>'}</td>
+      <td>${src?`${src.how}`:'<span class="mut">—</span>'}</td>
+      <td class="n">${fmt(cat.offers||0)}</td>
+      <td class="n">${cat.offers?pct(live,cat.offers,1):"–"}</td>
+      <td class="n">${blocked?fmt(blocked):"–"}</td>
+      <td class="n">${fmt(methodClicks(a,"ADS"))}</td>
+      <td class="n">${fmt(methodClicks(a,"ORGANIC"))}</td>
+      <td class="n">${fmt(perf.impressions||0)}</td>
+      <td>${val}</td></tr>`;}).join("")||'<tr><td colspan="10" class="mut">No Merchant Center account could be read.</td></tr>';
+
+  const clicks=A.reduce((n,a)=>n+((a.performance||{}).clicks||0),0);
+  const win=(A.find(a=>a.performance)||{}).performance;
+  $("#mc-note").innerHTML=`${fmt(clicks)} Shopping clicks across ${A.length} account${A.length===1?"":"s"}`
+    +(win&&win.window?` over ${win.window[0]} to ${win.window[1]}`:"")
+    +`. Clicks and impressions add across accounts; tracked value does not, so each currency is listed on its own.`
+    +` <b>Blocked</b> counts offers Google marks disapproved or limited — they are in the feed but not fully serving.`;
+
+  const rows=[];
+  A.forEach(a=>{const total=(a.catalogue||{}).offers||0;
+    ((a.catalogue||{}).issues||[]).filter(i=>i.severity==="DISAPPROVED").slice(0,6)
+      .forEach(i=>rows.push({a,i,total}));});
+  rows.sort((x,y)=>y.i.offers-x.i.offers);
+  $("#mc-issues tbody").innerHTML=rows.map(({a,i,total})=>`<tr>
+    <td><span class="mut">${a.name}</span></td><td><code>${i.code}</code></td>
+    <td>${i.attribute?`<code>${i.attribute}</code>`:'<span class="mut">—</span>'}</td>
+    <td class="n">${fmt(i.offers)}</td><td class="n">${total?pct(i.offers,total,1):"–"}</td></tr>`).join("")
+    ||'<tr><td colspan="5" class="mut">Nothing is blocking offers in any account.</td></tr>';
+
+  const noFeed=STORES.filter(x=>!MK[x.key]);
+  $("#feed-hint").innerHTML=`${A.length} accounts · ${fmt(A.reduce((n,a)=>n+((a.catalogue||{}).offers||0),0))} offers`
+    +(noFeed.length?` · <b>no feed for ${noFeed.map(x=>LABEL[x.key]).join(", ")}</b>`:"");
+})();
+
+// ---------------------------------------------------------------- superhairpieces.ca in detail
 const M = D.merchant && D.merchant.available ? D.merchant : null;
 if(!M){ $("#feed-missing").hidden=false;
   $("#feed-why").textContent=(D.merchant&&D.merchant.reason)?`The Merchant Center feed could not be read this run: ${D.merchant.reason}`:"The Merchant Center feed was not collected in this build.";
 } else { $("#feed-live").hidden=false;
-  $("#feed-hint").textContent=`superhairpieces.ca · Merchant Center 5298296396 · ${fmt(M.variants.offers)} offers · feed data ${M.generated}`;
   // ---- Feed health
   const P=M.products; const totOffers=P.reduce((s,p)=>s+p.offers,0), totDis=P.reduce((s,p)=>s+p.disapproved,0), totOOS=P.reduce((s,p)=>s+p.oos,0), totApp=P.reduce((s,p)=>s+p.approved,0);
   $("#htiles").innerHTML=[["Offers in feed",fmt(totOffers),`${fmt(P.length)} products`],["Approved",pct(totApp,totOffers,1),fmt(totApp)+" offers"],["Disapproved",fmt(totDis),`${P.filter(p=>p.disapproved).length} products`],["Out of stock",pct(totOOS,totOffers,1),fmt(totOOS)+" offers"],["Internal or under $3",fmt(P.filter(p=>p.internal).length),"products in feed"],["Third-party brands with a GTIN",`${M.gtin.third_party_with_gtin} / ${M.gtin.third_party_offers}`,"offers"]]

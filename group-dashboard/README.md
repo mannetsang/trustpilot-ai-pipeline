@@ -26,7 +26,7 @@ python group-dashboard/build_site.py                   # renders site/index.html
 | **Organic search** | Six markets on one chart, switchable between clicks, impressions and average position. Then top queries and the countries they come from, for the whole group or one market on its own, over the full history or the last 28 days. Across the group a query carries the markets it appears in and an impression-weighted position; inside one market it carries that market's own CTR. Per-market device and surface mix below. |
 | **Catalogue** | Products, visibility, variants, stock and sale coverage per market, then price bands, brands, categories and best sellers for the market you pick. |
 | **Sales** | Revenue by month per market, order-status mix, and how customers pay. |
-| **Shopping feed** | superhairpieces.ca's Merchant Center feed: approval rate, every disapproval and warning, how Google categorised the offers, and a filterable explorer over all 1,014 products. |
+| **Shopping feed** | All three Merchant Center accounts: offers, how much of each feed is actually serving, what is blocking the rest, and a year of Shopping clicks and impressions. Then superhairpieces.ca in detail — approval rate, every disapproval and warning, how Google categorised the offers, and a filterable explorer over all 1,014 products. |
 | **Action plan** | The fourteen ranked actions from the Google Shopping review, ticked off in your browser. |
 | **Coverage** | Every market against every source, with the exact fix for each gap. |
 
@@ -37,7 +37,7 @@ python group-dashboard/build_site.py                   # renders site/index.html
 | Search Console | all six | Needs the service account on each property; see `google-search-console/README.md`. |
 | BigCommerce catalogue | all six | |
 | BigCommerce orders | ca, com, es | The .nl, .fr and .de tokens carry catalogue scope only and answer 403 on `/v2/orders`. |
-| Merchant Center | ca | Pulled by calling `google-merchant/dashboard/build_data.py`, which is the thing the nightly sync already exercises. Account `289630622` (.com and EU) has not been shared with the service account. |
+| Merchant Center | ca, com | All three accounts are readable. Only two carry offers: `5298296396` (.ca, 11,818 offers, pushed by this repo) and `289630622` (.com, 1,084 offers, autofeed). `670525760` is Gen'C Beauty, a separate brand. The .ca product explorer comes from `google-merchant/dashboard/build_data.py`; the per-account figures come from `merchant.py`. |
 
 Nothing here guesses around a gap. A market with no order scope shows "no
 access" in the revenue column and a row in Coverage naming the fix; it never
@@ -53,6 +53,33 @@ patterns that identify them, first written to keep garbage bags out of Google
 Shopping. The Catalogue tab counts them in their own column and leaves them out
 of the best-seller ranking, where they would otherwise be the whole top of the
 list.
+
+## Shopping
+
+Three Merchant Center accounts, all readable since 2026-10-21. What they hold is
+not what their names suggest:
+
+| Account | Offers | Fed by | Serves |
+|---|---|---|---|
+| `5298296396` Superhairpieces.ca | 11,818 | this repo's API feed | .ca |
+| `289630622` Superhairpieces | 1,084 | **autofeed** - Google crawls the site | .com only |
+| `670525760` Gen'C Beauty | 4,333 | autofeed | a separate brand |
+
+Two things the page is careful not to let slide:
+
+- **An account you can read is not a storefront in Shopping.** `289630622` is
+  named for .com *and the EU storefronts*, and every offer in it carries feed
+  label `US`. **.nl, .fr, .es and .de have no offers in Google Shopping at all** -
+  3,323 products with no Shopping presence. Coverage keys on feed labels, not on
+  account access, so those four read as missing rather than connected.
+- **An autofeed is Google guessing.** It crawls the storefront and keeps what it
+  can parse. It is why .com carries 1,084 offers against .ca's 11,818 on a
+  *larger* catalogue - while doing 32,772 Shopping clicks a year to .ca's 6,182.
+
+Gen'C Beauty is the worst feed and the easiest fix: 2,741 of its 4,333 offers
+(63%) are blocked by one setting, `missing_shipping_mismatch_of_shipping_method_and_offer_currency`
+- its offers are priced in USD and CAD but shipping services are defined for only
+one of them. Only 29% of that account is fully serving.
 
 ## Money
 

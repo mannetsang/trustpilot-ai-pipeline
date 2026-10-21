@@ -12,7 +12,8 @@ Sources, and what each can tell us today:
 | Search Console       | all six        | organic clicks, queries, pages, sitemaps    |
 | BigCommerce catalogue| all six        | products, stock, brands, price bands        |
 | BigCommerce orders   | ca, com, es    | the other three tokens are catalogue-scoped |
-| Merchant Center      | ca             | 289630622 has not been granted to us        |
+| Merchant Center      | ca, com        | all three accounts readable; only two have  |
+|                      |                | a feed - nl/fr/es/de have no offers at all  |
 
 Where a source is missing, the gap is recorded with the reason and the fix, and
 the dashboard shows it. A blank panel would imply zero; "not connected" does not.
@@ -143,30 +144,23 @@ def merchant_feed(verbose):
 
 
 def merchant_centre(verbose):
-    """Merchant Center reach, per account. Only .ca has been granted to us."""
-    accounts = [
-        {"id": "5298296396", "name": "Superhairpieces.ca", "covers": ["ca"]},
-        {"id": "289630622", "name": "Superhairpieces (.com and EU)", "covers": ["com", "nl", "fr", "es", "de"]},
-        {"id": "670525760", "name": "Gen'C Beauty", "covers": []},
-    ]
-    try:
-        from google.api_core import exceptions as gexc  # noqa: PLC0415
-        from google.shopping.merchant_accounts_v1 import AccountsServiceClient, GetAccountRequest  # noqa: PLC0415
-    except Exception as exc:  # noqa: BLE001
-        for a in accounts:
-            a.update(connected=False, reason=f"client library unavailable: {exc}")
-        return accounts
+    """Every Merchant Center account, in full: offers, disapprovals, performance.
 
-    client = AccountsServiceClient()
-    for a in accounts:
-        try:
-            live = client.get_account(request=GetAccountRequest(name=f"accounts/{a['id']}"))
-            a.update(connected=True, account_name=live.account_name)
-        except gexc.GoogleAPICallError as exc:
-            a.update(connected=False, reason=type(exc).__name__)
-        if verbose:
-            print(f"  merchant {a['id']}: {'connected' if a['connected'] else a['reason']}")
-    return accounts
+    This used to ask one question - can we read the account? - and store a
+    boolean. That was fine while two of the three answered no. Now that all
+    three answer yes, a boolean would make the page claim Shopping coverage for
+    five storefronts on the strength of an account it can merely open: four of
+    them have no offers in Shopping at all. So read what is actually in each
+    account, and let `merchant.markets()` decide which storefront is covered.
+    """
+    try:
+        import merchant  # noqa: PLC0415
+    except Exception as exc:  # noqa: BLE001 - one bad import must not end the build
+        return [{**a, "connected": False, "reason": f"collector unavailable: {exc}"}
+                for a in ({"id": "5298296396", "name": "Superhairpieces.ca"},
+                          {"id": "289630622", "name": "Superhairpieces"},
+                          {"id": "670525760", "name": "Gen'C Beauty"})]
+    return [merchant.account(a, verbose=verbose) for a in merchant.ACCOUNTS]
 
 
 def collect(stores=None, days=480, want_sales=True, want_merchant_feed=True, verbose=True):
@@ -186,6 +180,16 @@ def collect(stores=None, days=480, want_sales=True, want_merchant_feed=True, ver
     if verbose:
         print("merchant center:")
     accounts = merchant_centre(verbose)
+    try:
+        import merchant  # noqa: PLC0415
+        feed_markets = merchant.markets(accounts)
+    except Exception as exc:  # noqa: BLE001
+        feed_markets = {}
+        if verbose:
+            print(f"  merchant markets unavailable: {exc}")
+    if verbose:
+        covered = ", ".join(f"{k} {v['offers']:,}" for k, v in feed_markets.items()) or "none"
+        print(f"  storefronts with offers in Shopping: {covered}")
     feed = merchant_feed(verbose) if want_merchant_feed else {"available": False, "reason": "skipped"}
 
     return {
@@ -194,24 +198,49 @@ def collect(stores=None, days=480, want_sales=True, want_merchant_feed=True, ver
         "search": search,
         "stores": store_data,
         "merchant_accounts": accounts,
+        "merchant_markets": feed_markets,
         "merchant": feed,
-        "coverage": coverage(store_data, search, accounts),
+        "coverage": coverage(store_data, search, feed_markets),
     }
 
 
-def coverage(store_data, search, accounts):
-    """One row per market per source: connected, or the reason and the fix."""
+def merchant_cell(entry):
+    """The Shopping column for one market: offers in a feed, or why there are none."""
+    if not entry or not entry.get("offers"):
+        return {
+            "ok": False,
+            "detail": "no offers in Shopping",
+            "fix": "no Merchant Center feed targets this storefront; create a data source "
+                   "with this market's feed label and push the catalogue to it",
+        }
+    source = entry["accounts"][0]
+    pushed = source.get("how") == "pushed by this repo"
+    return {
+        "ok": True,
+        "detail": f"{entry['offers']:,} offers in account {source['id']}",
+        # An autofeed is Google guessing at the catalogue off the website. It is
+        # not nothing, but it is not the catalogue either, and the gap does not
+        # show up as an error anywhere - only as a small number.
+        "fix": "" if pushed else
+               f"fed by autofeed ({source['how']}); push the catalogue to this account "
+               f"for full coverage",
+    }
+
+
+def coverage(store_data, search, feed_markets):
+    """One row per market per source: connected, or the reason and the fix.
+
+    Merchant Center is judged on offers, not on access. Being able to open the
+    account that nominally covers a storefront is not the same as that
+    storefront being in Shopping, and conflating the two is how a page ends up
+    reporting five connected markets when four of them have no feed.
+    """
     sc_by_key = {p["key"]: p for p in search.get("properties", [])}
-    mc_by_market = {}
-    for a in accounts:
-        for market in a.get("covers", []):
-            mc_by_market[market] = a
 
     rows = []
     for store in store_data:
         key = store["key"]
         prop = sc_by_key.get(key, {})
-        account = mc_by_market.get(key)
         rows.append({
             "market": key,
             "domain": store["domain"],
@@ -234,13 +263,7 @@ def coverage(store_data, search, accounts):
                 "fix": "" if "sales" in store else
                        "BigCommerce > Settings > API accounts: this token needs Orders (read-only)",
             },
-            "merchant_center": {
-                "ok": bool(account and account.get("connected")),
-                "detail": (f"account {account['id']}" if account and account.get("connected")
-                           else f"account {account['id']} not granted" if account else "no account covers this market"),
-                "fix": "" if (account and account.get("connected")) else
-                       "Merchant Center > People and access > add the claude-sessions service account as Admin",
-            },
+            "merchant_center": merchant_cell(feed_markets.get(key)),
         })
     return rows
 
