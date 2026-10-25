@@ -51,6 +51,16 @@ def save_watermark(store_key: str, value: str):
     os.replace(tmp, WATERMARK_FILE)
 
 
+def _redact(message: str, secret: str) -> str:
+    """Blank out a secret, and anything shaped like one, in text we are about
+    to print. Build logs are not a private place."""
+    out = message
+    for piece in (secret or "").split():
+        if len(piece) >= 8:
+            out = out.replace(piece, "[redacted]")
+    return out
+
+
 def _with_overlap(iso: str) -> str:
     try:
         t = dt.datetime.strptime(iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
@@ -97,9 +107,20 @@ def main():
 
         window = since or "(everything)"
         try:
-            urls = bc.changed_product_urls(st, st.token(), since, limit=args.limit)
+            token = st.token()
+        except Exception as exc:  # no secret, no access, wrong project
+            print(f"{st.key:4} FAIL  secret: {exc}")
+            exit_code = 1
+            continue
+
+        try:
+            urls = bc.changed_product_urls(st, token, since, limit=args.limit)
         except Exception as exc:  # credential or API failure, reported per store
-            print(f"{st.key:4} FAIL  BigCommerce: {exc}")
+            # The message is redacted before printing. These logs are readable
+            # by anyone with the repository, and a library exception can quote
+            # whatever it was handed -- which is exactly how the .es token
+            # reached 26 of them.
+            print(f"{st.key:4} FAIL  BigCommerce: {_redact(str(exc), token)}")
             exit_code = 1
             continue
 

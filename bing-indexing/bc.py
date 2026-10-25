@@ -23,10 +23,30 @@ class BigCommerceError(RuntimeError):
     pass
 
 
+def _checked(store, token):
+    """Return the token, or raise without ever quoting it.
+
+    urllib refuses a header value containing a line break, and its error
+    message quotes the whole bad value. When the .es secret was replaced with
+    a pasted credentials block, that put an access token, a client id and a
+    client secret into every build log for four days. So the shape is checked
+    here, and nothing that fails the check is ever echoed.
+    """
+    token = (token or "").strip()
+    if not token:
+        raise BigCommerceError(f"{store.key}: no access token came back from Secret Manager")
+    if any(c.isspace() for c in token):
+        raise BigCommerceError(
+            f"{store.key}: the access token is not a single unbroken value, which is what a "
+            f"pasted credentials block looks like. Store only the token in Secret Manager."
+        )
+    return token
+
+
 def _get(store, token, path, params):
     url = f"{store.api_base}{path}?" + urllib.parse.urlencode(params)
     req = urllib.request.Request(url, headers={
-        "X-Auth-Token": token,
+        "X-Auth-Token": _checked(store, token),
         "Accept": "application/json",
     })
     try:
