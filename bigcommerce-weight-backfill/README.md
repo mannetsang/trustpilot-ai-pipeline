@@ -27,11 +27,21 @@ Run 2026-10-20 against store `qet21urb3p` (.es, **KGS**).
 
 ## Credentials
 
-Token comes from Secret Manager `BIGCOMMERCE_ES_PRODUCT_TOKEN` (account
-"SEO product - Manne", needs **Products: modify**). Note that secret holds the
-whole pasted credentials block, not a bare token, so the script parses the
-`ACCESS TOKEN:` line. Other stores' `BIGCOMMERCE_<hash>_ACCESS_TOKEN` secrets
-hold a bare value.
+`apply_weights.py` reads its token from a local file, `$SP/estok2.txt` - not
+from Secret Manager. It accepts either a bare token or a pasted credentials
+block, taking the `ACCESS TOKEN:` line from the latter.
+
+This file used to say the token came from Secret Manager
+`BIGCOMMERCE_ES_PRODUCT_TOKEN`. That was never true of the script, and that
+secret has since been deleted: it held a pasted block whose token no longer
+authenticated, and nothing read it.
+
+The account needs **Products: modify**. If this script is ever run again it
+should take the token the same way everything else does - `get_secret` on
+`BIGCOMMERCE_qet21urb3p_ACCESS_TOKEN`, via `lib/stores.py`, which is a bare
+token and is the one kept current. A credential in a working file beside the
+data is how the `.es` token came to be pasted into the wrong place to begin
+with.
 
 ## Not yet checked
 
