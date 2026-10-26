@@ -2835,6 +2835,7 @@
   function setJobRunning(on) {
     state.jobRunning = on;
     ['#uploadBtn', '#rematchBtn', '#notifyBtn'].forEach(function (s) { $(s).disabled = on; });
+    showChosenFile();                              // a statement chosen meanwhile says when it can go
   }
   function count(x, one, many) { x = Number(x) || 0; return x + ' ' + (x === 1 ? one : many); }
   function onBusyWait(step) {
@@ -3063,6 +3064,7 @@
     el.textContent = f ? f.name + ' (' + (f.size > 1048576 ? (f.size / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(f.size / 1024)) + ' KB') + ')' : '';
     el.classList.toggle('hidden', !f);
     el.title = f ? f.name : '';
+    if (f && state.jobRunning) el.textContent += ' · click Upload and process when this run is done';
     $('#dropZone').classList.toggle('has-file', !!f);
   }
   $('#fileInput').addEventListener('change', showChosenFile);
@@ -3114,8 +3116,8 @@
         (s.already_stored ? ' (' + s.already_stored + ' already in the dashboard)' : '') +
         (months.length ? ', for ' + months.map(function (ym) { return monthLabel(ym[0], ym[1]); }).join(' and ') : '');
       setStep('upload', warnings.length ? 'warn' : 'done', got + (warnings.length ? '. Some lines need a look, see Details.' : '.'));
-      $('#fileInput').value = '';
-      showChosenFile();
+      // Clear the box only if it still holds this statement: the next one may already be chosen.
+      if ($('#fileInput').files[0] === file) { $('#fileInput').value = ''; showChosenFile(); }
       await loadMonths();
       var matched = [];
       try {
@@ -3148,6 +3150,8 @@
       report(e, 'Upload failed', true);
     } finally {
       setJobRunning(false);
+      var next = $('#fileInput').files[0];
+      if (next && next !== file) toast('Next statement ready: ' + next.name + '. Click Upload and process.', 'ok', 6000);
     }
   });
 
