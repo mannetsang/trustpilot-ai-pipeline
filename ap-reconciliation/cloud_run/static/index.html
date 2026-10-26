@@ -507,8 +507,8 @@
           <div class="ap-row">
             <form id="uploadForm" class="ap-upload">
               <label id="dropZone" class="dropzone" for="fileInput" title="RBC transaction export (.xlsx, .csv), or a statement as PDF or photo. After matching, the page shows which cards would get a Chat reminder and waits for you to send them.">
-                <input type="file" id="fileInput" accept=".xlsx,.xlsm,.csv,.tsv,.pdf,.jpg,.jpeg,.png" />
-                <div class="dz-text"><b>Drop a statement here</b> or click to choose <span class="sub">· RBC export, PDF or photo</span></div>
+                <input type="file" id="fileInput" accept=".xlsx,.xlsm,.csv,.tsv,.txt,.docx,.pdf,.jpg,.jpeg,.png" />
+                <div class="dz-text"><b>Drop a statement here</b> or click to choose <span class="sub">· RBC export, .txt or Word export, PDF or photo</span></div>
                 <div id="dzFile" class="dz-file hidden"></div>
               </label>
               <button type="submit" id="uploadBtn" class="btn btn-primary">Upload and process</button>
@@ -3057,7 +3057,7 @@
     if (state.year) { await loadMonth(); }
   }
 
-  var ACCEPTED = /\.(xlsx|xlsm|csv|tsv|pdf|jpe?g|png)$/i;
+  var ACCEPTED = /\.(xlsx|xlsm|csv|tsv|txt|docx|pdf|jpe?g|png)$/i;
   function showChosenFile() {
     var f = $('#fileInput').files[0], el = $('#dzFile');
     el.textContent = f ? f.name + ' (' + (f.size > 1048576 ? (f.size / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(f.size / 1024)) + ' KB') + ')' : '';
@@ -3078,7 +3078,7 @@
     var files = ev.dataTransfer && ev.dataTransfer.files;
     if (!files || !files.length) return;
     if (files.length > 1) { toast('One statement at a time, please.', 'err'); return; }
-    if (!ACCEPTED.test(files[0].name)) { toast('That file type is not supported: use an .xlsx or .csv export, or a PDF or photo of the statement.', 'err'); return; }
+    if (!ACCEPTED.test(files[0].name)) { toast('That file type is not supported: use an .xlsx, .csv, .txt or Word (.docx) export, or a PDF or photo of the statement.', 'err'); return; }
     try { $('#fileInput').files = files; } catch (e) { toast('Your browser did not hand the file over; click the box to choose it instead.', 'err'); return; }
     showChosenFile();
     $('#uploadBtn').focus();

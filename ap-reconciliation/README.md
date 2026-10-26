@@ -92,7 +92,14 @@ updates its folder hints without another model call.
    exports with a recognisable header row (`Transaction date`, `Supplier`,
    `Amount`, `Account ****-****-****-1610`, `Cardholder first/last name`,
    `Source currency/amount`, `Billing currency`...) are parsed directly, no
-   AI involved. PDF statements, photos and spreadsheets whose columns are not
+   AI involved. So are `.txt` exports, and a text export saved into a Word
+   document (`.docx`, read paragraph by paragraph, or a Word table row by
+   row), including **headerless** ones such as the New Frontier Global card
+   export (`00000003,"4514xxxxxxxx3914",20260513,0,"PAYPAL *...","USD",000002025.00`):
+   the columns are recognised from their contents (masked card number,
+   `YYYYMMDD` date, `0`/`1` debit-credit flag where `1` is a payment or
+   credit, description, currency code, amount), and the upload warns that
+   it did so. PDF statements, photos and spreadsheets whose columns are not
    recognised go to Gemini with a fixed output schema. Every line gets a
    deterministic id (card, dates, normalised description, amount, currency,
    plus a counter for identical lines in one file), so uploading the same
@@ -740,6 +747,6 @@ next idle period, or at once with *Run workflow*.
 | *The receipt was not kept* (409) after *Save receipt* | someone linked, confirmed or waived the purchase while the file was saving; the file went to the Drive trash. Reload and check the row |
 | *This photo could not be prepared in this browser* | usually an iPhone HEIC photo on a Windows computer: add it on its own (it is sent as is), or take the photo on the phone |
 | The Chat card's button still says *Invoice folder* for card 4421 | the card was posted before receipt upload; *Send reminders* posts a new one |
-| Upload reports `new: 0` | the same lines are already stored (ids are deterministic); nothing is lost. Legacy `.xls` is refused: save as `.xlsx` |
+| Upload reports `new: 0` | the same lines are already stored (ids are deterministic); nothing is lost. Legacy `.xls` and `.doc` are refused: save as `.xlsx`, or `.docx`/`.txt` |
 | Everything stays `missing` although invoices are filed | the invoices are not indexed yet (`AI_DISABLED`, or `remaining` > 0), are filed under a month folder outside month-1..month+1, or have no readable total (`extraction_error` in the picker) |
 | A Chat card's *Open dashboard* button opens the wrong host, or the header has no *Sign out* | `DASHBOARD_URL` or `LOGIN_URL` is not set on the dashboard: the workflow's *Point DASHBOARD_URL and LOGIN_URL at the services* step, which runs straight after the dashboard deploy, failed; or, on the sign-in page's very first deploy, one of the two steps after it failed (if *Deploy the sign-in page* itself failed there is no page yet, and a hidden *Sign out* is expected). Re-run the workflow, or set both by hand: `gcloud run services update ap-reconciliation --region us-central1 --project shp-ai-bot-2026 --update-env-vars DASHBOARD_URL=<dashboard url>,LOGIN_URL=<sign-in page url>` |

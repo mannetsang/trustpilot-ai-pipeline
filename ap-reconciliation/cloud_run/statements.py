@@ -2,9 +2,13 @@
 
 Three input shapes:
 
-1. Spreadsheet exports (.xlsx, .csv, .tsv) with a recognisable header row,
+1. Spreadsheet exports (.xlsx, .csv, .tsv, .txt) with a recognisable header row,
    such as the RBC Purchasing Card "Transaction Export" that carries every
-   card of the account in one file. Parsed deterministically, no AI.
+   card of the account in one file, or a headerless text export whose columns
+   can be told apart by their contents (a masked card number, a YYYYMMDD date,
+   a 0/1 debit-credit flag, the description, a currency code, an amount).
+   A text export saved into a Word document (.docx) is read from the
+   document's paragraphs. Parsed deterministically, no AI.
 2. Spreadsheets whose columns are not recognised: the text is handed to
    Gemini with the same output schema.
 3. PDF statements and photos: Gemini reads them inline.
@@ -22,10 +26,13 @@ and gets a deterministic id, so uploading the same export twice adds nothing.
 import csv
 import datetime as dt
 import hashlib
+import html
 import io
 import re
+import zipfile
 
-TABULAR_EXTENSIONS = {"xlsx", "xlsm", "csv", "tsv", "txt"}
+TABULAR_EXTENSIONS = {"xlsx", "xlsm", "csv", "tsv", "txt", "docx"}
+DOCX_MAX_XML = 20 * 1024 * 1024        # word/document.xml, uncompressed
 GEMINI_MIME = {"pdf": "application/pdf", "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
                "webp": "image/webp", "gif": "image/gif", "heic": "image/heic", "heif": "image/heif"}
 MAX_GEMINI_TEXT = 120_000
@@ -254,6 +261,112 @@ def read_csv(data):
     return rows
 
 
+def read_docx(data):
+    """A text export someone saved into Word: one line per paragraph (a table row's cells joined by
+    tabs), then read like a CSV. The XML is taken apart with plain patterns, never an XML parser, so
+    nothing in the file is expanded or fetched."""
+    try:
+        z = zipfile.ZipFile(io.BytesIO(data))
+        info = z.getinfo("word/document.xml")
+    except (zipfile.BadZipFile, KeyError) as exc:
+        raise StatementError("The Word document could not be opened; save it again as .docx, or upload "
+                             "the original .txt or .csv.") from exc
+    if info.file_size > DOCX_MAX_XML:
+        raise StatementError("The Word document is too large to read; upload the original .txt or .csv.")
+    xml = z.read(info).decode("utf-8", errors="replace")
+
+    def runs(fragment):
+        out = []
+        for m in re.finditer(r"<w:t(?:\s[^>]*)?>(.*?)</w:t>|<w:tab\s*/>|<w:(?:br|cr)\b[^>]*/>", fragment, re.S):
+            out.append(m.group(1) if m.group(1) is not None else ("\t" if "tab" in m.group(0) else "\n"))
+        return html.unescape("".join(out))
+
+    lines = []
+    for block in re.finditer(r"<w:tr[\s>].*?</w:tr>|<w:p[\s>].*?</w:p>", xml, re.S):
+        if block.group(0).startswith("<w:tr"):
+            lines.append("\t".join(runs(c) for c in re.findall(r"<w:tc[\s>].*?</w:tc>", block.group(0), re.S)))
+        else:
+            lines.append(runs(block.group(0)))
+    text = "\n".join(line for line in lines if line.strip())
+    if not text:
+        raise StatementError("The Word document holds no text.")
+    return read_csv(text.encode("utf-8"))
+
+
+# Headerless exports: what each column's values look like.
+MASKED_CARD_RE = re.compile(r"^\d{4,6}[xX*#•]{2,}\d{4}$|^\d{13,19}$")
+YMD8_RE = re.compile(r"^(19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])$")
+AMOUNT_RE = re.compile(r"^-?\$?\d[\d,]*\.\d{2}$")
+CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
+DC_FLAGS = ({"0", "1"}, {"D", "C"}, {"DR", "CR"})
+CREDIT_FLAGS = {"1", "C", "CR"}
+PAYMENT_RE = re.compile(r"\b(payment|pymt|autopay)\b", re.I)
+
+
+def detect_headerless(rows):
+    """For a file with no header row: (rows with a made-up header row on top, {column: field}) when
+    its columns can be told apart by their values, else None. Needs a date, an amount and a
+    description column; a 0/1 (or D/C) column says which lines are credits and payments, and is
+    folded into the amount's sign and a type column."""
+    rows = [r for r in rows if any(clean(c) for c in r)]
+    width = max((len(r) for r in rows), default=0)
+    if len(rows) < 1 or width < 3:
+        return None
+
+    def share(col, test):
+        values = [clean(r[col]) for r in rows if col < len(r)]
+        return sum(1 for v in values if v and test(v)) / len(rows)
+
+    mapping, taken = {}, set()
+
+    def pick(field, test, threshold=0.9):
+        for col in range(width):
+            if col not in taken and share(col, test) >= threshold:
+                mapping[col] = field
+                taken.add(col)
+                return col
+        return None
+
+    pick("card", lambda v: bool(MASKED_CARD_RE.match(v)))
+    date_col = pick("txn_date", lambda v: bool(YMD8_RE.match(v)))
+    if date_col is None:
+        date_col = pick("txn_date", lambda v: bool(parse_date(v)))
+    amount_col = pick("amount", lambda v: bool(AMOUNT_RE.match(v)))
+    pick("currency", lambda v: bool(CURRENCY_RE.match(v)))
+    flag_col = None
+    for col in range(width):
+        values = {clean(r[col]).upper() for r in rows if col < len(r) and clean(r[col])}
+        if col not in taken and values and any(values <= flags for flags in DC_FLAGS):
+            flag_col = col
+            taken.add(col)
+            break
+    letters = {col: sum(sum(ch.isalpha() for ch in clean(r[col])) for r in rows if col < len(r))
+               for col in range(width) if col not in taken}
+    desc_col = max(letters, key=letters.get) if letters and max(letters.values()) > 0 else None
+    if date_col is None or amount_col is None or desc_col is None:
+        return None
+    mapping[desc_col] = "description"
+
+    names = {"card": "Card number", "txn_date": "Transaction date", "amount": "Amount", "currency": "Currency",
+             "description": "Description", "type": "Type"}
+    header = [names.get(mapping.get(col), f"Column {col + 1}") for col in range(width)]
+    if flag_col is not None:
+        header[flag_col] = "Debit/credit"
+    out = [header]
+    for r in rows:
+        r = list(r) + [""] * (width - len(r))
+        if flag_col is not None:
+            credit = clean(r[flag_col]).upper() in CREDIT_FLAGS
+            amount = clean(r[amount_col]).lstrip("-")
+            r[amount_col] = ("-" + amount) if credit and amount else amount
+            r.append(("payment" if PAYMENT_RE.search(clean(r[desc_col])) else "credit") if credit else "purchase")
+        out.append(r)
+    if flag_col is not None:
+        out[0].append("Type")
+        mapping[width] = "type"
+    return out, mapping
+
+
 def detect_header(rows):
     """(header row index, {column index: field}) for the row that looks most like a header."""
     best, best_score = None, 0
@@ -455,6 +568,8 @@ def parse_statement(file_name, data, mime_type="", gemini=None):
     rows = None
     if ext in ("xlsx", "xlsm") or "spreadsheetml" in mime_type:
         rows = read_xlsx(data)
+    elif ext == "docx" or "wordprocessingml" in mime_type:
+        rows = read_docx(data)
     elif ext in ("csv", "tsv", "txt") or mime_type.startswith("text/"):
         rows = read_csv(data)
     elif ext == "xls":
@@ -462,8 +577,14 @@ def parse_statement(file_name, data, mime_type="", gemini=None):
 
     if rows is not None:
         header = detect_header(rows)
+        headerless = None if header else detect_headerless(rows)
         if header:
             result = from_table(rows, header[0], header[1], file_name)
+        elif headerless:
+            result = from_table(headerless[0], 0, headerless[1], file_name)
+            result["format"] = "table (no header row)"
+            result["warnings"].insert(0, "The file has no header row: its columns were recognised from their "
+                                         "contents. Check a few lines against the statement.")
         elif gemini is not None:
             result = from_gemini([gemini.text(STATEMENT_PROMPT + "\nThe statement, as CSV text:\n" + rows_to_text(rows))], gemini)
         else:
@@ -471,7 +592,7 @@ def parse_statement(file_name, data, mime_type="", gemini=None):
     else:
         gem_mime = GEMINI_MIME.get(ext) or (mime_type if mime_type in GEMINI_MIME.values() else "")
         if not gem_mime:
-            raise StatementError(f"Unsupported file type '.{ext or '?'}'. Upload .xlsx, .csv, .pdf or an image.")
+            raise StatementError(f"Unsupported file type '.{ext or '?'}'. Upload .xlsx, .csv, .txt, .docx, .pdf or an image.")
         if gemini is None:
             raise StatementError("PDF and image statements need Gemini, which is not configured.")
         if len(data) > 15 * 1024 * 1024:

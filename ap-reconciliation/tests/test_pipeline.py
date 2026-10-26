@@ -607,8 +607,8 @@ class GeminiStatementTests(unittest.TestCase):
 
     def test_unsupported_extension(self):
         with self.assertRaises(statements.StatementError) as ctx:
-            statements.parse_statement("statement.docx", b"PK\x03\x04", gemini=FakeGemini())
-        self.assertIn("Unsupported file type '.docx'", str(ctx.exception))
+            statements.parse_statement("statement.doc", b"\xd0\xcf\x11\xe0", gemini=FakeGemini())
+        self.assertIn("Unsupported file type '.doc'", str(ctx.exception))
         with self.assertRaises(statements.StatementError):
             statements.parse_statement("statement.xls", b"\xd0\xcf\x11\xe0")
 
@@ -1307,9 +1307,12 @@ class ApiFlowTests(ApiTestCase):
         r = self.client.post("/api/statements", data={}, content_type="multipart/form-data")
         self.assertEqual(r.status_code, 400)
         self.assertEqual(self.upload(b"", name="empty.xlsx").status_code, 400)
-        r = self.upload(b"PK\x03\x04", name="notes.docx")
+        r = self.upload(b"\xd0\xcf\x11\xe0", name="notes.doc")
         self.assertEqual(r.status_code, 400)
         self.assertIn("Unsupported file type", r.get_json()["error"])
+        r = self.upload(b"PK\x03\x04", name="notes.docx")              # read now, but this one is broken
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("could not be opened", r.get_json()["error"])
         r = self.upload(b"%PDF-1.4", name="statement.pdf")
         self.assertEqual(r.status_code, 400)
         self.assertIn("Gemini", r.get_json()["error"])
