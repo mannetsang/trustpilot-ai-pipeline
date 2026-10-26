@@ -2865,7 +2865,11 @@
       try { job = await api('/api/jobs/current?id=' + encodeURIComponent(id)); misses = 0; }
       catch (e) {
         if (e.status === 0 && ++misses <= 30) continue;   // a dropped poll is harmless; the job carries on
-        if (e.status === 404) throw new ApiError(404, 'the server restarted while this step was running; it may not have finished', null);
+        if (e.status === 404) {
+          var lost = new ApiError(404, 'the server restarted while this step was running; it may not have finished', null);
+          lost.lost = true;                                  // the job went with the instance (an update, a recycle)
+          throw lost;
+        }
         throw e;
       }
       if (!quiet) seen = syncServerLog(job.progress || {}, seen);
@@ -2889,9 +2893,27 @@
     if (/^(AI judge|possible)/.test(line)) return 'info';
     return '';
   }
+  // Reading invoices and matching pick up where they stopped (what was read or matched is stored as it
+  // goes), so a job lost to a server restart is simply started again, up to RESTART_TRIES times. Sending
+  // reminders is not: a second run could post the same Chat card twice.
+  var RESTART_TRIES = 3;
+  async function afterRestart(step, text) {
+    log('The server restarted during this step (for example while an update was being installed); ' + text, 'info');
+    setStep(step, 'running', 'The server restarted; ' + text);
+    setBar(-1);
+    await sleep(5000);                                       // let the new server start
+  }
   async function runJob(kind, year, month, onProgress, extra) {
-    var started = await apiRetryBusy('/api/jobs?kind=' + kind + '&year=' + year + '&month=' + month + (extra || ''), { method: 'POST' }, onBusyWait(STEP_OF[kind]));
-    return pollJob(started.job, onProgress);
+    var again = kind === 'index' || kind === 'match';
+    for (var attempt = 1; ; attempt++) {
+      var started = await apiRetryBusy('/api/jobs?kind=' + kind + '&year=' + year + '&month=' + month + (extra || ''), { method: 'POST' }, onBusyWait(STEP_OF[kind]));
+      try {
+        return await pollJob(started.job, onProgress);
+      } catch (e) {
+        if (!(e && e.lost) || !again || attempt >= RESTART_TRIES) throw e;
+        await afterRestart(STEP_OF[kind], 'picking up where it stopped…');
+      }
+    }
   }
   function readProgress(label) {
     return function (p) {
@@ -3101,10 +3123,20 @@
       setBar(-1);
       var fd = new FormData();
       fd.append('file', file, file.name);
-      var started = await apiRetryBusy('/api/statements?background=1', { method: 'POST', body: fd }, onBusyWait('upload'));
-      var s = await pollJob(started.job, function (p) {
-        if (p.note) setStep('upload', 'running', 'Reading the transactions in ' + file.name + '… ' + shortNote(p.note));
-      });
+      var s;
+      // A statement sent again adds nothing twice (each line has a fixed id), so a restart just resends it.
+      for (var attempt = 1; ; attempt++) {
+        var started = await apiRetryBusy('/api/statements?background=1', { method: 'POST', body: fd }, onBusyWait('upload'));
+        try {
+          s = await pollJob(started.job, function (p) {
+            if (p.note) setStep('upload', 'running', 'Reading the transactions in ' + file.name + '… ' + shortNote(p.note));
+          });
+          break;
+        } catch (e) {
+          if (!(e && e.lost) || attempt >= RESTART_TRIES) throw e;
+          await afterRestart('upload', 'sending ' + file.name + ' again…');
+        }
+      }
       var cardBits = Object.keys(s.cards || {}).sort().map(function (l4) { return l4 + (s.cards[l4].holder_name ? ' (' + s.cards[l4].holder_name + ')' : '') + ' ×' + s.cards[l4].count; });
       log('Statement ' + s.file_name + ': ' + s.transactions + ' transactions, ' + s.new + ' new, ' + s.already_stored + ' already stored' + (s.period_start ? ' · ' + s.period_start + ' to ' + s.period_end : ''), 'ok');
       log('cards: ' + (cardBits.join(', ') || 'none') + ' · months: ' + (s.months || []).map(function (ym) { return monthLabel(ym[0], ym[1]); }).join(', '), 'info');
