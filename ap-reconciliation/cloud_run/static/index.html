@@ -99,6 +99,22 @@
     .ap-upload .dropzone.has-file .dz-file { margin: 0; max-width: 100%; }
     .ap-upload .btn, .ap-actions .btn { white-space: nowrap; }
     .ap-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+    /* Re-run matching and its ▾ menu (all months, clear the queue) read as one button. */
+    .btn-split { position: relative; display: inline-flex; }
+    .btn-split > #rematchBtn { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+    .btn-split > #rematchMore { border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -1px; padding-left: 9px; padding-right: 10px; }
+    #rematchMenu { top: calc(100% + 6px); left: 0; right: auto; min-width: 250px; max-width: calc(100vw - 32px); padding: 6px; gap: 2px; }   /* id: wins over .col-menu */
+    .rematch-menu button { text-align: left; padding: 8px 10px; border-radius: 8px; font-size: 13px; color: var(--text); background: none; border: 0; cursor: pointer; }
+    .rematch-menu button:hover:not(:disabled), .rematch-menu button:focus-visible { background: var(--hover-wash); }
+    .rematch-menu button:disabled { color: var(--text-mute); cursor: not-allowed; }
+    .rematch-menu .sub { display: block; font-size: 11.5px; margin-top: 1px; }
+    .rerun-queue { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-mid); margin-bottom: 8px; }
+    .rerun-queue .chip { padding: 3px 4px 3px 10px; gap: 2px; cursor: default; }
+    .rerun-queue .chip button { border: 0; background: none; cursor: pointer; color: var(--text-mute); font-size: 14px; line-height: 1; padding: 2px 6px; border-radius: 9999px; }
+    .rerun-queue .chip button:hover { color: var(--down); background: var(--hover-wash); }
+    .job-earlier { display: grid; gap: 3px; font-size: 12.5px; color: var(--text-mid); padding-bottom: 9px; margin-bottom: 10px; border-bottom: 1px solid var(--border-subtle); }
+    .job-earlier::before { content: 'Earlier in this run'; font-weight: 600; color: var(--text); }
+    .job-earlier .failed { color: var(--down); }
     .ap-sep { width: 1px; align-self: stretch; background: var(--border); margin: 2px 4px; }
     @media (max-width: 1099px) { .ap-sep { display: none; } }
     input[type="checkbox"] { accent-color: var(--brand); width: 15px; height: 15px; }
@@ -515,13 +531,19 @@
             </form>
             <div class="ap-sep" aria-hidden="true"></div>
             <div class="ap-actions" role="group" aria-label="This month">
-              <button id="rematchBtn" class="btn btn-secondary">Re-run matching</button>
+              <span class="btn-split" id="rematchSplit">
+                <button id="rematchBtn" class="btn btn-secondary">Re-run matching</button>
+                <button id="rematchMore" class="btn btn-secondary" type="button" aria-label="More ways to re-run matching" aria-haspopup="menu" aria-expanded="false" title="Re-run every month, or clear the queue">▾</button>
+                <div id="rematchMenu" class="col-menu rematch-menu hidden" role="menu" aria-label="Re-run matching"></div>
+              </span>
               <button id="notifyBtn" class="btn btn-secondary">Send reminders</button>
               <button id="cardsBtn" class="btn btn-secondary">Cards…</button>
             </div>
           </div>
           <div id="aiNote" class="sub hidden mt-1.5">Invoice reading is switched off on this server (AI_DISABLED): matching uses invoices already indexed.</div>
           <div id="job" class="job hidden" aria-live="polite">
+            <div id="rerunQueue" class="rerun-queue hidden"></div>
+            <div id="jobEarlier" class="job-earlier hidden"></div>
             <ol id="jobSteps"></ol>
             <div id="jobBar" class="bar hidden"><i></i></div>
             <details id="jobDetails"><summary>Details for troubleshooting</summary><div id="jobLog" class="log"></div></details>
@@ -1460,6 +1482,7 @@
 
   function renderMonth() {
     $('#monthTitle').textContent = monthLabel(state.year, state.month);
+    updateRerunButton();
     renderKpis();
     renderCardStrip();
     renderToolbar();
@@ -2715,7 +2738,8 @@
   });
   // Leaving the page with photos not saved yet, or while one is being sent.
   window.addEventListener('beforeunload', function (ev) {
-    if (!savesInFlight && !(sheet && sheet.pages.length && !sheet.saved)) return;
+    var queued = typeof rerun !== 'undefined' && (rerun.draining || rerun.queue.length);
+    if (!savesInFlight && !(sheet && sheet.pages.length && !sheet.saved) && !queued) return;
     ev.preventDefault();
     ev.returnValue = '';
   });
@@ -2785,11 +2809,26 @@
     logEl.scrollTop = logEl.scrollHeight;
     return line;
   }
-  // A fresh run: the steps it will go through, all waiting.
-  function startJob(steps) {
+  // A fresh run: the steps it will go through, all waiting. carry: a run queued behind another keeps
+  // that run's problems (under "Earlier in this run") and its Details lines; label names the run there.
+  var jobLabel = '';
+  function startJob(steps, carry, label) {
     stepSaid = {};
-    logEl.innerHTML = '';
-    detailsEl.open = false;
+    var earlier = $('#jobEarlier');
+    if (carry) {
+      stepsEl.querySelectorAll('li.warn, li.failed').forEach(function (li) {
+        var line = document.createElement('div');
+        line.className = li.classList.contains('failed') ? 'failed' : 'warn';
+        line.textContent = (jobLabel ? jobLabel + ' · ' : '') + $('.step-title', li).textContent + ': ' + $('.step-text', li).textContent;
+        earlier.appendChild(line);
+      });
+    } else {
+      earlier.innerHTML = '';
+      logEl.innerHTML = '';
+      detailsEl.open = false;
+    }
+    earlier.classList.toggle('hidden', !earlier.children.length);
+    jobLabel = label || '';
     stepsEl.innerHTML = steps.map(function (key) {
       return '<li class="step pending" data-step="' + key + '"><span class="step-icon"></span><div class="min-w-0"><div class="step-title">' + esc(STEP_TITLES[key]) + '</div><div class="step-text"></div><div class="step-actions"></div></div></li>';
     }).join('');
@@ -2834,8 +2873,10 @@
   }
   function setJobRunning(on) {
     state.jobRunning = on;
-    ['#uploadBtn', '#rematchBtn', '#notifyBtn'].forEach(function (s) { $(s).disabled = on; });
+    ['#uploadBtn', '#notifyBtn'].forEach(function (s) { $(s).disabled = on; });
     showChosenFile();                              // a statement chosen meanwhile says when it can go
+    updateRerunButton();
+    if (!on) setTimeout(kickRerunQueue, 0);        // months queued meanwhile start now
   }
   function count(x, one, many) { x = Number(x) || 0; return x + ' ' + (x === 1 ? one : many); }
   function onBusyWait(step) {
@@ -3006,7 +3047,15 @@
     });
     return { ready: ready, blocked: blocked };
   }
+  var pendingOffer = null;                         // months whose reminder question waits for Send / Not now
+  function uniqueMonths(list) {
+    var seen = {};
+    return list.filter(function (ym) { var k = ym[0] + '-' + ym[1]; if (seen[k]) return false; seen[k] = true; return true; });
+  }
   async function offerReminders(months) {
+    if (pendingOffer) { months = pendingOffer.concat(months); pendingOffer = null; }   // a question left unanswered is asked again
+    months = uniqueMonths(months);
+    if (rerun.draining || rerun.queue.length) { rerun.offer = rerun.offer.concat(months); return; }   // asked once, after the queue
     setJobRunning(true);
     var ready = [], blocked = [], labels = months.map(function (ym) { return monthLabel(ym[0], ym[1]); }).join(' and ');
     try {
@@ -3019,6 +3068,7 @@
         p.blocked.forEach(function (b) { blocked.push(tag + b); });
       }
     } catch (e) {
+      if (rerun.queue.length) rerun.offer = rerun.offer.concat(months);   // months queued meanwhile: asked again after them
       failStep('Could not check the reminders: ' + (e.message || e) + '. Use "Send reminders" to try again.');
       report(e, 'Reminders', true);
       setJobRunning(false);
@@ -3032,9 +3082,11 @@
       ? '<button type="button" class="btn btn-primary btn-xs" data-remind="send">Send ' + (ready.length === 1 ? 'the reminder' : 'these reminders') + '</button><button type="button" class="btn btn-ghost btn-xs" data-remind="skip">Not now</button>'
       : '<button type="button" class="btn btn-ghost btn-xs" data-remind="skip">OK</button>';
     setStep('notify', 'ask', text, actions);
+    pendingOffer = months.slice();
     var li = stepsEl.querySelector('li[data-step="notify"]');
-    $('.step-actions', li).addEventListener('click', async function (ev) {
+    $('.step-actions', li).onclick = async function (ev) {          // replaces an earlier question's handler
       var b = ev.target.closest('button[data-remind]'); if (!b) return;
+      pendingOffer = null;
       if (b.dataset.remind === 'skip') { setStep('notify', 'done', 'Not sent. Use "Send reminders" whenever you are ready.'); return; }
       if (state.jobRunning) return;
       setJobRunning(true);
@@ -3048,7 +3100,7 @@
         failStep('The reminders could not be sent: ' + (e.message || e) + '. Try again in a minute.');
         report(e, 'Reminders failed', true);
       } finally { setJobRunning(false); }
-    });
+    };
   }
   // A step started earlier (this tab, another tab, before a reload) may still be running: show and follow it.
   async function resumeRunningJob() {
@@ -3057,6 +3109,7 @@
     if (!j || !j.running || !STEP_OF[j.name] || state.jobRunning) return;
     var step = STEP_OF[j.name], p = j.progress || {};
     var label = p.year && p.month ? monthLabel(p.year, p.month) : 'this month';
+    if (j.name === 'match' && p.year && p.month) rerun.covered = [[p.year, p.month]];   // not queued twice meanwhile
     setJobRunning(true);
     startJob([step]);
     setStep(step, 'running', 'Still running from earlier: ' + STEP_TITLES[step].toLowerCase() + ' for ' + label + '…');
@@ -3073,7 +3126,7 @@
     } catch (e) {
       failStep('This step failed: ' + (e.message || e) + '. Try again in a minute.');
       report(e, 'Job failed', true);
-    } finally { setJobRunning(false); }
+    } finally { rerun.covered = []; setJobRunning(false); }
   }
   async function reloadAll() {
     await loadMonths();
@@ -3117,7 +3170,7 @@
     if (!file) { toast('Choose a statement file first.', 'err'); return; }
     if (state.jobRunning) return;
     setJobRunning(true);
-    startJob(['upload', 'read', 'match', 'notify']);
+    startJob(['upload', 'read', 'match', 'notify'], false, file.name);
     try {
       setStep('upload', 'running', 'Uploading ' + file.name + ' and reading its transactions…');
       setBar(-1);
@@ -3155,6 +3208,10 @@
       try {
         for (var i = 0; i < months.length; i++) {
           var y = months[i][0], m = months[i][1];
+          rerun.covered = months.slice(i);         // this run reads and matches them: no queueing them twice
+          rerun.queue = rerun.queue.filter(function (q) { return !sameMonth(q, months[i]); });
+          renderRerunQueue();
+          updateRerunButton();
           await indexLoop(y, m);
           await matchStep(y, m);
           matched.push([y, m]);
@@ -3164,7 +3221,7 @@
         failStep('The statement is saved, but this step failed: ' + (e2.message || e2) + '. Use "Re-run matching" to try again.');
         log('Statement stored, but the follow-up failed: ' + (e2.message || e2), 'err');
         report(e2, 'Invoice matching failed', true);
-      }
+      } finally { rerun.covered = []; updateRerunButton(); }
       await loadMonths();
       if (months.length) {
         var last = months[months.length - 1];
@@ -3174,35 +3231,199 @@
       } else {
         await reloadAll();
       }
-      if (matched.length) offerReminders(matched);            // asks before anything is posted; not awaited
+      if (matched.length) await offerReminders(matched);      // the check runs before this run counts as done
       else setStep('notify', 'done', 'Skipped: matching did not finish.');
     } catch (e) {
       failStep('The upload did not go through: ' + (e.message || e) + '. Check the file and try again.');
       log('Failed: ' + (e.message || e), 'err');
       report(e, 'Upload failed', true);
     } finally {
+      rerun.covered = [];
       setJobRunning(false);
       var next = $('#fileInput').files[0];
       if (next && next !== file) toast('Next statement ready: ' + next.name + '. Click Upload and process.', 'ok', 6000);
     }
   });
 
-  $('#rematchBtn').addEventListener('click', async function () {
-    if (state.jobRunning || !state.year) return;
+  // -- Re-run matching: this month now, or queued behind what is running; ▾ All months ----------------
+  // The queue lives in this page: months run one after another (the server runs one job at a time), and
+  // the reminder question comes once, for every month that finished, when the queue is empty.
+  // covered: months an upload (or a match resumed after a reload) is still reading and matching.
+  // carry: the first queued run keeps what the run before it reported, since it was queued behind it.
+  var rerun = { queue: [], running: null, draining: false, offer: [], failed: [], covered: [], carry: false };
+  function sameMonth(a, b) { return !!a && !!b && a[0] === b[0] && a[1] === b[1]; }
+  function rerunQueued(ym) { return rerun.queue.some(function (q) { return sameMonth(q, ym); }); }
+  function rerunCovered(ym) { return rerun.covered.some(function (c) { return sameMonth(c, ym); }); }
+  function rerunTaken(ym) { return sameMonth(rerun.running, ym) || rerunCovered(ym) || rerunQueued(ym); }
+  function rerunBusy() { return state.jobRunning || rerun.draining; }
+  function queueReruns(months) {
+    var added = [];
+    months.forEach(function (ym) {
+      if (rerunTaken(ym)) return;
+      rerun.queue.push(ym);
+      added.push(ym);
+    });
+    if (added.length && rerunBusy()) rerun.carry = true;
+    renderRerunQueue();
+    updateRerunButton();
+    kickRerunQueue();
+    return added;
+  }
+  function kickRerunQueue() {
+    if (typeof rerun === 'undefined' || state.jobRunning || rerun.draining || !rerun.queue.length) return;
+    drainReruns();
+  }
+  async function drainReruns() {
+    rerun.draining = true;
+    if (pendingOffer) { rerun.offer = rerun.offer.concat(pendingOffer); pendingOffer = null; }   // asked again at the end
+    var carry = rerun.carry;
+    try {
+      while (rerun.queue.length) {
+        var ym = rerun.queue.shift();
+        rerun.running = ym;
+        renderRerunQueue();
+        updateRerunButton();
+        var ok = await rerunMonth(ym[0], ym[1], carry);
+        carry = true;
+        rerun.failed = rerun.failed.filter(function (f) { return !sameMonth(f, ym); });   // queued again and done this time
+        (ok ? rerun.offer : rerun.failed).push(ym);
+      }
+    } finally {
+      rerun.running = null;
+      rerun.draining = false;
+      rerun.carry = false;
+      renderRerunQueue();
+      updateRerunButton();
+    }
+    var failed = rerun.failed.splice(0);
+    var months = uniqueMonths(rerun.offer.splice(0));
+    if (failed.length) toast('Re-run matching did not finish for ' + failed.map(function (ym) { return monthLabel(ym[0], ym[1]); }).join(', ') + '; open the month and try again.', 'err', 9000);
+    if (months.length) offerReminders(months);              // asks before anything is posted; not awaited
+    else setStep('notify', 'done', 'Skipped: matching did not finish.');
+  }
+  // One month: read its new invoices, match it. -> true when it finished.
+  async function rerunMonth(y, m, carry) {
     setJobRunning(true);
-    startJob(['read', 'match', 'notify']);
-    var y = state.year, m = state.month;
+    startJob(['read', 'match', 'notify'], carry, monthLabel(y, m));
+    log('Re-run matching for ' + monthLabel(y, m), 'info');
     try {
       await indexLoop(y, m);
       await matchStep(y, m);
       await reloadAll();
       renderSidebar();
-      offerReminders([[y, m]]);                                // asks before anything is posted; not awaited
+      setStep('notify', 'pending', rerun.queue.length ? 'Asked once the queued months are done.' : '');
+      return true;
     } catch (e) {
-      failStep('This step failed: ' + (e.message || e) + '. Try again in a minute.');
+      failStep('This step failed for ' + monthLabel(y, m) + ': ' + (e.message || e) + '. Try again in a minute.');
       log('Failed: ' + (e.message || e), 'err');
       report(e, 'Matching failed', true);
-    } finally { setJobRunning(false); }
+      return false;
+    } finally {
+      rerun.running = null;
+      setJobRunning(false);
+    }
+  }
+  // What the button says depends on what runs: nothing (re-run this month), this month, or another one.
+  function updateRerunButton() {
+    var b = $('#rematchBtn');
+    if (!b || typeof rerun === 'undefined') return;          // before this part of the page has run
+    var here = state.year ? [state.year, state.month] : null, label = here ? monthLabel(here[0], here[1]) : '';
+    if (!here) { b.textContent = 'Re-run matching'; b.disabled = true; b.title = ''; }
+    else if (!rerunBusy()) {
+      b.textContent = 'Re-run matching'; b.disabled = false;
+      b.title = 'Read new invoices for ' + label + ' and match its purchases again';
+    } else if (sameMonth(rerun.running, here)) {
+      b.textContent = 'Re-running…'; b.disabled = true; b.title = label + ' is being matched now';
+    } else if (rerunCovered(here)) {
+      b.textContent = 'Matching…'; b.disabled = true; b.title = 'The run in progress reads and matches ' + label;
+    } else if (rerunQueued(here)) {
+      b.textContent = 'Queued'; b.disabled = true; b.title = label + ' runs when the months before it are done';
+    } else {
+      b.textContent = 'Queue ' + MONTHS[here[1] - 1]; b.disabled = false;
+      b.title = 'Re-run matching for ' + label + ' when the current run is done';
+    }
+  }
+  function renderRerunQueue() {
+    var el = $('#rerunQueue');
+    var show = rerun.running || rerun.queue.length;
+    el.classList.toggle('hidden', !show);
+    if (!show) { el.innerHTML = ''; return; }
+    if (rerun.queue.length) jobEl.classList.remove('hidden');
+    el.innerHTML = '<span>Re-run matching:</span>' +
+      (rerun.running ? '<span class="pill pill-brand">now ' + esc(monthLabel(rerun.running[0], rerun.running[1])) + '</span>' : '') +
+      (rerun.queue.length ? '<span>next</span>' + rerun.queue.map(function (ym) {
+        var label = monthLabel(ym[0], ym[1]);
+        return '<span class="chip">' + esc(label) + '<button type="button" data-unqueue="' + ym[0] + '-' + ym[1] + '" aria-label="Take ' + esc(label) + ' out of the queue" title="Take it out of the queue">×</button></span>';
+      }).join('') : '');
+  }
+  $('#rerunQueue').addEventListener('click', function (ev) {
+    var b = ev.target.closest('button[data-unqueue]'); if (!b) return;
+    var at = rerun.queue.findIndex(function (ym) { return ym[0] + '-' + ym[1] === b.dataset.unqueue; });
+    var gone = at >= 0 ? rerun.queue.splice(at, 1)[0] : null;    // it may have started meanwhile
+    if (gone) toast(monthLabel(gone[0], gone[1]) + ' taken out of the queue.');
+    renderRerunQueue();
+    updateRerunButton();
+  });
+  $('#rematchBtn').addEventListener('click', function () {
+    if (!state.year) return;
+    var ym = [state.year, state.month], busy = rerunBusy();
+    var added = queueReruns([ym]);
+    if (busy && added.length) toast(monthLabel(ym[0], ym[1]) + ' is queued: it runs when the current run is done. Keep this page open.', 'ok');
+  });
+  function rerunMenuHtml() {
+    var left = state.months.map(function (m) { return [m.year, m.month]; })
+      .filter(function (ym) { return !rerunTaken(ym); });
+    var busy = rerunBusy();
+    var html = '<button type="button" role="menuitem" data-rerun="all"' + (left.length ? '' : ' disabled') + '>' +
+      (busy ? 'Queue all the other months' : 'Re-run all months') + ' (' + left.length + ')' +
+      '<span class="sub">Newest first, one after another; reminders are offered once at the end. Keep this page open.</span></button>';
+    if (rerun.queue.length) html += '<button type="button" role="menuitem" data-rerun="clear">Clear the queue (' + rerun.queue.length + ')<span class="sub">The month running now still finishes.</span></button>';
+    return html;
+  }
+  function closeRerunMenu() { $('#rematchMenu').classList.add('hidden'); $('#rematchMore').setAttribute('aria-expanded', 'false'); }
+  $('#rematchMore').addEventListener('click', function (ev) {
+    ev.stopPropagation();
+    var menu = $('#rematchMenu'), open = menu.classList.contains('hidden');
+    if (!open) { closeRerunMenu(); return; }
+    menu.innerHTML = rerunMenuHtml();
+    menu.classList.remove('hidden');
+    $('#rematchMore').setAttribute('aria-expanded', 'true');
+    var first = menu.querySelector('button:not(:disabled)'); if (first) first.focus();
+  });
+  $('#rematchMenu').addEventListener('click', function (ev) {
+    ev.stopPropagation();
+    var b = ev.target.closest('button[data-rerun]'); if (!b || b.disabled) return;
+    closeRerunMenu();
+    if (b.dataset.rerun === 'clear') {
+      var n = rerun.queue.length;
+      rerun.queue = [];
+      renderRerunQueue();
+      updateRerunButton();
+      toast(count(n, 'month', 'months') + ' taken out of the queue.');
+      return;
+    }
+    var added = queueReruns(state.months.map(function (m) { return [m.year, m.month]; }));
+    if (added.length) toast('Re-run matching for ' + count(added.length, 'month', 'months') + ', newest first. Keep this page open until it is done.', 'ok', 6000);
+  });
+  // Keyboard: arrows, Home and End move between the items; Tab away or Escape closes it.
+  $('#rematchMenu').addEventListener('keydown', function (ev) {
+    var items = [].slice.call(this.querySelectorAll('button:not(:disabled)')), at = items.indexOf(document.activeElement), to = null;
+    if (!items.length) return;
+    if (ev.key === 'ArrowDown') to = items[(at + 1) % items.length];
+    else if (ev.key === 'ArrowUp') to = items[(at - 1 + items.length) % items.length];
+    else if (ev.key === 'Home') to = items[0];
+    else if (ev.key === 'End') to = items[items.length - 1];
+    if (to) { ev.preventDefault(); to.focus(); }
+  });
+  $('#rematchSplit').addEventListener('focusout', function (ev) {
+    if (ev.relatedTarget && !this.contains(ev.relatedTarget)) closeRerunMenu();   // a click elsewhere: the document handler
+  });
+  document.addEventListener('click', closeRerunMenu);
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key !== 'Escape' || $('#rematchMenu').classList.contains('hidden')) return;
+    var inside = $('#rematchSplit').contains(document.activeElement);
+    closeRerunMenu();
+    if (inside) $('#rematchMore').focus();
   });
 
   $('#notifyBtn').addEventListener('click', function () {

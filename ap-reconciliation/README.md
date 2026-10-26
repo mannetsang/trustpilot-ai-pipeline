@@ -290,6 +290,17 @@ Two other modes exist, one edit of the deploy workflow away (step 5):
   of the running job. Nothing is posted to Chat on its own: after matching
   (and on *Send reminders*) the page lists which cards would get a reminder,
   with their counts and Chat spaces, and waits for *Send* or *Not now*.
+  *Re-run matching* reads new invoices for the month on screen and matches
+  all its cards again. While something runs, the button in another month
+  reads *Queue July* and lines that month up; the step list shows *now
+  September 2026, next July 2026 ×, ...* (× takes a month out). The ▾ next
+  to it offers *Re-run all months* (newest first) and *Clear the queue*.
+  Queued months run one after another, and the reminder question comes once
+  at the end for every month that finished. A month an upload is still
+  matching reads *Matching…* and cannot be queued twice. Problems from the
+  runs before stay above the steps under *Earlier in this run*, and the
+  Details lines are kept. The queue lives in the open page: keep it open
+  until it is done (leaving asks first).
 - **Card chips** ("1610 - Yin Wei", the full label on hover; one line that
   scrolls sideways when there are more cards than fit) and a status filter
   (all, missing, possible, matched, waived, no cost centre), a search box
