@@ -84,6 +84,7 @@ from the environment need no third-party packages.
 | `ap-reconciliation-dashboard-password` | `ap-reconciliation/cloud_run/main.py` (env `DASHBOARD_PASSWORD`) — the shared password of the dashboard's password mode. Not mounted since 2026-10-13: the live dashboard uses Google sign-in (Identity-Aware Proxy) instead; can be deleted, or kept for a switch back |
 | `ap-reconciliation-api-token` | unused since 2026-10-12 (the weekly reminder became a Cloud Run job started by Cloud Scheduler, and the dashboard sits behind Identity-Aware Proxy); can be deleted |
 | `SUPABASE_ACCESS_TOKEN` | `ap-reconciliation/setup_db.py` (env `SUPABASE_ACCESS_TOKEN`) — Supabase Management API personal access token, only to apply `schema.sql` |
+| `SEARCHATLAS_API_KEY` | `lib/searchatlas.py` (env `SEARCHATLAS_API_KEY`) — Search Atlas API key, sent as `X-API-Key`; issued under *Dashboard → Settings → API*. Version 1 (Sept 2026) was rejected as "Bad API key" and is disabled; version 2 added 2026-10-26 works. Each Search Atlas service has its own host (traffic lives on `keyword.searchatlas.com`, not `api.searchatlas.com`) and the Cloudflare front rejects the default Python user agent; the helper handles both |
 
 Only genuine secrets belong here. The BigCommerce store hash identifies the
 store in a URL path and is not sensitive, so it is set inline in the workflow
