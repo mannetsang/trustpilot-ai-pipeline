@@ -1,0 +1,667 @@
+<title>Superhairpieces Group Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{color-scheme:light;
+  --ground:#f3f5f7;--surface:#fff;--surface-2:#e9edf1;--ink:#1a2430;--ink-2:#4d5b69;--muted:#7a8794;--rule:#d5dbe1;--rule-soft:#e6eaee;
+  --accent:#1c5cab;--accent-soft:#e3edfa;--s1:#2a78d6;--s2:#eb6834;--good:#008300;--warn:#b26a00;--crit:#c0392b;--good-soft:#e2f2e2;--warn-soft:#fbefd9;--crit-soft:#fbe3e0;
+  --m-ca:#2a78d6;--m-com:#1b9e77;--m-nl:#eb6834;--m-fr:#7570b3;--m-es:#d4a106;--m-de:#c0392b;
+  --sans:"IBM Plex Sans","Helvetica Neue",Arial,sans-serif;--mono:"IBM Plex Mono",Menlo,Consolas,monospace}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;
+  --ground:#14181c;--surface:#1d2227;--surface-2:#262d34;--ink:#e7ebef;--ink-2:#b4bec8;--muted:#8a96a2;--rule:#343d47;--rule-soft:#2a323a;
+  --accent:#7fb2f0;--accent-soft:#1f2f45;--s1:#3987e5;--s2:#d95926;--good:#5cc25c;--warn:#e0a24a;--crit:#ef7b6f;--good-soft:#1c3320;--warn-soft:#3a2d13;--crit-soft:#3d1f1c;
+  --m-ca:#5a9ae8;--m-com:#35c196;--m-nl:#f0814f;--m-fr:#9d97d8;--m-es:#e8bf3a;--m-de:#e8705f}}
+:root[data-theme="dark"]{color-scheme:dark;
+  --ground:#14181c;--surface:#1d2227;--surface-2:#262d34;--ink:#e7ebef;--ink-2:#b4bec8;--muted:#8a96a2;--rule:#343d47;--rule-soft:#2a323a;
+  --accent:#7fb2f0;--accent-soft:#1f2f45;--s1:#3987e5;--s2:#d95926;--good:#5cc25c;--warn:#e0a24a;--crit:#ef7b6f;--good-soft:#1c3320;--warn-soft:#3a2d13;--crit-soft:#3d1f1c;
+  --m-ca:#5a9ae8;--m-com:#35c196;--m-nl:#f0814f;--m-fr:#9d97d8;--m-es:#e8bf3a;--m-de:#e8705f}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
+header{position:sticky;top:0;z-index:5;background:var(--ground);border-bottom:1px solid var(--rule);padding:0 24px}
+.hbar{max-width:1320px;margin:0 auto;display:flex;align-items:center;gap:18px;height:54px}
+.hbar h1{font-size:15px;font-weight:600;margin:0;letter-spacing:-.01em;white-space:nowrap}
+.hbar .sub{font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap}
+nav{display:flex;gap:2px;margin-left:auto;flex-wrap:wrap}
+nav a{padding:8px 12px;border-radius:5px;text-decoration:none;color:var(--ink-2);font-weight:500;font-size:13px}
+nav a:hover{background:var(--surface-2);color:var(--ink)}
+main{max-width:1320px;margin:0 auto;padding:18px 24px 80px}
+section{scroll-margin-top:62px;padding-top:12px;margin-bottom:34px}
+.sec-h{display:flex;align-items:baseline;gap:14px;margin-bottom:12px;flex-wrap:wrap}
+.sec-h h2{font-size:18px;font-weight:600;margin:0;letter-spacing:-.01em}
+.sec-h .hint{color:var(--muted);font-size:12.5px}
+.controls{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;padding:8px 0 14px}
+.seg{display:inline-flex;background:var(--surface);border:1px solid var(--rule);border-radius:6px;overflow:hidden;flex-wrap:wrap}
+.seg button{border:0;background:transparent;color:var(--ink-2);font:inherit;font-size:12.5px;padding:6px 11px;cursor:pointer;border-right:1px solid var(--rule-soft)}
+.seg button:last-child{border-right:0} .seg button.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.seg button:disabled{opacity:.45;cursor:not-allowed}
+.lbl{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-right:6px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+.tile{background:var(--surface);border:1px solid var(--rule-soft);border-radius:6px;padding:12px 14px;min-height:92px;display:flex;flex-direction:column;justify-content:space-between}
+.tile .l{font-size:12px;color:var(--ink-2);line-height:1.3} .tile .v{font-weight:600;font-size:23px;letter-spacing:-.02em;line-height:1;margin-top:8px} .tile .d{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:4px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px} @media(max-width:980px){.grid2{grid-template-columns:1fr}}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px} @media(max-width:1100px){.grid3{grid-template-columns:1fr 1fr}} @media(max-width:700px){.grid3{grid-template-columns:1fr}}
+.card{background:var(--surface);border:1px solid var(--rule-soft);border-radius:6px;padding:14px 16px 10px}
+.card .cap{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:8px}
+.card .cap b{font-weight:500;font-size:13.5px} .card .cap span.s{color:var(--muted);font-size:12px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:7px 9px;text-align:left;border-bottom:1px solid var(--rule-soft);vertical-align:top}
+th{font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500;white-space:nowrap}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--mono);font-size:12.5px}
+tbody tr:last-child td{border-bottom:0}
+svg.chart{width:100%;display:block;overflow:visible} svg.chart text{font-family:var(--mono);font-size:10.5px;fill:var(--muted)}
+svg.chart .grid{stroke:var(--rule-soft)} svg.chart .axis{stroke:var(--rule)} svg.chart .lb{fill:var(--ink);font-family:var(--sans);font-size:11.5px}
+.legend{display:flex;gap:12px;font-size:11.5px;color:var(--ink-2);font-family:var(--mono);flex-wrap:wrap}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.legend button{border:0;background:transparent;color:inherit;font:inherit;cursor:pointer;padding:0;opacity:1} .legend button.off{opacity:.35;text-decoration:line-through}
+.pill{display:inline-block;font-family:var(--mono);font-size:10.5px;padding:1px 7px;border-radius:999px;white-space:nowrap}
+.pill.good{background:var(--good-soft);color:var(--good)} .pill.warn{background:var(--warn-soft);color:var(--warn)} .pill.crit{background:var(--crit-soft);color:var(--crit)} .pill.neutral{background:var(--surface-2);color:var(--ink-2)}
+.flag{font-family:var(--mono);font-size:11px;font-weight:500;padding:1px 6px;border-radius:3px;background:var(--surface-2);color:var(--ink-2)}
+svg.fl{width:16px;height:10.67px;display:inline-block;vertical-align:-1px;border-radius:1.5px;box-shadow:0 0 0 .5px rgba(0,0,0,.22);flex:none}
+.flag.ico{padding:0;background:none;display:inline-flex;align-items:center;line-height:0}
+.flags{display:inline-flex;gap:4px;align-items:center;flex-wrap:nowrap}
+.seg button svg.fl,.legend button svg.fl{margin-right:5px}
+.seg button,.legend button{display:inline-flex;align-items:center}
+.note{font-size:12.5px;color:var(--muted);margin-top:8px}
+.mut{color:var(--muted)}
+#o-queries thead th,#o-countries thead th{position:sticky;top:0;background:var(--surface);z-index:1}
+code{font-family:var(--mono);font-size:11.5px;background:var(--surface-2);padding:1px 5px;border-radius:3px;overflow-wrap:anywhere}
+.tip{position:fixed;pointer-events:none;background:var(--ink);color:var(--ground);font-family:var(--mono);font-size:11.5px;line-height:1.4;padding:6px 9px;border-radius:4px;opacity:0;transform:translate(-50%,-110%);white-space:nowrap;z-index:9;transition:opacity .08s}
+.wrap{overflow-x:auto}
+.cov td{vertical-align:middle} .cov .fix{font-size:11.5px;color:var(--muted);display:block;margin-top:2px}
+th.sort{cursor:pointer} th.sort:hover{color:var(--ink)} th.sort.on{color:var(--accent)}
+.filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:6px 0 10px}
+.filters input,.filters select{font:inherit;font-size:12.5px;background:var(--surface);border:1px solid var(--rule);color:var(--ink);border-radius:5px;padding:5px 8px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:24px;margin:4px 0 8px}
+.chip{background:var(--accent-soft);color:var(--accent);border-radius:999px;padding:2px 10px;font-size:12px;cursor:pointer} .chip:hover{text-decoration:line-through}
+.pager{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:10px 0 0;font-size:12.5px;color:var(--muted)}
+.pager button{font:inherit;font-size:12.5px;background:var(--surface);border:1px solid var(--rule);color:var(--ink-2);border-radius:5px;padding:4px 10px;cursor:pointer} .pager button:disabled{opacity:.4;cursor:default}
+.drawer{position:fixed;top:0;right:0;height:100vh;width:min(460px,100vw);background:var(--surface);border-left:1px solid var(--rule);box-shadow:-12px 0 32px rgba(0,0,0,.12);transform:translateX(100%);transition:transform .18s;z-index:30;overflow:auto;padding:18px 20px 40px}
+.drawer.open{transform:none} .drawer .x{position:absolute;top:10px;right:12px;border:0;background:var(--surface-2);color:var(--ink);border-radius:50%;width:30px;height:30px;cursor:pointer;font-size:16px}
+.drawer img{width:100%;max-height:260px;object-fit:contain;background:var(--surface-2);border-radius:6px;margin:10px 0}
+.drawer h3{margin:8px 0 2px;font-size:16px;line-height:1.3} .drawer .kv{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;margin:12px 0;font-size:13px} .drawer .kv div span{display:block;font-family:var(--mono);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.drawer ul{padding-left:1.1em;margin:6px 0} .drawer a{color:var(--accent)} .drawer .lbl{display:block;margin-top:10px}
+.plan .row td:first-child{font-weight:500} .plan input{width:16px;height:16px;cursor:pointer;accent-color:var(--accent)} .plan tr.done td{color:var(--muted);text-decoration:line-through} .plan tr.done td:last-child,.plan tr.done td:nth-child(1){text-decoration:none}
+a{color:var(--accent)}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<header><div class="hbar"><h1>Superhairpieces · Group</h1><span class="sub" id="stamp"></span>
+<nav><a href="#group">Group</a><a href="#organic">Organic search</a><a href="#catalogue">Catalogue</a><a href="#sales">Sales</a><a href="#feed">Shopping feed</a><a href="#plan">Action plan</a><a href="#coverage">Coverage</a></nav></div></header>
+
+<main>
+<section id="group">
+  <div class="sec-h"><h2>Six storefronts</h2><span class="hint" id="group-hint"></span></div>
+  <div class="tiles" id="group-tiles"></div>
+  <div class="card" style="margin-top:14px"><div class="cap"><b>Every market, side by side</b><span class="s">revenue stays in each store's own currency</span></div>
+    <div class="wrap"><table id="market-table"><thead><tr>
+      <th>Market</th><th class="n">Organic clicks</th><th class="n">Impressions</th><th class="n">Avg position</th>
+      <th class="n">Products</th><th class="n">Orders, 12 mo</th><th class="n">Revenue, 12 mo</th><th class="n">AOV</th><th>Shopping feed</th>
+    </tr></thead><tbody></tbody></table></div>
+    <p class="note" id="market-note"></p></div>
+  <div class="grid2" style="margin-top:14px">
+    <div class="card"><div class="cap"><b>Organic reach by market</b><span class="s">16 months</span></div>
+      <div class="lbl" style="margin:2px 0 2px">Clicks</div><svg id="g-clicks" class="chart"></svg>
+      <div class="lbl" style="margin:10px 0 2px">Impressions</div><svg id="g-impr" class="chart"></svg>
+      <div class="lbl" style="margin:10px 0 2px">Products listed</div><svg id="g-products" class="chart"></svg></div>
+    <div class="card"><div class="cap"><b>Revenue by currency</b><span class="s">12 months · never added across currencies</span></div><div id="g-revenue"></div></div>
+  </div>
+</section>
+
+<section id="organic">
+  <div class="sec-h"><h2>Organic search</h2><span class="hint" id="organic-hint"></span></div>
+  <div class="controls">
+    <span class="lbl">Metric</span><div class="seg" id="o-metric"><button data-k="clicks" class="on">Clicks</button><button data-k="impr">Impressions</button><button data-k="pos">Average position</button></div>
+    <span class="lbl">Range</span><div class="seg" id="o-range"><button data-d="90">3 months</button><button data-d="365" class="on">12 months</button><button data-d="480">16 months</button></div>
+  </div>
+  <div class="card"><div class="cap"><b id="o-title">Clicks</b><div class="legend" id="o-legend"></div></div><svg id="o-chart" class="chart" viewBox="0 0 900 280"></svg></div>
+  <div class="controls" style="padding:14px 0 10px">
+    <span class="lbl">Tables below</span><div class="seg" id="oq-market"></div>
+    <div class="seg" id="oq-win"><button data-w="full" class="on">Full history</button><button data-w="recent">Last 28 days</button></div>
+  </div>
+  <div class="grid2">
+    <div class="card"><div class="cap"><b id="oq-title">Top queries across the group</b><span class="s" id="oq-note"></span></div>
+      <div class="wrap" style="max-height:420px;overflow-y:auto"><table id="o-queries"><thead id="oq-head"></thead><tbody></tbody></table></div></div>
+    <div class="card"><div class="cap"><b>Where the searches happen</b><span class="s" id="oc-note"></span></div>
+      <div class="wrap" style="max-height:420px;overflow-y:auto"><table id="o-countries"><thead><tr><th>Country</th><th class="n">Clicks</th><th class="n">Impressions</th><th class="n">CTR</th></tr></thead><tbody></tbody></table></div></div>
+  </div>
+  <div class="card" style="margin-top:14px"><div class="cap"><b>Per market</b><span class="s">devices, search surfaces and sitemaps</span></div>
+    <div class="wrap"><table id="o-markets"><thead><tr><th>Market</th><th>Property</th><th class="n">Clicks</th><th class="n">CTR</th><th class="n">Position</th><th>Devices</th><th>Surfaces with data</th><th class="n">Sitemaps</th><th class="n">URLs</th></tr></thead><tbody></tbody></table></div></div>
+</section>
+
+<section id="catalogue">
+  <div class="sec-h"><h2>Catalogue</h2><span class="hint" id="cat-hint"></span></div>
+  <div class="card"><div class="cap"><b>Products per market</b><span class="s">internal items are office stock, surcharges and services, counted but never ranked</span></div>
+    <div class="wrap"><table id="cat-table"><thead><tr><th>Market</th><th class="n">Products</th><th class="n">Visible</th><th class="n">Hidden</th><th class="n">Internal</th><th class="n">Variants</th><th class="n">Out of stock</th><th class="n">On sale</th><th>Top brand</th><th>Biggest category</th></tr></thead><tbody></tbody></table></div></div>
+  <div class="controls"><span class="lbl">Market</span><div class="seg" id="cat-market"></div></div>
+  <div class="grid3">
+    <div class="card"><div class="cap"><b>Price bands</b><span class="s">visible products</span></div><svg id="cat-bands" class="chart"></svg></div>
+    <div class="card"><div class="cap"><b>Brands</b><span class="s">visible products</span></div><svg id="cat-brands" class="chart"></svg></div>
+    <div class="card"><div class="cap"><b>Categories</b><span class="s">top-level</span></div><svg id="cat-cats" class="chart"></svg></div>
+  </div>
+  <div class="card" style="margin-top:14px"><div class="cap"><b>Best sellers</b><span class="s" id="cat-best-note"></span></div>
+    <div class="wrap"><table id="cat-best"><thead><tr><th>Product</th><th>SKU</th><th class="n">Price</th><th class="n">Units sold</th><th class="n">Page views</th></tr></thead><tbody></tbody></table></div></div>
+</section>
+
+<section id="sales">
+  <div class="sec-h"><h2>Sales</h2><span class="hint" id="sales-hint"></span></div>
+  <div class="tiles" id="sales-tiles"></div>
+  <div class="card" style="margin-top:14px"><div class="cap"><b>Revenue by month</b><span class="s">each market on its own scale and currency · faded bars are part months</span></div>
+    <div class="grid3" id="sales-charts"></div></div>
+  <div class="grid2" style="margin-top:14px">
+    <div class="card"><div class="cap"><b>Order status</b><span class="s">12 months · Incomplete, Cancelled and Declined are not revenue</span></div>
+      <div class="wrap"><table id="sales-status"><thead><tr><th>Status</th><th class="n" id="st-h1"></th><th class="n" id="st-h2"></th><th class="n" id="st-h3"></th></tr></thead><tbody></tbody></table></div></div>
+    <div class="card"><div class="cap"><b>How customers pay</b><span class="s">normalised; card labels merged</span></div>
+      <div class="controls" style="padding:0 0 8px"><div class="seg" id="pay-market"></div></div>
+      <div class="wrap"><table id="sales-pay"><thead><tr><th>Method</th><th class="n">Orders</th><th class="n">Revenue</th><th class="n">Share</th></tr></thead><tbody></tbody></table></div></div>
+  </div>
+  <p class="note" id="sales-note"></p>
+</section>
+
+<section id="feed">
+  <div class="sec-h"><h2>Shopping feed</h2><span class="hint" id="feed-hint"></span></div>
+
+  <div class="card"><div class="cap"><b>Merchant Center accounts</b><span class="s">offers in the feed, and a year of Shopping traffic</span></div>
+    <div class="wrap"><table id="mc-accounts"><thead><tr><th>Account</th><th>Storefronts</th><th>Fed by</th>
+      <th class="n">Offers</th><th class="n">Live</th><th class="n">Blocked</th>
+      <th class="n">Ads clicks</th><th class="n">Free clicks</th><th class="n">Impressions</th><th>Tracked value</th></tr></thead><tbody></tbody></table></div>
+    <p class="note" id="mc-note"></p></div>
+
+  <div class="card" style="margin-top:14px"><div class="cap"><b>What is blocking offers</b><span class="s">the issue Google gives, and how many offers carry it</span></div>
+    <div class="wrap"><table id="mc-issues"><thead><tr><th>Account</th><th>Issue</th><th>Attribute</th><th class="n">Offers</th><th class="n">Share of feed</th></tr></thead><tbody></tbody></table></div></div>
+
+  <div class="sec-h" style="margin-top:22px"><h3 style="font-size:15px;margin:0">superhairpieces.ca in detail</h3><span class="hint">the one feed this repo pushes, joined to its BigCommerce catalogue</span></div>
+  <div id="feed-missing" class="card" hidden><p style="margin:2px 0;color:var(--ink-2)" id="feed-why"></p></div>
+  <div id="feed-live" hidden>
+    <div class="tiles" id="htiles"></div>
+    <div class="grid2" style="margin-top:14px">
+      <div class="card"><div class="cap"><b>Disapproval reasons</b><span class="s">offers affected · faded bars are temporary · click to filter the products below</span></div><svg id="c-iss" class="chart"></svg></div>
+      <div class="card"><div class="cap"><b>Warnings that do not block</b><span class="s">offers affected</span></div><svg id="c-warn" class="chart"></svg></div>
+    </div>
+    <div class="grid2" style="margin-top:14px">
+      <div class="card"><div class="cap"><b>How Google categorised the offers</b><div class="legend"><span><i style="background:var(--s1)"></i>Acceptable</span><span><i style="background:var(--s2)"></i>Mis-filed</span></div></div><svg id="c-gcat" class="chart"></svg></div>
+      <div class="card"><div class="cap"><b>Offers by store category</b><span class="s">approved vs disapproved vs out of stock</span></div><svg id="c-root" class="chart"></svg></div>
+    </div>
+    <div class="card" style="margin-top:14px">
+      <div class="cap"><b>Product explorer</b><span class="s" id="pcount"></span></div>
+      <div class="filters">
+        <input type="search" id="q" placeholder="Search name or SKU">
+        <select id="f-root"><option value="">All store categories</option></select>
+        <select id="f-gcat"><option value="">All Google categories</option></select>
+        <select id="f-status"><option value="">Any status</option><option value="dis">Has disapproved variants</option><option value="ok">All variants approved</option></select>
+        <select id="f-stock"><option value="">Any stock</option><option value="oos">Has out-of-stock variants</option><option value="alloos">All variants out of stock</option></select>
+        <select id="f-flag"><option value="">Any flag</option><option value="internal">Internal or under $3</option><option value="noweight">Missing weight</option><option value="nogtin">Third-party brand, no GTIN</option><option value="noclicks">Top seller, zero Google clicks</option><option value="many">Over 50 variants</option></select>
+        <button class="chip" id="clear" style="display:none">Clear all</button>
+      </div>
+      <div class="chips" id="chips"></div>
+      <div class="wrap"><table id="tbl"><thead><tr>
+        <th class="sort" data-k="name">Product</th><th class="sort" data-k="root">Store category</th><th class="sort" data-k="gcat">Google category</th><th class="sort n" data-k="price">Price</th><th class="sort n" data-k="offers">Variants</th><th class="sort n" data-k="oos">Out of stock</th><th class="sort n" data-k="disapproved">Disapproved</th><th class="sort n on" data-k="sold">Sold</th><th class="sort n" data-k="views">Views</th><th class="sort n" data-k="gclicks">Google clicks</th><th class="sort n" data-k="margin">Margin</th>
+      </tr></thead><tbody></tbody></table></div>
+      <div class="pager"><span id="pinfo"></span><span><button id="prev">Previous</button> <button id="next">Next</button></span></div>
+    </div>
+  </div>
+</section>
+
+<section id="plan">
+  <div class="sec-h"><h2>Action plan</h2><span class="hint">from the Google Shopping review · ticks are saved in this browser only</span></div>
+  <div class="card" style="padding:0"><div class="wrap"><table class="plan"><thead><tr><th></th><th>#</th><th>Action</th><th>Evidence</th><th>Impact</th><th>Effort</th><th>Where</th></tr></thead><tbody id="plan-body"></tbody></table></div></div>
+  <p class="note">Actions 2, 3 and 7 can be done in the sync script alone. Actions 4, 6, 10 and 11 are BigCommerce catalogue data work.</p>
+</section>
+
+<section id="coverage">
+  <div class="sec-h"><h2>Coverage</h2><span class="hint">every market against every source this dashboard can read</span></div>
+  <div class="card"><div class="wrap"><table class="cov" id="cov-table"><thead><tr><th>Market</th><th>Organic search</th><th>Catalogue</th><th>Orders</th><th>Shopping feed</th></tr></thead><tbody></tbody></table></div>
+  <p class="note">A cell reads <span class="pill good">connected</span> only when this build actually read data from it today. Anything else names the reason and what to do about it.</p></div>
+  <div class="card" style="margin-top:14px"><div class="cap"><b>Merchant Center accounts</b></div>
+    <table id="cov-accounts"><thead><tr><th>Account</th><th>Id</th><th>Covers</th><th>Status</th></tr></thead><tbody></tbody></table></div>
+  <div class="card" style="margin-top:14px"><div class="cap"><b>What is not here</b></div><div id="cov-gaps"></div></div>
+</section>
+</main>
+<div class="tip" id="tip"></div>
+<aside class="drawer" id="drawer"><button class="x" id="dx" aria-label="Close">×</button><div id="dbody"></div></aside>
+
+<script>
+const D = __DATA__;
+const fmt = n => (n==null?"–":Math.round(n).toLocaleString("en-CA"));
+const money = (n,c) => n==null?"–":`${c} ${Math.round(n).toLocaleString("en-CA")}`;
+const pct = (a,b,d=2) => b ? (a/b*100).toFixed(d)+"%" : "–";
+const frac = v => v==null?"–":(v*100).toFixed(2)+"%";
+const pos = v => v==null?"–":v.toFixed(1);
+const $ = s => document.querySelector(s);
+const NS="http://www.w3.org/2000/svg";
+const el=(t,a,p)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e};
+const tip=$("#tip"); const showTip=(e,h)=>{tip.innerHTML=h;tip.style.left=e.clientX+"px";tip.style.top=(e.clientY-8)+"px";tip.style.opacity=1}; const hideTip=()=>tip.style.opacity=0;
+const niceMax=v=>{if(v<=0)return 1;const p=Math.pow(10,Math.floor(Math.log10(v)));const m=v/p;return (m<=1?1:m<=2?2:m<=2.5?2.5:m<=5?5:10)*p};
+const steps=max=>max<=4?Math.max(1,Math.round(max)):4;
+const mon=s=>["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][+s.slice(5,7)-1];
+const addDays=(s,n)=>{const d=new Date(s+"T00:00:00Z");d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10)};
+const weekOf=s=>{const d=new Date(s+"T00:00:00Z");const w=(d.getUTCDay()+6)%7;d.setUTCDate(d.getUTCDate()-w);return d.toISOString().slice(0,10)};
+
+const STORES=D.stores, SEARCH=D.search||{properties:[]};
+const LABEL={ca:"CA",com:"US",nl:"NL",fr:"FR",es:"ES",de:"DE"};
+const NAME={ca:"Canada",com:"United States",nl:"Netherlands",fr:"France",es:"Spain",de:"Germany"};
+// Inline SVG, not emoji: Windows renders regional-indicator pairs as the bare
+// letters "CA", "US", so an emoji flag would show nothing on half the machines
+// that open this page. Drawn at 3:2 and scaled by CSS.
+const FLAG={
+  ca:'<rect width="3" height="2" fill="#fff"/><rect width=".75" height="2" fill="#D52B1E"/><rect x="2.25" width=".75" height="2" fill="#D52B1E"/>'
+    +'<path fill="#D52B1E" transform="translate(1.14 .26) scale(.0072)" d="M100 0l12 26q2 4 6 2l14-8-4 28q0 4 4 4l20-2-8 18q-2 4 2 6l26 12-26 20q-4 2-2 6l4 10-28-2q-4 0-4 4l2 26-16-14q-4-2-4 2l2 36h-8l2-36q0-4-4-2l-16 14 2-26q0-4-4-4l-28 2 4-10q2-4-2-6L-28 96l26-12q4-2 2-6l-8-18 20 2q4 0 4-4l-4-28 14 8q4 2 6-2z"/>',
+  com:'<rect width="3" height="2" fill="#fff"/>'
+    +[0,1,2,3,4,5,6].map(i=>`<rect y="${(i*2/6.5).toFixed(4)}" width="3" height="${(2/13).toFixed(4)}" fill="#B22234"/>`).join("")
+    +'<rect width="1.2" height="1.0769" fill="#3C3B6E"/>',
+  nl:'<rect width="3" height="2" fill="#21468B"/><rect width="3" height="1.3333" fill="#fff"/><rect width="3" height=".6667" fill="#AE1C28"/>',
+  fr:'<rect width="3" height="2" fill="#ED2939"/><rect width="2" height="2" fill="#fff"/><rect width="1" height="2" fill="#002395"/>',
+  es:'<rect width="3" height="2" fill="#AA151B"/><rect y=".5" width="3" height="1" fill="#F1BF00"/>',
+  de:'<rect width="3" height="2" fill="#FFCE00"/><rect width="3" height="1.3333" fill="#DD0000"/><rect width="3" height=".6667" fill="#000"/>',
+};
+const svgFlag=k=>FLAG[k]?`<svg class="fl" viewBox="0 0 3 2" role="img" aria-label="${NAME[k]||k}"><title>${NAME[k]||k}</title>${FLAG[k]}</svg>`:"";
+// A badge beside a domain or a market name: the flag carries it, no letters.
+const flag=k=>`<span class="flag ico" title="${NAME[k]||k}">${svgFlag(k)}</span>`;
+// A picker button: the flag plus its code, because six tricolours with no text
+// is a guessing game - NL, ES and DE are all horizontal bands at this size.
+const flagBtn=k=>`${svgFlag(k)}<span>${LABEL[k]}</span>`;
+const COLOR=k=>`var(--m-${k})`;
+const prop=k=>(SEARCH.properties||[]).find(p=>p.key===k)||{};
+const store=k=>STORES.find(s=>s.key===k)||{};
+const live=STORES.filter(s=>s.catalogue||s.sales||prop(s.key).available);
+
+$("#stamp").textContent=`${STORES.length} storefronts · data ${D.generated}`;
+
+// ---------------------------------------------------------------- Group
+(function group(){
+  const scOK=STORES.filter(s=>prop(s.key).available);
+  const clicks=scOK.reduce((n,s)=>n+prop(s.key).totals.clicks,0);
+  const impr=scOK.reduce((n,s)=>n+prop(s.key).totals.impr,0);
+  const products=STORES.reduce((n,s)=>n+((s.catalogue&&s.catalogue.products)||0),0);
+  const withSales=STORES.filter(s=>s.sales);
+  const orders=withSales.reduce((n,s)=>n+s.sales.orders_counted,0);
+  const byCur={}; withSales.forEach(s=>{byCur[s.sales.currency]=(byCur[s.sales.currency]||0)+s.sales.revenue});
+  $("#group-hint").textContent=`organic from Search Console · catalogue and orders from BigCommerce · ${D.sales_since} onwards for sales`;
+  $("#group-tiles").innerHTML=[
+    ["Organic clicks","16 months, "+scOK.length+" properties",fmt(clicks)],
+    ["Organic impressions","16 months",fmt(impr)],
+    ["Products listed",STORES.length+" storefronts",fmt(products)],
+    ["Orders counted","12 months, "+withSales.length+" stores",fmt(orders)],
+    ...Object.entries(byCur).map(([c,v])=>["Revenue "+c,"12 months, "+withSales.filter(s=>s.sales.currency===c).map(s=>LABEL[s.key]).join(" "),money(v,c)]),
+  ].map(([l,d,v])=>`<div class="tile"><div class="l">${l}</div><div><div class="v">${v}</div><div class="d">${d}</div></div></div>`).join("");
+
+  const mcOK=new Set(D.coverage.filter(c=>c.merchant_center.ok).map(c=>c.market));
+  $("#market-table tbody").innerHTML=STORES.map(s=>{
+    const p=prop(s.key), c=s.catalogue, sa=s.sales;
+    const feed=mcOK.has(s.key)?'<span class="pill good">connected</span>':'<span class="pill neutral">not connected</span>';
+    return `<tr><td>${flag(s.key)} ${s.domain}</td>
+      <td class="n">${p.available?fmt(p.totals.clicks):"–"}</td><td class="n">${p.available?fmt(p.totals.impr):"–"}</td><td class="n">${p.available?pos(p.totals.pos):"–"}</td>
+      <td class="n">${c?fmt(c.products):"–"}</td>
+      <td class="n">${sa?fmt(sa.orders_counted):'<span class="mut">no access</span>'}</td>
+      <td class="n">${sa?money(sa.revenue,sa.currency):"–"}${sa&&sa.refunded?`<div class="d mut" style="font-family:var(--mono);font-size:10.5px">less ${money(sa.refunded,sa.currency)} refunded</div>`:""}</td>
+      <td class="n">${sa&&sa.aov?money(sa.aov,sa.currency):"–"}</td><td>${feed}</td></tr>`;}).join("");
+  const noOrders=STORES.filter(s=>!s.sales).map(s=>LABEL[s.key]);
+  $("#market-note").innerHTML=`Organic figures cover the API's full 16-month retention; orders and revenue cover the 12 months from ${D.sales_since}.`
+    +(noOrders.length?` ${noOrders.join(", ")} show no orders because those API tokens carry catalogue scope only — see Coverage.`:"");
+
+  hbars($("#g-clicks"),scOK.map(s=>({k:LABEL[s.key],v:prop(s.key).totals.clicks,c:COLOR(s.key)})),{unit:"clicks"});
+  hbars($("#g-impr"),scOK.map(s=>({k:LABEL[s.key],v:prop(s.key).totals.impr,c:COLOR(s.key)})),{unit:"impressions"});
+  hbars($("#g-products"),STORES.filter(s=>s.catalogue).map(s=>({k:LABEL[s.key],v:s.catalogue.products,c:COLOR(s.key)})),{unit:"products"});
+  $("#g-revenue").innerHTML=Object.entries(byCur).map(([c,v])=>{
+    const rows=withSales.filter(s=>s.sales.currency===c);
+    return `<div style="margin:6px 0 14px"><div class="lbl">${c}</div><div style="font-size:21px;font-weight:600;letter-spacing:-.02em">${money(v,c)}</div>
+      <table style="margin-top:6px"><tbody>${rows.map(s=>`<tr><td>${flag(s.key)} ${s.domain}</td><td class="n">${money(s.sales.revenue,c)}</td><td class="n">${fmt(s.sales.orders_counted)} orders</td></tr>`).join("")}</tbody></table></div>`;
+  }).join("")+`<p class="note">Three stores are missing from this because their tokens cannot read orders, so no EUR figure here is a group total.</p>`;
+})();
+
+function hbars(svg,items,{unit="",H_=null}={}){
+  svg.innerHTML=""; const W=600,rowH=26,padL=58,padT=6,H=padT+items.length*rowH+8; svg.setAttribute("viewBox",`0 0 ${W} ${H}`);
+  const max=niceMax(Math.max(1,...items.map(i=>i.v))), xw=W-padL-78;
+  items.forEach((it,i)=>{const y=padT+i*rowH, w=xw*it.v/max;
+    el("text",{x:padL-10,y:y+rowH/2+4,"text-anchor":"end",class:"lb"},svg).textContent=it.k;
+    const r=el("rect",{x:padL,y:y+5,width:Math.max(w,2),height:rowH-10,rx:3,fill:it.c||"var(--s1)"},svg);
+    el("text",{x:padL+w+7,y:y+rowH/2+4,class:"lb"},svg).textContent=fmt(it.v);
+    r.addEventListener("mousemove",e=>showTip(e,`<b>${it.k}</b><br>${fmt(it.v)} ${unit}`)); r.addEventListener("mouseleave",hideTip);});
+}
+
+// ---------------------------------------------------------------- Organic search
+let oState={metric:"clicks",days:365,off:new Set()};
+let oq={market:"all",win:"full"};
+(function organic(){
+  const ok=STORES.filter(s=>prop(s.key).available);
+  $("#organic-hint").textContent=ok.length?`${ok.length} properties · ${SEARCH.auth||""}`:"no property is connected";
+  $("#o-legend").innerHTML=ok.map(s=>`<button data-k="${s.key}"><i style="background:${COLOR(s.key)}"></i>${flagBtn(s.key)}</button>`).join("");
+  $("#o-legend").addEventListener("click",e=>{const b=e.target.closest("button"); if(!b)return;
+    const k=b.dataset.k; oState.off.has(k)?oState.off.delete(k):oState.off.add(k); b.classList.toggle("off",oState.off.has(k)); drawOrganic();});
+  seg("#o-metric",b=>{oState.metric=b.dataset.k; drawOrganic();});
+  seg("#o-range",b=>{oState.days=+b.dataset.d; drawOrganic();});
+
+  // One control drives both tables: the whole group, or one market on its own.
+  $("#oq-market").innerHTML='<button data-m="all" class="on">All markets</button>'
+    + ok.map(x=>`<button data-m="${x.key}">${flagBtn(x.key)}</button>`).join("");
+  seg("#oq-market",b=>{oq.market=b.dataset.m; drawQueryTables();});
+  seg("#oq-win",b=>{oq.win=b.dataset.w; drawQueryTables();});
+  drawQueryTables();
+
+  $("#o-markets tbody").innerHTML=STORES.map(s=>{const p=prop(s.key);
+    if(!p.available) return `<tr><td>${flag(s.key)} ${s.domain}</td><td colspan="8" class="mut">${p.reason||"not connected"}</td></tr>`;
+    const dev=(p.dimensions.full.device||[]).map(d=>`${d.k.slice(0,3)} ${pct(d.clicks,p.totals.clicks,0)}`).join(" · ");
+    const surf=Object.entries(p.types||{}).filter(([,v])=>v.impr).map(([k])=>k).join(", ")||"–";
+    const urls=(p.sitemaps||[]).reduce((n,m)=>n+(m.contents||[]).reduce((x,c)=>x+c.submitted,0),0);
+    return `<tr><td>${flag(s.key)} ${s.domain}</td><td><code>${p.site_url}</code></td>
+      <td class="n">${fmt(p.totals.clicks)}</td><td class="n">${frac(p.totals.ctr)}</td><td class="n">${pos(p.totals.pos)}</td>
+      <td>${dev||"–"}</td><td>${surf}</td><td class="n">${(p.sitemaps||[]).length}</td><td class="n">${urls?fmt(urls):"–"}</td></tr>`;}).join("");
+  drawOrganic();
+})();
+
+function drawQueryTables(){
+  const ok=STORES.filter(x=>prop(x.key).available);
+  const picked=oq.market==="all"?ok:ok.filter(x=>x.key===oq.market);
+  const label=oq.win==="recent"?"last 28 days":"full 16 months";
+  const window_=picked.length?(prop(picked[0].key).windows||{})[oq.win]:null;
+  const span=window_?`${window_[0]} to ${window_[1]}`:label;
+
+  if(oq.market==="all"){
+    $("#oq-title").textContent="Top queries across the group";
+    $("#oq-note").textContent=`${span} · a query counts once per market it appears in`;
+    $("#oq-head").innerHTML='<tr><th>Query</th><th>Markets</th><th class="n">Clicks</th><th class="n">Impressions</th><th class="n">Position</th></tr>';
+    const agg={};
+    picked.forEach(x=>{((prop(x.key).dimensions[oq.win]||{}).query||[]).forEach(r=>{
+      const a=agg[r.k]||(agg[r.k]={k:r.k,clicks:0,impr:0,posSum:0,markets:new Set()});
+      a.clicks+=r.clicks; a.impr+=r.impr; a.posSum+=(r.pos||0)*r.impr; a.markets.add(x.key);});});
+    const rows=Object.values(agg).sort((a,b)=>b.clicks-a.clicks).slice(0,150);
+    $("#o-queries tbody").innerHTML=rows.map(r=>`<tr><td>${r.k}</td><td><span class="flags">${[...r.markets].map(k=>`${flag(k)}`).join("")}</span></td><td class="n">${fmt(r.clicks)}</td><td class="n">${fmt(r.impr)}</td><td class="n">${pos(r.impr?r.posSum/r.impr:null)}</td></tr>`).join("")
+      ||'<tr><td colspan="5" class="mut">No query data.</td></tr>';
+  } else {
+    const x=picked[0], p=prop(x.key);
+    $("#oq-title").innerHTML=`Top queries · <span style="color:${COLOR(x.key)}">${x.domain}</span>`;
+    $("#oq-note").textContent=`${span} · top ${fmt(((p.dimensions[oq.win]||{}).query||[]).length)} by clicks · Google withholds rare queries entirely`;
+    $("#oq-head").innerHTML='<tr><th>Query</th><th class="n">Clicks</th><th class="n">Impressions</th><th class="n">CTR</th><th class="n">Position</th></tr>';
+    const rows=((p.dimensions[oq.win]||{}).query||[]);
+    $("#o-queries tbody").innerHTML=rows.map(r=>`<tr><td>${r.k}</td><td class="n">${fmt(r.clicks)}</td><td class="n">${fmt(r.impr)}</td><td class="n">${frac(r.ctr)}</td><td class="n">${pos(r.pos)}</td></tr>`).join("")
+      ||'<tr><td colspan="5" class="mut">No query data for this market.</td></tr>';
+  }
+
+  const CTRY={can:"Canada",usa:"United States",nld:"Netherlands",fra:"France",esp:"Spain",deu:"Germany",gbr:"United Kingdom",aus:"Australia",ind:"India",irl:"Ireland",nzl:"New Zealand",zaf:"South Africa",phl:"Philippines",mex:"Mexico",bra:"Brazil",ita:"Italy",bel:"Belgium",che:"Switzerland",aut:"Austria",swe:"Sweden",nor:"Norway",dnk:"Denmark",pol:"Poland",prt:"Portugal",tur:"Turkey",are:"United Arab Emirates",jpn:"Japan",kor:"South Korea",sgp:"Singapore",mys:"Malaysia"};
+  const cagg={};
+  picked.forEach(x=>{((prop(x.key).dimensions[oq.win]||{}).country||[]).forEach(r=>{
+    const a=cagg[r.k]||(cagg[r.k]={k:r.k,clicks:0,impr:0}); a.clicks+=r.clicks; a.impr+=r.impr;});});
+  $("#oc-note").textContent=oq.market==="all"?`all markets combined · ${span}`:`${picked[0].domain} · ${span}`;
+  $("#o-countries tbody").innerHTML=Object.values(cagg).sort((a,b)=>b.clicks-a.clicks).slice(0,40)
+    .map(r=>`<tr><td>${CTRY[r.k]||r.k.toUpperCase()} <span class="mut">${r.k}</span></td><td class="n">${fmt(r.clicks)}</td><td class="n">${fmt(r.impr)}</td><td class="n">${pct(r.clicks,r.impr)}</td></tr>`).join("")
+    ||'<tr><td colspan="4" class="mut">No country data.</td></tr>';
+}
+
+function drawOrganic(){
+  const svg=$("#o-chart"); svg.innerHTML="";
+  const ok=STORES.filter(s=>prop(s.key).available&&!oState.off.has(s.key));
+  const W=900,H=280,padL=58,padR=14,padT=14,padB=30;
+  const ends=ok.map(s=>{const d=prop(s.key).daily; return d.length?d[d.length-1].d:null}).filter(Boolean);
+  if(!ok.length||!ends.length){ el("text",{x:W/2,y:H/2,"text-anchor":"middle",class:"lb"},svg).textContent="Nothing selected"; return; }
+  const end=ends.sort().pop(), start=addDays(end,-oState.days+1);
+  const weekly=oState.days>120;
+  const series=ok.map(s=>{
+    let rows=prop(s.key).daily.filter(r=>r.d>=start);
+    if(weekly){ const m=new Map(); rows.forEach(r=>{const k=weekOf(r.d); if(!m.has(k))m.set(k,{k,clicks:0,impr:0,_p:0,days:0}); const g=m.get(k); g.clicks+=r.clicks; g.impr+=r.impr; g._p+=(r.pos||0)*r.impr; g.days++;});
+      rows=[...m.values()].map(g=>({k:g.k,clicks:g.clicks,impr:g.impr,pos:g.impr?g._p/g.impr:null,days:g.days}));
+      if(rows.length&&rows[rows.length-1].days<7) rows.pop();   // the week in progress is not a drop
+      if(rows.length&&rows[0].days<7) rows.shift(); }
+    else rows=rows.map(r=>({k:r.d,...r}));
+    return {key:s.key,rows};});
+  const keys=[...new Set(series.flatMap(s=>s.rows.map(r=>r.k)))].sort();
+  const metric=oState.metric;
+  $("#o-title").textContent={clicks:"Clicks",impr:"Impressions",pos:"Average position"}[metric]+(weekly?", weekly":", daily");
+  const vals=series.flatMap(s=>s.rows.map(r=>r[metric]).filter(v=>v!=null&&(metric!=="pos"||v>0)));
+  if(!vals.length){ el("text",{x:W/2,y:H/2,"text-anchor":"middle",class:"lb"},svg).textContent="No data in this range"; return; }
+  const invert=metric==="pos";
+  const max=invert?Math.max(10,Math.ceil(Math.max(...vals)/5)*5):niceMax(Math.max(...vals));
+  const n=keys.length, xs=i=>n>1?padL+(W-padL-padR)*i/(n-1):W/2;
+  const ys=v=>invert?padT+(H-padT-padB)*((v-1)/(max-1)):padT+(H-padT-padB)*(1-v/max);
+  const st=invert?4:steps(max);
+  for(let i=0;i<=st;i++){ const v=invert?1+(max-1)*i/st:max*i/st, y=ys(v);
+    el("line",{x1:padL,x2:W-padR,y1:y,y2:y,class:i&&!invert?"grid":(invert&&i?"grid":"axis")},svg);
+    el("text",{x:padL-8,y:y+4,"text-anchor":"end"},svg).textContent=invert?v.toFixed(0):fmt(v); }
+  const idx=new Map(keys.map((k,i)=>[k,i]));
+  series.forEach(s=>{ let d="",open=false;
+    s.rows.forEach(r=>{ const v=r[metric]; const i=idx.get(r.k);
+      if(v==null||(invert&&!v)){ open=false; return; }
+      d+=(open?"L":"M")+xs(i)+","+ys(v); open=true; });
+    if(d) el("path",{d,fill:"none",stroke:COLOR(s.key),"stroke-width":1.8,"stroke-linejoin":"round"},svg); });
+  let last="",lastX=-99; keys.forEach((k,i)=>{ const m=k.slice(0,7); if(m!==last&&xs(i)-lastX>=28){ el("text",{x:xs(i),y:H-padB+16,"text-anchor":"middle"},svg).textContent=mon(k)+(k.slice(5,7)==="01"?" "+k.slice(2,4):""); lastX=xs(i); } last=m;});
+  const hit=el("rect",{x:padL,y:padT,width:W-padL-padR,height:H-padT-padB,fill:"transparent"},svg);
+  const cross=el("line",{y1:padT,y2:H-padB,stroke:"var(--ink)",opacity:0},svg);
+  hit.addEventListener("mousemove",e=>{ const r=svg.getBoundingClientRect(); const px=(e.clientX-r.left)*(W/r.width);
+    let i=n>1?Math.round((px-padL)/((W-padL-padR)/(n-1))):0; i=Math.max(0,Math.min(n-1,i)); const k=keys[i];
+    cross.setAttribute("x1",xs(i)); cross.setAttribute("x2",xs(i)); cross.setAttribute("opacity",1);
+    showTip(e,`<b>${weekly?"Week of ":""}${k}</b><br>`+series.map(s=>{const row=s.rows.find(r=>r.k===k); return row?`${LABEL[s.key]}: ${metric==="pos"?pos(row.pos):fmt(row[metric])}`:null;}).filter(Boolean).join("<br>"));});
+  hit.addEventListener("mouseleave",()=>{cross.setAttribute("opacity",0);hideTip();});
+}
+
+// ---------------------------------------------------------------- Catalogue
+let catKey=null;
+(function catalogue(){
+  const withCat=STORES.filter(s=>s.catalogue);
+  $("#cat-hint").textContent=`${withCat.length} of ${STORES.length} storefronts readable · from the BigCommerce catalogue API`;
+  $("#cat-table tbody").innerHTML=STORES.map(s=>{const c=s.catalogue;
+    if(!c) return `<tr><td>${flag(s.key)} ${s.domain}</td><td colspan="9" class="mut">${s.catalogue_error||s.error||"unavailable"}</td></tr>`;
+    return `<tr><td>${flag(s.key)} ${s.domain}</td>
+      <td class="n">${fmt(c.products)}</td><td class="n">${fmt(c.visible)}</td><td class="n">${c.hidden?fmt(c.hidden):"–"}</td>
+      <td class="n">${c.internal?`<span class="pill neutral">${fmt(c.internal)}</span>`:"–"}</td>
+      <td class="n">${c.variants==null?"–":fmt(c.variants)}</td><td class="n">${c.out_of_stock?`<span class="pill warn">${fmt(c.out_of_stock)}</span>`:"–"}</td>
+      <td class="n">${c.on_sale?fmt(c.on_sale):"–"}</td><td>${(c.brands[0]||{}).name||"–"}</td><td>${(c.categories[0]||{}).name||"–"}</td></tr>`;}).join("");
+  if(!withCat.length) return;
+  catKey=withCat[0].key;
+  $("#cat-market").innerHTML=withCat.map(s=>`<button data-k="${s.key}"${s.key===catKey?' class="on"':""}>${flagBtn(s.key)}</button>`).join("");
+  seg("#cat-market",b=>{catKey=b.dataset.k; drawCatalogue();});
+  drawCatalogue();
+})();
+function drawCatalogue(){
+  const s=store(catKey), c=s.catalogue; if(!c) return;
+  hbars($("#cat-bands"),c.price_bands.map(b=>({k:b.band,v:b.products,c:COLOR(catKey)})),{unit:"products"});
+  hbars($("#cat-brands"),c.brands.slice(0,8).map(b=>({k:b.name.length>18?b.name.slice(0,17)+"…":b.name,v:b.products,c:COLOR(catKey)})),{unit:"products"});
+  hbars($("#cat-cats"),c.categories.slice(0,8).map(b=>({k:b.name.length>18?b.name.slice(0,17)+"…":b.name,v:b.products,c:COLOR(catKey)})),{unit:"products"});
+  $("#cat-best-note").textContent=`${s.domain} · lifetime units sold · internal items excluded`;
+  $("#cat-best tbody").innerHTML=c.best_sellers.map(p=>`<tr><td>${p.name}</td><td><code>${p.sku||"–"}</code></td><td class="n">${money(p.price,s.currency)}</td><td class="n">${fmt(p.sold)}</td><td class="n">${fmt(p.views)}</td></tr>`).join("");
+}
+
+// ---------------------------------------------------------------- Sales
+let payKey=null;
+(function sales(){
+  const withSales=STORES.filter(s=>s.sales);
+  const missing=STORES.filter(s=>!s.sales);
+  $("#sales-hint").textContent=withSales.length?`${withSales.length} of ${STORES.length} storefronts · orders since ${D.sales_since}`:"no store's token can read orders";
+  if(!withSales.length){ $("#sales-note").textContent="Every token is catalogue-scoped; see Coverage."; return; }
+
+  $("#sales-tiles").innerHTML=withSales.flatMap(s=>{const a=s.sales;
+    const r=a.refunded?` · ${money(a.refunded,a.currency)} refunded`:"";
+    return [[`${LABEL[s.key]} revenue`,`${fmt(a.orders_counted)} orders · AOV ${money(a.aov,a.currency)}${r}`,money(a.revenue,a.currency)]];})
+    .map(([l,d,v])=>`<div class="tile"><div class="l">${l}</div><div><div class="v">${v}</div><div class="d">${d}</div></div></div>`).join("");
+
+  $("#sales-charts").innerHTML=withSales.map(s=>`<div><div class="lbl" style="margin-bottom:4px"><span style="color:${COLOR(s.key)}">${LABEL[s.key]}</span> · ${s.sales.currency}</div><svg id="sc-${s.key}" class="chart" viewBox="0 0 400 180"></svg></div>`).join("");
+  withSales.forEach(s=>monthBars($(`#sc-${s.key}`),s));
+
+  const heads=withSales.slice(0,3);
+  heads.forEach((s,i)=>{const h=$(`#st-h${i+1}`); if(h) h.textContent=LABEL[s.key];});
+  const ids=[...new Set(withSales.flatMap(s=>s.sales.statuses.map(x=>x.id)))].sort((a,b)=>a-b);
+  const names={}; withSales.forEach(s=>s.sales.statuses.forEach(x=>names[x.id]=x.name));
+  const NONREV=new Set([0,5,6]);
+  $("#sales-status tbody").innerHTML=ids.map(id=>`<tr><td>${names[id]} ${NONREV.has(id)?'<span class="pill neutral">not revenue</span>':""}</td>`
+    +heads.map(s=>{const row=s.sales.statuses.find(x=>x.id===id); return `<td class="n">${row?fmt(row.orders):"–"}</td>`;}).join("")+"</tr>").join("");
+
+  payKey=withSales[0].key;
+  $("#pay-market").innerHTML=withSales.map(s=>`<button data-k="${s.key}"${s.key===payKey?' class="on"':""}>${flagBtn(s.key)}</button>`).join("");
+  seg("#pay-market",b=>{payKey=b.dataset.k; drawPay();});
+  drawPay();
+  $("#sales-note").innerHTML=`Revenue is <code>total_inc_tax</code> less <code>refunded_amount</code>, on orders that are not Incomplete, Cancelled or Declined — a refunded order keeps its original total in the API, so counting it whole would overstate the month. Payment methods are normalised: the three card labels BigCommerce records are merged, and free-text entries (service-request and contract numbers) are grouped as one row rather than invented into categories.`
+    +(missing.length?` ${missing.map(s=>LABEL[s.key]).join(", ")} are absent: their API tokens have no order scope.`:"");
+})();
+function monthBars(svg,s){
+  svg.innerHTML=""; const rows=s.sales.monthly.filter(m=>m.m!=="unknown"); const W=400,H=180,padL=48,padR=8,padT=10,padB=26;
+  if(!rows.length){ el("text",{x:W/2,y:H/2,"text-anchor":"middle",class:"lb"},svg).textContent="No orders"; return; }
+  const max=niceMax(Math.max(...rows.map(r=>r.revenue))), bw=(W-padL-padR)/rows.length;
+  for(let i=0;i<=3;i++){ const v=max*i/3, y=padT+(H-padT-padB)*(1-v/max);
+    el("line",{x1:padL,x2:W-padR,y1:y,y2:y,class:i?"grid":"axis"},svg);
+    el("text",{x:padL-6,y:y+4,"text-anchor":"end"},svg).textContent=v>=1000?Math.round(v/1000)+"k":fmt(v); }
+  const partial=new Set([rows[0].m,rows[rows.length-1].m]);   // the window cuts both ends mid-month
+  rows.forEach((r,i)=>{ const h=(H-padT-padB)*r.revenue/max, x=padL+i*bw+1; const part=partial.has(r.m);
+    const rect=el("rect",{x,y:H-padB-h,width:Math.max(bw-2,1),height:Math.max(h,1),rx:2,fill:COLOR(s.key),"fill-opacity":part?0.45:1},svg);
+    rect.addEventListener("mousemove",e=>showTip(e,`<b>${r.m}</b>${part?" <i>part month</i>":""}<br>${money(r.revenue,s.sales.currency)}<br>${fmt(r.orders)} orders`));
+    rect.addEventListener("mouseleave",hideTip);
+    if(i===0||r.m.slice(5)==="01"||i===rows.length-1) el("text",{x:x+bw/2,y:H-padB+15,"text-anchor":"middle"},svg).textContent=mon(r.m+"-01"); });
+}
+function drawPay(){
+  const s=store(payKey); if(!s||!s.sales) return;
+  const total=s.sales.payments.reduce((n,p)=>n+p.revenue,0);
+  $("#sales-pay tbody").innerHTML=s.sales.payments.map(p=>`<tr><td>${p.method}</td><td class="n">${fmt(p.orders)}</td><td class="n">${money(p.revenue,s.sales.currency)}</td><td class="n">${pct(p.revenue,total,1)}</td></tr>`).join("");
+}
+
+// ---------------------------------------------------------------- Coverage
+(function coverage(){
+  const cell=c=>c.ok?`<span class="pill good">connected</span><span class="fix">${c.detail}</span>`
+    :`<span class="pill crit">missing</span><span class="fix">${c.detail}${c.fix?" — "+c.fix:""}</span>`;
+  $("#cov-table tbody").innerHTML=D.coverage.map(r=>`<tr><td>${flag(r.market)} ${r.domain}</td>
+    <td>${cell(r.search_console)}</td><td>${cell(r.catalogue)}</td><td>${cell(r.orders)}</td><td>${cell(r.merchant_center)}</td></tr>`).join("");
+  $("#cov-accounts tbody").innerHTML=(D.merchant_accounts||[]).map(a=>{
+    const off=(a.catalogue||{}).offers;
+    // Readable and useful are different things: an account we can open but whose
+    // offers serve none of our storefronts is connected, not covering.
+    const serves=(a.markets||[]).filter(k=>(D.merchant_markets||{})[k]);
+    return `<tr><td>${a.name}</td><td><code>${a.id}</code></td>
+    <td><span class="flags">${serves.map(k=>`${flag(k)}`).join("")||'<span class="mut">—</span>'}</span></td>
+    <td>${a.connected?`<span class="pill good">readable</span><span class="fix">${off?fmt(off)+" offers":"no offers"}</span>`
+      :`<span class="pill crit">not granted</span><span class="fix">${a.reason||"the service account is not a user on this account"}</span>`}</td></tr>`;}).join("");
+  const gaps=[];
+  const noOrders=D.coverage.filter(c=>!c.orders.ok);
+  if(noOrders.length) gaps.push(`<b>Orders for ${noOrders.map(c=>LABEL[c.market]).join(", ")}</b> — those API tokens carry catalogue scope only, so there is no revenue, no order count and no payment mix for those markets. BigCommerce → Settings → API accounts → edit the token → Orders: read-only.`);
+  const noMC=D.coverage.filter(c=>!c.merchant_center.ok);
+  if(noMC.length) gaps.push(`<b>No Shopping feed for ${noMC.map(c=>LABEL[c.market]).join(", ")}</b> — all three Merchant Center accounts are readable now, and these storefronts still have no offers in any of them. Account 289630622 nominally covers the EU, but every offer in it carries feed label US. This is a missing feed, not a missing permission: those catalogues are not in Google Shopping at all.`);
+  const auto=D.coverage.filter(c=>c.merchant_center.ok&&c.merchant_center.fix);
+  if(auto.length) gaps.push(`<b>Autofeed rather than a pushed catalogue for ${auto.map(c=>LABEL[c.market]).join(", ")}</b> — Google crawls the storefront and keeps what it can parse, instead of being given the catalogue. It is why .com carries ${fmt(((D.merchant_markets||{}).com||{}).offers||0)} offers against .ca's ${fmt(((D.merchant_markets||{}).ca||{}).offers||0)}, on a larger catalogue.`);
+  gaps.push(`<b>Google Business Profile and Trustpilot</b> — the salon listings and review pipelines run on their own credentials and are not pulled into this page yet.`);
+  gaps.push(`<b>Bing</b> — <code>bing-indexing/</code> submits sitemaps and URLs; Bing Webmaster performance data is a separate API that is not connected.`);
+  gaps.push(`<b>Advertising spend</b> — Google Ads cost sits outside the Merchant API, so every figure here is organic or total revenue, never return on ad spend.`);
+  $("#cov-gaps").innerHTML=gaps.map(g=>`<p class="sdef" style="font-size:12.5px;margin:0 0 8px">${g}</p>`).join("");
+})();
+
+// ---------------------------------------------------------------- Shopping: every account
+// Three Merchant Center accounts, all readable. Clicks and impressions add up
+// across them; tracked value does not, so it stays per currency throughout.
+(function shopping(){
+  const A=(D.merchant_accounts||[]).filter(a=>a.connected);
+  const MK=D.merchant_markets||{};
+  const BLOCKED=new Set(["NOT_ELIGIBLE_OR_DISAPPROVED","ELIGIBLE_LIMITED"]);
+  const statusCount=(a,pred)=>((a.catalogue||{}).by_status||[]).filter(r=>pred(r.status)).reduce((n,r)=>n+r.offers,0);
+  const methodClicks=(a,m)=>(((a.performance||{}).by_method)||[]).filter(r=>r.method===m).reduce((n,r)=>n+r.clicks,0);
+
+  $("#mc-accounts tbody").innerHTML=A.map(a=>{
+    const cat=a.catalogue||{}, perf=a.performance||{};
+    const live=statusCount(a,st=>st==="ELIGIBLE"), blocked=statusCount(a,st=>BLOCKED.has(st));
+    const serves=(a.markets||[]).filter(k=>MK[k]);
+    const src=(a.sources||[]).find(x=>x.primary);
+    // Never one money number: each currency is its own figure.
+    const val=(perf.value||[]).map(v=>`${v.currency} ${fmt(Math.round(v.amount))}`).join(" · ")||'<span class="mut">none tracked</span>';
+    return `<tr><td>${a.name}<br><code>${a.id}</code></td>
+      <td><span class="flags">${serves.map(k=>`${flag(k)}`).join("")||'<span class="mut">a separate brand</span>'}</span></td>
+      <td>${src?`${src.how}`:'<span class="mut">—</span>'}</td>
+      <td class="n">${fmt(cat.offers||0)}</td>
+      <td class="n">${cat.offers?pct(live,cat.offers,1):"–"}</td>
+      <td class="n">${blocked?fmt(blocked):"–"}</td>
+      <td class="n">${fmt(methodClicks(a,"ADS"))}</td>
+      <td class="n">${fmt(methodClicks(a,"ORGANIC"))}</td>
+      <td class="n">${fmt(perf.impressions||0)}</td>
+      <td>${val}</td></tr>`;}).join("")||'<tr><td colspan="10" class="mut">No Merchant Center account could be read.</td></tr>';
+
+  const clicks=A.reduce((n,a)=>n+((a.performance||{}).clicks||0),0);
+  const win=(A.find(a=>a.performance)||{}).performance;
+  $("#mc-note").innerHTML=`${fmt(clicks)} Shopping clicks across ${A.length} account${A.length===1?"":"s"}`
+    +(win&&win.window?` over ${win.window[0]} to ${win.window[1]}`:"")
+    +`. Clicks and impressions add across accounts; tracked value does not, so each currency is listed on its own.`
+    +` <b>Blocked</b> counts offers Google marks disapproved or limited — they are in the feed but not fully serving.`;
+
+  const rows=[];
+  A.forEach(a=>{const total=(a.catalogue||{}).offers||0;
+    ((a.catalogue||{}).issues||[]).filter(i=>i.severity==="DISAPPROVED").slice(0,6)
+      .forEach(i=>rows.push({a,i,total}));});
+  rows.sort((x,y)=>y.i.offers-x.i.offers);
+  $("#mc-issues tbody").innerHTML=rows.map(({a,i,total})=>`<tr>
+    <td><span class="mut">${a.name}</span></td><td><code>${i.code}</code></td>
+    <td>${i.attribute?`<code>${i.attribute}</code>`:'<span class="mut">—</span>'}</td>
+    <td class="n">${fmt(i.offers)}</td><td class="n">${total?pct(i.offers,total,1):"–"}</td></tr>`).join("")
+    ||'<tr><td colspan="5" class="mut">Nothing is blocking offers in any account.</td></tr>';
+
+  const noFeed=STORES.filter(x=>!MK[x.key]);
+  $("#feed-hint").innerHTML=`${A.length} accounts · ${fmt(A.reduce((n,a)=>n+((a.catalogue||{}).offers||0),0))} offers`
+    +(noFeed.length?` · <b>no feed for ${noFeed.map(x=>LABEL[x.key]).join(", ")}</b>`:"");
+})();
+
+// ---------------------------------------------------------------- superhairpieces.ca in detail
+const M = D.merchant && D.merchant.available ? D.merchant : null;
+if(!M){ $("#feed-missing").hidden=false;
+  $("#feed-why").textContent=(D.merchant&&D.merchant.reason)?`The Merchant Center feed could not be read this run: ${D.merchant.reason}`:"The Merchant Center feed was not collected in this build.";
+} else { $("#feed-live").hidden=false;
+  // ---- Feed health
+  const P=M.products; const totOffers=P.reduce((s,p)=>s+p.offers,0), totDis=P.reduce((s,p)=>s+p.disapproved,0), totOOS=P.reduce((s,p)=>s+p.oos,0), totApp=P.reduce((s,p)=>s+p.approved,0);
+  $("#htiles").innerHTML=[["Offers in feed",fmt(totOffers),`${fmt(P.length)} products`],["Approved",pct(totApp,totOffers,1),fmt(totApp)+" offers"],["Disapproved",fmt(totDis),`${P.filter(p=>p.disapproved).length} products`],["Out of stock",pct(totOOS,totOffers,1),fmt(totOOS)+" offers"],["Internal or under $3",fmt(P.filter(p=>p.internal).length),"products in feed"],["Third-party brands with a GTIN",`${M.gtin.third_party_with_gtin} / ${M.gtin.third_party_offers}`,"offers"]]
+   .map(([l,v,d])=>`<div class="tile"><div class="l">${l}</div><div><div class="v">${v}</div><div class="d">${d}</div></div></div>`).join("");
+  function hbars(svg, items, {labelKey,valueKey,colorFn,muteFn,onClick,rowH=26,padL=230}){ svg.innerHTML=""; const W=600,padT=6,H=padT+items.length*rowH+6; svg.setAttribute("viewBox",`0 0 ${W} ${H}`); const max=niceMax(Math.max(1,...items.map(i=>i[valueKey]))); const xw=W-padL-64;
+    items.forEach((it,i)=>{const y=padT+i*rowH,w=xw*it[valueKey]/max; const t=el("text",{x:padL-10,y:y+rowH/2+4,"text-anchor":"end",class:"lb"},svg); t.textContent=it[labelKey].length>34?it[labelKey].slice(0,33)+"…":it[labelKey];
+      const r=el("rect",{x:padL,y:y+5,width:Math.max(w,2),height:rowH-10,rx:3,class:"bar",fill:colorFn?colorFn(it):"var(--s1)","fill-opacity":muteFn&&muteFn(it)?.35:1},svg); el("text",{x:padL+w+7,y:y+rowH/2+4,class:"lb"},svg).textContent=fmt(it[valueKey]);
+      r.addEventListener("mousemove",e=>showTip(e,`<b>${it[labelKey]}</b><br>${fmt(it[valueKey])} offers`+(onClick?"<br><i>click to filter products</i>":""))); r.addEventListener("mouseleave",hideTip); if(onClick) r.addEventListener("click",()=>onClick(it)); }); }
+  // count offers per issue code from products (approximate by disapproved offers per product when single issue; use offer-level counts embedded)
+  const issOffers={}, warnOffers={}; P.forEach(p=>{ p.issues.forEach(c=>issOffers[c]=(issOffers[c]||0)+p.offers); p.warnings.forEach(c=>warnOffers[c]=(warnOffers[c]||0)+p.offers); });
+  // Prefer exact offer counts from report data where available
+  const exactIss={attribute_pending_review:660,image_unwanted_overlays:159,missing_shipping_weight:127,personal_hardships_policy_violation:67,violated_discovery_ads_policy_experiment2:13,attribute_violated_discovery_ads_policy:13,healthcare_pet_pharma_policy_violation:12,price_mismatch:9,healthcare_pdt_policy_violation:6,image_link_pending_crawl:3,image_link_internal_error:2,tobacco_policy_violation:1};
+  const exactWarn={availability_updated:676,image_link_internal_error:576,image_too_small_for_high_resolution:57,price_updated:32,description_short:27,title_all_caps:3,image_link_internal_error_fallback:2,utf8_encoding_error:1,low_image_quality:1,image_too_small:1};
+  const issItems=(M.issue_counts?M.issue_counts.map(x=>[x.code,x.offers]):Object.entries(exactIss)).map(([c,n])=>({code:c,name:M.issue_names[c]||c,offers:n,temp:/temporary/.test(M.issue_names[c]||"")})); const warnItems=(M.warning_counts?M.warning_counts.map(x=>[x.code,x.offers]):Object.entries(exactWarn)).map(([c,n])=>({code:c,name:M.issue_names[c]||c,offers:n}));
+  hbars($("#c-iss"),issItems,{labelKey:"name",valueKey:"offers",muteFn:i=>i.temp,onClick:i=>{setFilter("issue",i.code,i.name);}});
+  hbars($("#c-warn"),warnItems,{labelKey:"name",valueKey:"offers",onClick:i=>{setFilter("warn",i.code,i.name);}});
+  const bad=new Set(["Hats","Computer Components","First Aid","Shirts & Tops","Cosmetics","(no category)"]);
+  hbars($("#c-gcat"),M.google_categories,{labelKey:"category",valueKey:"offers",colorFn:c=>bad.has(c.category)?"var(--s2)":"var(--s1)",onClick:c=>{$("#f-gcat").value=c.category;applyFilters();}});
+  const rootAgg={}; P.forEach(p=>{const r=rootAgg[p.root]||(rootAgg[p.root]={root:p.root,offers:0,dis:0,oos:0}); r.offers+=p.offers;r.dis+=p.disapproved;r.oos+=p.oos;});
+  (function(){ const items=Object.values(rootAgg).sort((a,b)=>b.offers-a.offers).slice(0,9); const svg=$("#c-root"); svg.innerHTML=""; const W=600,rowH=26,padL=230,padT=6,H=padT+items.length*rowH+6; svg.setAttribute("viewBox",`0 0 ${W} ${H}`); const max=niceMax(Math.max(...items.map(i=>i.offers))); const xw=W-padL-64;
+    items.forEach((it,i)=>{const y=padT+i*rowH; el("text",{x:padL-10,y:y+rowH/2+4,"text-anchor":"end",class:"lb"},svg).textContent=it.root.length>34?it.root.slice(0,33)+"…":it.root; const segs=[["approved",it.offers-it.dis-it.oos,"var(--s1)"],["out of stock",it.oos,"var(--s1)"],["disapproved",it.dis,"var(--s2)"]]; let x=padL;
+      segs.forEach(([n,v,c],k)=>{ if(v<=0) return; const w=xw*v/max; const r=el("rect",{x:x,y:y+5,width:Math.max(w-2,1),height:rowH-10,rx:2,class:"bar",fill:c,"fill-opacity":n==="out of stock"?.4:1},svg); r.addEventListener("mousemove",e=>showTip(e,`<b>${it.root}</b><br>${n}: ${fmt(v)} offers<br>total ${fmt(it.offers)}`)); r.addEventListener("mouseleave",hideTip); r.addEventListener("click",()=>{$("#f-root").value=it.root; $("#f-status").value=n==="disapproved"?"dis":""; $("#f-stock").value=n==="out of stock"?"oos":""; applyFilters();}); x+=w; });
+      el("text",{x:padL+xw*it.offers/max+7,y:y+rowH/2+4,class:"lb"},svg).textContent=fmt(it.offers); }); })();
+  
+  // ---- Product explorer
+  const roots=[...new Set(P.map(p=>p.root))].sort(), gcats=[...new Set(P.map(p=>p.gcat))].sort();
+  $("#f-root").innerHTML+=roots.map(r=>`<option>${r}</option>`).join(""); $("#f-gcat").innerHTML+=gcats.map(r=>`<option>${r}</option>`).join("");
+  let extra={}; let sort={k:"sold",dir:-1}; let page=0; const PAGE=25; let view=[];
+  function setFilter(kind,code,name){ extra={kind,code,name}; page=0; applyFilters(); document.getElementById("products").scrollIntoView({behavior:"smooth"}); }
+  function applyFilters(){ const q=$("#q").value.trim().toLowerCase(), root=$("#f-root").value, gcat=$("#f-gcat").value, st=$("#f-status").value, stock=$("#f-stock").value, flag=$("#f-flag").value;
+    view=P.filter(p=> (!q||p.name.toLowerCase().includes(q)||(p.sku||"").toLowerCase().includes(q)) && (!root||p.root===root) && (!gcat||p.gcat===gcat) && (!st||(st==="dis"?p.disapproved>0:p.disapproved===0)) && (!stock||(stock==="oos"?p.oos>0:p.oos===p.offers))
+      && (!flag|| (flag==="internal"?p.internal: flag==="noweight"?!p.weight: flag==="nogtin"?(p.brand.toLowerCase()!=="superhairpieces"&&!p.gtin): flag==="noclicks"?(p.sold>=500&&p.gclicks===0&&!p.internal): p.offers>50))
+      && (!extra.kind || (extra.kind==="issue"?p.issues.includes(extra.code):p.warnings.includes(extra.code))));
+    view.sort((a,b)=>{let x=a[sort.k],y=b[sort.k]; if(x==null)x=-Infinity; if(y==null)y=-Infinity; return (typeof x==="string"? x.localeCompare(y): x-y)*sort.dir;});
+    page=Math.min(page,Math.max(0,Math.ceil(view.length/PAGE)-1)); renderTable();
+    const chips=[]; if(q)chips.push(["q",`Search: ${q}`]); if(root)chips.push(["f-root",`Store: ${root}`]); if(gcat)chips.push(["f-gcat",`Google: ${gcat}`]); if(st)chips.push(["f-status",$("#f-status").selectedOptions[0].text]); if(stock)chips.push(["f-stock",$("#f-stock").selectedOptions[0].text]); if(flag)chips.push(["f-flag",$("#f-flag").selectedOptions[0].text]); if(extra.kind)chips.push(["extra",`${extra.kind==="issue"?"Issue":"Warning"}: ${extra.name}`]);
+    $("#chips").innerHTML=chips.map(([k,l])=>`<span class="chip" data-k="${k}" title="Remove">${l} ×</span>`).join(""); $("#clear").style.display=chips.length?"":"none";
+    $("#pcount").textContent=`${fmt(view.length)} of ${fmt(P.length)} products · ${fmt(view.reduce((s,p)=>s+p.offers,0))} offers`; }
+  $("#chips").addEventListener("click",e=>{const c=e.target.closest(".chip");if(!c)return;const k=c.dataset.k; if(k==="extra")extra={}; else if(k==="q")$("#q").value=""; else $("#"+k).value=""; applyFilters();});
+  $("#clear").addEventListener("click",()=>{extra={};$("#q").value="";["f-root","f-gcat","f-status","f-stock","f-flag"].forEach(k=>$("#"+k).value="");applyFilters();});
+  ["q","f-root","f-gcat","f-status","f-stock","f-flag"].forEach(k=>$("#"+k).addEventListener("input",()=>{page=0;applyFilters();}));
+  document.querySelectorAll("th.sort").forEach(th=>th.addEventListener("click",()=>{const k=th.dataset.k; if(sort.k===k)sort.dir*=-1; else {sort={k,dir:(k==="name"||k==="root"||k==="gcat")?1:-1};} document.querySelectorAll("th.sort").forEach(x=>x.classList.toggle("on",x===th)); applyFilters();}));
+  function renderTable(){ const rows=view.slice(page*PAGE,(page+1)*PAGE); $("#tbl tbody").innerHTML=rows.map(p=>`<tr class="row" data-id="${p.id}"><td>${p.name}${p.internal?' <span class="pill crit">internal</span>':''}</td><td>${p.root}</td><td>${bad.has(p.gcat)?`<span class="pill warn">${p.gcat}</span>`:p.gcat}</td><td class="n">$${fmt(p.price)}${p.pmax>p.price?"–"+fmt(p.pmax):""}</td><td class="n">${p.offers}</td><td class="n">${p.oos?p.oos:"–"}</td><td class="n">${p.disapproved?`<span class="pill crit">${p.disapproved}</span>`:"–"}</td><td class="n">${fmt(p.sold)}</td><td class="n">${fmt(p.views)}</td><td class="n">${p.gclicks?fmt(p.gclicks):'<span class="pill neutral">0</span>'}</td><td class="n">${p.margin==null?"–":p.margin+"%"}</td></tr>`).join("");
+    const pages=Math.max(1,Math.ceil(view.length/PAGE)); $("#pinfo").textContent=`Page ${page+1} of ${pages}`; $("#prev").disabled=page===0; $("#next").disabled=page>=pages-1; }
+  $("#prev").addEventListener("click",()=>{page--;renderTable();}); $("#next").addEventListener("click",()=>{page++;renderTable();});
+  $("#tbl tbody").addEventListener("click",e=>{const tr=e.target.closest("tr.row");if(!tr)return;openDrawer(P.find(p=>p.id==tr.dataset.id));});
+  function openDrawer(p){ const pill=(n,c)=>`<span class="pill ${c}">${n}</span>`;
+    $("#dbody").innerHTML=`<div class="lbl">${p.root} · SKU ${p.sku||"–"}</div><h3>${p.name}</h3><img src="${p.img}" alt="" onerror="this.style.display='none'">
+    <div class="kv"><div><span>Price</span>$${fmt(p.price)}${p.pmax>p.price?" – $"+fmt(p.pmax):""}</div><div><span>Margin</span>${p.margin==null?"unknown":p.margin+"%"}</div><div><span>Variants in feed</span>${p.offers}</div><div><span>Out of stock</span>${p.oos}</div><div><span>Approved</span>${p.approved}</div><div><span>Disapproved</span>${p.disapproved}</div><div><span>Units sold, lifetime</span>${fmt(p.sold)}</div><div><span>Page views, lifetime</span>${fmt(p.views)}</div><div><span>Google clicks, 12 mo</span>${fmt(p.gclicks)}</div><div><span>Google impressions, 12 mo</span>${fmt(p.gimpr)}</div><div><span>Google category</span>${bad.has(p.gcat)?pill(p.gcat,"warn"):p.gcat}</div><div><span>Brand</span>${p.brand}</div></div>
+    <div class="lbl">Blocking issues</div>${p.issues.length?"<ul>"+p.issues.map(c=>`<li>${M.issue_names[c]||c}</li>`).join("")+"</ul>":"<p style='margin:4px 0'>None</p>"}
+    <div class="lbl" style="margin-top:10px">Warnings</div>${p.warnings.length?"<ul>"+p.warnings.map(c=>`<li>${M.issue_names[c]||c}</li>`).join("")+"</ul>":"<p style='margin:4px 0'>None</p>"}
+    <div class="lbl" style="margin-top:10px">Flags</div><p style="margin:4px 0">${[p.internal&&pill("internal item","crit"),!p.weight&&pill("missing weight","warn"),(p.brand.toLowerCase()!=="superhairpieces"&&!p.gtin)&&pill("no GTIN","warn"),p.offers>50&&pill(p.offers+" variants","neutral"),(p.sold>=500&&p.gclicks===0)&&pill("top seller, no Google clicks","crit")].filter(Boolean).join(" ")||"None"}</p>
+    <p style="margin-top:14px"><a href="${p.url}" target="_blank" rel="noopener">Open product page</a> · <a href="https://merchants.google.com/mc/items?a=5298296396" target="_blank" rel="noopener">Open Merchant Center products</a></p>`;
+    $("#drawer").classList.add("open"); }
+  $("#dx").addEventListener("click",()=>$("#drawer").classList.remove("open")); document.addEventListener("keydown",e=>{if(e.key==="Escape")$("#drawer").classList.remove("open");});
+  
+  // ---- Action plan
+  const PLAN=[["Keep the daily sync running and watch the first week of runs","Two-month blackout","High","Done","GitHub Actions, live since 6 Sep"],["Exclude internal and office items from the feed, then hide them on the storefront","57 approved junk offers","High","Hours","Sync rule; BigCommerce visibility"],["Send Google product categories mapped from BigCommerce categories","Hats, First Aid, Computer Components","High","Hours","Sync mapping table"],["Enter shipping weights for the 68 products missing them, starting with Six Teeth Comb Clips","127 disapproved offers, 42,963 units sold","High","Hours","BigCommerce product data"],["Opt in to price competitiveness, price insights and best sellers","Empty market-insight reports","Medium","Minutes","Merchant Center, Growth"],["Replace overlay images on the 8 extension and topper products","159 disapproved offers","Medium","Days","Marketing, BigCommerce images"],["Rewrite titles: searched phrase first, then length, colour, weight; drop 'hair loss' and 'medical' from titles","Extension invisibility, personal-hardships policy","High","Days","BigCommerce names, or a title rule in the sync"],["Track consultation bookings and phone orders as Google conversions","Hairpiece conversions invisible","High","Days","GA4 and Merchant Center conversion settings"],["Launch a paid Shopping campaign on supplies and the top four men's toupee models","2.1% supplies conversion; M101 and HD111 impressions","High","Days + budget","Google Ads"],["Fix third-party barcodes in BigCommerce and send GTINs","5 of 691 supplies offers have a GTIN","Medium","Days","BigCommerce import"],["Prune permanently unavailable extension variants; make page and feed availability agree","1,066 extension variants out of stock; 676 auto-corrected","Medium","Days","BigCommerce variants"],["Push Stamped.io and Trustpilot reviews as a product review data source","No ratings on listings","Medium","Days","Merchant API, new script"],["Send sale prices and a promotions data source for seasonal offers","Zero sale prices in feed","Medium","Days","BigCommerce sale price; Merchant API"],["Connect the .com and EU Merchant Center account and repeat the setup","17 of 6,798 clicks from outside Canada","High","Weeks","Account 289630622"]];
+  let done={}; try{done=JSON.parse(localStorage.getItem("shp-gmc-plan")||"{}");}catch(e){}
+  const effC=e=>e==="Done"||e==="Minutes"||e==="Hours"?"good":e==="Weeks"?"crit":"warn";
+  $("#plan-body").innerHTML=PLAN.map((r,i)=>`<tr class="row ${done[i]?"done":""}" data-i="${i}"><td><input type="checkbox" ${done[i]?"checked":""}></td><td class="n">${i+1}</td><td>${r[0]}</td><td>${r[1]}</td><td><span class="pill ${r[2]==="High"?"good":"warn"}">${r[2]}</span></td><td><span class="pill ${effC(r[3])}">${r[3]}</span></td><td>${r[4]}</td></tr>`).join("");
+  $("#plan-body").addEventListener("change",e=>{const tr=e.target.closest("tr");if(!tr)return;done[tr.dataset.i]=e.target.checked;tr.classList.toggle("done",e.target.checked);try{localStorage.setItem("shp-gmc-plan",JSON.stringify(done));}catch(err){}});
+  
+  applyFilters();   // the explorer starts populated, not waiting on a filter change
+
+}
+
+
+function seg(sel,fn){ const node=$(sel); if(!node) return;
+  node.addEventListener("click",e=>{const b=e.target.closest("button"); if(!b||b.disabled)return;
+    node.querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b)); fn(b);}); }
+</script>

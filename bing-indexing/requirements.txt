@@ -1,0 +1,4 @@
+# The scripts themselves use only the standard library (urllib).
+# This is for lib/secrets.py resolving credentials from Secret Manager in CI;
+# local runs that read the gitignored .env need nothing installed.
+google-cloud-secret-manager>=2.20

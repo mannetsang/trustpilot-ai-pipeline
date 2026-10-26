@@ -1,0 +1,554 @@
+{
+  "info": {
+    "name": "Google Search Console API",
+    "description": "Search Console API v3 (sites, sitemaps, search analytics) plus URL Inspection v1.\n\n## Auth\nThe collection is configured for OAuth 2.0 and every request inherits it, so Postman can\nmint and renew tokens itself. Three ways to work, in order of how much setup they need:\n\n**A. Let Postman do it (no pasting, renews itself).** One-time Google Cloud Console step:\nopen the OAuth client (type **Web application**) and add\n`https://oauth.pstmn.io/v1/callback` under Authorised redirect URIs. Put the client id\nand secret in the `clientId` / `clientSecret` variables, then Authorization tab ->\n**Get New Access Token** -> consent in the browser -> **Use Token**. The auth URL already\ncarries `access_type=offline&prompt=consent`, so Google returns a refresh token and\nPostman renews silently from then on.\n\n**B. Paste an access token in.** OAuth 2.0 Playground, authorise the scope, exchange for\nan access token, put it in the `accessToken` variable. ~1 hour, no setup, no stored\ncredential. Good for a one-off check; note that **Get New Access Token** overwrites the\n`{{accessToken}}` reference in the auth config when you use it.\n\n**C. Run request 1.** For an existing refresh token. It opts out of collection auth and\nsaves the resulting access token to `accessToken` itself.\n\n> **Do not reuse the `google-business-profile-*` credential for this.** That refresh token\n> is granted `https://www.googleapis.com/auth/business.manage` only. Request 1 would still\n> return 200 and a valid-looking access token, and every request after it would fail with\n> `403 insufficientPermissions` - the first request succeeding is what makes this\n> misleading. Search Console needs its own refresh token minted with a webmasters scope.\n> Doing so against the same OAuth client is fine and leaves the Business Profile token\n> working; Google allows many refresh tokens per user and client.\n\n**C. Service account.** Add it under Settings -> Users and permissions on **each property**\n- Search Console grants no org-wide access - then mint a token with the webmasters scope.\n\nThe `scope` variable is read-only by default. Change it to\n`https://www.googleapis.com/auth/webmasters` before using requests 6 and 7, and get a\nnew token - widening the scope does not retrofit a token already issued.\n\n## The one gotcha\n`siteUrl` goes in the URL *path*, so it must be percent-encoded. A collection pre-request\nscript derives `{{siteUrlEnc}}` and `{{feedpathEnc}}` for you - edit only the readable\n`siteUrl` and `feedpath` variables. Un-encoded values are the usual cause of a 404 here.\n\nProperty identity is exact: `https://superhairpieces.ca/` (trailing slash),\n`https://www.superhairpieces.com/` (www is a separate property from non-www), or\n`sc-domain:superhairpieces.ca` for a Domain property.\n\n## Superhairpieces properties\nImport the companion environment file for all six storefronts. `.com` is **www**; `.ca`,\n`.nl`, `.fr`, `.es` and `.de` are non-www. Every store serves a BigCommerce-generated\nsitemap index at `/xmlsitemap.php`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "oauth2",
+    "oauth2": [
+      {
+        "key": "grant_type",
+        "value": "authorization_code",
+        "type": "string"
+      },
+      {
+        "key": "authUrl",
+        "value": "https://accounts.google.com/o/oauth2/v2/auth?access_type=offline&prompt=consent",
+        "type": "string"
+      },
+      {
+        "key": "accessTokenUrl",
+        "value": "https://oauth2.googleapis.com/token",
+        "type": "string"
+      },
+      {
+        "key": "refreshTokenUrl",
+        "value": "https://oauth2.googleapis.com/token",
+        "type": "string"
+      },
+      {
+        "key": "clientId",
+        "value": "{{clientId}}",
+        "type": "string"
+      },
+      {
+        "key": "clientSecret",
+        "value": "{{clientSecret}}",
+        "type": "string"
+      },
+      {
+        "key": "scope",
+        "value": "{{scope}}",
+        "type": "string"
+      },
+      {
+        "key": "redirect_uri",
+        "value": "https://oauth.pstmn.io/v1/callback",
+        "type": "string"
+      },
+      {
+        "key": "useBrowser",
+        "value": true,
+        "type": "boolean"
+      },
+      {
+        "key": "client_authentication",
+        "value": "body",
+        "type": "string"
+      },
+      {
+        "key": "addTokenTo",
+        "value": "header",
+        "type": "string"
+      },
+      {
+        "key": "tokenName",
+        "value": "Search Console token",
+        "type": "string"
+      },
+      {
+        "key": "accessToken",
+        "value": "{{accessToken}}",
+        "type": "string"
+      },
+      {
+        "key": "autoRefreshToken",
+        "value": true,
+        "type": "boolean"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// siteUrl sits in the URL *path*, so it must be percent-encoded. This is the",
+          "// single most common cause of a 404 on this API: /sites/https://x.com/ is not",
+          "// a valid path - it has to be /sites/https%3A%2F%2Fx.com%2F.",
+          "// Encoded copies are derived here so you only ever edit the readable variables.",
+          "const siteUrl = pm.collectionVariables.get(\"siteUrl\") || \"\";",
+          "const feedpath = pm.collectionVariables.get(\"feedpath\") || \"\";",
+          "",
+          "pm.collectionVariables.set(\"siteUrlEnc\", encodeURIComponent(siteUrl));",
+          "pm.collectionVariables.set(\"feedpathEnc\", encodeURIComponent(feedpath));",
+          "",
+          "if (siteUrl && !siteUrl.startsWith(\"sc-domain:\") && !siteUrl.endsWith(\"/\")) {",
+          "  console.warn(\"siteUrl has no trailing slash. A URL-prefix property is stored \"",
+          "    + \"WITH one and the API matches it exactly, e.g. https://superhairpieces.ca/\");",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Get Access Token (refresh token)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://oauth2.googleapis.com/token",
+          "path": [
+            "token"
+          ],
+          "protocol": "https",
+          "host": [
+            "oauth2",
+            "googleapis",
+            "com"
+          ]
+        },
+        "description": "Exchanges a long-lived refresh token for a ~1 hour access token and saves it to {{accessToken}}. Form-encoded, which is what Google's token endpoint expects.",
+        "auth": {
+          "type": "noauth"
+        },
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            {
+              "key": "client_id",
+              "value": "{{clientId}}",
+              "type": "text"
+            },
+            {
+              "key": "client_secret",
+              "value": "{{clientSecret}}",
+              "type": "text"
+            },
+            {
+              "key": "refresh_token",
+              "value": "{{refreshToken}}",
+              "type": "text"
+            },
+            {
+              "key": "grant_type",
+              "value": "refresh_token",
+              "type": "text"
+            }
+          ]
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Saves the access token so every other request in the collection can use it.",
+              "const body = pm.response.json();",
+              "if (body.access_token) {",
+              "  pm.collectionVariables.set(\"accessToken\", body.access_token);",
+              "  console.log(\"accessToken saved, expires in \" + body.expires_in + \"s\");",
+              "}",
+              "pm.test(\"200 OK\", function () { pm.response.to.have.status(200); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Sites - List properties",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/webmasters/v3/sites",
+          "path": [
+            "webmasters",
+            "v3",
+            "sites"
+          ],
+          "host": [
+            "{{baseUrl}}"
+          ]
+        },
+        "description": "Every property this credential can see, with its permission level. Run this first: the console output gives you the exact siteUrl strings to paste into the siteUrl variable, which removes all guesswork about www and trailing slashes."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"200 OK\", function () { pm.response.to.have.status(200); });",
+              "",
+              "// Prints the exact siteUrl strings to paste into the siteUrl variable. Domain",
+              "// properties come back as sc-domain:example.com; URL-prefix properties keep",
+              "// their scheme, host and trailing slash - and www is a DIFFERENT property.",
+              "const body = pm.response.json();",
+              "(body.siteEntry || []).forEach(function (s) {",
+              "  console.log(s.siteUrl + \"   [\" + s.permissionLevel + \"]\");",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Sites - Get one",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/webmasters/v3/sites/{{siteUrlEnc}}",
+          "path": [
+            "webmasters",
+            "v3",
+            "sites",
+            "{{siteUrlEnc}}"
+          ],
+          "host": [
+            "{{baseUrl}}"
+          ]
+        },
+        "description": "Confirms a property exists and what permission level you hold on it."
+      },
+      "response": []
+    },
+    {
+      "name": "4. Sitemaps - List for a property",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/webmasters/v3/sites/{{siteUrlEnc}}/sitemaps",
+          "path": [
+            "webmasters",
+            "v3",
+            "sites",
+            "{{siteUrlEnc}}",
+            "sitemaps"
+          ],
+          "host": [
+            "{{baseUrl}}"
+          ]
+        },
+        "description": "THE check for 'is my sitemap submitted'. An empty response means nothing is registered on this property. Per sitemap you get path, lastDownloaded, isPending, errors, warnings and submitted/indexed counts; the test script prints one line each."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"200 OK\", function () { pm.response.to.have.status(200); });",
+              "",
+              "// An empty body is the answer people miss: it means NO sitemap is registered on",
+              "// this property. Google may still crawl one it auto-discovered from robots.txt,",
+              "// but nothing is registered here - and the registered ones are what Bing",
+              "// Webmaster Tools carries over when you import from Search Console.",
+              "const body = pm.response.json();",
+              "const feeds = body.sitemap || [];",
+              "",
+              "if (feeds.length === 0) {",
+              "  console.log(\"NO sitemaps registered on \" + pm.collectionVariables.get(\"siteUrl\"));",
+              "} else {",
+              "  feeds.forEach(function (f) {",
+              "    const web = (f.contents || []).filter(function (c) { return c.type === \"web\"; })[0] || {};",
+              "    console.log([",
+              "      f.path,",
+              "      \"lastDownloaded=\" + (f.lastDownloaded || \"never\"),",
+              "      \"pending=\" + Boolean(f.isPending),",
+              "      \"errors=\" + (f.errors || 0),",
+              "      \"warnings=\" + (f.warnings || 0),",
+              "      \"submitted=\" + (web.submitted || 0),",
+              "      \"indexed=\" + (web.indexed || 0)",
+              "    ].join(\"  \"));",
+              "  });",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Sitemaps - Get one",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/webmasters/v3/sites/{{siteUrlEnc}}/sitemaps/{{feedpathEnc}}",
+          "path": [
+            "webmasters",
+            "v3",
+            "sites",
+            "{{siteUrlEnc}}",
+            "sitemaps",
+            "{{feedpathEnc}}"
+          ],
+          "host": [
+            "{{baseUrl}}"
+          ]
+        },
+        "description": "Detail for a single sitemap, including per-content-type counts. For a sitemap index this reports the index itself; its child sitemaps appear separately in request 4."
+      },
+      "response": []
+    },
+    {
+      "name": "6. Sitemaps - Submit",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/webmasters/v3/sites/{{siteUrlEnc}}/sitemaps/{{feedpathEnc}}",
+          "path": [
+            "webmasters",
+            "v3",
+            "sites",
+            "{{siteUrlEnc}}",
+            "sitemaps",
+            "{{feedpathEnc}}"
+          ],
+          "host": [
+            "{{baseUrl}}"
+          ]
+        },
+        "description": "Registers a sitemap. No request body, returns 204, and is idempotent - re-submitting an existing sitemap is harmless. Needs the read-write webmasters scope. This is the API equivalent of typing the path into the 'Add a new sitemap' box."
+      },
+      "response": []
+    },
+    {
+      "name": "7. Sitemaps - Delete",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/webmasters/v3/sites/{{siteUrlEnc}}/sitemaps/{{feedpathEnc}}",
+          "path": [
+            "webmasters",
+            "v3",
+            "sites",
+            "{{siteUrlEnc}}",
+            "sitemaps",
+            "{{feedpathEnc}}"
+          ],
+          "host": [
+            "{{baseUrl}}"
+          ]
+        },
+        "description": "Unregisters a sitemap; returns 204. Does not stop Google crawling one it auto-discovered from robots.txt."
+      },
+      "response": []
+    },
+    {
+      "name": "8. Search Analytics - Query",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/webmasters/v3/sites/{{siteUrlEnc}}/searchAnalytics/query",
+          "path": [
+            "webmasters",
+            "v3",
+            "sites",
+            "{{siteUrlEnc}}",
+            "searchAnalytics",
+            "query"
+          ],
+          "host": [
+            "{{baseUrl}}"
+          ]
+        },
+        "description": "Clicks, impressions, CTR and average position. Data starts ~2 days back, which is why endDate is not today. rowLimit maxes at 25000; page with startRow. Add a dimensionFilterGroups block to filter by country, device or query.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"startDate\": \"{{startDate}}\",\n  \"endDate\": \"{{endDate}}\",\n  \"dimensions\": [\n    \"query\",\n    \"page\"\n  ],\n  \"type\": \"web\",\n  \"rowLimit\": 100,\n  \"startRow\": 0\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "9. URL Inspection - Inspect a URL",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/v1/urlInspection/index:inspect",
+          "path": [
+            "v1",
+            "urlInspection",
+            "index:inspect"
+          ],
+          "host": [
+            "{{baseUrl}}"
+          ]
+        },
+        "description": "Index status for one URL: coverage verdict, the canonical Google chose, last crawl, mobile usability, and which sitemaps reference it. Quota is tight (~2000/day) so this is for spot checks, not bulk auditing. inspectionUrl must sit inside siteUrl.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"inspectionUrl\": \"{{inspectUrl}}\",\n  \"siteUrl\": \"{{siteUrl}}\",\n  \"languageCode\": \"en-US\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://searchconsole.googleapis.com",
+      "type": "string",
+      "description": "Also served at https://www.googleapis.com - same API."
+    },
+    {
+      "key": "accessToken",
+      "value": "",
+      "type": "string",
+      "description": "Filled automatically by request 1, or paste one in. ~1 hour lifetime."
+    },
+    {
+      "key": "scope",
+      "value": "https://www.googleapis.com/auth/webmasters.readonly",
+      "type": "string",
+      "description": "Swap .readonly for the plain webmasters scope to submit or delete sitemaps, then fetch a new token."
+    },
+    {
+      "key": "clientId",
+      "value": "",
+      "type": "string",
+      "description": "OAuth client id, type Web application, with https://oauth.pstmn.io/v1/callback as an authorised redirect URI."
+    },
+    {
+      "key": "clientSecret",
+      "value": "",
+      "type": "string",
+      "description": "OAuth client secret - do not commit a real value."
+    },
+    {
+      "key": "refreshToken",
+      "value": "",
+      "type": "string",
+      "description": "Refresh token for the Google user managing the properties. Request 1 only - do not commit a real value."
+    },
+    {
+      "key": "siteUrl",
+      "value": "https://superhairpieces.ca/",
+      "type": "string",
+      "description": "Exact property id. Trailing slash for URL-prefix properties; www is a separate property; sc-domain:example.com for a Domain property."
+    },
+    {
+      "key": "siteUrlEnc",
+      "value": "",
+      "type": "string",
+      "description": "Derived by the pre-request script. Do not edit."
+    },
+    {
+      "key": "feedpath",
+      "value": "https://superhairpieces.ca/xmlsitemap.php",
+      "type": "string",
+      "description": "Full sitemap URL. BigCommerce serves a sitemap index at /xmlsitemap.php."
+    },
+    {
+      "key": "feedpathEnc",
+      "value": "",
+      "type": "string",
+      "description": "Derived by the pre-request script. Do not edit."
+    },
+    {
+      "key": "startDate",
+      "value": "2026-09-01",
+      "type": "string",
+      "description": "Search Analytics range start, YYYY-MM-DD."
+    },
+    {
+      "key": "endDate",
+      "value": "2026-10-19",
+      "type": "string",
+      "description": "Range end. Keep ~2 days behind today; recent data is not final."
+    },
+    {
+      "key": "inspectUrl",
+      "value": "https://superhairpieces.ca/products/hook-needle.html",
+      "type": "string",
+      "description": "URL to inspect. Must be inside siteUrl."
+    }
+  ]
+}

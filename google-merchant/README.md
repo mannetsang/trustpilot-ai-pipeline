@@ -4,15 +4,30 @@ Scripts that drive Merchant Center through the **Merchant API** (the successor
 to the Content API for Shopping): register the GCP project, create one product
 data source per storefront, and push products into them.
 
-| Merchant Center account | ID | Storefronts | Service account added? |
-|---|---|---|---|
-| Superhairpieces.ca | `5298296396` | superhairpieces.ca | yes, project registered |
-| Superhairpieces | `289630622` | .com and the EU sites | no |
-| Gen'C Beauty | `670525760` | genc | no |
+| Merchant Center account | ID | Storefronts | Service account | Holds our registration | Offers |
+|---|---|---|---|---|---|
+| Superhairpieces.ca | `5298296396` | superhairpieces.ca | yes | yes — and it covers all three | 11,818, pushed by `sync_bigcommerce.py` |
+| Superhairpieces | `289630622` | `.com` only, in practice | yes | no — `40060666568`, which is fine | 1,084, autofeed |
+| Gen'C Beauty | `670525760` | gencbeauty.com | yes | no — none, which is fine | 4,333, autofeed |
 
-The scripts only see accounts the service account has been added to, so
-`.com` and the EU storefronts need step 2 below repeated on `289630622`
-before anything can be created there. Account IDs are not secrets. Neither is anything else here: the scripts
+Being *added to the account* is what lets the scripts touch it, and that is
+done on all three. Developer registration is a separate thing and is easy to
+misread: it is per **project**, not per account. One project registers against
+exactly one Merchant Center account, and that single registration then covers
+every other account the caller can reach - see the
+[Merchant API FAQ](https://developers.google.com/merchant/api/guides/quickstart/faq).
+
+Ours lives on `5298296396`. `289630622` carries a different project's
+registration (`40060666568`) and `670525760` carries none, and reads **and
+writes** work on all three anyway; verified 2026-10-21 by watching a write to
+each reach field validation rather than an auth gate. Running step 3 against a
+second account returns `409 DUPLICATE_PROJECT_REGISTRATION` - do not.
+
+`289630622` is named for the EU storefronts but every offer in it carries feed
+label `US`: **.nl, .fr, .es and .de have no offers in Google Shopping at all.**
+Creating their data sources is step 3, and it has never been run there.
+
+Account IDs are not secrets. Neither is anything else here: the scripts
 authenticate with Application Default Credentials, so there is no API key and
 nothing for Secret Manager to hold.
 
@@ -85,6 +100,14 @@ python google-merchant/products.py delete --account 5298296396 --label CA --offe
 `product.json` is the Merchant API `ProductAttributes` object plus a
 top-level `offerId`; `products.py --help` shows a minimal example. Useful for
 one-off tests; the catalogue itself is pushed by the sync below.
+
+## The dashboard moved
+
+`dashboard/build_data.py` still builds the .ca feed data every night, but it is
+now called by `group-dashboard/collect.py` and rendered as the **Shopping
+feed** tab there. The old `merchant-dashboard` Cloud Run service redirects to
+it (`dashboard/redirect/`), so one URL covers the whole business instead of two
+covering overlapping parts of it.
 
 ## Catalogue sync from BigCommerce
 

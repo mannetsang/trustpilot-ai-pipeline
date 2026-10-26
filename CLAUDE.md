@@ -54,11 +54,18 @@ Each storefront is a separate BigCommerce store with its own hash, so a report
 must be run once per store and the results combined. Revenue is **never** summed
 across currencies.
 
-| Store hash | Storefront | Currency |
-|---|---|---|
-| `gmosz3ja` | superhairpieces.ca | CAD |
-| _(unknown)_ | superhairpieces.com | USD |
-| _(unknown)_ | .nl / .fr / .es / .de | EUR |
+| Store hash | Storefront | Canonical host | Currency |
+|---|---|---|---|
+| `gmosz3ja` | superhairpieces.ca | non-www | CAD |
+| `cavofu` | superhairpieces.com | **www** | USD |
+| `1f8t0plkkw` | superhairpieces.nl | non-www | EUR |
+| `1tqjsol232` | superhairpieces.fr | non-www | EUR |
+| `qet21urb3p` | superhairpieces.es | non-www | EUR |
+| `34amlu9gm` | superhairpieces.de | non-www | EUR |
+
+`.com` 301-redirects to www; the other five are non-www. Tokens for all six are
+in the project-root `.env` (`<MARKET>_BIGCOMMERCE_<hash>_ACCESS_TOKEN`, except
+`.es` which uses `ES_BIGCOMMERCE_PRODUCT_*`).
 
 Secrets follow `BIGCOMMERCE_<store_hash>_<CREDENTIAL>`, e.g.
 `BIGCOMMERCE_gmosz3ja_ACCESS_TOKEN`. The store hash itself is not sensitive.
@@ -71,11 +78,62 @@ Credentials, so the calling service account must be an Admin user on the
 Merchant Center account and the project must be registered once with
 `register_developer.py`. Account IDs are not secrets:
 
-| Merchant Center account | ID | Service account added? |
-|---|---|---|
-| Superhairpieces.ca (standalone, CA only) | `5298296396` | yes, project registered |
-| Superhairpieces (.com and EU storefronts) | `289630622` | no |
-| Gen'C Beauty | `670525760` | no |
+| Merchant Center account | ID | Readable | Offers | Fed by |
+|---|---|---|---|---|
+| Superhairpieces.ca (standalone, CA only) | `5298296396` | yes, project registered | 11,818 | this repo's API feed |
+| Superhairpieces (.com; EU **in name only**) | `289630622` | yes | 1,084 | autofeed |
+| Gen'C Beauty (separate brand) | `670525760` | yes | 4,333 | autofeed |
+
+All three were shared with the service account on 2026-10-21. Two caveats that
+matter more than the access:
+
+- **`289630622` serves `.com` only.** Every offer in it carries feed label `US`.
+  The four EU storefronts have **no offers in Google Shopping at all** - treat
+  "the account covers the EU" as a label, not a fact.
+- **Developer registration is per *project*, not per account, and one is
+  enough.** A GCP project registers against exactly one Merchant Center account
+  and that registration then covers every other account the caller can reach
+  ([Merchant API FAQ](https://developers.google.com/merchant/api/guides/quickstart/faq)).
+  Ours lives on `5298296396`; `289630622` holds someone else's project
+  (`40060666568`) and `670525760` holds none, and **reads and writes work on all
+  three regardless** - verified 2026-10-21. Do not try to register a second:
+  it returns `409 DUPLICATE_PROJECT_REGISTRATION`. `register_developer.py
+  --check` reports where our registration lives; it is not a gate.
+
+### Google Search Console
+
+Organic search for all six storefronts, through the **Search Console API**
+(`searchconsole.googleapis.com`) by the scripts in `google-search-console/`.
+Access is granted **per property** — Search Console has no org-wide role — so
+the `claude-sessions` service account has to be added under *Settings → Users
+and permissions* on each one before anything returns data; until then
+`sites.list` answers `{}` rather than failing. `collect.py` feeds the **Organic
+search** tab of the Shopping dashboard. A user OAuth refresh token
+(`google-search-console-*`) is the alternative; the Business Profile refresh
+token is **not** — it is `business.manage` only and 403s after a successful
+token call. Properties are exact: `https://superhairpieces.ca/` with the
+trailing slash, and `.com` is the **www** host.
+
+### Group dashboard
+
+`group-dashboard/` builds **the** dashboard — one page across all six
+storefronts (Cloud Run `group-dashboard`, rebuilt daily): organic search from
+Search Console, catalogue and sales from BigCommerce, the .ca Merchant Center
+feed and its action plan (via `google-merchant/dashboard/build_data.py`), and a
+Coverage tab naming every gap and its fix. The older `merchant-dashboard`
+service now redirects here; there is one URL, not two. `lib/stores.py` is the
+shared six-store registry it uses - hash, canonical host, currency, market and
+token ids - and new code should prefer it over the per-module copies in
+`bing-indexing/`, `google-merchant/` and `google-search-console/`.
+
+Reachable today: catalogue and Search Console for all six; **orders only for
+.ca, .com and .es** (the .nl, .fr and .de API tokens carry catalogue scope and
+answer 403 on `/v2/orders`); all three Merchant Center accounts, though only
+`.ca` and `.com` have a feed - **.nl, .fr, .es and .de have no offers in Google
+Shopping**. Revenue is `total_inc_tax` less `refunded_amount`, excluding statuses
+0/5/6, and is never added across currencies. Nor is Shopping conversion value:
+the Merchant API returns it per row with its own currency code, and `.ca` alone
+returns both CAD and USD.
 
 ### Google Business Profile
 
