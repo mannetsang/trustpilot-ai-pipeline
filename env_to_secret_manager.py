@@ -60,6 +60,24 @@ def gcloud(args, project, stdin=None):
     return subprocess.run(cmd, input=stdin, capture_output=True)
 
 
+def active_account():
+    """The account gcloud will run as, or None when signed out."""
+    r = subprocess.run([GCLOUD, "auth", "list", "--filter=status:ACTIVE",
+                        "--format=value(account)"], capture_output=True)
+    if r.returncode != 0:
+        return None
+    return r.stdout.decode(errors="replace").strip() or None
+
+
+def error_line(r):
+    """The most informative line of a failed gcloud call's stderr."""
+    lines = [l for l in r.stderr.decode(errors="replace").splitlines() if l.strip()]
+    for line in lines:
+        if line.startswith("ERROR"):
+            return line.strip()
+    return lines[-1].strip() if lines else "no error output"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--project", default="shp-ai-bot-2026")
@@ -68,7 +86,17 @@ def main():
     args = ap.parse_args()
 
     entries = parse_env(args.env)
-    print(f"{len(entries)} secrets to sync from {args.env} -> project {args.project}\n")
+    print(f"{len(entries)} secrets to sync from {args.env} -> project {args.project}")
+
+    if not args.dry_run:
+        account = active_account()
+        if not account:
+            print("\nNo active gcloud account, so every secret would fail. Sign in with:")
+            print("    gcloud auth login")
+            print(f"    gcloud config set project {args.project}")
+            return 1
+        print(f"signed in as {account}")
+    print()
 
     created = updated = unchanged = failed = 0
     for name, value in entries:
@@ -88,7 +116,7 @@ def main():
                 print(f"created  {name}")
             else:
                 failed += 1
-                print(f"FAILED   {name}: {r.stderr.decode(errors='replace').strip().splitlines()[-1]}")
+                print(f"FAILED   {name}: {error_line(r)}")
             continue
 
         cur = gcloud(["secrets", "versions", "access", "latest", "--secret", name], args.project)
@@ -103,7 +131,7 @@ def main():
             print(f"new ver  {name}")
         else:
             failed += 1
-            print(f"FAILED   {name}: {r.stderr.decode(errors='replace').strip().splitlines()[-1]}")
+            print(f"FAILED   {name}: {error_line(r)}")
 
     print(f"\ncreated={created} new_versions={updated} unchanged={unchanged} failed={failed}")
     return 1 if failed else 0
