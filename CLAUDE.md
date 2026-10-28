@@ -111,8 +111,12 @@ and permissions* on each one before anything returns data; until then
 search** tab of the Shopping dashboard. A user OAuth refresh token
 (`google-search-console-*`) is the alternative; the Business Profile refresh
 token is **not** — it is `business.manage` only and 403s after a successful
-token call. Properties are exact: `https://superhairpieces.ca/` with the
-trailing slash, and `.com` is the **www** host.
+token call. All six are **Domain** properties (`sc-domain:superhairpieces.ca`
+and so on, no scheme, no www), shared with `claude-sessions` at Full -
+verified 2026-10-28, along with `sc-domain:gencbeauty.com`. `collect.py` tries
+the URL-prefix form (`https://superhairpieces.ca/`) first and falls back to the
+Domain property, so either works; the API path wants the exact string listed
+by `sites.list`.
 
 ### Group dashboard
 
