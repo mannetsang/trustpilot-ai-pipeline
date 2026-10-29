@@ -1,4 +1,5 @@
 import os
+import re
 import base64
 import json
 import time
@@ -157,7 +158,8 @@ def process_review(payload):
     suggestion   = get_gemini_suggestion(comment, rating) if has_comment else ""
     review_type  = get_review_type(comment) if has_comment and rating.isdigit() and int(rating) <= 3 else ""
 
-    send_to_gchat(name, email, rating, comment, reply, suggestion, event, review_id, review_date)
+    auto_reply = auto_reply_five_star(review_id, rating, reply) if event == "review.created" else ""
+    send_to_gchat(name, email, rating, comment, reply, suggestion, event, review_id, review_date, auto_reply)
     write_to_sheet(name, email, rating, review_type, comment, reply, suggestion, review_id, review_date)
 
     if rating.isdigit() and int(rating) <= 3:
@@ -241,7 +243,8 @@ def monitor():
             suggestion   = get_gemini_suggestion(comment, rating) if has_comment else ""
             review_type  = get_review_type(comment) if has_comment and rating.isdigit() and int(rating) <= 3 else ""
 
-            send_to_gchat(name, email, rating, comment, reply, suggestion, "review.created", rid, review_date)
+            auto_reply = auto_reply_five_star(rid, rating, reply)
+            send_to_gchat(name, email, rating, comment, reply, suggestion, "review.created", rid, review_date, auto_reply)
             write_to_sheet(name, email, rating, review_type, comment, reply, suggestion, rid, review_date)
 
             if rating.isdigit() and int(rating) <= 3:
@@ -366,7 +369,50 @@ def get_gemini_suggestion(comment, rating):
     return "AI suggestion unavailable."
 
 
-def send_to_gchat(name, email, rating, comment, reply, suggestion, event, review_id="", review_date=""):
+REPLY_SIGNATURE = "Geeta - Superhairpieces"
+
+
+def auto_reply_five_star(review_id, rating, reply):
+    """Publicly post the AI reply on a 5-star Trustpilot review. Returns a short status for the Chat card."""
+    if rating != "5" or not review_id or not reply:
+        return ""
+    if re.search(r"[\[\]{}<>]", reply):
+        print(f"Auto-reply skipped for {review_id}: reply contains a placeholder")
+        return "skipped: AI reply looked like a template"
+    try:
+        token = get_tp_token()
+        r = requests.get(
+            f"https://api.trustpilot.com/v1/private/reviews/{review_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            params={"apikey": TP_API_KEY},
+            timeout=15,
+        )
+        if r.status_code != 200:
+            print(f"Auto-reply skipped for {review_id}: review lookup HTTP {r.status_code}")
+            return f"failed: review lookup HTTP {r.status_code}"
+        if r.json().get("companyReply"):
+            return "skipped: already replied"
+
+        message = reply.strip()
+        if "superhairpieces" not in message[-40:].lower():
+            message = f"{message} {REPLY_SIGNATURE}"
+        r = requests.post(
+            f"https://api.trustpilot.com/v1/private/reviews/{review_id}/reply",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={"message": message, "authorBusinessUserId": TP_AUTHOR_BUSINESS_USER_ID},
+            timeout=15,
+        )
+        if r.status_code not in (200, 201, 204):
+            print(f"Auto-reply failed for {review_id}: HTTP {r.status_code} {r.text[:300]}")
+            return f"failed: Trustpilot HTTP {r.status_code}"
+        print(f"Auto-reply posted for {review_id}")
+        return "posted"
+    except Exception as e:
+        print(f"Auto-reply error for {review_id}: {e}")
+        return "failed: error"
+
+
+def send_to_gchat(name, email, rating, comment, reply, suggestion, event, review_id="", review_date="", auto_reply=""):
     stars = "⭐" * min(int(rating) if rating.isdigit() else 0, 5)
     label = "New Trustpilot Review" if event == "review.created" else "Trustpilot Review Updated"
     email_line = f"<br><b>Email:</b> {email}" if email else ""
@@ -394,7 +440,9 @@ def send_to_gchat(name, email, rating, comment, reply, suggestion, event, review
                         "widgets": [{"textParagraph": {"text": comment or "—"}}]
                     },
                     {
-                        "header": "\U0001f4ac Reply Suggestion",
+                        "header": "\U0001f4ac Reply (auto-posted on Trustpilot)" if auto_reply == "posted"
+                                  else f"\U0001f4ac Reply Suggestion (auto-reply {auto_reply})" if auto_reply
+                                  else "\U0001f4ac Reply Suggestion",
                         "widgets": [{"textParagraph": {"text": reply or "—"}}]
                     },
                     {
