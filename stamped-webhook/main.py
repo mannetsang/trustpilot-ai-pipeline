@@ -3,6 +3,7 @@ import re
 import json
 import time
 import threading
+from datetime import datetime, timedelta, timezone
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, request, jsonify, Response, stream_with_context
@@ -135,13 +136,17 @@ def vertex_call(prompt: str, model: str = None) -> str:
 
 
 def get_reply_suggestion(author: str, rating: int, title: str, message: str, product: str) -> str:
+    named = author and author.strip().lower() not in ("anonymous", "a customer")
+    who = f"A customer named {author}" if named else "An anonymous customer"
     prompt = (
-        f"A customer named {author} left a {rating}-star review for the product "
+        f"{who} left a {rating}-star review for the product "
         f'"{product}" at Superhairpieces with the following:\n'
         f'Title: "{title}"\nReview: "{message}"\n\n'
         "Write a warm, professional public reply from Superhairpieces to post on Stamped.io. "
         "Keep it to 2-3 sentences. Thank them, address their specific feedback, and invite "
-        "them to reach out if needed. Do not use generic filler phrases."
+        "them to reach out if needed. Do not use generic filler phrases. "
+        + ("" if named else "Do not address them by name. ")
+        + "Respond with only the reply text itself: no preamble, no options, no quotation marks, no sign-off."
     )
     try:
         return vertex_call(prompt)
@@ -218,7 +223,46 @@ VERIFIED_MAP = {0: "Unverified", 1: "Verified Purchase", 2: "Verified"}
 RATING_EMOJI = {5: "🟢", 4: "🟢", 3: "🟡", 2: "🟠", 1: "🔴"}
 
 
-def send_to_gchat(data: dict, reply: str, suggestion: str, topic: str):
+REPLY_SIGNATURE = "Geeta - Superhairpieces"
+STAMPED_REVIEWS_API = f"https://stamped.io/api/v2/{STAMPED_STORE_HASH}/dashboard/reviews"
+
+
+def auto_reply_five_star(review_id, rating, reply: str) -> str:
+    """Post the AI reply on a 5-star Stamped review. Returns a short status for the Chat card."""
+    if int(rating or 0) != 5 or not review_id or not reply:
+        return ""
+    if re.search(r"[\[\]{}<>]", reply):
+        print(f"Auto-reply skipped for {review_id}: reply contains a placeholder")
+        return "skipped: AI reply looked like a template"
+    if "\n" in reply.strip() or re.match(r"\s*(of course|sure|certainly|absolutely|okay|here( is| are|'s|’s))\b", reply, re.I) \
+            or re.search(r"\breply\b[^.!?]{0,60}:", reply[:120], re.I):
+        print(f"Auto-reply skipped for {review_id}: reply includes model preamble")
+        return "skipped: AI reply included a preamble"
+    auth = (STAMPED_PUBLIC_KEY, STAMPED_PRIVATE_KEY)
+    try:
+        r = requests.get(f"{STAMPED_REVIEWS_API}/{review_id}", auth=auth, timeout=30)
+        if r.status_code != 200:
+            print(f"Auto-reply skipped for {review_id}: review lookup HTTP {r.status_code}")
+            return f"failed: review lookup HTTP {r.status_code}"
+        if (r.json().get("reply") or "").strip():
+            return "skipped: already replied"
+
+        message = reply.strip()
+        if "superhairpieces" not in message[-40:].lower():
+            message = f"{message} {REPLY_SIGNATURE}"
+        r = requests.post(f"{STAMPED_REVIEWS_API}/{review_id}/reply", auth=auth,
+                          json={"reply": message, "isPublicReply": True}, timeout=30)
+        if r.status_code >= 300:
+            print(f"Auto-reply failed for {review_id}: HTTP {r.status_code} {r.text[:300]}")
+            return f"failed: Stamped HTTP {r.status_code}"
+        print(f"Auto-reply posted for {review_id}")
+        return "posted"
+    except Exception as e:
+        print(f"Auto-reply error for {review_id}: {e}")
+        return "failed: error"
+
+
+def send_to_gchat(data: dict, reply: str, suggestion: str, topic: str, auto_reply: str = ""):
     author  = data.get("author", "A customer")
     email   = data.get("customerEmail", "")
     rating  = data.get("reviewRating", 0)
@@ -259,7 +303,9 @@ def send_to_gchat(data: dict, reply: str, suggestion: str, topic: str):
                         "widgets": [{"textParagraph": {"text": message or "—"}}]
                     },
                     {
-                        "header": "✍️ Reply Suggestion",
+                        "header": "✍️ Reply (auto-posted on Stamped.io)" if auto_reply == "posted"
+                                  else f"✍️ Reply Suggestion (auto-reply {auto_reply})" if auto_reply
+                                  else "✍️ Reply Suggestion",
                         "widgets": [{"textParagraph": {"text": reply or "—"}}]
                     },
                     {
@@ -300,7 +346,8 @@ def process_review(data: dict, topic: str):
     suggestion  = get_business_suggestion(rating, title, message, product) if has_content else ""
     issue_type  = get_issue_type(rating, title, message) if has_content else ""
 
-    send_to_gchat(data, reply, suggestion, topic)
+    auto_reply = auto_reply_five_star(data.get("id"), rating, reply) if "creat" in topic else ""
+    send_to_gchat(data, reply, suggestion, topic, auto_reply)
 
     date_created = (data.get("dateCreated") or "")[:10]
 
@@ -371,6 +418,63 @@ def health():
     return jsonify({"status": "healthy"})
 
 
+MONITOR_DAYS = 21  # unpublished reviews auto-publish after 14 days; look back past that
+_monitor_lock = threading.Lock()
+
+
+def stamped_review_to_data(rev: dict, source: str) -> dict:
+    """Map a Stamped dashboard API review to the webhook field names process_review expects."""
+    return {
+        "id":                 rev.get("id"),
+        "author":             rev.get("author", "A customer"),
+        "customerEmail":      rev.get("email", ""),
+        "reviewRating":       rev.get("rating", 0),
+        "reviewTitle":        rev.get("title", "") or "",
+        "reviewMessage":      rev.get("body", "") or "",
+        "productName":        rev.get("productTitle", "") or "",
+        "productUrl":         rev.get("productUrl", "") or "",
+        "location":           rev.get("location", "") or "",
+        "reviewVerifiedType": rev.get("verifiedType", 0),
+        "dateCreated":        rev.get("dateCreated", ""),
+        "widgetType":         source,
+        "reviewReply":        rev.get("reply", "") or "",
+    }
+
+
+@app.route("/monitor", methods=["GET", "POST"])
+def monitor():
+    """Process recent Stamped reviews that are not yet in the sheet (by review ID, column A).
+    Called by Cloud Scheduler every 30 minutes; Stamped no longer sends review/created webhooks."""
+    if not _monitor_lock.acquire(blocking=False):
+        return jsonify({"status": "busy"}), 409
+    try:
+        known = get_sheets_service().spreadsheets().values().get(
+            spreadsheetId=GOOGLE_SHEET_ID, range="Reviews!A:A"
+        ).execute().get("values", [])
+        known_ids = {row[0].strip() for row in known if row and row[0].strip()}
+
+        r = requests.get(STAMPED_REVIEWS_API, auth=(STAMPED_PUBLIC_KEY, STAMPED_PRIVATE_KEY),
+                         params={"page": 1, "take": 100}, timeout=30)
+        if r.status_code != 200:
+            print(f"Monitor: Stamped HTTP {r.status_code} {r.text[:200]}")
+            return jsonify({"status": "error", "stamped_status": r.status_code}), 502
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=MONITOR_DAYS)).strftime("%Y-%m-%d")
+        recent = [item.get("review", {}) for item in r.json().get("results", [])]
+        missing = [rev for rev in recent
+                   if (rev.get("dateCreated") or "")[:10] >= cutoff and str(rev.get("id")) not in known_ids]
+        print(f"Monitor: {len(recent)} reviews checked, {len(missing)} missing")
+
+        for rev in sorted(missing, key=lambda x: x.get("dateCreated", "")):
+            process_review(stamped_review_to_data(rev, "stamped-monitor"), "review/created")
+            print(f"Monitor: processed {rev.get('author')} ({rev.get('rating')} stars, id={rev.get('id')})")
+        return jsonify({"status": "ok", "checked": len(recent), "processed": len(missing)})
+    except Exception as e:
+        print(f"Monitor error: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+    finally:
+        _monitor_lock.release()
+
+
 @app.route("/backfill-since", methods=["GET", "POST"])
 def backfill_since():
     secret = request.args.get("secret", "")
@@ -412,22 +516,7 @@ def backfill_since():
             rating = rev.get("rating", 0)
             email  = rev.get("email", "")
             yield f"Processing ID={rev_id} | {date} | {rating}star | {email}\n"
-            # Map Stamped API field names to the webhook field names process_review expects
-            data = {
-                "id":                rev_id,
-                "author":            rev.get("author", "A customer"),
-                "customerEmail":     email,
-                "reviewRating":      rating,
-                "reviewTitle":       rev.get("title", "") or "",
-                "reviewMessage":     rev.get("body", "") or "",
-                "productName":       rev.get("productTitle", "") or "",
-                "productUrl":        rev.get("productUrl", "") or "",
-                "location":          rev.get("location", "") or "",
-                "reviewVerifiedType": rev.get("verifiedType", 0),
-                "dateCreated":       rev.get("dateCreated", ""),
-                "widgetType":        "stamped-api-backfill",
-                "reviewReply":       rev.get("reply", "") or "",
-            }
+            data = stamped_review_to_data(rev, "stamped-api-backfill")
             try:
                 process_review(data, "review/created")
                 yield f"  OK: {(rev.get('title') or '')[:50]}\n"
