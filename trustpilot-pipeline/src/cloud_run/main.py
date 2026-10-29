@@ -345,7 +345,8 @@ def get_reply_suggestion(comment, rating, name):
         f"with the following comment:\n\"{comment}\"\n\n"
         "Write a warm, professional public reply from Superhairpieces to post on Trustpilot. "
         "Keep it to 2-3 sentences. Thank them, address their specific feedback, and invite "
-        "them to reach out if needed. Do not use generic filler phrases."
+        "them to reach out if needed. Do not use generic filler phrases. "
+        "Respond with only the reply text itself: no preamble, no options, no quotation marks."
     )
     try:
         return vertex_call(prompt)
@@ -379,6 +380,10 @@ def auto_reply_five_star(review_id, rating, reply):
     if re.search(r"[\[\]{}<>]", reply):
         print(f"Auto-reply skipped for {review_id}: reply contains a placeholder")
         return "skipped: AI reply looked like a template"
+    if "\n" in reply.strip() or re.match(r"\s*(of course|sure|certainly|absolutely|okay|here( is| are|'s|’s))\b", reply, re.I) \
+            or re.search(r"\breply\b[^.!?]{0,60}:", reply[:120], re.I):
+        print(f"Auto-reply skipped for {review_id}: reply includes model preamble")
+        return "skipped: AI reply included a preamble"
     try:
         token = get_tp_token()
         r = requests.get(
