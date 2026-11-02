@@ -687,7 +687,7 @@ this repo.
    `gcloud run jobs execute ap-reconciliation-remind --region=us-central1 --project=shp-ai-bot-2026`
 9. **Drive import.** The schema (step 2) is applied again **before** the
    code that uses it deploys: `statement_sources`, `job_lease` and
-   `app_state`. Every long step takes the lease in
+   `app_state` (applied 2026-11-02, 30 statements). Every long step takes the lease in
    `job_lease`, the weekly reminder included, so without the table it fails.
    Then two things, once: the **Bank Transactions** folder is shared with
    `ap@superhairpieces.com` as a viewer (its owner, nikki@, does this:
@@ -695,7 +695,13 @@ this repo.
    creates, every 15 minutes, the same way as the weekly one:
    `gcloud scheduler jobs create http ap-reconciliation-sync --location=us-central1 --project=shp-ai-bot-2026 --schedule="*/15 * * * *" --time-zone=Etc/UTC --uri="https://run.googleapis.com/v2/projects/shp-ai-bot-2026/locations/us-central1/jobs/ap-reconciliation-sync:run" --http-method=POST --oauth-service-account-email=304363458561-compute@developer.gserviceaccount.com`
    Until the folder is shared the dashboard's line under the upload box says
-   so, and each run ends in seconds. Run it by hand with
+   so, and each run ends in seconds.
+   On 2026-11-02 the lines uploaded by hand before these parser fixes were
+   corrected in place (936 lines nobody had touched: Chase 4516/4692/9783
+   from CAD to USD, the True Top 4805/5018 lines Gemini had read with their
+   signs turned round, bank fees typed as fees, `&amp;` decoded), and their
+   months were queued for matching; the import recognises those lines, so
+   the folder's copies of the same statements add nothing twice. Run it by hand with
    `gcloud run jobs execute ap-reconciliation-sync --region=us-central1 --project=shp-ai-bot-2026`.
 10. **Cards.** Open the dashboard as AP, upload the first export, then under
    *Cards...* give each card its label, owner e-mail (the person who may
