@@ -45,14 +45,17 @@ Endpoints
   GET  /api/statements?year&month           uploads
   POST /api/statements (AP, multipart file; ?sync=1 also indexes, matches and notifies)
   DELETE /api/statements/<id> (AP)          remove an upload and its untouched lines
+  GET  /api/bank-imports (AP)               the Drive import: last check of the Bank Transactions folder, files read
   POST /api/index?year&month&limit (AP)     read new invoices for month-1..month+1, one batch
   POST /api/match?year&month[&card] (AP)    pair purchases with invoices
   POST /api/notify?year&month[&card] (AP)   post the "invoices needed" Chat cards
   POST /api/jobs?kind=index|match|notify&year&month[&card] (AP)  the same steps in the background (202)
   GET  /api/jobs/current                    the running or last background job: progress, then result
-The weekly reminder is a Cloud Run job running `python main.py remind` (see the deploy workflow).
+The weekly reminder is a Cloud Run job running `python main.py remind`, and the Drive import one
+running `python main.py sync` every 15 minutes (see the deploy workflow).
 
 Env: SUPABASE_URL, SUPABASE_SERVICE_KEY, INVOICE_FOLDER_ID, STATEMENTS_FOLDER_ID (optional),
+BANK_FOLDER_ID and BANK_SETTLE_MINUTES (the Drive import; off when unset),
 GOOGLE_WORKSPACE_AP_CLIENT_ID/_CLIENT_SECRET/_REFRESH_TOKEN (Drive as ap@; ADC when unset),
 CARD_WEBHOOKS_JSON, GCHAT_WEBHOOK_URL, IAP_AUDIENCE, ALLOWED_DOMAINS,
 AP_EMAILS, DASHBOARD_URL, LOGIN_URL, GEMINI_EXTRACT_MODEL, GEMINI_MATCH_MODEL, AI_DISABLED, AUTH_DISABLED,
@@ -64,6 +67,7 @@ import concurrent.futures
 import datetime as dt
 import hashlib
 import hmac
+import html
 import json
 import os
 import re
@@ -111,6 +115,10 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 INVOICE_FOLDER_ID = os.environ.get("INVOICE_FOLDER_ID", "18YkGTNDIrxdQgHRgquvQizI8fLsFOpPk")
 STATEMENTS_FOLDER_ID = os.environ.get("STATEMENTS_FOLDER_ID", "")
+# The Drive folder whose statements are imported on their own (`python main.py sync`, every 15
+# minutes): the "Bank Transactions" folder, shared with ap@ as a viewer. Unset: no import.
+BANK_FOLDER_ID = os.environ.get("BANK_FOLDER_ID", "")
+BANK_SETTLE = int(os.environ.get("BANK_SETTLE_MINUTES", "10")) * 60   # a file edited this recently waits
 AP_CLIENT_ID = os.environ.get("GOOGLE_WORKSPACE_AP_CLIENT_ID", "")
 AP_CLIENT_SECRET = os.environ.get("GOOGLE_WORKSPACE_AP_CLIENT_SECRET", "")
 AP_REFRESH_TOKEN = os.environ.get("GOOGLE_WORKSPACE_AP_REFRESH_TOKEN", "")
@@ -455,10 +463,94 @@ def may_edit(user, card_last4, cards=None):
 _job_lock = threading.Lock()
 _last_job = {"name": None, "started": None, "finished": None, "result": None, "error": None, "progress": {}}
 
+# The lock above keeps the dashboard's own long steps apart. The Cloud Run jobs (the weekly
+# reminder, the Drive import) run in other containers, so the store holds a lease as well: whoever
+# runs a long step takes it, renews it every LEASE_BEAT seconds, and a holder that died loses it
+# LEASE_TTL seconds after its last renewal. The service runs on one instance, so a lease that
+# another service instance holds was left by an earlier one (a deploy, a restart) and is taken over.
+LEASE_NAME = "jobs"
+LEASE_TTL = 300
+LEASE_BEAT = 60
+LEASE_POLL = 5             # a waiter asks this often: shorter than the import's LEASE_GAP
+_RUN_ID = os.environ.get("CLOUD_RUN_EXECUTION") or os.environ.get("K_REVISION") or "local"
+LEASE_HOLDER = f"service:{_RUN_ID}:{uuid.uuid4().hex[:8]}"      # the CLI's jobs switch it to job:...
+
+
+class Lease:
+    """The store's job lease while a long step runs; renewed in the background until release()."""
+
+    def __init__(self, job, holder, held=True):
+        self.job, self.holder, self.held = job, holder, held
+        self._done = threading.Event()
+        if held:
+            threading.Thread(target=self._beat, name=f"lease-{job}", daemon=True).start()
+
+    def _beat(self):
+        while not self._done.wait(LEASE_BEAT):
+            try:
+                if not get_store().renew_lease(LEASE_NAME, self.holder, LEASE_TTL):
+                    print(f"lease: {self.job} lost the job lease (expired and taken by someone else)")
+                    return
+            except Exception as exc:  # noqa: BLE001
+                print(f"lease: could not renew for {self.job}: {exc}")
+
+    def release(self):
+        if self._done.is_set():
+            return
+        self._done.set()
+        if self.held:
+            try:
+                get_store().release_lease(LEASE_NAME, self.holder)
+            except Exception as exc:  # noqa: BLE001
+                print(f"lease: could not release after {self.job} (it expires in {LEASE_TTL} s): {exc}")
+
+
+def take_lease(job, wait=0, fail_open=True):
+    """A Lease once the store's job lease is ours; None while another container holds it after
+    `wait` seconds. fail_open: when the store cannot be reached, run anyway (the step itself will
+    say what is wrong) rather than refuse; the jobs pass False and try again on their next run."""
+    holder = LEASE_HOLDER
+    take_over = "service:" if holder.startswith("service:") else ""
+    deadline = time.time() + wait
+    while True:
+        try:
+            if get_store().take_lease(LEASE_NAME, holder, job, LEASE_TTL, take_over):
+                return Lease(job, holder)
+        except Exception as exc:  # noqa: BLE001
+            if not fail_open:
+                raise
+            print(f"lease: could not reach the store ({exc}); {job} runs without the job lease")
+            return Lease(job, holder, held=False)
+        if time.time() >= deadline:
+            return None
+        time.sleep(max(1, min(LEASE_POLL, deadline - time.time())))
+
+
+def lease_live(lease, job=None, holder_prefix=""):
+    """A job_lease row someone holds now (not expired), optionally for `job` or by a holder
+    starting with `holder_prefix`."""
+    lease = lease or {}
+    until = _when(lease.get("expires_at"))
+    return bool(lease.get("holder")) and (lease.get("holder") or "").startswith(holder_prefix) and \
+        (job is None or lease.get("job") == job) and until is not None and until > dt.datetime.now(dt.timezone.utc)
+
+
+def lease_view():
+    """Who holds the job lease elsewhere, for a 409: {"job", "since"} or {}."""
+    try:
+        lease = get_store().get_lease(LEASE_NAME) or {}
+    except Exception:  # noqa: BLE001
+        return {}
+    return {"job": lease.get("job"), "since": lease.get("acquired_at")} if lease.get("holder") else {}
+
 
 def run_locked(name, fn, *args, **kwargs):
     if not _job_lock.acquire(blocking=False):
         return 409, {"status": "busy", "last_job": _last_job}
+    lease = take_lease(name)
+    if lease is None:
+        _job_lock.release()
+        return 409, {"status": "busy", "last_job": _last_job, "elsewhere": lease_view()}
     _last_job.update({"name": name, "started": now_iso(), "finished": None, "error": None, "progress": {}})
     try:
         result = fn(*args, **kwargs)
@@ -470,6 +562,7 @@ def run_locked(name, fn, *args, **kwargs):
         print(f"{name} error: {exc}")
         return 500, {"status": "error", "message": str(exc)}
     finally:
+        lease.release()
         _last_job["finished"] = now_iso()
         _job_lock.release()
 
@@ -508,6 +601,10 @@ def start_job(name, fn, *args, **kwargs):
     """Run fn in the background; 409 while another job (background or in-request) holds the lock."""
     if not _job_lock.acquire(blocking=False):
         return 409, {"status": "busy", "job": job_view()}
+    lease = take_lease(name)
+    if lease is None:              # the Drive import or the weekly reminder is running in its own container
+        _job_lock.release()
+        return 409, {"status": "busy", "job": job_view(), "elsewhere": lease_view()}
     job = {"id": uuid.uuid4().hex, "name": name, "started": now_iso(), "finished": None, "result": None,
            "error": None, "progress": {}}
     _jobs[job["id"]] = job
@@ -523,6 +620,7 @@ def start_job(name, fn, *args, **kwargs):
             job["error"] = str(exc)
             print(f"{name} error: {exc}")
         finally:
+            lease.release()
             job["finished"] = now_iso()
             _last_job.update({k: job[k] for k in ("finished", "result", "error")})
             _job_lock.release()
@@ -685,8 +783,63 @@ def month_folder_url(year, month):
 # ---------------------------------------------------------------------------
 # Pipeline steps
 # ---------------------------------------------------------------------------
-def ingest_statement(file_name, data, mime_type, uploaded_by):
-    """Parse the upload and store what is new. Returns the summary shown to AP."""
+def _words(text):
+    return re.findall(r"[a-z0-9]+", html.unescape(str(text or "")).lower())
+
+
+def description_tie(a, b):
+    """How closely two readings of a line's text agree: 3 the same words, 2 one cut short of the
+    other (a bank's 20-character text), 1 most words in common, 0 not the same line."""
+    wa, wb = _words(a), _words(b)
+    if not wa or not wb:
+        return 0
+    ja, jb = " ".join(wa), " ".join(wb)
+    if ja == jb:
+        return 3
+    if ja.startswith(jb) or jb.startswith(ja):
+        return 2
+    sa, sb = set(wa), set(wb)
+    return 1 if len(sa & sb) / len(sa | sb) >= 0.5 else 0
+
+
+def stored_under_other_ids(store, candidates, parsed_ids):
+    """{parsed id: stored row} for lines of a statement that are stored, but under another id: an
+    earlier reading of the same lines (Gemini's, or this parser's before a fix changed a currency,
+    a sign or a description, all of which the id is made of). Same card, same date, the same amount
+    up to its sign, and a description that says the same; each stored row stands for one line.
+
+    Pairs are made best first over each card's month: the same words and type, then the same words,
+    then a cut-short text (same type first), then most words in common; so a loose match never takes
+    a row that a closer line needs ("AMAZON MKTPL*AAA111" vs "*BBB222", a same-day sale and refund).
+    The type, not the sign, is what earlier readings got right (Gemini kept purchases negative)."""
+    found, groups = {}, {}
+    for t in candidates:
+        groups.setdefault((t["card_last4"], t["year"], t["month"]), []).append(t)
+    for (card, year, month), lines in groups.items():
+        free = {}
+        for r in store.list_transactions(year, month, card):
+            if r["id"] not in parsed_ids:           # a stored line this reading has under its own id is taken
+                key = (str(r["txn_date"])[:10], round(abs(float(r["amount"])) * 100))
+                free.setdefault(key, []).append(r)
+        for tie, same_type in ((3, True), (3, False), (2, True), (2, False), (1, True), (1, False)):
+            for t in lines:
+                if t["id"] in found:
+                    continue
+                bucket = free.get((t["txn_date"], round(abs(float(t["amount"])) * 100)), [])
+                hit = next((r for r in bucket if (not same_type or r.get("type") == t["type"])
+                            and description_tie(t["description"], r.get("description")) >= tie), None)
+                if hit:
+                    bucket.remove(hit)
+                    found[t["id"]] = hit
+    return found
+
+
+def ingest_statement(file_name, data, mime_type, uploaded_by, source=None):
+    """Parse the upload and store what is new. Returns the summary shown to AP.
+
+    source: the Drive file a statement was imported from (the Bank Transactions folder). It stays
+    where it is, so no copy is saved and the upload links to it; a version that adds no new line
+    is not listed as an upload, and the summary also carries every line's id."""
     store = get_store()
     parsed = statements.parse_statement(file_name, data, mime_type, gemini=get_gemini())
     txns = parsed["transactions"]
@@ -702,26 +855,40 @@ def ingest_statement(file_name, data, mime_type, uploaded_by):
     store.upsert_cards(card_rows)
 
     existing_ids = store.existing_transaction_ids([t["id"] for t in txns])
-    new = [t for t in txns if t["id"] not in existing_ids]
+    elsewhere = stored_under_other_ids(store, [t for t in txns if t["id"] not in existing_ids], {t["id"] for t in txns})
+    new = [t for t in txns if t["id"] not in existing_ids and t["id"] not in elsewhere]
+    if elsewhere:
+        parsed_by_id = {t["id"]: t for t in txns}
+        differ = sum(1 for tid, r in elsewhere.items()
+                     if r.get("currency") != parsed_by_id[tid]["currency"] or r.get("type") != parsed_by_id[tid]["type"]
+                     or round(float(r["amount"]), 2) != parsed_by_id[tid]["amount"])
+        n = len(elsewhere)
+        parsed["warnings"].append(
+            f"{n} line{'s were' if n != 1 else ' was'} already in the dashboard from an earlier reading of this "
+            "statement and not added again" + (f"; {differ} read differently there (currency, sign or type)." if differ else "."))
     months = sorted({month_folder_name(t["year"], t["month"]) for t in txns})
     stamp = now_iso()
     drive_file = {}
-    if STATEMENTS_FOLDER_ID and new:
+    if source:
+        drive_file = {"id": source.get("id"), "webViewLink": source.get("webViewLink")}
+    elif STATEMENTS_FOLDER_ID and new:
         try:
             drive = get_drive()
             folder = drive.ensure_folder(STATEMENTS_FOLDER_ID, months[-1])
             drive_file = drive.upload(folder, file_name, data, mime_type)
         except Exception as exc:  # noqa: BLE001
             print(f"statement copy to Drive failed: {exc}")
-    statement = store.insert_statement({
-        "file_name": file_name, "file_type": mime_type or "", "format": parsed["format"],
-        "uploaded_by": uploaded_by, "uploaded_at": stamp,
-        "period_start": parsed["period_start"], "period_end": parsed["period_end"],
-        "cards": sorted(parsed["cards"]), "months": months,
-        "transaction_count": len(txns), "new_count": len(new),
-        "drive_file_id": drive_file.get("id"), "drive_link": drive_file.get("webViewLink"),
-        "warnings": parsed["warnings"],
-    })
+    statement = {"id": None}
+    if new or not source:
+        statement = store.insert_statement({
+            "file_name": file_name, "file_type": mime_type or "", "format": parsed["format"],
+            "uploaded_by": uploaded_by, "uploaded_at": stamp,
+            "period_start": parsed["period_start"], "period_end": parsed["period_end"],
+            "cards": sorted(parsed["cards"]), "months": months,
+            "transaction_count": len(txns), "new_count": len(new),
+            "drive_file_id": drive_file.get("id"), "drive_link": drive_file.get("webViewLink"),
+            "warnings": parsed["warnings"],
+        })
     rows = []
     for t in new:
         row = dict(t)
@@ -729,15 +896,30 @@ def ingest_statement(file_name, data, mime_type, uploaded_by):
                     "invoice_status": "missing" if t["type"] == "purchase" else "not_required",
                     "invoice_id": None, "cost_center": None, "usage": None, "note": None})
         rows.append(row)
-    store.insert_transactions(rows)
-    return {
+    try:
+        store.insert_transactions(rows)
+    except Exception:
+        # No upload left behind without its lines (a retry would add another): take the row back
+        # out, with any lines of it that did land (the insert goes 500 at a time).
+        if statement.get("id"):
+            try:
+                store.delete_statement(statement["id"])
+            except Exception as exc:  # noqa: BLE001
+                print(f"statement {statement['id']}: could not take back the upload after a failed insert: {exc}")
+        raise
+    summary = {
         "statement_id": statement["id"], "file_name": file_name, "format": parsed["format"],
         "period_start": parsed["period_start"], "period_end": parsed["period_end"],
         "transactions": len(txns), "new": len(new), "already_stored": len(txns) - len(new),
         "cards": {l4: {"holder_name": c.get("holder_name", ""), "count": c["count"]} for l4, c in parsed["cards"].items()},
         "months": [[int(m[:4]), int(m[5:])] for m in months],
+        "new_months": sorted({(t["year"], t["month"]) for t in new}, reverse=True),
         "warnings": parsed["warnings"], "drive_link": drive_file.get("webViewLink"),
     }
+    if source:
+        summary["transaction_ids"] = [t["id"] for t in txns]
+        summary["line_months"] = {t["id"]: [t["year"], t["month"]] for t in txns}
+    return summary
 
 
 def index_month(year, month, limit=None, log=print, on_read=None):
@@ -1706,11 +1888,54 @@ def api_statements():
 def api_statement_delete(statement_id):
     """Remove a wrong upload. Lines someone already coded or decided on are kept (detached)."""
     user = require_user(ap_only=True)
-    result = get_store().delete_statement(statement_id)
+    store = get_store()
+    upload = store.get_statement(statement_id)
+    result = store.delete_statement(statement_id)
     if not result.get("deleted"):
         return jsonify({"error": "upload not found"}), 404
     print(f"statement {statement_id} removed by {user['email']}: {result}")
+    # An upload the Drive import made: its file is not read again (each new version of it would
+    # otherwise bring the removed lines back). Any other imported file of the same months is read
+    # again on the next run: lines it found already stored (under this upload) are gone now.
+    months = set((upload or {}).get("months") or [])
+    reread = []
+    for source in store.list_statement_sources():
+        if upload and upload.get("drive_file_id") and source["file_id"] == upload["drive_file_id"]:
+            source.update(status="removed", checked_at=now_iso(),
+                          error=f"Removed from the dashboard by {user['email']}; not read again. Copy the file in "
+                                "Drive to have it read as a new one.")
+            store.save_statement_source(source)
+            result["file_excluded"] = source["name"]
+        elif source.get("status") == "imported" and months & set(source.get("months") or []):
+            store.save_statement_source(dict(source, modified_time=None))
+            reread.append(source["name"])
+    if reread:
+        result["files_read_again"] = reread
     return jsonify({"status": "ok", **result})
+
+
+@app.route("/api/bank-imports")
+def api_bank_imports():
+    """The Drive import (the Bank Transactions folder): its last check and the files it read, newest
+    first. AP only; {"enabled": false} when BANK_FOLDER_ID is not set."""
+    require_user(ap_only=True)
+    if not BANK_FOLDER_ID:
+        return jsonify({"enabled": False})
+    store = get_store()
+    state = store.get_state("bank_sync") or {}
+    # Between months the run lets the lease go for a moment; it is still running while its state
+    # says so (a run killed outright stops counting after an hour).
+    checked = _when(state.get("checked_at"))
+    running = lease_live(store.get_lease(LEASE_NAME), job="drive-sync") or (
+        bool(state.get("running")) and checked is not None
+        and (dt.datetime.now(dt.timezone.utc) - checked).total_seconds() < 3600)
+    rows = sorted(store.list_statement_sources(), key=lambda r: str(r.get("checked_at") or ""), reverse=True)
+    files = [{k: r.get(k) for k in ("name", "path", "status", "new_count", "transaction_count", "months", "error",
+                                    "warnings", "web_link", "checked_at")} for r in rows[:50]]
+    view = {k: state.get(k) for k in ("checked_at", "ok", "error", "folder_name", "files", "settling",
+                                      "months_pending", "last_import", "finished_at")}
+    view["running"] = running
+    return jsonify({"enabled": True, "folder_url": folder_url(BANK_FOLDER_ID), "state": view, "files": files})
 
 
 @app.route("/api/statements", methods=["POST"])
@@ -1801,14 +2026,32 @@ def api_job_current():
         if job is None:
             return jsonify({"error": "no such job; the server may have restarted while it was running"}), 404
         return jsonify(job_view(job))
-    return jsonify(job_view())
+    view = job_view()
+    if not view["running"]:
+        # A step of the Cloud Run jobs (the Drive import, the weekly reminder) holds the job lease:
+        # the page waits on this cheap call rather than resending its request.
+        lease = get_store().get_lease(LEASE_NAME)
+        if lease_live(lease, holder_prefix="job:"):
+            view["elsewhere"] = {"job": lease.get("job"), "since": lease.get("acquired_at")}
+    return jsonify(view)
 
 
 def remind_latest():
     """Re-index, re-match and re-notify the newest month per card that still has missing invoices.
 
     This is what the weekly Cloud Run job runs (`python main.py remind`, started by Cloud Scheduler).
+    It waits up to 25 minutes for a step running elsewhere (the dashboard, the Drive import).
     """
+    lease = take_lease("remind", wait=1500, fail_open=False)
+    if lease is None:
+        raise SystemExit("remind: another job held the job lease for 25 minutes; not run")
+    try:
+        return _remind_latest()
+    finally:
+        lease.release()
+
+
+def _remind_latest():
     store = get_store()
     latest = {}
     for row in store.month_summary():          # newest month first, so the first hit per card wins
@@ -1829,19 +2072,256 @@ def remind_latest():
 
 
 # ---------------------------------------------------------------------------
-# Local CLI (and the weekly Cloud Run job, which runs `remind`)
+# The Bank Transactions folder: statements put there are imported on their own
+# ---------------------------------------------------------------------------
+GOOGLE_DOC = "application/vnd.google-apps.document"
+GOOGLE_SHEET = "application/vnd.google-apps.spreadsheet"
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+BANK_EXTENSIONS = {"xlsx", "xlsm", "xls", "csv", "tsv", "txt", "docx", "pdf", "jpg", "jpeg", "png"}
+BANK_MAX_BYTES = 25 * 1024 * 1024
+BANK_MAX_TRIES = 3          # a file that fails for a reason other than its content (Drive, Gemini) is retried
+BANK_RUN_BUDGET = 25 * 60   # a run starts no month after this long; the next run (15 minutes on) carries on
+LEASE_GAP = 15              # seconds the import leaves the lease free between steps (LEASE_POLL is 5)
+LEASE_HOLD = 60             # it lets the lease go after holding it this long, between two steps
+# Files Drive knows by type even when their name has no extension.
+BANK_MIME_EXT = {"application/pdf": "pdf", "text/csv": "csv", "text/plain": "txt", "text/tab-separated-values": "tsv",
+                 "image/jpeg": "jpg", "image/png": "png", XLSX: "xlsx",
+                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx"}
+
+
+def bank_reader(f):
+    """How a file in the folder is read: (export mime type or None, file name for the parser), or
+    None for a file that is not a statement (left alone). A Google Doc holds a bank's text export
+    pasted in, so it is read as its plain text; a Google Sheet as .xlsx."""
+    mime, name = f.get("mimeType", ""), f.get("name") or ""
+    if mime == GOOGLE_DOC:
+        return "text/plain", name + ".txt"
+    if mime == GOOGLE_SHEET:
+        return XLSX, name + ".xlsx"
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    if ext in BANK_EXTENSIONS:
+        return None, name
+    return (None, f"{name}.{BANK_MIME_EXT[mime]}") if mime in BANK_MIME_EXT else None
+
+
+def _when(value):
+    """An RFC 3339 time from Drive or Postgres as an aware datetime; None when empty or unreadable."""
+    try:
+        return dt.datetime.fromisoformat(str(value).replace("Z", "+00:00")) if value else None
+    except ValueError:
+        return None
+
+
+def bank_todo(files, ledger, now):
+    """(files to read now, names still being edited). A file is read once per version: when it is
+    new, when its modified time differs from the version read, or when the last try failed for a
+    reason other than its content. A version younger than BANK_SETTLE waits, so a sheet someone is
+    still filling in, or a file still uploading, is not read half-way."""
+    todo, settling = [], []
+    for f in files:
+        if not bank_reader(f):
+            continue
+        seen = ledger.get(f["id"])
+        modified = _when(f.get("modifiedTime"))
+        if seen and seen.get("status") == "removed":
+            continue                        # AP removed its upload from the dashboard: not read again
+        if seen and seen.get("status") != "retrying" and _when(seen.get("modified_time")) == modified:
+            continue
+        if modified and (now - modified).total_seconds() < BANK_SETTLE:
+            settling.append(f.get("name"))
+            continue
+        todo.append(f)
+    todo.sort(key=lambda f: (f.get("path") or "", f.get("name") or ""))
+    return todo, settling
+
+
+def bank_folder_problem(exc):
+    """Why the folder could not be listed, in words AP can act on."""
+    text = str(exc)
+    if re.search(r"-> 40[34]\b", text):
+        return "ap@superhairpieces.com cannot open the folder: share it with ap@superhairpieces.com (Viewer)."
+    return f"The folder could not be read: {text[:300]}"
+
+
+LEDGER_KEPT = ("statement_id", "transaction_count", "new_count", "months", "transaction_ids", "warnings")
+
+
+def import_bank_file(drive, f, seen, uploaded_by, log=print):
+    """Read one file of the folder into the dashboard: (its statement_sources row, the ingest
+    summary or None). A failed version keeps what the last version read left in the row (its
+    line ids above all), so a later version can still say which lines it dropped."""
+    export_as, name = bank_reader(f)
+    row = {"file_id": f["id"], "name": f.get("name") or "", "path": f.get("path") or "",
+           "mime_type": f.get("mimeType"), "web_link": f.get("webViewLink"), "status": "imported",
+           "modified_time": f.get("modifiedTime"), "statement_id": None, "transaction_count": 0,
+           "new_count": 0, "months": [], "transaction_ids": [], "attempts": 0, "error": None,
+           "warnings": [], "checked_at": now_iso()}
+    try:
+        if int(f.get("size") or 0) > BANK_MAX_BYTES:
+            raise statements.StatementError("The file is larger than 25 MB; split it and put the parts in the folder.")
+        if export_as:
+            data, mime = drive.export(f["id"], export_as), export_as
+        else:
+            data, mime = drive.download(f)
+        summary = ingest_statement(name, data, mime, uploaded_by, source=f)
+    except Exception as exc:  # noqa: BLE001
+        row.update({k: (seen or {}).get(k, row[k]) for k in LEDGER_KEPT})
+        if isinstance(exc, statements.StatementError):
+            # The content itself: reading it again gives the same answer, so wait for a new version.
+            row.update(status="failed", error=str(exc))
+            log(f"sync: {row['path']}/{row['name']} could not be read: {exc}")
+            return row, None
+        tries = ((seen or {}).get("attempts") or 0) + 1 if (seen or {}).get("status") == "retrying" else 1
+        if tries < BANK_MAX_TRIES:
+            # Keep the version read before (if any), so the next run tries this one again.
+            row.update(status="retrying", attempts=tries, error=str(exc)[:500],
+                       modified_time=(seen or {}).get("modified_time"))
+        else:
+            row.update(status="failed", attempts=tries, error=f"{str(exc)[:450]} (tried {tries} times)")
+        log(f"sync: {row['path']}/{row['name']} failed (try {tries}): {exc}")
+        return row, None
+    gone = len(set((seen or {}).get("transaction_ids") or []) - set(summary["transaction_ids"]))
+    warnings = list(summary["warnings"])
+    if gone:
+        warnings.append(f"{gone} line{'s' if gone != 1 else ''} of the version read before "
+                        f"{'are' if gone != 1 else 'is'} no longer in the file; the dashboard keeps "
+                        f"{'them' if gone != 1 else 'it'}. If a line was corrected, check that card's month.")
+    row.update(statement_id=summary["statement_id"] or (seen or {}).get("statement_id"),
+               transaction_count=summary["transactions"], new_count=summary["new"],
+               months=[month_folder_name(y, m) for y, m in summary["months"]],
+               transaction_ids=summary["transaction_ids"], warnings=warnings)
+    log(f"sync: {row['path']}/{row['name']}: {summary['transactions']} lines, {summary['new']} new")
+    return row, summary
+
+
+def update_sync_state(store, **changes):
+    """Merge `changes` into app_state "bank_sync" as it stands now: a run only writes the keys it
+    owns, so an overlapping run's progress is not put back to an older copy."""
+    state = store.get_state("bank_sync") or {}
+    state.update(changes)
+    store.set_state("bank_sync", state)
+    return state
+
+
+def sync_bank_folder(log=print, now=None):
+    """Import what is new in the Bank Transactions folder, then read invoices for and match the
+    months those statements touch: what the Cloud Run job ap-reconciliation-sync runs every 15
+    minutes (`python main.py sync`). Nothing is posted to Chat; reminders stay with AP's
+    "Send reminders" and the weekly job.
+
+    Months still to match are kept in app_state "bank_sync" (with the last check, for the
+    dashboard), so a run cut short, or one that stopped after BANK_RUN_BUDGET, leaves them to the
+    next. Between months the job lease is let go for a moment, so a dashboard step or the weekly
+    reminder waiting for it gets its turn; the run then stops and the next one carries on."""
+    if not BANK_FOLDER_ID:
+        return {"status": "off", "detail": "BANK_FOLDER_ID is not set"}
+    store, drive = get_store(), get_drive()
+    now = now or dt.datetime.now(dt.timezone.utc)
+    started = time.time()
+    check = {"checked_at": now_iso(), "folder_id": BANK_FOLDER_ID}
+    files, folder = [], {}
+    try:
+        folder = drive.get(BANK_FOLDER_ID)
+        files = drive.walk(BANK_FOLDER_ID)
+        check.update(ok=True, error="", folder_name=folder.get("name") or "", files=len(files))
+    except DriveError as exc:
+        check.update(ok=False, error=bank_folder_problem(exc))
+        log(f"sync: {exc}")
+    todo, settling = bank_todo(files, {r["file_id"]: r for r in store.list_statement_sources()}, now)
+    check["settling"] = settling
+    state = update_sync_state(store, **check)
+    status = "ok" if check["ok"] else "unreadable"
+    if not todo and not state.get("months_pending"):
+        out = {"status": "nothing new" if check["ok"] else "unreadable", "files": len(files), "settling": settling}
+        return dict(out, error=check["error"]) if not check["ok"] else out
+    lease = take_lease("drive-sync", fail_open=False)
+    if lease is None:
+        update_sync_state(store, busy=True)
+        log("sync: another step holds the job lease; trying again on the next run")
+        return {"status": "busy"}
+    imported, failed, pending = [], [], set()
+    held_since, steps = time.time(), 0
+
+    def turn():
+        """Between two steps (files, months): False when the run stops here, out of time or because
+        a step that was waiting took the lease while this run let it go."""
+        nonlocal lease, held_since
+        if time.time() - started > BANK_RUN_BUDGET:
+            log("sync: out of time; the next run carries on")
+            return False
+        if time.time() - held_since >= LEASE_HOLD:
+            lease.release()
+            lease = None
+            time.sleep(LEASE_GAP)                           # a dashboard step or the weekly reminder takes it now
+            lease = take_lease("drive-sync", fail_open=False)
+            if lease is None:
+                log("sync: another step took the job lease; the next run carries on")
+                return False
+            held_since = time.time()
+        return True
+
+    try:
+        update_sync_state(store, busy=False, running=True)
+        ledger = {r["file_id"]: r for r in store.list_statement_sources()}
+        todo, _ = bank_todo(files, ledger, now)              # again: an earlier run may have read some
+        uploaded_by = "Drive: " + (folder.get("name") or "Bank Transactions")
+        pending = {tuple(m) for m in (store.get_state("bank_sync") or {}).get("months_pending") or []}
+        stopped = False
+        for f in todo:
+            if steps and not turn():
+                stopped = True                              # files not reached keep their rows: read next time
+                break
+            steps += 1
+            seen = ledger.get(f["id"])
+            who = uploaded_by + (f"/{f['path']}" if f.get("path") else "")
+            row, summary = import_bank_file(drive, f, seen, who, log)
+            store.save_statement_source(row)
+            (imported if summary else failed).append(row["name"])
+            if summary:
+                # A version read before needs only the months of lines it did not have. Anything
+                # else (a first read, a retry) may have stored lines without its row saying so: all.
+                if seen and seen.get("status") == "imported":
+                    before = set(seen.get("transaction_ids") or [])
+                    months = [m for tid, m in summary["line_months"].items() if tid not in before]
+                else:
+                    months = summary["months"]
+                pending |= {tuple(m) for m in months}
+                update_sync_state(store, months_pending=sorted(pending, reverse=True),
+                                  last_import={"name": row["name"], "at": row["checked_at"], "new": row["new_count"]})
+        for year, month in sorted(pending, reverse=True):       # newest first
+            if stopped or (steps and not turn()):
+                log(f"sync: {len(pending)} months left for the next run")
+                break
+            steps += 1
+            log(f"sync: reading invoices and matching {year}-{month:02d}")
+            for _ in range(MAX_INDEX_ROUNDS):
+                if not index_month(year, month, log=log).get("remaining"):
+                    break
+            match_month(year, month, log=log)
+            pending.discard((year, month))
+            update_sync_state(store, months_pending=sorted(pending, reverse=True))
+    finally:
+        if lease is not None:
+            lease.release()
+        update_sync_state(store, running=False, finished_at=now_iso())
+    return {"status": status, "imported": imported, "failed": failed, "settling": settling, "months_left": len(pending)}
+
+
+# ---------------------------------------------------------------------------
+# Local CLI (and the Cloud Run jobs, which run `remind` and `sync`)
 #   python main.py parse <file>                       print the parsed transactions
 #   python main.py dry-run <file> [--no-ai]           full flow on an in-memory store, Chat cards printed
 #   python main.py index [--months "2026 09,2026 10"] read new invoices into the configured store
 #   python main.py match --year 2026 --month 9
 #   python main.py notify --year 2026 --month 9 [--dry-run]
 #   python main.py remind                             the weekly reminder (what the Cloud Run job runs)
+#   python main.py sync                               import new statements from the Bank Transactions folder
 #   python main.py serve [--port 8080]
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("command", choices=["parse", "dry-run", "index", "match", "notify", "remind", "serve"])
+    ap.add_argument("command", choices=["parse", "dry-run", "index", "match", "notify", "remind", "sync", "serve"])
     ap.add_argument("file", nargs="?")
     ap.add_argument("--year", type=int)
     ap.add_argument("--month", type=int)
@@ -1854,6 +2334,8 @@ if __name__ == "__main__":
     args = ap.parse_args()
     if args.no_ai:
         AI_DISABLED = True
+    if args.command != "serve":
+        LEASE_HOLDER = f"job:{_RUN_ID}:{uuid.uuid4().hex[:8]}"     # never taken over by the service
     if args.command == "parse":
         with open(args.file, "rb") as fh:
             result = statements.parse_statement(os.path.basename(args.file), fh.read(), gemini=get_gemini())
@@ -1885,5 +2367,7 @@ if __name__ == "__main__":
         print(json.dumps(notify_month(args.year, args.month, args.card, sent_by="cli", dry_run=args.dry_run), indent=2))
     elif args.command == "remind":
         print(json.dumps(remind_latest(), indent=2))
+    elif args.command == "sync":
+        print(json.dumps(sync_bank_folder(), indent=2))
     else:
         app.run(host="127.0.0.1", port=args.port, debug=False)

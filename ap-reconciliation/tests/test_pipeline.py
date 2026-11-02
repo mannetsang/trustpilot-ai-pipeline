@@ -414,7 +414,7 @@ class RbcExportTests(unittest.TestCase):
         self.assertEqual(set(mapping.values()), {
             "card", "holder_first", "holder_last", "period_start", "period_end", "post_date", "txn_date", "type",
             "description", "city", "country", "merchant_category", "source_currency", "source_amount", "currency",
-            "amount"})
+            "amount", "account_type"})       # "Purchasing Card": a card account, so every line is kept
 
     def test_cards_period_and_counts(self):
         self.assertEqual(self.result["format"], "table")
@@ -504,12 +504,13 @@ class GenericCsvTests(unittest.TestCase):
         result = statements.parse_statement("visa_4894_sep_2026.csv", GENERIC_CSV.encode())
         txns = result["transactions"]
         self.assertEqual(len(txns), 5)
-        self.assertEqual(len(result["warnings"]), 1)
-        self.assertIn("signs flipped", result["warnings"][0])
+        self.assertEqual(len(result["warnings"]), 2)
+        self.assertIn("taken from the file name", result["warnings"][0])
+        self.assertIn("signs flipped", result["warnings"][1])
         self.assertEqual(one(txns, "AMZN MKTP CA")["amount"], 45.10)
         self.assertEqual(one(txns, "AMZN MKTP CA")["type"], "purchase")
         self.assertEqual(one(txns, "PAYMENT - THANK YOU")["amount"], -500.0)
-        self.assertEqual(one(txns, "PAYMENT - THANK YOU")["type"], "credit")
+        self.assertEqual(one(txns, "PAYMENT - THANK YOU")["type"], "payment")     # named so; a refund stays "credit"
         # 03/09 is the 3rd of September because other rows (15/09, 22/09, 30/09) prove the file is day-first.
         self.assertEqual(one(txns, "ANTHROPIC* CLAUDE TEAM")["txn_date"], "2026-09-03")
         self.assertEqual(one(txns, "AMZN MKTP CA")["txn_date"], "2026-09-15")
@@ -530,7 +531,7 @@ class GenericCsvTests(unittest.TestCase):
                     "2026-09-28,PAYMENT RECEIVED,,1000.00\n")
         txns = statements.parse_statement("c.csv", csv_text.encode())["transactions"]
         self.assertEqual([(t["description"], t["amount"], t["type"]) for t in txns],
-                         [("ANTHROPIC", 150.0, "purchase"), ("PAYMENT RECEIVED", -1000.0, "credit")])
+                         [("ANTHROPIC", 150.0, "purchase"), ("PAYMENT RECEIVED", -1000.0, "payment")])
 
     def test_unrecognised_columns_need_gemini(self):
         with self.assertRaises(statements.StatementError) as ctx:

@@ -117,6 +117,20 @@
     .job-earlier .failed { color: var(--down); }
     .ap-sep { width: 1px; align-self: stretch; background: var(--border); margin: 2px 4px; }
     @media (max-width: 1099px) { .ap-sep { display: none; } }
+    /* The Drive import: one line under the upload box, its files listed on demand. */
+    .bank-sync { margin-top: 8px; font-size: 12.5px; color: var(--text-mid); }
+    .bank-sync .bank-line { line-height: 1.5; }
+    .bank-sync .bank-dot { display: inline-block; width: 8px; height: 8px; border-radius: 999px; background: var(--up-ink); margin-right: 6px; vertical-align: 1px; }
+    .bank-sync.err .bank-dot { background: var(--down); }
+    .bank-sync.err .bank-text { color: var(--down); }
+    .bank-sync.busy .bank-dot { background: var(--brand); }
+    .bank-sync .bank-warn { color: var(--warn-text); }
+    .bank-sync .bank-toggle { border: 0; background: none; padding: 0; margin-left: 8px; color: var(--brand-ink); cursor: pointer; font: inherit; }
+    .bank-sync .bank-toggle:hover { text-decoration: underline; }
+    .bank-list { margin-top: 6px; display: grid; gap: 0; max-height: 320px; overflow-y: auto; border-top: 1px solid var(--border-subtle); }
+    .bank-list .bank-file { display: flex; gap: 8px; align-items: flex-start; padding: 6px 0; border-bottom: 1px solid var(--border-subtle); }
+    .bank-list .bank-file .min-w-0 { min-width: 0; }
+    .bank-list .bank-err { color: var(--down); }
     input[type="checkbox"] { accent-color: var(--brand); width: 15px; height: 15px; }
 
     /* Layout: dark sidebar on the left, scrolling main area on the right. Under 900px the sidebar
@@ -541,6 +555,10 @@
             </div>
           </div>
           <div id="aiNote" class="sub hidden mt-1.5">Invoice reading is switched off on this server (AI_DISABLED): matching uses invoices already indexed.</div>
+          <div id="bankSync" class="bank-sync hidden">
+            <div class="bank-line"><span class="bank-dot" aria-hidden="true"></span><span id="bankText" class="bank-text" aria-live="polite"></span><button type="button" id="bankToggle" class="bank-toggle hidden" aria-expanded="false" aria-controls="bankList">Files read</button></div>
+            <div id="bankList" class="bank-list hidden"></div>
+          </div>
           <div id="job" class="job hidden" aria-live="polite">
             <div id="rerunQueue" class="rerun-queue hidden"></div>
             <div id="jobEarlier" class="job-earlier hidden"></div>
@@ -743,8 +761,19 @@
         return await api(path, opts);
       } catch (e) {
         if (e.status !== 409) throw e;
-        if (onWait) onWait(attempt);
-        await sleep(4000);
+        var elsewhere = (e.data && e.data.elsewhere) || {};
+        if (onWait) onWait(attempt, elsewhere);
+        if (!elsewhere.job) { await sleep(4000); continue; }
+        // A Cloud Run job (the Drive import, the weekly reminder) has the server's lease, maybe for
+        // many minutes: wait on the cheap status call rather than sending this request (an upload's
+        // whole file) again and again; up to 45 minutes. Every 5 s: the import lets the lease go
+        // for 15 s between its steps, which is when this request gets in.
+        for (var w = 0; w < 540; w++) {
+          await sleep(5000);
+          var cur = null;
+          try { cur = await api('/api/jobs/current'); } catch (e2) { if (e2.status === 401) throw e2; }
+          if (cur && !cur.running && !cur.elsewhere) break;
+        }
       }
     }
     throw new ApiError(409, 'the server stayed busy for too long; try again later', null);
@@ -1089,7 +1118,7 @@
     $('#aiNote').classList.toggle('hidden', state.config.ai_enabled !== false);
     state.loaded = true;
     await applyRoute();
-    if (state.me.role === 'ap') resumeRunningJob();
+    if (state.me.role === 'ap') { resumeRunningJob(); loadBankSync(); }
   }
 
   async function loadMonths() {
@@ -2793,6 +2822,85 @@
   });
 
   // ---------------------------------------------------------------------------
+  // The Drive import: statements put in the Bank Transactions folder are read by a job every
+  // 15 minutes. One line says when it last looked and what it read; its files are listed on demand.
+  // When it has read something new since the page last asked, the months reload (between jobs).
+  // ---------------------------------------------------------------------------
+  var bank = { data: null, shown: '', lastImport: null, loaded: false, timer: 0 };
+  // Someone is typing in a row or has a dialog open: a reload now would throw their edit away.
+  function editingNow() {
+    var a = document.activeElement;
+    if (a && a !== document.body && (a.closest('#txnBody') || /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))) return true;
+    return !!document.querySelector('[aria-modal="true"]:not(.hidden)');
+  }
+  async function loadBankSync() {
+    clearTimeout(bank.timer);
+    bank.timer = setTimeout(loadBankSync, document.hidden ? 300000 : 60000);
+    var data;
+    try { data = await api('/api/bank-imports'); } catch (e) { return; }
+    if (!data || !data.enabled) { $('#bankSync').classList.add('hidden'); return; }
+    var st = data.state || {}, now = st.last_import ? st.last_import.at : null;
+    bank.data = data;
+    var shown = JSON.stringify(data);
+    if (shown !== bank.shown) { bank.shown = shown; renderBankSync(); }     // unchanged: nothing re-announced
+    if (!bank.loaded) { bank.loaded = true; bank.lastImport = now; return; }
+    // Something new: said and reloaded once the run has also read invoices and matched, and not
+    // under a step of the page's own or someone's edit (the next look tries again).
+    if (now && now !== bank.lastImport && !st.running && !state.jobRunning && !editingNow()) {
+      var since = bank.lastImport ? new Date(bank.lastImport).getTime() : 0;
+      bank.lastImport = now;
+      var got = (data.files || []).filter(function (f) { return f.status === 'imported' && new Date(f.checked_at).getTime() > since; });
+      var lines = got.reduce(function (n, f) { return n + (Number(f.new_count) || 0); }, 0);
+      var li = data.state.last_import;
+      toast('Imported from Drive: ' + (got.length > 1 ? count(got.length, 'statement', 'statements') : li.name) +
+            ' (' + count(got.length > 1 ? lines : li.new, 'new line', 'new lines') + ').', 'ok', 6000);
+      try { await reloadAll(); renderSidebar(); } catch (e) { /* the next load shows it */ }
+    }
+  }
+  document.addEventListener('visibilitychange', function () { if (!document.hidden && bank.data) loadBankSync(); });
+  function renderBankSync() {
+    var d = bank.data, st = d.state || {}, el = $('#bankSync');
+    var folder = esc(st.folder_name || 'Bank Transactions');
+    var link = safeUrl(d.folder_url) ? '<a class="link" href="' + esc(safeUrl(d.folder_url)) + '" target="_blank" rel="noopener noreferrer">' + folder + ' ↗</a>' : folder;
+    var failed = [];
+    (d.files || []).forEach(function (f) { if (f.status === 'failed') failed.push(f); });
+    var bits = [];
+    if (st.running) bits.push('importing now…');
+    else if (st.checked_at) bits.push('checked ' + esc(fmtStamp(st.checked_at)));
+    else bits.push('not checked yet; the first check runs within 15 minutes');
+    if (st.last_import) bits.push('last import ' + esc(st.last_import.name) + ', ' + esc(fmtStamp(st.last_import.at)));
+    if ((st.settling || []).length) bits.push('waiting for ' + count(st.settling.length, 'file', 'files') + ' still being edited');
+    if ((st.months_pending || []).length && !st.running) bits.push(count(st.months_pending.length, 'month', 'months') + ' still to match');
+    var text = st.ok === false
+      ? 'Statements from the ' + link + ' folder cannot be imported: ' + esc(st.error || 'the folder could not be read')
+      : 'Statements put in the ' + link + ' folder in Drive are imported by themselves · ' + bits.join(' · ') +
+        (failed.length ? ' · <span class="bank-warn">' + count(failed.length, 'file', 'files') + ' could not be read</span>' : '');
+    $('#bankText').innerHTML = text;
+    el.classList.toggle('err', st.ok === false);
+    el.classList.toggle('busy', !!st.running);
+    $('#bankToggle').classList.toggle('hidden', !(d.files || []).length);
+    $('#bankList').innerHTML = (d.files || []).map(function (f) {
+      var pill = f.status === 'imported' ? '<span class="pill pill-up">read</span>'
+        : f.status === 'retrying' ? '<span class="pill pill-warn">trying again</span>'
+        : f.status === 'removed' ? '<span class="pill">removed</span>' : '<span class="pill pill-down">not read</span>';
+      var name = (f.path ? esc(f.path) + ' / ' : '') + esc(f.name);
+      name = safeUrl(f.web_link) ? '<a class="link" href="' + esc(safeUrl(f.web_link)) + '" target="_blank" rel="noopener noreferrer">' + name + ' ↗</a>' : name;
+      var info = f.status === 'imported'
+        ? count(f.transaction_count, 'line', 'lines') + ', ' + count(f.new_count, 'new', 'new') + ((f.months || []).length ? ' · ' + esc(f.months.map(function (m) { return monthLabel(Number(m.slice(0, 4)), Number(m.slice(5))); }).join(', ')) : '')
+        : '';
+      var note = f.status !== 'imported' && f.error ? '<div class="sub bank-err">' + esc(f.error) + '</div>' : '';
+      var warn = (f.warnings || []).length ? '<div class="sub" style="color: var(--warn-text);">' + esc(f.warnings.join(' ')) + '</div>' : '';
+      return '<div class="bank-file">' + pill + '<div class="min-w-0"><div>' + name + '</div><div class="sub">' + (info ? info + ' · ' : '') + esc(fmtStamp(f.checked_at)) + '</div>' + note + warn + '</div></div>';
+    }).join('');
+    el.classList.remove('hidden');
+  }
+  $('#bankToggle').addEventListener('click', function () {
+    var open = $('#bankList').classList.toggle('hidden') === false;
+    this.setAttribute('aria-expanded', String(open));
+    this.textContent = open ? 'Hide files' : 'Files read';
+  });
+
+  // ---------------------------------------------------------------------------
   // AP jobs: upload, index, match, notify. Progress is shown as plain-language steps with a bar;
   // the technical lines go to the collapsed "Details" box, which opens by itself on a problem.
   // ---------------------------------------------------------------------------
@@ -2879,10 +2987,12 @@
     if (!on) setTimeout(kickRerunQueue, 0);        // months queued meanwhile start now
   }
   function count(x, one, many) { x = Number(x) || 0; return x + ' ' + (x === 1 ? one : many); }
+  var ELSEWHERE = { 'drive-sync': 'the import from the Bank Transactions folder', remind: 'the weekly reminder' };
   function onBusyWait(step) {
-    return function (attempt) {
+    return function (attempt, elsewhere) {
       if (!attempt) delete stepSaid[step];          // said once (a change of state), not on every retry
-      setStep(step, 'running', 'Waiting for another job on the server to finish before ' + STEP_DOING[step].toLowerCase() + '…'); setBar(-1);
+      var who = (elsewhere && ELSEWHERE[elsewhere.job]) || 'another job on the server';
+      setStep(step, 'running', 'Waiting for ' + who + ' to finish before ' + STEP_DOING[step].toLowerCase() + '…'); setBar(-1);
     };
   }
   // "indexed 2026 08/Anthropic/Invoice-0069.pdf: Anthropic 45.03 CAD …" -> "Anthropic/Invoice-0069.pdf"

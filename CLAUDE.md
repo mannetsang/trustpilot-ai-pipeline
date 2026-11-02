@@ -173,6 +173,15 @@ Storage is a **separate Supabase project** (ref
 `bkkifrwfgtcnmfynbbdd`; schema in `ap-reconciliation/schema.sql`, applied
 with `setup_db.py`), not shared with anything else. Secrets are `ap-reconciliation-*` plus the AP user's Drive
 OAuth triple `google-workspace-ap-*`; see `ap-reconciliation/README.md`.
+Statements put in the Drive folder **Bank Transactions**
+(`1MGenhujsY-zElpg6A0SGD8C1WqC516t3`, owned by nikki@; Manne is an editor but
+editors may not share it) are imported by the Cloud Run job
+`ap-reconciliation-sync` (`python main.py sync`) every 15 minutes. It needs the
+folder shared with ap@ as a viewer, and a Cloud Scheduler job only an owner can
+create: claude-sessions has no Cloud Scheduler rights (neither job exists until
+Manne creates it; the README's one-time setup has both commands). It can deploy
+and execute Cloud Run jobs and apply the schema. The job and the dashboard
+share a lease in `job_lease`, so their long steps never overlap.
 
 ### Known data-quality caveats
 

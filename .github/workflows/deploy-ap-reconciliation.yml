@@ -5,7 +5,9 @@ name: Deploy AP credit-card reconciliation service
 # the reconciliation dashboard; see ap-reconciliation/README.md), the public
 # sign-in page ap-reconciliation/login as the service
 # `ap-reconciliation-login`, and, from the dashboard's image, the Cloud Run
-# job `ap-reconciliation-remind` that Cloud Scheduler runs every Monday.
+# jobs `ap-reconciliation-remind` that Cloud Scheduler runs every Monday and
+# `ap-reconciliation-sync` that it runs every 15 minutes (statements put in
+# the Bank Transactions folder in Drive are imported by themselves).
 #
 # Credentials reach the containers as Secret Manager references, never as
 # values in this file: the Supabase service-role key, the AP user's Drive
@@ -49,7 +51,11 @@ env:
   SERVICE: ap-reconciliation
   LOGIN_SERVICE: ap-reconciliation-login
   JOB: ap-reconciliation-remind
+  SYNC_JOB: ap-reconciliation-sync
   INVOICE_FOLDER_ID: 18YkGTNDIrxdQgHRgquvQizI8fLsFOpPk
+  # Drive folder "Bank Transactions" (nikki@'s, shared with ap@ as a viewer): its statements are
+  # imported by the sync job. A folder id is not a secret.
+  BANK_FOLDER_ID: 1MGenhujsY-zElpg6A0SGD8C1WqC516t3
   SUPABASE_URL: https://bkkifrwfgtcnmfynbbdd.supabase.co
   ALLOWED_DOMAINS: superhairpieces.com
   AP_EMAILS: ap@superhairpieces.com,manne@superhairpieces.com,snow@superhairpieces.com
@@ -87,7 +93,7 @@ jobs:
             --region "$REGION" --project "$PROJECT" \
             --no-allow-unauthenticated --iap --no-cpu-throttling \
             --min-instances 0 --max-instances 1 --timeout 1800 --memory 1Gi \
-            --set-env-vars "^;^INVOICE_FOLDER_ID=$INVOICE_FOLDER_ID;ALLOWED_DOMAINS=$ALLOWED_DOMAINS;AP_EMAILS=$AP_EMAILS;SUPABASE_URL=$SUPABASE_URL;IAP_AUDIENCE=$IAP_AUDIENCE" \
+            --set-env-vars "^;^INVOICE_FOLDER_ID=$INVOICE_FOLDER_ID;BANK_FOLDER_ID=$BANK_FOLDER_ID;ALLOWED_DOMAINS=$ALLOWED_DOMAINS;AP_EMAILS=$AP_EMAILS;SUPABASE_URL=$SUPABASE_URL;IAP_AUDIENCE=$IAP_AUDIENCE" \
             --set-secrets "$SECRETS" \
             --quiet
 
@@ -147,7 +153,9 @@ jobs:
             --quiet
 
       # Weekly reminder: a Cloud Run job running `python main.py remind` in the
-      # image the service was just built from, with the same secrets. Cloud
+      # image the service was just built from, with the same secrets. An hour:
+      # it may first wait up to 25 minutes for the job lease (the Drive import
+      # or a dashboard step), then needs its usual time. Cloud
       # Scheduler starts it on Mondays through the Cloud Run API with its own
       # service account (no token, no path through IAP); that scheduler job is
       # created once by an owner (README, "One-time setup"). Only warns when
@@ -164,8 +172,35 @@ jobs:
             --image "$IMAGE" \
             --region "$REGION" --project "$PROJECT" \
             --command python --args main.py,remind \
-            --tasks 1 --max-retries 0 --task-timeout 1800 --memory 1Gi \
+            --tasks 1 --max-retries 0 --task-timeout 3600 --memory 1Gi \
             --set-env-vars "^;^INVOICE_FOLDER_ID=$INVOICE_FOLDER_ID;ALLOWED_DOMAINS=$ALLOWED_DOMAINS;AP_EMAILS=$AP_EMAILS;SUPABASE_URL=$SUPABASE_URL;DASHBOARD_URL=$SERVICE_URL" \
             --set-secrets "$SECRETS" \
             --quiet \
           || echo "::warning::Could not deploy the Cloud Run job $JOB (claude-sessions needs roles/run.admin on jobs); the weekly reminder will not run until it is deployed, see ap-reconciliation/README.md"
+
+      # The Drive import: a Cloud Run job running `python main.py sync` in the
+      # same image, started every 15 minutes by Cloud Scheduler the way the
+      # weekly job is (README, "One-time setup"). A run with nothing new ends
+      # in seconds; one with new statements reads them, then reads invoices
+      # for and matches their months, holding the job lease the dashboard also
+      # takes, so the two never run a long step at the same time. It starts no
+      # month after 25 minutes and lets the lease go between months, so the
+      # weekly reminder and the dashboard get their turn; the next run carries
+      # on. The schema (job_lease and the import's tables) must be applied
+      # before this code first deploys (README, one-time setup).
+      - name: Deploy the Drive import job
+        continue-on-error: true
+        run: |
+          IMAGE=$(gcloud run services describe "$SERVICE" \
+            --region "$REGION" --project "$PROJECT" --format 'value(spec.template.spec.containers[0].image)')
+          SERVICE_URL=$(gcloud run services describe "$SERVICE" \
+            --region "$REGION" --project "$PROJECT" --format 'value(status.url)')
+          gcloud run jobs deploy "$SYNC_JOB" \
+            --image "$IMAGE" \
+            --region "$REGION" --project "$PROJECT" \
+            --command python --args main.py,sync \
+            --tasks 1 --max-retries 0 --task-timeout 3600 --memory 1Gi \
+            --set-env-vars "^;^INVOICE_FOLDER_ID=$INVOICE_FOLDER_ID;BANK_FOLDER_ID=$BANK_FOLDER_ID;ALLOWED_DOMAINS=$ALLOWED_DOMAINS;AP_EMAILS=$AP_EMAILS;SUPABASE_URL=$SUPABASE_URL;DASHBOARD_URL=$SERVICE_URL" \
+            --set-secrets "$SECRETS" \
+            --quiet \
+          || echo "::warning::Could not deploy the Cloud Run job $SYNC_JOB (claude-sessions needs roles/run.admin on jobs); statements in the Bank Transactions folder are not imported until it is deployed, see ap-reconciliation/README.md"

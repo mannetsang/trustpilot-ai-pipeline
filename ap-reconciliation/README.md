@@ -124,12 +124,55 @@ updates its folder hints without another model call.
    Cloud Scheduler starts on Mondays 14:00 UTC; it runs `python main.py remind`).
    For each card, the newest month that still has missing or possible
    purchases is re-indexed, re-matched and notified again.
+6. **Drive import** (the Cloud Run job `ap-reconciliation-sync`, which Cloud
+   Scheduler starts every 15 minutes; it runs `python main.py sync`).
+   Statements put in the **Bank Transactions** folder in Drive
+   (`BANK_FOLDER_ID`, nikki@'s folder, shared with ap@ as a viewer), or in
+   any folder inside it, are uploaded by themselves: a Google Doc is read as
+   its plain text (a bank's text export pasted in), a Google Sheet as
+   `.xlsx`, and `.xlsx/.csv/.txt/.docx/.pdf` and photos as they are. Each
+   file is read once per version (its modified time, kept in
+   `statement_sources`); a version changed in the last 10 minutes waits, so a
+   sheet someone is still filling in is not read half-way. A changed file
+   adds only its new lines (line ids), and says so when lines of the version
+   read before are gone from it. Then the months those lines fell in are read
+   for invoices and matched, newest first. Nothing is posted to Chat:
+   reminders stay with *Send reminders* and the weekly job. A file that
+   cannot be read is listed with the reason and read again when it changes;
+   a Drive or Gemini failure is tried again on the next two runs. A file
+   read for the first time has all its months matched (its lines may have
+   been uploaded by hand before), a new version only the months of its new
+   lines. Months not matched yet are kept in `app_state`: a run starts no
+   month after 25 minutes, lets the job lease go for ten seconds between
+   months (a waiting dashboard step or the weekly reminder takes it, and the
+   run stops there), and the next run matches what is left, together with
+   the months of anything it imports. They are matched even while the folder
+   cannot be read. Removing an imported upload in the dashboard (*Remove*
+   under Uploads) also stops its file from being read again; copy the file
+   in Drive to have it read as a new one.
+   A line already stored under another id is not added again: same card,
+   same date, the same amount whatever its sign, and a description that says
+   the same. That covers statements uploaded by hand before (Gemini's
+   reading, or this parser's before a fix changed a currency or a sign, both
+   part of a line's id); the upload's warnings say how many such lines it
+   met and how many read differently.
 
 `POST /api/statements?sync=1` runs steps 1-4 in one request (the CLI, curl
 and the tests use it); the dashboard's *Upload and process* button runs them
 as separate calls so it can show progress. Jobs serialize on an in-process
 lock: a second index, match, notify or synchronous upload gets `409 busy`
-while one runs.
+while one runs. The two Cloud Run jobs run in their own containers, so the
+store holds a lease as well (`job_lease`): every long step, the dashboard's
+and the jobs', takes it and renews it every minute, and one that died loses
+it after five minutes. The dashboard answers `409` with
+`"elsewhere": {"job": "drive-sync"}` while the import runs (the page says it
+is waiting for the import); the import skips a run while the dashboard holds
+it; the weekly reminder waits up to 25 minutes. The dashboard takes over a
+lease an earlier instance of itself left (a deploy mid-step), since it runs
+on one instance. While a job holds it, the page waits on
+`GET /api/jobs/current` (which then carries `elsewhere`) for up to 45
+minutes before sending its request again, rather than resending it every
+few seconds.
 
 ## Matching rules and statuses
 
@@ -301,6 +344,14 @@ Two other modes exist, one edit of the deploy workflow away (step 5):
   runs before stay above the steps under *Earlier in this run*, and the
   Details lines are kept. The queue lives in the open page: keep it open
   until it is done (leaving asks first).
+  Under the row, one line on the **Drive import**: when the Bank
+  Transactions folder was last checked, the last statement imported from it,
+  files still being edited, months still to match, and how many files could
+  not be read; *Files read* lists each file (read, not read with the reason,
+  trying again) with its lines and months, linked to the file in Drive. A
+  folder ap@ cannot open turns the line red and says to share it. The page
+  asks every minute while it is open, and when the import has read something
+  new it says so and reloads the months (not while a step of its own runs).
 - **Card chips** ("1610 - Yin Wei", the full label on hover; one line that
   scrolls sideways when there are more cards than fit) and a status filter
   (all, missing, possible, matched, waived, no cost centre), a search box
@@ -477,6 +528,8 @@ Job endpoints answer `409 {"status": "busy"}` while another job runs and
 | `SUPABASE_SERVICE_KEY` | | service-role key; secret |
 | `INVOICE_FOLDER_ID` | the Invoice folder above | root of the walk |
 | `STATEMENTS_FOLDER_ID` | empty | when set, uploads are copied to Drive under `<folder>/<YYYY MM>/` |
+| `BANK_FOLDER_ID` | empty: no Drive import | the folder whose statements `python main.py sync` imports (the Bank Transactions folder, `1MGenhujsY-zElpg6A0SGD8C1WqC516t3`); the workflow sets it on the service (for the dashboard's line) and the sync job |
+| `BANK_SETTLE_MINUTES` | `10` | a file modified more recently than this waits for the next run |
 | `GOOGLE_WORKSPACE_AP_CLIENT_ID` / `_CLIENT_SECRET` / `_REFRESH_TOKEN` | | the AP user's OAuth triple for Drive; secrets. ADC when unset |
 | `CARD_WEBHOOKS_JSON` | | the webhook object above; secret |
 | `GCHAT_WEBHOOK_URL` | empty | optional single fallback webhook |
@@ -632,7 +685,19 @@ this repo.
    `gcloud run jobs add-iam-policy-binding ap-reconciliation-remind --region=us-central1 --project=shp-ai-bot-2026 --member="serviceAccount:304363458561-compute@developer.gserviceaccount.com" --role="roles/run.invoker"`
    The job can also be started by hand:
    `gcloud run jobs execute ap-reconciliation-remind --region=us-central1 --project=shp-ai-bot-2026`
-9. **Cards.** Open the dashboard as AP, upload the first export, then under
+9. **Drive import.** The schema (step 2) is applied again **before** the
+   code that uses it deploys: `statement_sources`, `job_lease` and
+   `app_state`. Every long step takes the lease in
+   `job_lease`, the weekly reminder included, so without the table it fails.
+   Then two things, once: the **Bank Transactions** folder is shared with
+   `ap@superhairpieces.com` as a viewer (its owner, nikki@, does this:
+   editors may not share it), and Cloud Scheduler starts the job the deploy
+   creates, every 15 minutes, the same way as the weekly one:
+   `gcloud scheduler jobs create http ap-reconciliation-sync --location=us-central1 --project=shp-ai-bot-2026 --schedule="*/15 * * * *" --time-zone=Etc/UTC --uri="https://run.googleapis.com/v2/projects/shp-ai-bot-2026/locations/us-central1/jobs/ap-reconciliation-sync:run" --http-method=POST --oauth-service-account-email=304363458561-compute@developer.gserviceaccount.com`
+   Until the folder is shared the dashboard's line under the upload box says
+   so, and each run ends in seconds. Run it by hand with
+   `gcloud run jobs execute ap-reconciliation-sync --region=us-central1 --project=shp-ai-bot-2026`.
+10. **Cards.** Open the dashboard as AP, upload the first export, then under
    *Cards...* give each card its label, owner e-mail (the person who may
    code its charges) and Chat space name. The *Webhook* column shows
    whether the card has an entry in `CARD_WEBHOOKS_JSON`.
