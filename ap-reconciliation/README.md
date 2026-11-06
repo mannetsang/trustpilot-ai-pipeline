@@ -138,8 +138,10 @@ updates its folder hints without another model call.
    read before are gone from it. Then the months those lines fell in are read
    for invoices and matched, newest first. Nothing is posted to Chat:
    reminders stay with *Send reminders* and the weekly job. A file that
-   cannot be read is listed with the reason and read again when it changes;
-   a Drive or Gemini failure is tried again on the next two runs. A file
+   cannot be read is listed with the reason and read again when it changes,
+   or when a newer reader no longer refuses it (`OLDER_READER_REFUSALS`: the
+   `.xls` exports turned down before `.xls` could be read are read again by
+   themselves); a Drive or Gemini failure is tried again on the next two runs. A file
    read for the first time has all its months matched (its lines may have
    been uploaded by hand before), a new version only the months of its new
    lines. Months not matched yet are kept in `app_state`: a run starts no

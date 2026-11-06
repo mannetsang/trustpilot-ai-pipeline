@@ -11,7 +11,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "cloud_run"))
 
 from test_pipeline import ApiTestCase, FakeDrive, build_xlsx, file_, folder, quiet, sample_rows  # noqa: E402
-from test_statement_formats import EXPORT_LINES  # noqa: E402
+from test_statement_formats import EXPORT_LINES, XLS_FIXTURE  # noqa: E402
 import main  # noqa: E402
 from drive import Drive, DriveError  # noqa: E402
 
@@ -318,6 +318,37 @@ class WalkTests(unittest.TestCase):
         self.assertEqual({(f["id"], f["path"]) for f in d.walk("root")},
                          {("f1", ""), ("f2", "A"), ("f3", "A/B")})
         self.assertEqual({f["id"] for f in d.walk("root", max_depth=1)}, {"f1", "f2"})
+
+
+class OlderReaderRefusalTests(BankSyncTestCase):
+    """A file an earlier reader turned down (an .xls, before .xls could be read) is read again by
+    itself, although it has not changed; a file refused for its content still waits for a new version."""
+    XLS = "application/vnd.ms-excel"
+
+    def setUp(self):
+        super().setUp()
+        with open(XLS_FIXTURE, "rb") as fh:
+            self.drive.contents["xls_feb"] = fh.read()
+        self.tree["bank"] = [file_("xls_feb", "Copy of Visa 4894 Feb 2026 Transaction Export.xls", self.XLS, EARLIER),
+                             file_("csv_bad", "notes.csv", "text/csv", EARLIER)]
+        self.drive.contents["csv_bad"] = b"hello,world\nfoo,bar\n"
+        for fid, name, error in (
+                ("xls_feb", "Copy of Visa 4894 Feb 2026 Transaction Export.xls",
+                 "Legacy .xls is not supported: save the export as .xlsx or .csv and upload again."),
+                ("csv_bad", "notes.csv", "Could not recognise the columns")):
+            self.store.save_statement_source({"file_id": fid, "name": name, "path": "", "status": "failed",
+                                              "modified_time": EARLIER, "attempts": 0, "error": error,
+                                              "transaction_count": 0, "new_count": 0, "months": [],
+                                              "transaction_ids": [], "warnings": []})
+
+    def test_the_refused_xls_is_read_and_the_bad_csv_is_left_alone(self):
+        result = self.sync()
+        self.assertEqual(result["imported"], ["Copy of Visa 4894 Feb 2026 Transaction Export.xls"])
+        src = self.sources()
+        self.assertEqual((src["xls_feb"]["status"], src["xls_feb"]["error"]), ("imported", None))
+        self.assertEqual(src["xls_feb"]["new_count"], len(sample_rows()))
+        self.assertEqual((src["csv_bad"]["status"], src["csv_bad"]["error"]), ("failed", "Could not recognise the columns"))
+        self.assertEqual(self.sync(NOW + dt.timedelta(minutes=15))["status"], "nothing new")
 
 
 if __name__ == "__main__":

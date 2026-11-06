@@ -2112,6 +2112,15 @@ def _when(value):
         return None
 
 
+# Refusals an earlier version of the reader gave and this one no longer does: a file turned down with one
+# of them is read again although it has not changed (the .xls exports, before .xls could be read).
+OLDER_READER_REFUSALS = ("Legacy .xls is not supported",)
+
+
+def refused_by_an_older_reader(seen):
+    return seen.get("status") == "failed" and str(seen.get("error") or "").startswith(OLDER_READER_REFUSALS)
+
+
 def bank_todo(files, ledger, now):
     """(files to read now, names still being edited). A file is read once per version: when it is
     new, when its modified time differs from the version read, or when the last try failed for a
@@ -2125,7 +2134,8 @@ def bank_todo(files, ledger, now):
         modified = _when(f.get("modifiedTime"))
         if seen and seen.get("status") == "removed":
             continue                        # AP removed its upload from the dashboard: not read again
-        if seen and seen.get("status") != "retrying" and _when(seen.get("modified_time")) == modified:
+        if (seen and seen.get("status") != "retrying" and _when(seen.get("modified_time")) == modified
+                and not refused_by_an_older_reader(seen)):
             continue
         if modified and (now - modified).total_seconds() < BANK_SETTLE:
             settling.append(f.get("name"))
