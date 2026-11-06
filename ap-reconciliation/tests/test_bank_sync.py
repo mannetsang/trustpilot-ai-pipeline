@@ -395,6 +395,10 @@ class ReviewFixTests(BankSyncTestCase):
     def test_files_known_by_type_without_an_extension(self):
         self.assertEqual(main.bank_reader({"name": "statement", "mimeType": "application/pdf"}), (None, "statement.pdf"))
         self.assertEqual(main.bank_reader({"name": "export", "mimeType": "text/csv"}), (None, "export.csv"))
+        self.assertEqual(main.bank_reader({"name": "Visa 4894 Jan 2026.xls", "mimeType": "application/vnd.ms-excel"}),
+                         (None, "Visa 4894 Jan 2026.xls"))
+        self.assertEqual(main.bank_reader({"name": "Visa 4894 Jan 2026", "mimeType": "application/vnd.ms-excel"}),
+                         (None, "Visa 4894 Jan 2026.xls"))
         self.assertIsNone(main.bank_reader({"name": "photo.heic", "mimeType": "image/heic"}))
 
     def test_a_file_reached_twice_is_read_once(self):

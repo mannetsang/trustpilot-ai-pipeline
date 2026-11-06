@@ -31,7 +31,8 @@ import io
 import re
 import zipfile
 
-TABULAR_EXTENSIONS = {"xlsx", "xlsm", "csv", "tsv", "txt", "docx"}
+TABULAR_EXTENSIONS = {"xlsx", "xlsm", "xls", "csv", "tsv", "txt", "docx"}
+OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"   # a legacy Office file (.xls, .doc)
 DOCX_MAX_XML = 20 * 1024 * 1024        # word/document.xml, uncompressed
 GEMINI_MIME = {"pdf": "application/pdf", "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
                "webp": "image/webp", "gif": "image/gif", "heic": "image/heic", "heif": "image/heif"}
@@ -276,7 +277,62 @@ def read_xlsx(data):
     return best
 
 
+def read_xls(data):
+    """A legacy Excel workbook (.xls), as read_xlsx gives its rows: dates as datetimes, whole numbers
+    as ints, empty cells as None. A bank's ".xls" is sometimes something else under that name: a newer
+    workbook (read as .xlsx) or a tab-separated text export (read like a CSV)."""
+    if data[:4] == b"PK\x03\x04":
+        return read_xlsx(data)
+    if data[:8] != OLE_MAGIC:
+        head = data[:1024].lstrip(b"\xef\xbb\xbf\xff\xfe\x00 \t\r\n").lower()
+        if head.startswith(b"<"):
+            raise StatementError("This .xls is a web page saved under an Excel name: open it in Excel, "
+                                 "save it as .xlsx and upload that.")
+        return read_csv(data)
+    import xlrd
+    try:
+        book = xlrd.open_workbook(file_contents=data, logfile=io.StringIO(), on_demand=True)
+    except Exception as exc:  # noqa: BLE001
+        raise StatementError(f"The spreadsheet could not be opened: {exc}") from exc
+    best = []
+    try:
+        for i in range(book.nsheets):
+            sheet = book.sheet_by_index(i)
+            rows = [[_xls_value(sheet.cell(r, c), book.datemode) for c in range(sheet.ncols)]
+                    for r in range(sheet.nrows)]
+            rows = [r for r in rows if any(c not in (None, "") for c in r)]
+            if len(rows) > len(best):
+                best = rows
+            book.unload_sheet(i)
+    except Exception as exc:  # noqa: BLE001
+        raise StatementError(f"The spreadsheet could not be read: {exc}") from exc
+    finally:
+        book.release_resources()
+    return best
+
+
+def _xls_value(cell, datemode):
+    import xlrd
+    kind, value = cell.ctype, cell.value
+    if kind in (xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK, xlrd.XL_CELL_ERROR):
+        return None
+    if kind == xlrd.XL_CELL_DATE:
+        try:
+            return xlrd.xldate.xldate_as_datetime(value, datemode)
+        except (xlrd.xldate.XLDateError, ValueError, OverflowError):
+            return value
+    if kind == xlrd.XL_CELL_NUMBER:
+        # .xls keeps every number as a float; a whole one comes back as an int, as openpyxl gives it
+        # (an account number 1610.0 would otherwise read as the digits 16100).
+        return int(value) if value.is_integer() and abs(value) < 1e15 else value
+    if kind == xlrd.XL_CELL_BOOLEAN:
+        return bool(value)
+    return value
+
+
 def read_csv(data):
+    if data[:2] in (b"\xff\xfe", b"\xfe\xff"):       # Excel's "Unicode text": UTF-16 with a byte-order mark
+        data = data.decode("utf-16", errors="replace").encode("utf-8")
     text = data.decode("utf-8-sig", errors="replace")
     sample = text[:5000]
     try:
@@ -655,8 +711,8 @@ def parse_statement(file_name, data, mime_type="", gemini=None):
         rows = read_docx(data)
     elif ext in ("csv", "tsv", "txt") or mime_type.startswith("text/"):
         rows = read_csv(data)
-    elif ext == "xls":
-        raise StatementError("Legacy .xls is not supported: save the export as .xlsx or .csv and upload again.")
+    elif ext == "xls" or mime_type == "application/vnd.ms-excel":
+        rows = read_xls(data)
 
     if rows is not None:
         header = detect_header(rows)

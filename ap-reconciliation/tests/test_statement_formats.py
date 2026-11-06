@@ -11,7 +11,7 @@ import zipfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "cloud_run"))
 
-from test_pipeline import ApiTestCase  # noqa: E402
+from test_pipeline import ApiTestCase, RBC_HEADER, build_xlsx, sample_rows  # noqa: E402
 import statements  # noqa: E402
 
 EXPORT_LINES = [
@@ -235,6 +235,97 @@ class DocxUploadTests(ApiTestCase):
         self.assertIn("7777", [c["last4"] for c in self.store.list_cards()])
         again = self.upload(docx(EXPORT_LINES), name="NFG_7777_Apr_1-Oct_21_2026.docx").get_json()
         self.assertEqual(again["new"], 0)
+
+
+# ---------------------------------------------------------------------------
+# Legacy Excel (.xls): RBC sends some months' Transaction Export as .xls
+# ---------------------------------------------------------------------------
+XLS_FIXTURE = os.path.join(HERE, "fixtures", "rbc_transaction_export.xls")   # sample_rows(), written with xlwt 1.3.0
+
+
+def summary(result):
+    return ([(t["id"], t["card_last4"], t["txn_date"], t["post_date"], t["type"], t["amount"], t["currency"],
+              t["source_amount"], t["source_currency"], t["description"]) for t in result["transactions"]],
+            result["cards"], result["period_start"], result["period_end"])
+
+
+def tsv(rows):
+    lines = ["\t".join(RBC_HEADER)]
+    for r in rows:
+        cells = []
+        for h in RBC_HEADER:
+            v = r.get(h)
+            cells.append("" if v is None else (v.strftime("%Y-%m-%d") if hasattr(v, "strftime") else str(v)))
+        lines.append("\t".join(cells))
+    return ("\r\n".join(lines) + "\r\n").encode()
+
+
+class LegacyXlsTests(unittest.TestCase):
+    def setUp(self):
+        with open(XLS_FIXTURE, "rb") as fh:
+            self.xls = fh.read()
+        self.from_xlsx = statements.parse_statement("Transaction Export.xlsx", build_xlsx(sample_rows()))
+
+    def test_an_xls_export_reads_exactly_like_the_same_export_as_xlsx(self):
+        result = statements.parse_statement("Visa 4894 Feb 2026 Transaction Export.xls", self.xls)
+        self.assertEqual(result["format"], "table")
+        self.assertEqual(summary(result), summary(self.from_xlsx))
+        self.assertEqual(result["warnings"], self.from_xlsx["warnings"])
+
+    def test_cells_come_back_as_openpyxl_gives_them(self):
+        rows = statements.read_xls(self.xls)
+        self.assertEqual(rows[0], list(RBC_HEADER))
+        first = dict(zip(rows[0], rows[1]))
+        self.assertEqual(first["Transaction date"], __import__("datetime").datetime(2026, 9, 4))
+        self.assertEqual(first["Amount"], 150)                     # a whole number: an int, as in .xlsx
+        self.assertIsInstance(first["Amount"], int)
+        self.assertEqual(first["Account"], "****-****-****-1610")
+        self.assertIsNone(first["Supplier address"])               # empty cell
+        usd = dict(zip(rows[0], rows[6]))
+        self.assertEqual((usd["Source amount"], usd["Amount"]), (70.4, 96.12))
+
+    def test_the_mime_type_alone_marks_an_xls(self):
+        result = statements.parse_statement("Transaction Export", self.xls, "application/vnd.ms-excel")
+        self.assertEqual(summary(result), summary(self.from_xlsx))
+
+    def test_an_xlsx_saved_under_an_xls_name_is_read_as_xlsx(self):
+        result = statements.parse_statement("Transaction Export.xls", build_xlsx(sample_rows()))
+        self.assertEqual(summary(result), summary(self.from_xlsx))
+
+    def test_a_tab_separated_text_export_named_xls_is_read_as_text(self):
+        result = statements.parse_statement("Transaction Export.xls", tsv(sample_rows()))
+        self.assertEqual(len(result["transactions"]), len(self.from_xlsx["transactions"]))
+        self.assertEqual(result["cards"].keys(), self.from_xlsx["cards"].keys())
+
+    def test_unicode_text_utf16_named_xls_is_read_as_text(self):
+        data = b"\xff\xfe" + tsv(sample_rows()).decode().encode("utf-16-le")
+        result = statements.parse_statement("Transaction Export.xls", data)
+        self.assertEqual(len(result["transactions"]), len(self.from_xlsx["transactions"]))
+
+    def test_a_web_page_named_xls_is_refused_with_what_to_do(self):
+        for data in (b"<html><table><tr><td>Date</td></tr></table></html>",
+                     b"\xef\xbb\xbf  <table><tr><td>Date</td></tr></table>",
+                     b"\xff\xfe" + "<html><table></table></html>".encode("utf-16-le")):
+            with self.assertRaises(statements.StatementError) as ctx:
+                statements.parse_statement("Transaction Export.xls", data)
+            self.assertIn("save it as .xlsx", str(ctx.exception))
+
+    def test_a_damaged_xls_is_refused(self):
+        with self.assertRaises(statements.StatementError) as ctx:
+            statements.parse_statement("statement.xls", statements.OLE_MAGIC + b"\x00" * 600)
+        self.assertIn("could not be opened", str(ctx.exception))
+
+
+class XlsUploadTests(ApiTestCase):
+    def test_uploading_an_xls_export_adds_its_lines_once(self):
+        with open(XLS_FIXTURE, "rb") as fh:
+            data = fh.read()
+        r = self.upload(data, name="Copy of Visa 4894 Feb 2026 Transaction Export.xls")
+        self.assertEqual(r.status_code, 200, r.get_json())
+        body = r.get_json()
+        self.assertEqual(body["new"], body["transactions"])
+        self.assertGreater(body["new"], 0)
+        self.assertEqual(self.upload(build_xlsx(sample_rows()), name="Transaction Export.xlsx").get_json()["new"], 0)
 
 
 if __name__ == "__main__":

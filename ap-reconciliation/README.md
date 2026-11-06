@@ -88,7 +88,7 @@ updates its folder hints without another model call.
 
 ## Pipeline
 
-1. **Upload** (`POST /api/statements`). `.xlsx`, `.xlsm`, `.csv` and `.tsv`
+1. **Upload** (`POST /api/statements`). `.xlsx`, `.xlsm`, `.xls`, `.csv` and `.tsv`
    exports with a recognisable header row (`Transaction date`, `Supplier`,
    `Amount`, `Account ****-****-****-1610`, `Cardholder first/last name`,
    `Source currency/amount`, `Billing currency`...) are parsed directly, no
@@ -130,7 +130,7 @@ updates its folder hints without another model call.
    (`BANK_FOLDER_ID`, nikki@'s folder, shared with ap@ as a viewer), or in
    any folder inside it, are uploaded by themselves: a Google Doc is read as
    its plain text (a bank's text export pasted in), a Google Sheet as
-   `.xlsx`, and `.xlsx/.csv/.txt/.docx/.pdf` and photos as they are. Each
+   `.xlsx`, and `.xlsx/.xls/.csv/.txt/.docx/.pdf` and photos as they are. Each
    file is read once per version (its modified time, kept in
    `statement_sources`); a version changed in the last 10 minutes waits, so a
    sheet someone is still filling in is not read half-way. A changed file
@@ -830,6 +830,6 @@ next idle period, or at once with *Run workflow*.
 | *This photo could not be prepared in this browser* | usually an iPhone HEIC photo on a Windows computer: add it on its own (it is sent as is), or take the photo on the phone |
 | The Chat card's button still says *Invoice folder* for card 4421 | the card was posted before receipt upload; *Send reminders* posts a new one |
 | A step says *the server restarted while this step was running* | the server was replaced mid-job (a deploy, or Cloud Run recycling the instance) and the job went with it. Uploading, reading invoices and matching are started again by the page on their own, up to three times, since each picks up where it stopped (already-read invoices are not read again, lines already stored are not stored twice); sending reminders is not, so a Chat card is never posted twice. If it still fails, *Re-run matching* in each month the statement touched |
-| Upload reports `new: 0` | the same lines are already stored (ids are deterministic); nothing is lost. Legacy `.xls` and `.doc` are refused: save as `.xlsx`, or `.docx`/`.txt` |
+| Upload reports `new: 0` | the same lines are already stored (ids are deterministic); nothing is lost. Legacy `.doc` is refused: save as `.docx` or `.txt`. An `.xls` that is really a web page is refused too: save it as `.xlsx` |
 | Everything stays `missing` although invoices are filed | the invoices are not indexed yet (`AI_DISABLED`, or `remaining` > 0), are filed under a month folder outside month-1..month+1, or have no readable total (`extraction_error` in the picker) |
 | A Chat card's *Open dashboard* button opens the wrong host, or the header has no *Sign out* | `DASHBOARD_URL` or `LOGIN_URL` is not set on the dashboard: the workflow's *Point DASHBOARD_URL and LOGIN_URL at the services* step, which runs straight after the dashboard deploy, failed; or, on the sign-in page's very first deploy, one of the two steps after it failed (if *Deploy the sign-in page* itself failed there is no page yet, and a hidden *Sign out* is expected). Re-run the workflow, or set both by hand: `gcloud run services update ap-reconciliation --region us-central1 --project shp-ai-bot-2026 --update-env-vars DASHBOARD_URL=<dashboard url>,LOGIN_URL=<sign-in page url>` |

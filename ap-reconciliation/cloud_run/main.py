@@ -2085,7 +2085,7 @@ LEASE_GAP = 15              # seconds the import leaves the lease free between s
 LEASE_HOLD = 60             # it lets the lease go after holding it this long, between two steps
 # Files Drive knows by type even when their name has no extension.
 BANK_MIME_EXT = {"application/pdf": "pdf", "text/csv": "csv", "text/plain": "txt", "text/tab-separated-values": "tsv",
-                 "image/jpeg": "jpg", "image/png": "png", XLSX: "xlsx",
+                 "image/jpeg": "jpg", "image/png": "png", XLSX: "xlsx", "application/vnd.ms-excel": "xls",
                  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx"}
 
 

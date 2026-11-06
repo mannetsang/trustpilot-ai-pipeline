@@ -610,8 +610,6 @@ class GeminiStatementTests(unittest.TestCase):
         with self.assertRaises(statements.StatementError) as ctx:
             statements.parse_statement("statement.doc", b"\xd0\xcf\x11\xe0", gemini=FakeGemini())
         self.assertIn("Unsupported file type '.doc'", str(ctx.exception))
-        with self.assertRaises(statements.StatementError):
-            statements.parse_statement("statement.xls", b"\xd0\xcf\x11\xe0")
 
     def test_pdf_without_gemini(self):
         with self.assertRaises(statements.StatementError) as ctx:
