@@ -163,12 +163,13 @@ Identity-Aware Proxy for the `superhairpieces.com` domain, decided
 only the cards they own; the public sign-in page is the second Cloud Run
 service `ap-reconciliation-login`, source `ap-reconciliation/login/`. The
 README's "Access" section has the open and shared-password modes too).
-Card holders on the cards in `RECEIPT_UPLOAD_CARDS` (default `4421`, Bo Li) can
+Card holders on the cards in `RECEIPT_UPLOAD_CARDS` (default `4421`) can
 photograph or upload receipts from the dashboard (*Add receipt…*, and the
 Chat card's *Add receipts* opens a phone list); files are saved to
 `Invoice/YYYY MM/<vendor>/` and linked to the purchase. Whoever does it must be
 one of the card's owner emails under *Cards…* (several allowed, comma-separated);
-card 4421's owner is `anais@superhairpieces.com` (Bo Li not added yet).
+card 4421 is labelled Linda (its statement names Bo Li) and its owner is
+`anais@superhairpieces.com`.
 Storage is a **separate Supabase project** (ref
 `bkkifrwfgtcnmfynbbdd`; schema in `ap-reconciliation/schema.sql`, applied
 with `setup_db.py`), not shared with anything else. Secrets are `ap-reconciliation-*` plus the AP user's Drive
