@@ -223,7 +223,9 @@ VERIFIED_MAP = {0: "Unverified", 1: "Verified Purchase", 2: "Verified"}
 RATING_EMOJI = {5: "🟢", 4: "🟢", 3: "🟡", 2: "🟠", 1: "🔴"}
 
 
-REPLY_SIGNATURE = "Geeta - Superhairpieces"
+REPLY_SIGNATURE = "SHP Team"
+# A sign-off the model added anyway ("- Superhairpieces", "The Superhairpieces Team"), replaced by ours.
+SIGN_OFF = r"(?:(?<=[.!?])|\s[-–—])\s*(?:the\s+)?(?:superhairpieces|shp)(?:\s+team)?\.?\s*$"
 STAMPED_REVIEWS_API = f"https://stamped.io/api/v2/{STAMPED_STORE_HASH}/dashboard/reviews"
 
 
@@ -247,9 +249,8 @@ def auto_reply_five_star(review_id, rating, reply: str) -> str:
         if (r.json().get("reply") or "").strip():
             return "skipped: already replied"
 
-        message = reply.strip()
-        if "superhairpieces" not in message[-40:].lower():
-            message = f"{message} {REPLY_SIGNATURE}"
+        message = re.sub(SIGN_OFF, "", reply.strip(), flags=re.I)
+        message = f"{message} {REPLY_SIGNATURE}"
         r = requests.post(f"{STAMPED_REVIEWS_API}/{review_id}/reply", auth=auth,
                           json={"reply": message, "isPublicReply": True}, timeout=30)
         if r.status_code >= 300:

@@ -346,7 +346,7 @@ def get_reply_suggestion(comment, rating, name):
         "Write a warm, professional public reply from Superhairpieces to post on Trustpilot. "
         "Keep it to 2-3 sentences. Thank them, address their specific feedback, and invite "
         "them to reach out if needed. Do not use generic filler phrases. "
-        "Respond with only the reply text itself: no preamble, no options, no quotation marks."
+        "Respond with only the reply text itself: no preamble, no options, no quotation marks, no sign-off."
     )
     try:
         return vertex_call(prompt)
@@ -370,7 +370,9 @@ def get_gemini_suggestion(comment, rating):
     return "AI suggestion unavailable."
 
 
-REPLY_SIGNATURE = "Geeta - Superhairpieces"
+REPLY_SIGNATURE = "SHP Team"
+# A sign-off the model added anyway ("- Superhairpieces", "The Superhairpieces Team"), replaced by ours.
+SIGN_OFF = r"(?:(?<=[.!?])|\s[-–—])\s*(?:the\s+)?(?:superhairpieces|shp)(?:\s+team)?\.?\s*$"
 
 
 def auto_reply_five_star(review_id, rating, reply):
@@ -398,9 +400,8 @@ def auto_reply_five_star(review_id, rating, reply):
         if r.json().get("companyReply"):
             return "skipped: already replied"
 
-        message = reply.strip()
-        if "superhairpieces" not in message[-40:].lower():
-            message = f"{message} {REPLY_SIGNATURE}"
+        message = re.sub(SIGN_OFF, "", reply.strip(), flags=re.I)
+        message = f"{message} {REPLY_SIGNATURE}"
         r = requests.post(
             f"https://api.trustpilot.com/v1/private/reviews/{review_id}/reply",
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
