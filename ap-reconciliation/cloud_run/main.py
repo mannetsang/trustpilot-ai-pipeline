@@ -2225,10 +2225,13 @@ def update_sync_state(store, **changes):
 # An invoice filed under Invoice/YYYY MM/<vendor>/ (the e-mail filer copies attachments there, AP files
 # by hand, a receipt is uploaded from the dashboard) is read and matched by the next import run, against
 # the purchases still waiting for one: matching.match_new_invoices, which only adds or improves links.
-# Drive's change feed says what moved since the last run; app_state "invoice_watch" keeps its page
-# token, the month folders still to read and the invoices read but not matched yet.
+# Drive's change feed says what moved since the last run. app_state "invoice_watch" keeps its page
+# token, the month folders still to read, and to_match: {invoice id: tries} for invoices filed or read
+# but not matched yet. Everything here runs under the job lease, so two runs never write it at once; a
+# run that finds the lease taken leaves the token where it was and the next run reads the same changes.
 INVOICE_WATCH = "invoice_watch"
 INVOICE_CATCH_UP_MONTHS = 2     # the first run reads this month's folder and the one before
+INVOICE_MAX_TRIES = 4           # runs an invoice waits in to_match (not read yet, read or judge failed)
 
 
 def update_watch_state(store, **changes):
@@ -2238,10 +2241,17 @@ def update_watch_state(store, **changes):
     return state
 
 
+def _drive_passing(exc):
+    """A Drive error that says "later", not "no": a rate limit or a server error."""
+    text = str(exc)
+    return bool(re.search(r"-> (429|5\d\d)\b", text) or (re.search(r"-> 403\b", text) and "ateLimit" in text))
+
+
 def invoice_month_of(drive, folder_id, cache, max_depth=8):
     """Where a folder sits under the Invoice folder: its month folder ("YYYY MM": the outermost folder
     on the way named like a month, as the index reads it), "" when it is under the Invoice folder but
-    in no month folder, None when it is not under it. cache: folder id -> (name, parent id)."""
+    in no month folder, None when it is not under it (or ap@ cannot see the way up). A rate limit or
+    server error is raised, so the run keeps its place in the feed. cache: id -> (name, parent id)."""
     names, fid = [], folder_id
     for _ in range(max_depth):
         if not fid:
@@ -2256,7 +2266,9 @@ def invoice_month_of(drive, folder_id, cache, max_depth=8):
             try:
                 got = drive.get(fid, fields="id,name,parents")
                 cache[fid] = (got.get("name") or "", (got.get("parents") or [None])[0])
-            except DriveError:
+            except DriveError as exc:
+                if _drive_passing(exc):
+                    raise
                 cache[fid] = ("", None)
         name, parent = cache[fid]
         names.append(name)
@@ -2266,9 +2278,9 @@ def invoice_month_of(drive, folder_id, cache, max_depth=8):
 
 def invoice_changes(drive, store, token, log=print):
     """(month folders under Invoice where a file was added, changed, renamed, moved in or out, trashed
-    or removed since `token`; the token to read from next time)."""
+    or removed since `token`; the ids of the files now filed in a month folder; the next token)."""
     changes, next_token = drive.changes(token)
-    cache, months, ids, outside = {}, set(), [], 0
+    cache, months, ids, filed, outside = {}, set(), [], [], 0
     for change in changes:
         f = change.get("file") or {}
         fid = change.get("fileId") or f.get("id")
@@ -2277,11 +2289,13 @@ def invoice_changes(drive, store, token, log=print):
         ids.append(fid)
         if change.get("removed") or f.get("trashed"):
             continue                    # its month, if it was an invoice, comes from the index below
-        start = fid if f.get("mimeType") == FOLDER else (f.get("parents") or [None])[0]
-        month = invoice_month_of(drive, start, cache)
+        is_folder = f.get("mimeType") == FOLDER
+        month = invoice_month_of(drive, fid if is_folder else (f.get("parents") or [None])[0], cache)
         if month:
             months.add(month)
-        elif month == "":
+            if not is_folder:
+                filed.append(fid)
+        elif month == "" and not is_folder:
             outside += 1
     if ids:
         # A file the index knows: its month folder is walked again, so one moved away or removed is
@@ -2289,60 +2303,95 @@ def invoice_changes(drive, store, token, log=print):
         months |= {i["month_folder"] for i in store.list_invoices(ids=ids) if i.get("month_folder")}
     if outside:
         log(f"invoices: {outside} file(s) under Invoice but in no month folder; they are not read")
-    return months, next_token
+    return months, list(dict.fromkeys(filed)), next_token
 
 
 def watch_invoice_folder(store, drive, now, log=print):
-    """Note in app_state "invoice_watch" what changed under the Invoice folder since the last run. The
-    first run starts from now and queues this month's folder and the one before, for invoices filed
-    before the watch began. Returns the state."""
+    """Under the job lease: note in app_state "invoice_watch" what changed under the Invoice folder
+    since the last run. The first run starts from now and queues this month's folder and the one
+    before, for invoices filed before the watch began. Returns the state."""
     state = store.get_state(INVOICE_WATCH) or {}
     pending = set(state.get("folders_pending") or [])
+    to_match = dict(state.get("to_match") or {})
     try:
         if not state.get("token"):
             token = drive.start_page_token()
             pending |= {month_folder_name(y, m) for y, m in
                         neighbouring_months(now.year, now.month, before=INVOICE_CATCH_UP_MONTHS - 1, after=0)}
         else:
-            months, token = invoice_changes(drive, store, state["token"], log)
+            months, filed, token = invoice_changes(drive, store, state["token"], log)
             pending |= months
+            for fid in filed:
+                to_match.setdefault(fid, 0)
     except DriveError as exc:
         log(f"invoices: the Invoice folder's changes could not be read: {exc}")
-        if state.get("token") and re.search(r"-> 40[04]\b", str(exc)):
+        if state.get("token") and not _drive_passing(exc) and re.search(r"-> 40[04]\b", str(exc)):
             return update_watch_state(store, token=None, error=str(exc)[:300])   # start again next run
         return update_watch_state(store, error=str(exc)[:300])
     return update_watch_state(store, token=token, folders_pending=sorted(pending, reverse=True),
-                              checked_at=now_iso(), error="")
+                              to_match=to_match, checked_at=now_iso(), error="")
 
 
-def read_and_match_invoices(store, drive, folder, log=print):
-    """One step of the watch: read the new or changed files of one month folder, then match what was
-    read (and anything an earlier run read but did not get to match) against the purchases waiting."""
-    gemini = get_gemini()
+def read_invoice_folder(store, drive, gemini, folder, log=print):
+    """One watch step: read the new or changed files of one month folder. Each round's invoices go to
+    to_match as soon as they are stored, so a later failure does not leave them read but unmatched.
+    Returns how many were read."""
+    read = 0
     if gemini is None:
         log(f"invoices: AI_DISABLED=1, {folder} is not read")
-        state = store.get_state(INVOICE_WATCH) or {}
-        return update_watch_state(store, folders_pending=[f for f in state.get("folders_pending") or [] if f != folder])
-    read = []
-    for _ in range(MAX_INDEX_ROUNDS):
-        result = invoice_index.index_invoices(store, drive, gemini, INVOICE_FOLDER_ID, month_folders=[folder],
-                                              limit=INDEX_BATCH, workers=INDEX_WORKERS, log=log)
-        read += result.get("read_ids") or []
-        if not result.get("remaining"):
-            break
+    else:
+        for _ in range(MAX_INDEX_ROUNDS):
+            result = invoice_index.index_invoices(store, drive, gemini, INVOICE_FOLDER_ID, month_folders=[folder],
+                                                  limit=INDEX_BATCH, workers=INDEX_WORKERS, log=log)
+            ids = result.get("read_ids") or []
+            if ids:
+                to_match = dict((store.get_state(INVOICE_WATCH) or {}).get("to_match") or {})
+                for iid in ids:
+                    to_match.setdefault(iid, 0)
+                update_watch_state(store, to_match=to_match)
+            read += len(ids)
+            if not result.get("remaining"):
+                break
     state = store.get_state(INVOICE_WATCH) or {}
-    to_match = list(dict.fromkeys((state.get("to_match") or []) + read))
-    update_watch_state(store, to_match=to_match,
-                       folders_pending=[f for f in state.get("folders_pending") or [] if f != folder])
-    counts = matching.match_new_invoices(store, gemini, to_match, use_ai=not AI_DISABLED, log=log)
-    log(f"invoices: {folder}: {len(read)} read; {counts['matched']} matched, {counts['possible']} possible match(es)")
+    update_watch_state(store, folders_pending=[f for f in state.get("folders_pending") or [] if f != folder])
+    return read
+
+
+def _read_failed(row):
+    error = str(row.get("extraction_error") or "")
+    return bool(error) and not error.startswith(("unsupported", "upload withdrawn"))
+
+
+def match_watched_invoices(store, gemini, log=print):
+    """The watch's match step: match_new_invoices on to_match. An invoice not read yet, read with an
+    error that may pass, or left unplaced by a failed judge call stays for another try (its month
+    folder queued again when it was the read that failed), up to INVOICE_MAX_TRIES runs."""
+    to_match = dict((store.get_state(INVOICE_WATCH) or {}).get("to_match") or {})
+    if not to_match:
+        return {"matched": 0, "possible": 0}
+    rows = {r["id"]: r for r in store.list_invoices(ids=list(to_match))}
+    counts = matching.match_new_invoices(store, gemini, list(to_match), use_ai=not AI_DISABLED, log=log)
+    unjudged, keep, refolder = set(counts.get("unjudged") or []), {}, set()
+    for iid, tries in to_match.items():
+        row = rows.get(iid)
+        if row is None:
+            why = "not read yet"
+        elif _read_failed(row) and row.get("month_folder"):
+            why = f"could not be read: {str(row['extraction_error'])[:120]}"
+            refolder.add(row["month_folder"])
+        elif iid in unjudged:
+            why = "the judge did not answer"
+        else:
+            continue
+        if tries + 1 < INVOICE_MAX_TRIES:
+            keep[iid] = tries + 1
+        else:
+            log(f"invoices: giving up on {(row or {}).get('file_name') or iid} after {tries + 1} runs ({why})")
+            refolder.discard((row or {}).get("month_folder"))
     state = store.get_state(INVOICE_WATCH) or {}
-    done = set(to_match)
-    last = state.get("last") or {}
-    if read or counts["matched"] or counts["possible"]:
-        last = {"at": now_iso(), "folder": folder, "read": len(read), "matched": counts["matched"],
-                "possible": counts["possible"]}
-    return update_watch_state(store, to_match=[i for i in state.get("to_match") or [] if i not in done], last=last)
+    folders = sorted(set(state.get("folders_pending") or []) | refolder, reverse=True)
+    update_watch_state(store, to_match=keep, folders_pending=folders)
+    return counts
 
 
 def sync_bank_folder(log=print, now=None):
@@ -2373,16 +2422,25 @@ def sync_bank_folder(log=print, now=None):
     check["settling"] = settling
     state = update_sync_state(store, **check)
     status = "ok" if check["ok"] else "unreadable"
-    watch = watch_invoice_folder(store, drive, now, log) if INVOICE_WATCH_ON else {}
-    invoices_waiting = bool(watch.get("folders_pending") or watch.get("to_match"))
-    if not todo and not state.get("months_pending") and not invoices_waiting:
-        out = {"status": "nothing new" if check["ok"] else "unreadable", "files": len(files), "settling": settling}
-        return dict(out, error=check["error"]) if not check["ok"] else out
+    nothing = {"status": "nothing new" if check["ok"] else "unreadable", "files": len(files), "settling": settling}
+    if not check["ok"]:
+        nothing["error"] = check["error"]
+    if not todo and not state.get("months_pending") and not INVOICE_WATCH_ON:
+        return nothing
     lease = take_lease("drive-sync", fail_open=False)
     if lease is None:
         update_sync_state(store, busy=True)
         log("sync: another step holds the job lease; trying again on the next run")
         return {"status": "busy"}
+    if INVOICE_WATCH_ON:
+        try:
+            watch = watch_invoice_folder(store, drive, now, log)
+        except Exception:
+            lease.release()
+            raise
+        if not todo and not state.get("months_pending") and not (watch.get("folders_pending") or watch.get("to_match")):
+            lease.release()
+            return nothing
     imported, failed, pending = [], [], set()
     held_since, steps = time.time(), 0
 
@@ -2432,23 +2490,27 @@ def sync_bank_folder(log=print, now=None):
                 pending |= {tuple(m) for m in months}
                 update_sync_state(store, months_pending=sorted(pending, reverse=True),
                                   last_import={"name": row["name"], "at": row["checked_at"], "new": row["new_count"]})
-        # Invoices filed since the last run: a quick step per month folder, before the long full matches.
-        folders = list((store.get_state(INVOICE_WATCH) or {}).get("folders_pending") or []) if INVOICE_WATCH_ON else []
-        if INVOICE_WATCH_ON and not folders and (store.get_state(INVOICE_WATCH) or {}).get("to_match"):
-            folders = [None]                                # only invoices read before, still to match
-        for folder in folders:
-            if stopped or (steps and not turn()):
-                stopped = True
-                break
-            steps += 1
-            if folder is None:
-                to_match = (store.get_state(INVOICE_WATCH) or {}).get("to_match") or []
-                counts = matching.match_new_invoices(store, get_gemini(), to_match, use_ai=not AI_DISABLED, log=log)
-                left = [i for i in (store.get_state(INVOICE_WATCH) or {}).get("to_match") or [] if i not in set(to_match)]
-                update_watch_state(store, to_match=left)
-                log(f"invoices: {counts['matched']} matched, {counts['possible']} possible match(es)")
-            else:
-                read_and_match_invoices(store, drive, folder, log)
+        # Invoices filed since the last run: a quick step per month folder, then one match step, before
+        # the long full matches. The run's totals are what the dashboard's line reports.
+        if INVOICE_WATCH_ON:
+            gemini, totals = get_gemini(), {"read": 0, "matched": 0, "possible": 0}
+            for folder in list((store.get_state(INVOICE_WATCH) or {}).get("folders_pending") or []):
+                if stopped or (steps and not turn()):
+                    stopped = True
+                    break
+                steps += 1
+                totals["read"] += read_invoice_folder(store, drive, gemini, folder, log)
+            if not stopped and (store.get_state(INVOICE_WATCH) or {}).get("to_match"):
+                if steps and not turn():
+                    stopped = True
+                else:
+                    steps += 1
+                    counts = match_watched_invoices(store, gemini, log)
+                    totals["matched"], totals["possible"] = counts["matched"], counts["possible"]
+                    log(f"invoices: {totals['read']} read; {counts['matched']} matched, "
+                        f"{counts['possible']} possible match(es)")
+            if any(totals.values()) and lease is not None:
+                update_watch_state(store, last=dict(totals, at=now_iso()))
         for year, month in sorted(pending, reverse=True):       # newest first
             if stopped or (steps and not turn()):
                 log(f"sync: {len(pending)} months left for the next run")

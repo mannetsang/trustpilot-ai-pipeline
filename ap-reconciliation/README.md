@@ -164,21 +164,31 @@ updates its folder hints without another model call.
    `EmailattatchmentOriginal/YYYY MM/` first and reach `Invoice/` within a
    few hours), invoices filed by hand, receipts uploaded from the dashboard.
    Drive's change feed for ap@ says what moved (`app_state`
-   `invoice_watch` keeps its page token, the month folders still to read
-   and the invoices read but not matched yet); each month folder with a new,
-   changed, moved or removed file is read like step 2, and what was read is
-   matched by `matching.match_new_invoices`: rules first, then the Gemini
-   judge, only between the new invoices and the purchases of the months
-   that may draw on that folder (its own and the months either side) still
-   missing an invoice or holding a possible match, and the judge sees only
-   the purchases a new invoice could document (amount within 15%, or not
-   comparable and the vendor alike; no other card; dates under 45 days
-   apart). Nothing is taken away: a possible match is replaced only by a
-   better one, a match or a link made by hand is never touched. The first
-   run starts the feed and reads this month's folder and the one before.
-   Files under `Invoice/` but in no month folder are not read. The
-   dashboard's import line says what the last run read and matched, and the
-   rows reload. `INVOICE_WATCH=0` turns it off.
+   `invoice_watch` keeps its page token, the month folders still to read,
+   and `to_match`: every file the feed saw filed in a month folder, and
+   everything read, until it has been matched). Each month folder with a
+   new, changed, moved or removed file is read like step 2, then
+   `to_match` is matched by `matching.match_new_invoices`: rules first,
+   then the Gemini judge, only between those invoices and the purchases of
+   the months that may draw on their folder (its own and the months either
+   side) still missing an invoice or holding a possible match, and the
+   judge sees only the purchases a new invoice could document (amount within
+   15%, or not comparable and the vendor alike; no other card; dates under
+   45 days apart). Nothing is taken away: a possible match is replaced only
+   by a better one (or when its invoice is gone from Drive), a match or a
+   link made by hand is never touched, and a pair that would not be kept
+   never takes an invoice another purchase needs. An invoice moved to the
+   right month, restored from the trash, or read first by someone's Rematch
+   is matched too. One not read yet, whose read failed, or that a failed
+   judge call could not place is tried again on the next runs (four in all;
+   a failed read queues its folder again). The watch runs only under the
+   job lease: a run that finds the lease taken does not read the feed, and
+   the next one reads the same changes; a Drive rate limit or server error
+   keeps the run's place in the feed. The first run starts the feed and
+   reads this month's folder and the one before. Files under `Invoice/` but
+   in no month folder are not read. The dashboard's import line says what
+   the last run read and matched, and the rows reload. `INVOICE_WATCH=0`
+   turns it off.
 
 `POST /api/statements?sync=1` runs steps 1-4 in one request (the CLI, curl
 and the tests use it); the dashboard's *Upload and process* button runs them

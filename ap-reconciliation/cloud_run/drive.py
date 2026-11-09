@@ -37,6 +37,11 @@ class DriveError(RuntimeError):
     pass
 
 
+def _passing(r):
+    """A Drive answer worth asking again: 429, a 5xx, or a 403 that is a rate limit."""
+    return r.status_code == 429 or r.status_code >= 500 or (r.status_code == 403 and "ateLimit" in (r.text or ""))
+
+
 def _q(value):
     """A value for a single-quoted string in a Drive search query: the backslash first, then the quote."""
     return str(value).replace("\\", "\\\\").replace("'", "\\'")
@@ -84,6 +89,13 @@ class Drive:
         r = requests.request(method, url, params=params, headers=headers, timeout=timeout, **kwargs)
         if r.status_code == 401:
             headers["Authorization"] = f"Bearer {self.token(force=True)}"
+            r = requests.request(method, url, params=params, headers=headers, timeout=timeout, **kwargs)
+        # A read that hit a rate limit or a server error is tried twice more (writes are not: one that
+        # went through before the error would be made twice).
+        for wait in ((1, 3) if method == "GET" else ()):
+            if not _passing(r):
+                break
+            time.sleep(wait)
             r = requests.request(method, url, params=params, headers=headers, timeout=timeout, **kwargs)
         if r.status_code >= 400:
             raise DriveError(f"Drive {method} {url.split('/v3/')[-1][:60]} -> {r.status_code} {r.text[:300]}")
