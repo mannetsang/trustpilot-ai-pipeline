@@ -182,7 +182,13 @@ folder shared with ap@ as a viewer, and a Cloud Scheduler job only an owner can
 create: claude-sessions has no Cloud Scheduler rights (neither job exists until
 Manne creates it; the README's one-time setup has both commands). It can deploy
 and execute Cloud Run jobs and apply the schema. The job and the dashboard
-share a lease in `job_lease`, so their long steps never overlap.
+share a lease in `job_lease`, so their long steps never overlap. The same job
+also watches **Invoice/** through ap@'s Drive change feed: an invoice filed
+there (ap@'s e-mail attachments land in `EmailattatchmentOriginal/YYYY MM/`
+and something outside this repo files the invoices into
+`Invoice/YYYY MM/<vendor>/` within hours) is read and matched on the next
+run by `matching.match_new_invoices`, which only adds or improves links
+(`app_state` `invoice_watch`; `INVOICE_WATCH=0` turns it off).
 
 ### Known data-quality caveats
 

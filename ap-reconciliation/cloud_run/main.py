@@ -55,7 +55,8 @@ The weekly reminder is a Cloud Run job running `python main.py remind`, and the 
 running `python main.py sync` every 15 minutes (see the deploy workflow).
 
 Env: SUPABASE_URL, SUPABASE_SERVICE_KEY, INVOICE_FOLDER_ID, STATEMENTS_FOLDER_ID (optional),
-BANK_FOLDER_ID and BANK_SETTLE_MINUTES (the Drive import; off when unset),
+BANK_FOLDER_ID and BANK_SETTLE_MINUTES (the Drive import; off when unset), INVOICE_WATCH (0: the import
+run does not read and match newly filed invoices),
 GOOGLE_WORKSPACE_AP_CLIENT_ID/_CLIENT_SECRET/_REFRESH_TOKEN (Drive as ap@; ADC when unset),
 CARD_WEBHOOKS_JSON, GCHAT_WEBHOOK_URL, IAP_AUDIENCE, ALLOWED_DOMAINS,
 AP_EMAILS, DASHBOARD_URL, LOGIN_URL, GEMINI_EXTRACT_MODEL, GEMINI_MATCH_MODEL, AI_DISABLED, AUTH_DISABLED,
@@ -119,6 +120,9 @@ STATEMENTS_FOLDER_ID = os.environ.get("STATEMENTS_FOLDER_ID", "")
 # minutes): the "Bank Transactions" folder, shared with ap@ as a viewer. Unset: no import.
 BANK_FOLDER_ID = os.environ.get("BANK_FOLDER_ID", "")
 BANK_SETTLE = int(os.environ.get("BANK_SETTLE_MINUTES", "10")) * 60   # a file edited this recently waits
+# The same run reads and matches invoices filed under the Invoice folder since the last run (by the
+# e-mail filer, by hand, or a receipt uploaded here). INVOICE_WATCH=0 turns that off.
+INVOICE_WATCH_ON = os.environ.get("INVOICE_WATCH", "1") != "0"
 AP_CLIENT_ID = os.environ.get("GOOGLE_WORKSPACE_AP_CLIENT_ID", "")
 AP_CLIENT_SECRET = os.environ.get("GOOGLE_WORKSPACE_AP_CLIENT_SECRET", "")
 AP_REFRESH_TOKEN = os.environ.get("GOOGLE_WORKSPACE_AP_REFRESH_TOKEN", "")
@@ -1935,7 +1939,11 @@ def api_bank_imports():
     view = {k: state.get(k) for k in ("checked_at", "ok", "error", "folder_name", "files", "settling",
                                       "months_pending", "last_import", "finished_at")}
     view["running"] = running
-    return jsonify({"enabled": True, "folder_url": folder_url(BANK_FOLDER_ID), "state": view, "files": files})
+    watch = (store.get_state(INVOICE_WATCH) or {}) if INVOICE_WATCH_ON else {}
+    invoices = {"enabled": INVOICE_WATCH_ON, "checked_at": watch.get("checked_at"), "error": watch.get("error") or "",
+                "folders_pending": watch.get("folders_pending") or [], "last": watch.get("last") or None}
+    return jsonify({"enabled": True, "folder_url": folder_url(BANK_FOLDER_ID), "state": view, "files": files,
+                    "invoices": invoices})
 
 
 @app.route("/api/statements", methods=["POST"])
@@ -2213,6 +2221,130 @@ def update_sync_state(store, **changes):
     return state
 
 
+# -- the Invoice folder watch ---------------------------------------------------------------
+# An invoice filed under Invoice/YYYY MM/<vendor>/ (the e-mail filer copies attachments there, AP files
+# by hand, a receipt is uploaded from the dashboard) is read and matched by the next import run, against
+# the purchases still waiting for one: matching.match_new_invoices, which only adds or improves links.
+# Drive's change feed says what moved since the last run; app_state "invoice_watch" keeps its page
+# token, the month folders still to read and the invoices read but not matched yet.
+INVOICE_WATCH = "invoice_watch"
+INVOICE_CATCH_UP_MONTHS = 2     # the first run reads this month's folder and the one before
+
+
+def update_watch_state(store, **changes):
+    state = store.get_state(INVOICE_WATCH) or {}
+    state.update(changes)
+    store.set_state(INVOICE_WATCH, state)
+    return state
+
+
+def invoice_month_of(drive, folder_id, cache, max_depth=8):
+    """Where a folder sits under the Invoice folder: its month folder ("YYYY MM": the outermost folder
+    on the way named like a month, as the index reads it), "" when it is under the Invoice folder but
+    in no month folder, None when it is not under it. cache: folder id -> (name, parent id)."""
+    names, fid = [], folder_id
+    for _ in range(max_depth):
+        if not fid:
+            return None
+        if fid == INVOICE_FOLDER_ID:
+            for name in reversed(names):
+                parsed = invoice_index.parse_month_folder(name)
+                if parsed:
+                    return parsed
+            return ""
+        if fid not in cache:
+            try:
+                got = drive.get(fid, fields="id,name,parents")
+                cache[fid] = (got.get("name") or "", (got.get("parents") or [None])[0])
+            except DriveError:
+                cache[fid] = ("", None)
+        name, parent = cache[fid]
+        names.append(name)
+        fid = parent
+    return None
+
+
+def invoice_changes(drive, store, token, log=print):
+    """(month folders under Invoice where a file was added, changed, renamed, moved in or out, trashed
+    or removed since `token`; the token to read from next time)."""
+    changes, next_token = drive.changes(token)
+    cache, months, ids, outside = {}, set(), [], 0
+    for change in changes:
+        f = change.get("file") or {}
+        fid = change.get("fileId") or f.get("id")
+        if not fid or fid == INVOICE_FOLDER_ID:
+            continue
+        ids.append(fid)
+        if change.get("removed") or f.get("trashed"):
+            continue                    # its month, if it was an invoice, comes from the index below
+        start = fid if f.get("mimeType") == FOLDER else (f.get("parents") or [None])[0]
+        month = invoice_month_of(drive, start, cache)
+        if month:
+            months.add(month)
+        elif month == "":
+            outside += 1
+    if ids:
+        # A file the index knows: its month folder is walked again, so one moved away or removed is
+        # marked removed there.
+        months |= {i["month_folder"] for i in store.list_invoices(ids=ids) if i.get("month_folder")}
+    if outside:
+        log(f"invoices: {outside} file(s) under Invoice but in no month folder; they are not read")
+    return months, next_token
+
+
+def watch_invoice_folder(store, drive, now, log=print):
+    """Note in app_state "invoice_watch" what changed under the Invoice folder since the last run. The
+    first run starts from now and queues this month's folder and the one before, for invoices filed
+    before the watch began. Returns the state."""
+    state = store.get_state(INVOICE_WATCH) or {}
+    pending = set(state.get("folders_pending") or [])
+    try:
+        if not state.get("token"):
+            token = drive.start_page_token()
+            pending |= {month_folder_name(y, m) for y, m in
+                        neighbouring_months(now.year, now.month, before=INVOICE_CATCH_UP_MONTHS - 1, after=0)}
+        else:
+            months, token = invoice_changes(drive, store, state["token"], log)
+            pending |= months
+    except DriveError as exc:
+        log(f"invoices: the Invoice folder's changes could not be read: {exc}")
+        if state.get("token") and re.search(r"-> 40[04]\b", str(exc)):
+            return update_watch_state(store, token=None, error=str(exc)[:300])   # start again next run
+        return update_watch_state(store, error=str(exc)[:300])
+    return update_watch_state(store, token=token, folders_pending=sorted(pending, reverse=True),
+                              checked_at=now_iso(), error="")
+
+
+def read_and_match_invoices(store, drive, folder, log=print):
+    """One step of the watch: read the new or changed files of one month folder, then match what was
+    read (and anything an earlier run read but did not get to match) against the purchases waiting."""
+    gemini = get_gemini()
+    if gemini is None:
+        log(f"invoices: AI_DISABLED=1, {folder} is not read")
+        state = store.get_state(INVOICE_WATCH) or {}
+        return update_watch_state(store, folders_pending=[f for f in state.get("folders_pending") or [] if f != folder])
+    read = []
+    for _ in range(MAX_INDEX_ROUNDS):
+        result = invoice_index.index_invoices(store, drive, gemini, INVOICE_FOLDER_ID, month_folders=[folder],
+                                              limit=INDEX_BATCH, workers=INDEX_WORKERS, log=log)
+        read += result.get("read_ids") or []
+        if not result.get("remaining"):
+            break
+    state = store.get_state(INVOICE_WATCH) or {}
+    to_match = list(dict.fromkeys((state.get("to_match") or []) + read))
+    update_watch_state(store, to_match=to_match,
+                       folders_pending=[f for f in state.get("folders_pending") or [] if f != folder])
+    counts = matching.match_new_invoices(store, gemini, to_match, use_ai=not AI_DISABLED, log=log)
+    log(f"invoices: {folder}: {len(read)} read; {counts['matched']} matched, {counts['possible']} possible match(es)")
+    state = store.get_state(INVOICE_WATCH) or {}
+    done = set(to_match)
+    last = state.get("last") or {}
+    if read or counts["matched"] or counts["possible"]:
+        last = {"at": now_iso(), "folder": folder, "read": len(read), "matched": counts["matched"],
+                "possible": counts["possible"]}
+    return update_watch_state(store, to_match=[i for i in state.get("to_match") or [] if i not in done], last=last)
+
+
 def sync_bank_folder(log=print, now=None):
     """Import what is new in the Bank Transactions folder, then read invoices for and match the
     months those statements touch: what the Cloud Run job ap-reconciliation-sync runs every 15
@@ -2241,7 +2373,9 @@ def sync_bank_folder(log=print, now=None):
     check["settling"] = settling
     state = update_sync_state(store, **check)
     status = "ok" if check["ok"] else "unreadable"
-    if not todo and not state.get("months_pending"):
+    watch = watch_invoice_folder(store, drive, now, log) if INVOICE_WATCH_ON else {}
+    invoices_waiting = bool(watch.get("folders_pending") or watch.get("to_match"))
+    if not todo and not state.get("months_pending") and not invoices_waiting:
         out = {"status": "nothing new" if check["ok"] else "unreadable", "files": len(files), "settling": settling}
         return dict(out, error=check["error"]) if not check["ok"] else out
     lease = take_lease("drive-sync", fail_open=False)
@@ -2298,6 +2432,23 @@ def sync_bank_folder(log=print, now=None):
                 pending |= {tuple(m) for m in months}
                 update_sync_state(store, months_pending=sorted(pending, reverse=True),
                                   last_import={"name": row["name"], "at": row["checked_at"], "new": row["new_count"]})
+        # Invoices filed since the last run: a quick step per month folder, before the long full matches.
+        folders = list((store.get_state(INVOICE_WATCH) or {}).get("folders_pending") or []) if INVOICE_WATCH_ON else []
+        if INVOICE_WATCH_ON and not folders and (store.get_state(INVOICE_WATCH) or {}).get("to_match"):
+            folders = [None]                                # only invoices read before, still to match
+        for folder in folders:
+            if stopped or (steps and not turn()):
+                stopped = True
+                break
+            steps += 1
+            if folder is None:
+                to_match = (store.get_state(INVOICE_WATCH) or {}).get("to_match") or []
+                counts = matching.match_new_invoices(store, get_gemini(), to_match, use_ai=not AI_DISABLED, log=log)
+                left = [i for i in (store.get_state(INVOICE_WATCH) or {}).get("to_match") or [] if i not in set(to_match)]
+                update_watch_state(store, to_match=left)
+                log(f"invoices: {counts['matched']} matched, {counts['possible']} possible match(es)")
+            else:
+                read_and_match_invoices(store, drive, folder, log)
         for year, month in sorted(pending, reverse=True):       # newest first
             if stopped or (steps and not turn()):
                 log(f"sync: {len(pending)} months left for the next run")
@@ -2314,7 +2465,9 @@ def sync_bank_folder(log=print, now=None):
         if lease is not None:
             lease.release()
         update_sync_state(store, running=False, finished_at=now_iso())
-    return {"status": status, "imported": imported, "failed": failed, "settling": settling, "months_left": len(pending)}
+    watch = store.get_state(INVOICE_WATCH) or {}
+    return {"status": status, "imported": imported, "failed": failed, "settling": settling, "months_left": len(pending),
+            "invoice_folders_left": len(watch.get("folders_pending") or [])}
 
 
 # ---------------------------------------------------------------------------

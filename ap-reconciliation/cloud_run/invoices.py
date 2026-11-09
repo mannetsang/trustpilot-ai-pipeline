@@ -246,4 +246,5 @@ def index_invoices(store, drive, gemini, root_id, month_folders=None, limit=40, 
                                or (known.get(r["id"]) or {}).get("removed_at")])
     return {"files_seen": len(files), "indexed": len(rows), "remaining": max(len(todo) - limit, 0),
             "retried": len(batch) - min(len(todo), limit), "removed": len(gone),
-            "errors": errors, "month_folders": sorted(month_folders) if month_folders else "all"}
+            "errors": errors, "month_folders": sorted(month_folders) if month_folders else "all",
+            "read_ids": [r["id"] for r in rows if not r.get("extraction_error")]}

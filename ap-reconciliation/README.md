@@ -158,6 +158,27 @@ updates its folder hints without another model call.
    reading, or this parser's before a fix changed a currency or a sign, both
    part of a line's id); the upload's warnings say how many such lines it
    met and how many read differently.
+7. **Invoice watch** (the same job, every run). An invoice filed under
+   `Invoice/YYYY MM/<vendor>/` since the last run is read and matched by
+   itself: the e-mail filer's copies of ap@'s attachments (they land in
+   `EmailattatchmentOriginal/YYYY MM/` first and reach `Invoice/` within a
+   few hours), invoices filed by hand, receipts uploaded from the dashboard.
+   Drive's change feed for ap@ says what moved (`app_state`
+   `invoice_watch` keeps its page token, the month folders still to read
+   and the invoices read but not matched yet); each month folder with a new,
+   changed, moved or removed file is read like step 2, and what was read is
+   matched by `matching.match_new_invoices`: rules first, then the Gemini
+   judge, only between the new invoices and the purchases of the months
+   that may draw on that folder (its own and the months either side) still
+   missing an invoice or holding a possible match, and the judge sees only
+   the purchases a new invoice could document (amount within 15%, or not
+   comparable and the vendor alike; no other card; dates under 45 days
+   apart). Nothing is taken away: a possible match is replaced only by a
+   better one, a match or a link made by hand is never touched. The first
+   run starts the feed and reads this month's folder and the one before.
+   Files under `Invoice/` but in no month folder are not read. The
+   dashboard's import line says what the last run read and matched, and the
+   rows reload. `INVOICE_WATCH=0` turns it off.
 
 `POST /api/statements?sync=1` runs steps 1-4 in one request (the CLI, curl
 and the tests use it); the dashboard's *Upload and process* button runs them
@@ -532,6 +553,7 @@ Job endpoints answer `409 {"status": "busy"}` while another job runs and
 | `STATEMENTS_FOLDER_ID` | empty | when set, uploads are copied to Drive under `<folder>/<YYYY MM>/` |
 | `BANK_FOLDER_ID` | empty: no Drive import | the folder whose statements `python main.py sync` imports (the Bank Transactions folder, `1MGenhujsY-zElpg6A0SGD8C1WqC516t3`); the workflow sets it on the service (for the dashboard's line) and the sync job |
 | `BANK_SETTLE_MINUTES` | `10` | a file modified more recently than this waits for the next run |
+| `INVOICE_WATCH` | `1` | `0`: the import run does not read and match invoices newly filed under the Invoice folder (pipeline step 7) |
 | `GOOGLE_WORKSPACE_AP_CLIENT_ID` / `_CLIENT_SECRET` / `_REFRESH_TOKEN` | | the AP user's OAuth triple for Drive; secrets. ADC when unset |
 | `CARD_WEBHOOKS_JSON` | | the webhook object above; secret |
 | `GCHAT_WEBHOOK_URL` | empty | optional single fallback webhook |

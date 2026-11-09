@@ -17,6 +17,7 @@ import time
 import requests
 
 FILES = "https://www.googleapis.com/drive/v3/files"
+CHANGES = "https://www.googleapis.com/drive/v3/changes"
 UPLOAD = "https://www.googleapis.com/upload/drive/v3/files"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 FOLDER = "application/vnd.google-apps.folder"
@@ -152,6 +153,32 @@ class Drive:
     def export(self, file_id, mime_type):
         """A Google Doc, Sheet or Slides file converted to mime_type (text/plain, an Office type, PDF)."""
         return self._request("GET", f"{FILES}/{file_id}/export", {"mimeType": mime_type}, timeout=300).content
+
+    # -- changes: what moved in the user's Drive since a saved point ----------------------
+    def start_page_token(self):
+        """The point to read changes from: everything after now."""
+        return self._request("GET", f"{CHANGES}/startPageToken", {"supportsAllDrives": "true"}).json()["startPageToken"]
+
+    def changes(self, token, max_pages=20):
+        """([change], next token): every change since `token` (a file created, edited, moved, renamed,
+        trashed or removed; each with fileId, removed, and the file's id, name, mimeType, parents,
+        trashed and modifiedTime). Reads at most max_pages pages; the token returned then points at
+        the rest, so nothing is skipped."""
+        out, params = [], {
+            "pageToken": token, "pageSize": 1000, "includeRemoved": "true", "spaces": "drive",
+            "supportsAllDrives": "true", "includeItemsFromAllDrives": "true",
+            "fields": "nextPageToken,newStartPageToken,changes(fileId,removed,time,"
+                      "file(id,name,mimeType,parents,trashed,modifiedTime))",
+        }
+        for _ in range(max_pages):
+            body = self._request("GET", CHANGES, params).json()
+            out.extend(body.get("changes") or [])
+            if body.get("newStartPageToken"):
+                return out, body["newStartPageToken"]
+            if not body.get("nextPageToken"):
+                return out, params["pageToken"]
+            params["pageToken"] = body["nextPageToken"]
+        return out, params["pageToken"]
 
     # -- writing: a copy of each uploaded statement, receipts added from the dashboard ----
     def find_child_folder(self, parent_id, name):

@@ -2826,7 +2826,7 @@
   // 15 minutes. One line says when it last looked and what it read; its files are listed on demand.
   // When it has read something new since the page last asked, the months reload (between jobs).
   // ---------------------------------------------------------------------------
-  var bank = { data: null, shown: '', lastImport: null, loaded: false, timer: 0 };
+  var bank = { data: null, shown: '', lastImport: null, lastInvoices: null, loaded: false, timer: 0 };
   // Someone is typing in a row or has a dialog open: a reload now would throw their edit away.
   function editingNow() {
     var a = document.activeElement;
@@ -2840,10 +2840,22 @@
     try { data = await api('/api/bank-imports'); } catch (e) { return; }
     if (!data || !data.enabled) { $('#bankSync').classList.add('hidden'); return; }
     var st = data.state || {}, now = st.last_import ? st.last_import.at : null;
+    var inv = (data.invoices && data.invoices.last) || null, invAt = inv ? inv.at : null;
     bank.data = data;
     var shown = JSON.stringify(data);
     if (shown !== bank.shown) { bank.shown = shown; renderBankSync(); }     // unchanged: nothing re-announced
-    if (!bank.loaded) { bank.loaded = true; bank.lastImport = now; return; }
+    if (!bank.loaded) { bank.loaded = true; bank.lastImport = now; bank.lastInvoices = invAt; return; }
+    // Invoices filed in Drive and matched by the run: said once, and the rows reloaded, as below.
+    if (invAt && invAt !== bank.lastInvoices && !st.running && !state.jobRunning && !editingNow()) {
+      bank.lastInvoices = invAt;
+      if (inv.matched || inv.possible) {
+        toast('New invoices in Drive: ' + count(inv.matched, 'purchase matched', 'purchases matched') +
+              (inv.possible ? ', ' + count(inv.possible, 'possible match', 'possible matches') : '') + '.', 'ok', 6000);
+        if (!(now && now !== bank.lastImport)) {
+          try { await reloadAll(); renderSidebar(); } catch (e) { /* the next load shows it */ }
+        }
+      }
+    }
     // Something new: said and reloaded once the run has also read invoices and matched, and not
     // under a step of the page's own or someone's edit (the next look tries again).
     if (now && now !== bank.lastImport && !st.running && !state.jobRunning && !editingNow()) {
@@ -2871,6 +2883,12 @@
     if (st.last_import) bits.push('last import ' + esc(st.last_import.name) + ', ' + esc(fmtStamp(st.last_import.at)));
     if ((st.settling || []).length) bits.push('waiting for ' + count(st.settling.length, 'file', 'files') + ' still being edited');
     if ((st.months_pending || []).length && !st.running) bits.push(count(st.months_pending.length, 'month', 'months') + ' still to match');
+    var iw = d.invoices || {};
+    if (iw.enabled && iw.last && (iw.last.matched || iw.last.possible || iw.last.read)) {
+      bits.push('invoices filed in Drive: ' + count(iw.last.read, 'read', 'read') + ', ' +
+                count(iw.last.matched, 'matched', 'matched') + (iw.last.possible ? ', ' + count(iw.last.possible, 'possible', 'possible') : '') +
+                ' (' + esc(fmtStamp(iw.last.at)) + ')');
+    }
     var text = st.ok === false
       ? 'Statements from the ' + link + ' folder cannot be imported: ' + esc(st.error || 'the folder could not be read')
       : 'Statements put in the ' + link + ' folder in Drive are imported by themselves · ' + bits.join(' · ') +
