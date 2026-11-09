@@ -29,6 +29,14 @@ env:
   SERVICE: gbp-reviews
   GOOGLE_SHEET_ID: 1I6RJ9SoESONvCRnRZWMCwLq6wU3utYukWqC3w7iUav4
   GBP_ACCOUNT: accounts/111445610944292236883
+  # Dashboard origins allowed to post replies through /api/reply. Kept here because
+  # --set-env-vars replaces every plain variable on each deploy.
+  ALLOWED_ORIGINS: https://review.superhairpieces.com,https://reviews-dashboard-d6e42sfhya-uc.a.run.app,http://localhost:8765
+  # Automatic replies: star ratings answered automatically ("" = off), how old a review may be,
+  # and how long to leave it for a person first. See google-business/README.md.
+  AUTO_REPLY_STARS: "5"
+  AUTO_REPLY_MAX_AGE_DAYS: "3"
+  AUTO_REPLY_DELAY_HOURS: "0"
 
 jobs:
   deploy:
@@ -50,7 +58,7 @@ jobs:
             --region "$REGION" --project "$PROJECT" \
             --allow-unauthenticated \
             --min-instances 0 --max-instances 1 --timeout 900 \
-            --set-env-vars "GOOGLE_SHEET_ID=$GOOGLE_SHEET_ID,GBP_ACCOUNT=$GBP_ACCOUNT" \
+            --set-env-vars "^;^GOOGLE_SHEET_ID=$GOOGLE_SHEET_ID;GBP_ACCOUNT=$GBP_ACCOUNT;ALLOWED_ORIGINS=$ALLOWED_ORIGINS;AUTO_REPLY_STARS=$AUTO_REPLY_STARS;AUTO_REPLY_MAX_AGE_DAYS=$AUTO_REPLY_MAX_AGE_DAYS;AUTO_REPLY_DELAY_HOURS=$AUTO_REPLY_DELAY_HOURS" \
             --set-secrets "GOOGLE_BUSINESS_PROFILE_CLIENT_ID=google-business-profile-client-id:latest,GOOGLE_BUSINESS_PROFILE_CLIENT_SECRET=google-business-profile-client-secret:latest,GOOGLE_BUSINESS_PROFILE_REFRESH_TOKEN=google-business-profile-refresh-token:latest,GCHAT_WEBHOOK_URL=gbp-reviews-gchat-webhook-url:latest,API_TOKEN=gbp-reviews-api-token:latest" \
             --quiet
 

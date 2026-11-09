@@ -1,0 +1,58 @@
+name: Deploy Stamped.io reviews service
+
+# Deploys stamped-webhook/ to the Cloud Run service `stamped-webhook` and keeps
+# its Cloud Scheduler job (every 30 minutes -> /monitor) in place. Stamped no
+# longer sends review/created webhooks, so /monitor is how new reviews get a
+# Chat card, a Sheet row, and (for 5 stars) an automatic public reply.
+#
+# The service's environment (Stamped keys, Chat webhook, webhook secret) is
+# left exactly as it is on the running service: `gcloud run deploy --source`
+# keeps existing env vars when none are passed. Nothing sensitive lives here.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'stamped-webhook/**'
+      - '.github/workflows/deploy-stamped-webhook.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT: shp-ai-bot-2026
+  REGION: us-central1
+  SERVICE: stamped-webhook
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/304363458561/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: claude-sessions@shp-ai-bot-2026.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --source ./stamped-webhook \
+            --region "$REGION" --project "$PROJECT" \
+            --allow-unauthenticated --timeout 900 \
+            --quiet
+
+      - name: Upsert the 30-minute monitor job
+        # claude-sessions may lack a Cloud Scheduler role; then an owner creates
+        # the job once with the command printed in the warning.
+        continue-on-error: true
+        run: |
+          SERVICE_URL=$(gcloud run services describe "$SERVICE" --region "$REGION" --project "$PROJECT" --format 'value(status.url)')
+          gcloud scheduler jobs update http stamped-reviews-monitor --location "$REGION" --project "$PROJECT" --schedule "*/30 * * * *" --time-zone "Etc/UTC" --uri "$SERVICE_URL/monitor" --http-method GET --attempt-deadline 900s --quiet \
+          || gcloud scheduler jobs create http stamped-reviews-monitor --location "$REGION" --project "$PROJECT" --schedule "*/30 * * * *" --time-zone "Etc/UTC" --uri "$SERVICE_URL/monitor" --http-method GET --attempt-deadline 900s --quiet \
+          || echo "::warning::Could not upsert stamped-reviews-monitor. As an owner run: gcloud scheduler jobs create http stamped-reviews-monitor --location $REGION --project $PROJECT --schedule \"*/30 * * * *\" --time-zone Etc/UTC --uri $SERVICE_URL/monitor --http-method GET --attempt-deadline 900s"
