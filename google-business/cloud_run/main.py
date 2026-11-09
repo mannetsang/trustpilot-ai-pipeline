@@ -350,16 +350,36 @@ def get_vertex_token():
     return creds.token
 
 
-def vertex_call(prompt, temperature=0.4):
+def vertex_call(prompt, temperature=0.4, attempts=3):
+    """Gemini's text, or "" when every attempt failed. Rate limits, server errors and answers with
+    no text are retried and logged: on their own they look like an empty reply, which is how the
+    first automatic reply on 2026-11-09 was held with no trace of why."""
     url = (f"https://{VERTEX_LOCATION}-aiplatform.googleapis.com/v1/projects/{GCP_PROJECT}"
            f"/locations/{VERTEX_LOCATION}/publishers/google/models/{VERTEX_MODEL}:generateContent")
-    r = requests.post(url, headers={"Authorization": f"Bearer {get_vertex_token()}"},
-                      json={"contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                            "generationConfig": {"temperature": temperature}}, timeout=120)
-    parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
-    for part in parts:
-        if part.get("text"):
-            return part["text"].strip()
+    body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": temperature}}
+    for attempt in range(1, attempts + 1):
+        try:
+            r = requests.post(url, headers={"Authorization": f"Bearer {get_vertex_token()}"},
+                              json=body, timeout=120)
+            data = r.json() if r.content else {}
+            if r.status_code == 200:
+                candidate = (data.get("candidates") or [{}])[0]
+                for part in candidate.get("content", {}).get("parts", []):
+                    if part.get("text"):
+                        return part["text"].strip()
+                why = (f"no text (finishReason {candidate.get('finishReason')}, "
+                       f"blockReason {data.get('promptFeedback', {}).get('blockReason')})")
+            else:
+                why = f"HTTP {r.status_code} {json.dumps(data.get('error', data))[:200]}"
+                if r.status_code != 429 and r.status_code < 500:
+                    print(f"Vertex: {why}; not retried")
+                    return ""
+        except (requests.RequestException, ValueError) as e:
+            why = f"{type(e).__name__}: {str(e)[:200]}"
+        print(f"Vertex: attempt {attempt}/{attempts} failed, {why}")
+        if attempt < attempts:
+            time.sleep(5 * attempt)
     return ""
 
 
@@ -482,7 +502,11 @@ def get_review_type(comment, rating=1):
         "Categories:\n" + "\n".join(f"- {t}" for t in ISSUE_TYPES) + "\n\n" + ISSUE_GUIDANCE
     )
     try:
-        return canonical_issue_type(vertex_call(prompt, temperature=0)) or "Other"
+        # No answer at all stays "", never "Other": "Other" counts as a complaint, so a five-star
+        # review would be held for a person as if it reported a problem. A blank cell is filled
+        # whenever /maintenance/classify next runs.
+        label = vertex_call(prompt, temperature=0)
+        return (canonical_issue_type(label) or "Other") if label else ""
     except Exception as e:  # noqa: BLE001
         print(f"Vertex AI type error: {e}")
     return ""
