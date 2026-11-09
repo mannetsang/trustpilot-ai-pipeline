@@ -6,6 +6,12 @@ the Google Sheet it asks Gemini (Vertex AI) for a public reply suggestion, an
 internal business suggestion and, for 1-3 stars, a review type; then it posts
 a card to the reviews Google Chat space and appends a row to the Sheet.
 
+Automatic replies: a new review rated in AUTO_REPLY_STARS (5 by default) that
+has no owner reply, reads as positive (or is stars only) and is younger than
+AUTO_REPLY_MAX_AGE_DAYS gets an AI reply posted on Google by /monitor itself.
+A five-star review that names a problem is left for a person. Column N records
+when a reply was posted automatically.
+
 Business Profile offers no webhook we can register from this project, so
 polling is the ingestion path (the Trustpilot service's /monitor does the
 same job as a backstop for its webhook).
@@ -60,13 +66,24 @@ GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "")
 API_TOKEN = os.environ.get("API_TOKEN", "")
 GBP_ACCOUNT = os.environ.get("GBP_ACCOUNT", "accounts/111445610944292236883")
 MONITOR_WINDOW_DAYS = int(os.environ.get("MONITOR_WINDOW_DAYS", "3"))
+# Automatic public replies (Manne, 2026-11-09: "for five star reviews, pls reply to customers
+# automatically"). /monitor posts an AI reply for reviews rated in AUTO_REPLY_STARS that have no
+# owner reply, were written within AUTO_REPLY_MAX_AGE_DAYS and are at least AUTO_REPLY_DELAY_HOURS
+# old (0 = on the first pass that sees them). AUTO_REPLY_STARS="" switches it off. Failed attempts
+# are retried on later passes while the review is inside the age window.
+AUTO_REPLY_STARS = {int(x) for x in os.environ.get("AUTO_REPLY_STARS", "5").split(",") if x.strip().isdigit()}
+AUTO_REPLY_MAX_AGE_DAYS = float(os.environ.get("AUTO_REPLY_MAX_AGE_DAYS", "3"))
+AUTO_REPLY_DELAY_HOURS = float(os.environ.get("AUTO_REPLY_DELAY_HOURS", "0"))
+# Only reviews classified as one of these are answered automatically; a 5-star review that names a
+# problem (any other category) waits for a person.
+AUTO_REPLY_TYPES = {"Positive Experience", "Rating only"}
 # /api/reply carries no key (the dashboard asked for none), so it only answers browser calls made
 # from these origins. A speed bump against other websites and casual scripts, not authentication:
 # the Origin header can be forged by anything that isn't a browser.
 ALLOWED_ORIGINS = {o.strip().rstrip("/") for o in os.environ.get(
     "ALLOWED_ORIGINS",
-    "https://reviews-dashboard-304363458561.us-central1.run.app,"
-    "https://reviews-dashboard-onvg62bzra-uc.a.run.app,"
+    "https://review.superhairpieces.com,"
+    "https://reviews-dashboard-d6e42sfhya-uc.a.run.app,"
     "http://localhost:8765,http://127.0.0.1:8765").split(",") if o.strip()}
 
 GCP_PROJECT = "shp-ai-bot-2026"
@@ -104,13 +121,14 @@ NICKNAMES = {
 SHEET_HEADERS = [
     "Date", "Customer Name", "Location", "Star Rating", "Type", "Comment",
     "Reply Suggestion", "Business Suggestion", "Remark", "Review ID",
-    "Reply Posted At", "Review Name", "Reply Text",
+    "Reply Posted At", "Review Name", "Reply Text", "Auto-Replied At",
 ]
-SHEET_RANGE = "A:M"
+SHEET_RANGE = "A:N"
 COL_REVIEW_ID = 9      # J, zero-based index in a row
 COL_REPLY_AT = 10      # K
 COL_REVIEW_NAME = 11   # L
 COL_REPLY_TEXT = 12    # M  owner reply currently on Google, kept in sync by /monitor
+COL_AUTO_REPLIED = 13  # N  when /monitor posted the reply itself (blank = a person replied, or none)
 
 # ---------------------------------------------------------------------------
 # Business Profile auth + HTTP
@@ -176,6 +194,7 @@ def get_locations():
                 "name": f"{GBP_ACCOUNT}/locations/{loc_id}",   # v4 resource name
                 "title": loc.get("title", ""),
                 "locality": locality,
+                "region": address.get("regionCode", ""),
                 "label": f"{nickname} - {loc.get('title', '')}",
                 "maps_url": (loc.get("metadata") or {}).get("mapsUri", ""),
             }
@@ -292,7 +311,7 @@ def stamp_reply(row_number, replied_at, text=""):
     write_reply_cells([(row_number, replied_at, text)])
 
 
-def sheet_row(f, location, review_type, reply, suggestion):
+def sheet_row(f, location, review_type, reply, suggestion, auto_at=""):
     return [
         format_review_date(f["created"]),   # A Date the customer wrote the review
         f["reviewer"],                      # B Customer Name
@@ -307,7 +326,17 @@ def sheet_row(f, location, review_type, reply, suggestion):
         format_review_date(f["replied_at"]) if f["replied_at"] else "",  # K Reply Posted At
         f["name"],                          # L Review resource name (for /api/reply)
         f["reply"],                         # M Reply Text (owner reply on Google)
+        auto_at,                            # N Auto-Replied At (set when /monitor posted the reply)
     ]
+
+
+def write_auto_marks(marks):
+    """marks: [(row_number, label)] -> column N."""
+    data = [{"range": f"N{row}", "values": [[label]]} for row, label in marks]
+    for start in range(0, len(data), 200):
+        get_sheets_service().spreadsheets().values().batchUpdate(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            body={"valueInputOption": "RAW", "data": data[start:start + 200]}).execute()
 
 
 # ---------------------------------------------------------------------------
@@ -493,7 +522,8 @@ def get_business_suggestion(comment, rating, location):
 # ---------------------------------------------------------------------------
 # Google Chat card - same layout as the Trustpilot card
 # ---------------------------------------------------------------------------
-def send_to_gchat(f, location, reply, suggestion):
+def send_to_gchat(f, location, reply, suggestion, auto=None):
+    """auto: None, ("posted", reply text) or ("held", reason) for the automatic-reply outcome."""
     if not GCHAT_WEBHOOK_URL:
         print("Chat: no webhook configured, skipping")
         return
@@ -512,7 +542,10 @@ def send_to_gchat(f, location, reply, suggestion):
             f"<b>Rating:</b> {f['rating']}-star<br>"
             f"<b>Date:</b> {format_review_date(f['created'])}")}}]},
         {"header": "Comment", "widgets": [{"textParagraph": {"text": f["comment"] or "—"}}]},
-        {"header": "\U0001f4ac Reply Suggestion", "widgets": [{"textParagraph": {"text": reply or "—"}}]},
+        ({"header": "\u2705 Replied automatically on Google", "widgets": [{"textParagraph": {"text": auto[1]}}]}
+         if auto and auto[0] == "posted" else
+         {"header": "\U0001f4ac Reply Suggestion" + (" \u00b7 not posted automatically" if auto else ""),
+          "widgets": [{"textParagraph": {"text": (f"<i>{auto[1]}</i><br><br>" if auto else "") + (reply or "—")}}]}),
         {"header": "\U0001f4a1 Business Suggestion", "widgets": [
             {"textParagraph": {"text": suggestion or "—"}},
             *([{"buttonList": {"buttons": buttons}}] if buttons else []),
@@ -522,6 +555,124 @@ def send_to_gchat(f, location, reply, suggestion):
         r = requests.post(GCHAT_WEBHOOK_URL, json=card, timeout=10)
         if r.status_code != 200:
             print(f"Chat webhook returned {r.status_code} {r.text[:200]}")
+    except Exception as e:  # noqa: BLE001
+        print(f"Google Chat error: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Automatic replies
+# ---------------------------------------------------------------------------
+# Stars-only reviews have no language to follow, so the listing's country decides.
+REGION_LANGUAGE = {"ES": "Spanish", "NL": "Dutch", "FR": "French", "DE": "German"}
+
+
+def listing_brand(location):
+    """The brand the listing trades as: Superhairpieces, Gen'C Hair Center, Gen'C Beauty ..."""
+    return (location.get("title") or "Superhairpieces").split(" - ")[0].strip() or "Superhairpieces"
+
+
+def review_original_text(comment):
+    """What the customer actually typed. Google appends '(Translated by Google) <English>
+    (Original) <their text>' to non-English reviews; the original decides the reply language."""
+    c = comment or ""
+    i = c.find("(Original)")
+    return c[i + len("(Original)"):].strip() if i >= 0 else c.strip()
+
+
+def _plain(text):
+    return (text or "").replace("\u2019", "'").replace("\u2018", "'").lower()
+
+
+def generate_auto_reply(f, location):
+    """The reply /monitor posts by itself, or "" when the model output fails the checks. It goes
+    out with nobody reading it first, so it is short, specific and invents nothing."""
+    brand = listing_brand(location)
+    name = "" if f["reviewer"] in ("Anonymous", "A customer") else f["reviewer"]
+    original = review_original_text(f["comment"])
+    english = review_text_for_ai(f["comment"])
+    if len(original) > 5:
+        review_part = f'Their review, exactly as they wrote it: "{original[:1500]}"'
+        if english and english != original:
+            review_part += f'\nGoogle\'s English translation, for your understanding only: "{english[:1500]}"'
+        lang_rule = "Write the reply in the language the customer wrote in (their own text, not the translation)."
+    else:
+        review_part = "They left the stars only, with no written comment."
+        lang_rule = f"Write the reply in {REGION_LANGUAGE.get(location.get('region', ''), 'English')}."
+    prompt = (
+        f"You are the owner of {brand}, a hair-replacement salon and hairpiece company, replying "
+        f"publicly to a {f['rating']}-star Google review of the {location.get('label', brand)} listing.\n"
+        f"Reviewer name: {name or '(not shown)'}.\n{review_part}\n\n"
+        "This reply is posted automatically, with no one checking it first, so:\n"
+        "- 1 to 3 short sentences, warm and specific to what they wrote.\n"
+        "- Thank them by first name if a name is shown.\n"
+        "- If they name staff members, thank those people by name; never mention anyone else.\n"
+        "- Do not invent details, offers, discounts, prices or promises.\n"
+        f"- {lang_rule}\n"
+        f"- Then, on its own last line, sign off with an en dash and the words 'The {brand} Team' "
+        f"in the same language as the reply, keeping the name {brand} exactly as written.\n"
+        "- No greeting line, no emojis, no hashtags, no quotation marks, no placeholders.\n"
+        "Output only the reply and its sign-off line."
+    )
+    try:
+        raw = vertex_call(prompt, temperature=0.4) or ""
+    except Exception as e:  # noqa: BLE001
+        print(f"auto-reply: Vertex error {e}")
+        return ""
+    reply = "\n".join(line.strip() for line in raw.strip().strip('"\u201c\u201d').splitlines() if line.strip())
+    lines = reply.splitlines()
+    problems = []
+    if not 15 <= len(reply) <= 800:
+        problems.append(f"length {len(reply)}")
+    if len(lines) < 2 or _plain(brand) not in _plain(lines[-1]):
+        problems.append("no sign-off naming the listing's brand")
+    if any(c in reply for c in "[]{}<>"):
+        problems.append("placeholder brackets")
+    if _plain(reply).startswith(("here is", "here's", "sure", "certainly", "of course", "reply:")):
+        problems.append("preamble")
+    if "superhairpieces" in _plain(reply) and "superhairpieces" not in _plain(brand):
+        problems.append("names Superhairpieces on another brand's listing")
+    if problems:
+        print(f"auto-reply: rejected model output for {f['id'][:12]} ({', '.join(problems)}): {reply[:120]!r}")
+        return ""
+    return reply
+
+
+def auto_reply_due(f, review_type):
+    """Rating listed, no owner reply yet, positive or stars-only, and inside the age window."""
+    if f["rating"] not in AUTO_REPLY_STARS or f["replied_at"] or review_type not in AUTO_REPLY_TYPES:
+        return False
+    created = parse_time(f["created"])
+    if not created:
+        return False
+    age_hours = (dt.datetime.now(dt.timezone.utc) - created).total_seconds() / 3600
+    return AUTO_REPLY_DELAY_HOURS <= age_hours <= AUTO_REPLY_MAX_AGE_DAYS * 24
+
+
+def post_auto_reply(f, location):
+    """Generate and post the reply. On success f carries the reply (so the sheet row and the
+    reply sync record it) and the text is returned with no error; otherwise (None, reason)."""
+    text = generate_auto_reply(f, location)
+    if not text:
+        return None, "the AI reply did not pass the safety checks"
+    try:
+        result = gbp("PUT", f"{V4}/{f['name']}/reply", payload={"comment": text})
+    except Exception as e:  # noqa: BLE001
+        print(f"auto-reply: Google refused the reply for {f['id'][:12]}: {e}")
+        return None, f"Google refused the reply ({str(e)[:160]})"
+    f["replied_at"] = result.get("updateTime") or dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    f["reply"] = text
+    print(f"auto-reply: posted on {f['rating']}-star review by {f['reviewer']} at {location['label']} ({f['id'][:12]})")
+    return text, None
+
+
+def send_auto_reply_note(f, location, text):
+    """Chat note for a reply posted on a later pass (retry or delay), when no card goes out."""
+    if not GCHAT_WEBHOOK_URL:
+        return
+    try:
+        requests.post(GCHAT_WEBHOOK_URL, timeout=10, json={"text": (
+            f"\u2705 Replied automatically on Google to {f['reviewer']}'s {f['rating']}-star review "
+            f"at {location['label']}:\n{text}")})
     except Exception as e:  # noqa: BLE001
         print(f"Google Chat error: {e}")
 
@@ -551,9 +702,12 @@ def run_monitor(window_days, notify=True):
       edited or deleted). Google does not bump a review's updateTime when the owner
       replies, so reply state has to be compared across all reviews, not the window."""
     cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=window_days)
-    _, index, replied = read_sheet()
-    checked = processed = quiet = 0
-    new_rows, reply_updates = [], []
+    rows, index, replied = read_sheet()
+    types = {r[COL_REVIEW_ID].strip(): (r[4].strip() if len(r) > 4 else "")
+             for r in rows[1:] if len(r) > COL_REVIEW_ID and r[COL_REVIEW_ID].strip()}
+    now_label = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    checked = processed = quiet = auto_posted = 0
+    new_rows, reply_updates, auto_marks = [], [], []
     for location, review in iter_reviews(newest_first=True):
         f = review_fields(review)
         checked += 1
@@ -561,6 +715,15 @@ def run_monitor(window_days, notify=True):
             row_number = index[f["id"]]
             if row_number is True:      # appended earlier in this same pass
                 continue
+            # A review already in the Sheet can still be due: an earlier attempt failed, or
+            # AUTO_REPLY_DELAY_HOURS kept it waiting. The reply sync below then records it.
+            if AUTO_REPLY_STARS and auto_reply_due(f, types.get(f["id"], "")):
+                text, _ = post_auto_reply(f, location)
+                if text:
+                    auto_marks.append((row_number, now_label))
+                    auto_posted += 1
+                    if notify:
+                        send_auto_reply_note(f, location, text)
             want_at = format_review_date(f["replied_at"]) if f["replied_at"] else ""
             want_text = (f["reply"] or "").strip()
             have_at, have_text = replied.get(f["id"], ("", ""))
@@ -568,23 +731,38 @@ def run_monitor(window_days, notify=True):
                 reply_updates.append((row_number, want_at, want_text))
             continue
         updated = parse_time(f["updated"])
+        auto, auto_at = None, ""
         if not updated or updated >= cutoff:
             reply, suggestion, review_type = enrich(f, location)
+            if AUTO_REPLY_STARS and f["rating"] in AUTO_REPLY_STARS and not f["replied_at"]:
+                if auto_reply_due(f, review_type):
+                    text, err = post_auto_reply(f, location)
+                    if text:
+                        auto, auto_at, reply = ("posted", text), now_label, text
+                        auto_posted += 1
+                    else:
+                        auto = ("held", f"Automatic reply not posted: {err}. It is retried on the next "
+                                        "pass; reply on Google if you'd rather not wait.")
+                elif review_type and review_type not in AUTO_REPLY_TYPES:
+                    auto = ("held", f"{f['rating']}-star, but the review mentions a problem "
+                                    f"({review_type}), so it waits for a person.")
             if notify:
-                send_to_gchat(f, location, reply, suggestion)
+                send_to_gchat(f, location, reply, suggestion, auto)
             processed += 1
             print(f"Monitor: new {f['rating']}-star review by {f['reviewer']} at {location['label']} ({f['id'][:12]})")
         else:
             reply = suggestion = review_type = ""
             quiet += 1
-        new_rows.append(sheet_row(f, location, review_type, reply, suggestion))
+        new_rows.append(sheet_row(f, location, review_type, reply, suggestion, auto_at))
         index[f["id"]] = True
     append_rows(new_rows)
     write_reply_cells(reply_updates)
+    write_auto_marks(auto_marks)
     if reply_updates:
         print(f"Monitor: synced reply state on {len(reply_updates)} rows")
     return {"checked": checked, "new": processed, "appended_quietly": quiet,
-            "replies_synced": len(reply_updates), "window_days": window_days}
+            "replies_synced": len(reply_updates), "auto_replied": auto_posted,
+            "window_days": window_days}
 
 
 def run_backfill(days, with_ai, limit=100):
@@ -829,7 +1007,8 @@ def api_sheet():
         out = []
         for i, row in enumerate(rows[1:], start=2):
             row = (row + [""] * len(SHEET_HEADERS))[:len(SHEET_HEADERS)]
-            date, name, location, stars, rtype, comment, reply, biz, remark, rid, replied_at, rname, reply_text = row
+            (date, name, location, stars, rtype, comment, reply, biz, remark, rid, replied_at,
+             rname, reply_text, auto_at) = row
             if not rid:
                 continue
             out.append({
@@ -837,7 +1016,7 @@ def api_sheet():
                 "location": location, "stars": int(stars) if str(stars).strip().isdigit() else 0,
                 "type": rtype, "comment": comment, "reply_suggestion": reply, "business_suggestion": biz,
                 "remark": remark, "replied_at": parse_sheet_date(replied_at) if replied_at else "",
-                "review_name": rname, "reply_text": reply_text,
+                "review_name": rname, "reply_text": reply_text, "auto_replied_at": auto_at,
             })
         _sheet_cache, _sheet_cache_expiry = {"rows": out, "sheet_id": GOOGLE_SHEET_ID}, time.time() + 120
         return jsonify(_sheet_cache)
@@ -923,12 +1102,28 @@ def api_reply():
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("command", choices=["monitor", "locations", "reviews"])
+    ap.add_argument("command", choices=["monitor", "locations", "reviews", "autoreply-preview"])
+    ap.add_argument("--limit", type=int, default=8, help="autoreply-preview: how many reviews")
     ap.add_argument("--days", type=int, default=MONITOR_WINDOW_DAYS)
     ap.add_argument("--dry-run", action="store_true", help="skip Chat and Sheet; print what would be processed")
     ap.add_argument("--ai", action="store_true", help="with --dry-run, still call Gemini for the first review")
     args = ap.parse_args()
-    if args.command == "locations":
+    if args.command == "autoreply-preview":
+        # Generates the automatic reply for recent 5-star reviews and prints it next to any reply
+        # already on Google. Never posts anything.
+        shown = 0
+        for location, review in iter_reviews():
+            f = review_fields(review)
+            if f["rating"] not in AUTO_REPLY_STARS:
+                continue
+            print(f"\n{format_review_date(f['created'])} {f['rating']}* {location['label']} | {f['reviewer']}")
+            print("  review  :", (review_text_for_ai(f["comment"]) or "(stars only)")[:200].replace("\n", " "))
+            print("  on Google:", (f["reply"] or "(no reply)")[:200].replace("\n", " "))
+            print("  auto    :", generate_auto_reply(f, location).replace("\n", " / ") or "(rejected by checks)")
+            shown += 1
+            if shown >= args.limit:
+                break
+    elif args.command == "locations":
         for loc in get_locations().values():
             print(f"{loc['id']:<22} {loc['label']}")
     elif args.command == "reviews":
