@@ -31,7 +31,8 @@ import io
 import re
 import zipfile
 
-TABULAR_EXTENSIONS = {"xlsx", "xlsm", "csv", "tsv", "txt", "docx"}
+TABULAR_EXTENSIONS = {"xlsx", "xlsm", "xls", "csv", "tsv", "txt", "docx"}
+OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"   # a legacy Office file (.xls, .doc)
 DOCX_MAX_XML = 20 * 1024 * 1024        # word/document.xml, uncompressed
 GEMINI_MIME = {"pdf": "application/pdf", "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
                "webp": "image/webp", "gif": "image/gif", "heic": "image/heic", "heif": "image/heif"}
@@ -44,7 +45,9 @@ COLUMNS = {
     "post_date": ["posting date", "post date", "posted date", "date posted", "posted", "settlement date"],
     "description": ["supplier", "description", "merchant", "merchant name", "payee", "details",
                     "transaction description", "narrative", "vendor", "transaction details", "memo",
-                    "supplier name", "merchant description"],
+                    "supplier name", "merchant description", "description 1"],
+    "description_2": ["description 2"],
+    "account_type": ["account type"],
     "amount": ["amount", "billing amount", "transaction amount", "amount cad", "total", "amt", "billed amount",
                "amount billed"],
     "debit": ["debit", "debits", "charges", "charge", "withdrawals", "purchases", "amount debit"],
@@ -76,6 +79,20 @@ for _field, _names in COLUMNS.items():
     for _priority, _n in enumerate(_names):
         HEADER_LOOKUP.setdefault(_n, (_field, _priority))
 CARD_NUMBER_RE = re.compile(r"(?<!\d)(\d{4})\d{5,8}(\d{4})(?!\d)")
+# An amount column per currency, named after it: RBC's online-banking export has "CAD$" and "USD$",
+# each line filled in one of them, money going out negative.
+CURRENCY_AMOUNT_RE = re.compile(r"^\s*([A-Za-z]{3})\s*\$\s*$")
+# Layouts known by their columns, with what the file itself does not say: Chase's card activity
+# export (US accounts, so USD; money going out negative whatever the line's type). Memo is often
+# deleted, so it is not required. A file's own currency column still wins.
+KNOWN_LAYOUTS = [
+    {"columns": {"transaction date", "post date", "description", "category", "type", "amount"},
+     "currency": "USD", "charges_negative": True},
+]
+# RBC's online-banking export covers every account of the login: only card lines are statements.
+CARD_ACCOUNT_RE = re.compile(r"visa|master\s*card|amex|american express|\bcard\b", re.I)   # not a line of credit
+# Its Description 2 holds the original amount of a foreign purchase: "213.99 USD @ 1.42801".
+FX_NOTE_RE = re.compile(r"^([\d,]+(?:\.\d+)?)\s+([A-Z]{3})\s*@\s*[\d.]+$")
 
 
 def mask_card_numbers(value):
@@ -193,7 +210,8 @@ def card_from_file_name(file_name):
     return last4(file_name)
 
 
-def normalise_type(raw, amount):
+def type_from_words(raw):
+    """The type a transaction-type cell names ("Sale", "Payment", "Return", "Fee"), or None."""
     r = (raw or "").lower()
     if re.search(r"\b(payment|payments|pymt|autopay)\b", r) or r.startswith("pay "):
         return "payment"
@@ -203,7 +221,19 @@ def normalise_type(raw, amount):
         return "fee"
     if re.search(r"\b(purchase|purchases|sale|sales|pos|debit)\b", r):
         return "purchase"
-    return "purchase" if (amount or 0) >= 0 else "credit"
+    return None
+
+
+def normalise_type(raw, amount):
+    return type_from_words(raw) or ("purchase" if (amount or 0) >= 0 else "credit")
+
+
+# The bank's own charges, named as such at the start of a line ("OVERLIMIT FEE", "ANNUAL FEE",
+# "PURCHASE INTEREST"): a fee, not a purchase that needs an invoice, when no type column says so.
+BANK_FEE_RE = re.compile(
+    r"^(?:annual|overlimit|over[- ]limit|late(?: payment)?|cash advance|foreign (?:transaction|exchange)|"
+    r"returned payment|nsf|card replacement|additional card|monthly(?: account| card)?)\s+fees?\b|"
+    r"^(?:purchase|cash advance|cash)\s+interest\b|^interest charges?\b", re.I)
 
 
 def norm_description(value):
@@ -247,7 +277,62 @@ def read_xlsx(data):
     return best
 
 
+def read_xls(data):
+    """A legacy Excel workbook (.xls), as read_xlsx gives its rows: dates as datetimes, whole numbers
+    as ints, empty cells as None. A bank's ".xls" is sometimes something else under that name: a newer
+    workbook (read as .xlsx) or a tab-separated text export (read like a CSV)."""
+    if data[:4] == b"PK\x03\x04":
+        return read_xlsx(data)
+    if data[:8] != OLE_MAGIC:
+        head = data[:1024].lstrip(b"\xef\xbb\xbf\xff\xfe\x00 \t\r\n").lower()
+        if head.startswith(b"<"):
+            raise StatementError("This .xls is a web page saved under an Excel name: open it in Excel, "
+                                 "save it as .xlsx and upload that.")
+        return read_csv(data)
+    import xlrd
+    try:
+        book = xlrd.open_workbook(file_contents=data, logfile=io.StringIO(), on_demand=True)
+    except Exception as exc:  # noqa: BLE001
+        raise StatementError(f"The spreadsheet could not be opened: {exc}") from exc
+    best = []
+    try:
+        for i in range(book.nsheets):
+            sheet = book.sheet_by_index(i)
+            rows = [[_xls_value(sheet.cell(r, c), book.datemode) for c in range(sheet.ncols)]
+                    for r in range(sheet.nrows)]
+            rows = [r for r in rows if any(c not in (None, "") for c in r)]
+            if len(rows) > len(best):
+                best = rows
+            book.unload_sheet(i)
+    except Exception as exc:  # noqa: BLE001
+        raise StatementError(f"The spreadsheet could not be read: {exc}") from exc
+    finally:
+        book.release_resources()
+    return best
+
+
+def _xls_value(cell, datemode):
+    import xlrd
+    kind, value = cell.ctype, cell.value
+    if kind in (xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK, xlrd.XL_CELL_ERROR):
+        return None
+    if kind == xlrd.XL_CELL_DATE:
+        try:
+            return xlrd.xldate.xldate_as_datetime(value, datemode)
+        except (xlrd.xldate.XLDateError, ValueError, OverflowError):
+            return value
+    if kind == xlrd.XL_CELL_NUMBER:
+        # .xls keeps every number as a float; a whole one comes back as an int, as openpyxl gives it
+        # (an account number 1610.0 would otherwise read as the digits 16100).
+        return int(value) if value.is_integer() and abs(value) < 1e15 else value
+    if kind == xlrd.XL_CELL_BOOLEAN:
+        return bool(value)
+    return value
+
+
 def read_csv(data):
+    if data[:2] in (b"\xff\xfe", b"\xfe\xff"):       # Excel's "Unicode text": UTF-16 with a byte-order mark
+        data = data.decode("utf-16", errors="replace").encode("utf-8")
     text = data.decode("utf-8-sig", errors="replace")
     sample = text[:5000]
     try:
@@ -374,12 +459,15 @@ def detect_header(rows):
         chosen = {}      # field -> (priority, column)
         for j, cell in enumerate(row):
             hit = HEADER_LOOKUP.get(norm_header(cell))
+            ccy = CURRENCY_AMOUNT_RE.match(str(cell or ""))
+            if ccy:
+                hit = ("amount_" + ccy.group(1).upper(), 0)
             if hit and (hit[0] not in chosen or hit[1] < chosen[hit[0]][0]):
                 chosen[hit[0]] = (hit[1], j)
         mapping = {col: field for field, (_, col) in chosen.items()}
         used = set(mapping.values())
         has_date = "txn_date" in used or "post_date" in used
-        has_amount = "amount" in used or "debit" in used or "credit" in used
+        has_amount = "amount" in used or "debit" in used or "credit" in used or any(f.startswith("amount_") for f in used)
         score = len(used) + (2 if has_date and has_amount else 0)
         if has_date and has_amount and score > best_score:
             best, best_score = (i, mapping), score
@@ -401,13 +489,31 @@ def from_table(rows, header_index, mapping, file_name=""):
     data_rows = rows[header_index + 1:]
     dayfirst = _dayfirst([get(r, "txn_date") for r in data_rows] + [get(r, "post_date") for r in data_rows])
     fallback_card = card_from_file_name(file_name) if "card" not in fields else ""
+    by_currency = sorted((f[len("amount_"):], j) for f, j in fields.items() if f.startswith("amount_"))
+    headers = {norm_header(h) for h in rows[header_index]}
+    layout = next((lay for lay in KNOWN_LAYOUTS if lay["columns"] <= headers), {})
+    # How this layout signs its lines: an amount column per currency (RBC online banking) and the
+    # known layouts list money going out as negative, whatever a given file happens to contain.
+    charges_negative = bool(by_currency) or bool(layout.get("charges_negative"))
     transactions, warnings = [], []
     period_start, period_end = "", ""
-    skipped = 0
+    skipped = not_card = 0
     for row in data_rows:
+        account_type = clean(get(row, "account_type"))
+        if account_type and not CARD_ACCOUNT_RE.search(account_type):
+            not_card += 1                   # a chequing or savings line in an all-accounts download
+            continue
         txn_date = parse_date(get(row, "txn_date"), dayfirst) or parse_date(get(row, "post_date"), dayfirst)
+        row_currency = ""
         if "amount" in fields:
             amount = parse_amount(get(row, "amount"))
+        elif by_currency:
+            amount = None
+            for ccy, j in by_currency:
+                value = parse_amount(row[j] if j < len(row) else None)
+                if value is not None:
+                    amount, row_currency = value, ccy
+                    break
         else:
             debit, credit = parse_amount(get(row, "debit")), parse_amount(get(row, "credit"))
             amount = None if debit is None and credit is None else round((debit or 0) - (credit or 0), 2)
@@ -415,7 +521,9 @@ def from_table(rows, header_index, mapping, file_name=""):
             if any(clean(c) for c in row):
                 skipped += 1
             continue
-        description = clean(get(row, "description"))
+        extra = html.unescape(clean(get(row, "description_2")))
+        fx = FX_NOTE_RE.match(extra)
+        description = " ".join(x for x in (html.unescape(clean(get(row, "description"))), "" if fx else extra) if x)
         raw_type = clean(get(row, "type"))
         if not description:
             # Payments to the card and some fees carry no supplier text; keep them visible.
@@ -428,13 +536,15 @@ def from_table(rows, header_index, mapping, file_name=""):
             "txn_date": txn_date,
             "post_date": parse_date(get(row, "post_date"), dayfirst),
             "description": description,
-            "supplier": clean(get(row, "description")),
+            "supplier": html.unescape(clean(get(row, "description"))),
             "city": clean(get(row, "city")),
             "country": clean(get(row, "country")),
             "merchant_category": clean(get(row, "merchant_category")),
             "type": normalise_type(raw_type, amount),
+            "_named": type_from_words(raw_type),
+            "_fx": (abs(parse_amount(fx.group(1))), fx.group(2)) if fx else None,
             "amount": amount,
-            "currency": (clean(get(row, "currency")) or "CAD").upper()[:3],
+            "currency": (clean(get(row, "currency")) or row_currency or layout.get("currency") or "CAD").upper()[:3],
             "source_amount": parse_amount(get(row, "source_amount")),
             "source_currency": (clean(get(row, "source_currency")) or "").upper()[:3],
             "raw": {str(rows[header_index][j]): mask_card_numbers(clean(c))
@@ -446,24 +556,53 @@ def from_table(rows, header_index, mapping, file_name=""):
         period_start = min(period_start or ps, ps) if ps else period_start
         period_end = max(period_end, pe) if pe else period_end
         transactions.append(t)
+    if not transactions and not_card:
+        raise StatementError("The file holds only chequing or savings lines, no card lines: download the card's "
+                             "transactions on their own.")
     if not transactions:
         raise StatementError("The file has a header row but no transactions could be read from it.")
     if skipped:
         warnings.append(f"{skipped} line{'s' if skipped != 1 else ''} skipped: no readable date or amount.")
-    # Some banks list charges as negative numbers. Judge by the purchase lines when the
-    # file names its transaction types, by every line otherwise.
+    if not_card:
+        warnings.append(f"{not_card} line{'s' if not_card != 1 else ''} of a chequing or savings account left out.")
+    if fallback_card:
+        warnings.append(f"The file has no card number column: its lines are filed under card {fallback_card}, "
+                        "taken from the file name.")
+    elif "card" not in fields:
+        warnings.append("Neither the file nor its name gives a card number: its lines are filed under card 0000.")
+    # Some banks list charges as negative numbers. The layout may say so; otherwise judge by the
+    # purchase lines when the file names its transaction types, by every line when it does not.
     judged = [t for t in transactions if t["type"] == "purchase"] if "type" in fields else transactions
     negatives = sum(1 for t in judged if t["amount"] < 0)
-    if judged and negatives >= 0.8 * len(judged):
+    flip = charges_negative or (judged and negatives >= 0.8 * len(judged))
+    if flip:
         for t in transactions:
             t["amount"] = round(-t["amount"], 2)
-        warnings.append("Charges were listed as negative numbers; signs flipped so purchases are positive.")
+        if not charges_negative:
+            warnings.append("Charges were listed as negative numbers; signs flipped so purchases are positive.")
+    for t in transactions:
+        named, fx = t.pop("_named"), t.pop("_fx")
+        if "type" in fields and not named and flip:
+            # A type cell with no telling word ("Adjustment"): its sign decided it, and the sign
+            # just turned round: a statement credit is a credit, not a purchase.
+            t["type"] = "purchase" if t["amount"] >= 0 else "credit"
+        if fx:
+            t["source_amount"] = fx[0] if t["amount"] >= 0 else -fx[0]
+            t["source_currency"] = fx[1] if fx[1] != t["currency"] else ""
+            if not t["source_currency"]:
+                t["source_amount"] = None
     if "type" not in fields:
         for t in transactions:
             t["type"] = normalise_type("", t["amount"])
-    slash_dates = [v for v in (get(r, "txn_date") for r in data_rows)
-                   if re.match(r"^\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}$", clean(v))]
-    if slash_dates and not dayfirst:
+            if t["type"] == "credit" and PAYMENT_RE.search(t["description"]):
+                t["type"] = "payment"           # "AUTOMATIC PAYMENT -THANK YOU"
+    for t in transactions:
+        if t["type"] == "purchase" and BANK_FEE_RE.match(t["description"]):
+            t["type"] = "fee"
+    slash_dates = [re.match(r"^\d{1,2}[/\-.](\d{1,2})[/\-.]\d{2,4}$", clean(v)) for v in (get(r, "txn_date") for r in data_rows)]
+    slash_dates = [m for m in slash_dates if m]
+    month_first_shown = any(int(m.group(1)) > 12 for m in slash_dates)       # 1/19/2026
+    if slash_dates and not dayfirst and not month_first_shown:
         warnings.append("Numeric dates were read as month/day/year; check one against the statement.")
     dates = sorted(t["txn_date"] for t in transactions)
     return {
@@ -572,8 +711,8 @@ def parse_statement(file_name, data, mime_type="", gemini=None):
         rows = read_docx(data)
     elif ext in ("csv", "tsv", "txt") or mime_type.startswith("text/"):
         rows = read_csv(data)
-    elif ext == "xls":
-        raise StatementError("Legacy .xls is not supported: save the export as .xlsx or .csv and upload again.")
+    elif ext == "xls" or mime_type == "application/vnd.ms-excel":
+        rows = read_xls(data)
 
     if rows is not None:
         header = detect_header(rows)

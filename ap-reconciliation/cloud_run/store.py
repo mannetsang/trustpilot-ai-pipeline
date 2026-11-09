@@ -12,6 +12,7 @@ numeric(12,2) in Postgres; dates are ISO strings ("2026-09-04").
 """
 
 import datetime as dt
+import json
 import threading
 
 import requests
@@ -32,10 +33,16 @@ INVOICE_FIELDS = (
 )
 
 PAGE = 1000
+NEVER = "1970-01-01T00:00:00Z"
 
 
 def now_iso():
     return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def stamp(when):
+    """A UTC time as PostgREST and the lease compare it: 2026-11-02T14:05:00Z."""
+    return when.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def month_folder_name(year, month):
@@ -179,6 +186,10 @@ class SupabaseStore:
         gone = self.delete("statements", {"id": f"eq.{statement_id}"})
         return {"deleted": bool(gone), "transactions_removed": len(removed), "transactions_kept": len(kept)}
 
+    def get_statement(self, statement_id):
+        rows = self.select("statements", {"id": f"eq.{statement_id}"})
+        return rows[0] if rows else None
+
     def list_statements(self, year=None, month=None):
         params = {"order": "uploaded_at.desc"}
         if year and month:
@@ -286,6 +297,53 @@ class SupabaseStore:
     def list_cost_centers(self):
         return [r["name"] for r in self.select("cost_centers", {"order": "sort.asc,name.asc"})]
 
+    # -- the Drive import: one row per file read, and its last check -------
+    def list_statement_sources(self):
+        return self.select("statement_sources", {"order": "file_id"})
+
+    def save_statement_source(self, row):
+        """A full row (every column, as the import writes it): insert or replace."""
+        self.upsert("statement_sources", [dict(row)], "file_id")
+
+    def get_state(self, key):
+        rows = self.select("app_state", {"key": f"eq.{key}"})
+        return rows[0]["value"] if rows else {}
+
+    def set_state(self, key, value):
+        self.upsert("app_state", [{"key": key, "value": value, "updated_at": now_iso()}], "key")
+
+    # -- one lease for the long steps, shared by the service and the Cloud Run jobs ----------
+    def take_lease(self, name, holder, job, ttl, take_over=""):
+        """True when `holder` now holds the lease: it was free (expired), already this holder's,
+        or held by a holder starting with `take_over`. A conditional PATCH, so two takers at the
+        same moment cannot both win."""
+        now = dt.datetime.now(dt.timezone.utc)
+        when = [f"expires_at.lt.{stamp(now)}", f"holder.eq.{holder}"]
+        if take_over:
+            when.append(f"holder.like.{take_over}*")
+        row = {"holder": holder, "job": job, "acquired_at": stamp(now),
+               "expires_at": stamp(now + dt.timedelta(seconds=ttl))}
+        if self.patch("job_lease", {"name": f"eq.{name}", "or": "(" + ",".join(when) + ")"}, row):
+            return True
+        if self.select("job_lease", {"name": f"eq.{name}", "select": "name"}):
+            return False
+        # No row yet: the first taker creates it; a second one at the same moment is ignored.
+        made = self._req("POST", "job_lease", None, [dict(row, name=name)],
+                         prefer="resolution=ignore-duplicates,return=representation")
+        return bool(made)
+
+    def renew_lease(self, name, holder, ttl):
+        until = stamp(dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=ttl))
+        return bool(self.patch("job_lease", {"name": f"eq.{name}", "holder": f"eq.{holder}"}, {"expires_at": until}))
+
+    def release_lease(self, name, holder):
+        self.patch("job_lease", {"name": f"eq.{name}", "holder": f"eq.{holder}"},
+                   {"holder": None, "job": None, "expires_at": NEVER})
+
+    def get_lease(self, name):
+        rows = self.select("job_lease", {"name": f"eq.{name}"})
+        return rows[0] if rows else None
+
 
 def _content_range_total(header, previous):
     """'0-24/25' -> 25, '*/0' -> 0, '0-999/*' or missing -> previous."""
@@ -311,6 +369,7 @@ class MemoryStore:
         self.lock = threading.Lock()
         self.cards, self.transactions, self.invoices = {}, {}, {}
         self.statements, self.notifications = [], []
+        self.statement_sources, self.state, self.leases = {}, {}, {}
         self.cost_centers = list(DEFAULT_COST_CENTERS)
         self._seq = 0
 
@@ -343,6 +402,9 @@ class MemoryStore:
             self.statements = [s for s in self.statements if s["id"] != statement_id]
             return {"deleted": len(self.statements) < before, "transactions_removed": len(removable),
                     "transactions_kept": len(kept)}
+
+    def get_statement(self, statement_id):
+        return next((dict(r) for r in self.statements if r["id"] == statement_id), None)
 
     def list_statements(self, year=None, month=None):
         rows = self.statements
@@ -444,3 +506,47 @@ class MemoryStore:
 
     def list_cost_centers(self):
         return list(self.cost_centers)
+
+    def list_statement_sources(self):
+        return [dict(r) for _, r in sorted(self.statement_sources.items())]
+
+    def save_statement_source(self, row):
+        with self.lock:
+            self.statement_sources[row["file_id"]] = dict(row)
+
+    def get_state(self, key):
+        return dict(self.state.get(key) or {})
+
+    def set_state(self, key, value):
+        with self.lock:
+            self.state[key] = json.loads(json.dumps(value))     # stored as JSON, like the jsonb column
+
+    def take_lease(self, name, holder, job, ttl, take_over=""):
+        now = dt.datetime.now(dt.timezone.utc)
+        with self.lock:
+            cur = self.leases.get(name)
+            free = (not cur or cur["expires_at"] < stamp(now) or cur.get("holder") == holder
+                    or (take_over and (cur.get("holder") or "").startswith(take_over)))
+            if not free:
+                return False
+            self.leases[name] = {"name": name, "holder": holder, "job": job, "acquired_at": stamp(now),
+                                 "expires_at": stamp(now + dt.timedelta(seconds=ttl))}
+            return True
+
+    def renew_lease(self, name, holder, ttl):
+        with self.lock:
+            cur = self.leases.get(name)
+            if not cur or cur.get("holder") != holder:
+                return False
+            cur["expires_at"] = stamp(dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=ttl))
+            return True
+
+    def release_lease(self, name, holder):
+        with self.lock:
+            cur = self.leases.get(name)
+            if cur and cur.get("holder") == holder:
+                cur.update(holder=None, job=None, expires_at=NEVER)
+
+    def get_lease(self, name):
+        cur = self.leases.get(name)
+        return dict(cur) if cur else None

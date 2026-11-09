@@ -21,7 +21,7 @@ UPLOAD = "https://www.googleapis.com/upload/drive/v3/files"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 FOLDER = "application/vnd.google-apps.folder"
 SHORTCUT = "application/vnd.google-apps.shortcut"
-FILE_FIELDS = "id,name,mimeType,modifiedTime,size,webViewLink,shortcutDetails"
+FILE_FIELDS = "id,name,mimeType,modifiedTime,size,webViewLink,shortcutDetails,trashed"
 UPLOAD_FIELDS = "id,name,mimeType,modifiedTime,size,webViewLink"
 RESUMABLE_OVER = 5 * 1024 * 1024     # bytes; larger files go up in a resumable session
 EXPORT_AS_PDF = {
@@ -112,6 +112,8 @@ class Drive:
                     except DriveError as exc:
                         print(f"drive: shortcut {f.get('name')!r} in {folder_id} points to an unreadable file: {exc}")
                         continue
+                    if resolved.get("trashed"):
+                        continue            # the shortcut outlived its file
                     resolved["name"] = f.get("name") or resolved.get("name")
                     f = resolved
                 out.append(f)
@@ -119,14 +121,37 @@ class Drive:
                 return out
             params["pageToken"] = body["nextPageToken"]
 
+    def walk(self, folder_id, max_depth=5):
+        """Every file under a folder and its subfolders, each with "path": the subfolder names
+        between the folder and the file ("" for its own files). A folder or file reached twice
+        (a shortcut to it) is listed once, where it is met first."""
+        out, seen = [], {folder_id}
+
+        def visit(fid, path, depth):
+            for f in self.list_children(fid):
+                if f["id"] in seen:
+                    continue                # a folder or file reached twice (a shortcut to it)
+                seen.add(f["id"])
+                if f.get("mimeType") == FOLDER:
+                    if depth < max_depth:
+                        visit(f["id"], f"{path}/{f.get('name', '')}".lstrip("/"), depth + 1)
+                    continue
+                out.append(dict(f, path=path))
+
+        visit(folder_id, "", 0)
+        return out
+
     def download(self, file):
         """(bytes, mime type). Google Docs/Sheets/Slides are exported as PDF."""
         mime = file.get("mimeType", "")
         if mime in EXPORT_AS_PDF:
-            r = self._request("GET", f"{FILES}/{file['id']}/export", {"mimeType": "application/pdf"}, timeout=300)
-            return r.content, "application/pdf"
+            return self.export(file["id"], "application/pdf"), "application/pdf"
         r = self._request("GET", f"{FILES}/{file['id']}", {"alt": "media", "supportsAllDrives": "true"}, timeout=300)
         return r.content, mime
+
+    def export(self, file_id, mime_type):
+        """A Google Doc, Sheet or Slides file converted to mime_type (text/plain, an Office type, PDF)."""
+        return self._request("GET", f"{FILES}/{file_id}/export", {"mimeType": mime_type}, timeout=300).content
 
     # -- writing: a copy of each uploaded statement, receipts added from the dashboard ----
     def find_child_folder(self, parent_id, name):

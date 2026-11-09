@@ -131,6 +131,48 @@ insert into cost_centers (name, sort) values
   ('Other', 999)
 on conflict (name) do nothing;
 
+-- The Drive import (`python main.py sync`, every 15 minutes): one row per file found in the Bank
+-- Transactions folder, so each version of a file is read once and a file that could not be read
+-- says why. modified_time is the version read; status imported | failed | retrying (a failure
+-- that was not about the file's content, tried again on the next run).
+create table if not exists statement_sources (
+  file_id           text primary key,
+  name              text not null,
+  path              text not null default '',      -- subfolders between the watched folder and the file
+  mime_type         text,
+  web_link          text,
+  modified_time     timestamptz,
+  status            text not null,
+  statement_id      uuid references statements(id) on delete set null,
+  transaction_count integer not null default 0,
+  new_count         integer not null default 0,
+  months            text[] not null default '{}',
+  transaction_ids   text[] not null default '{}',  -- the lines of the version read, to see what a new one dropped
+  attempts          integer not null default 0,
+  error             text,
+  warnings          text[] not null default '{}',
+  checked_at        timestamptz not null default now()
+);
+
+-- One lease for the long steps (upload, read invoices, match, remind, the Drive import). The
+-- dashboard's own steps also share an in-process lock; the Cloud Run jobs run in other containers,
+-- so they meet here. A holder renews it every minute; one that died loses it when it expires.
+create table if not exists job_lease (
+  name        text primary key,
+  holder      text,
+  job         text,
+  acquired_at timestamptz,
+  expires_at  timestamptz not null default '1970-01-01T00:00:00Z'
+);
+insert into job_lease (name) values ('jobs') on conflict do nothing;
+
+-- Small shared state as JSON: "bank_sync" is the Drive import's last check, for the dashboard.
+create table if not exists app_state (
+  key        text primary key,
+  value      jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+
 -- Per-month, per-card roll-up for the dashboard's year/month navigation.
 create or replace view month_summary as
 select year, month, card_last4,
@@ -146,7 +188,8 @@ group by year, month, card_last4;
 -- Run the view with the caller's rights (so RLS applies to it too) and keep the
 -- public API roles away from everything: only the service-role key is used.
 alter view month_summary set (security_invoker = true);
-revoke all on cards, statements, invoices, transactions, notifications, cost_centers, month_summary
+revoke all on cards, statements, invoices, transactions, notifications, cost_centers, month_summary,
+  statement_sources, job_lease, app_state
   from anon, authenticated;
 
 -- The service uses the service-role key, which bypasses RLS. Enabling RLS with
@@ -157,3 +200,6 @@ alter table invoices      enable row level security;
 alter table transactions  enable row level security;
 alter table notifications enable row level security;
 alter table cost_centers  enable row level security;
+alter table statement_sources enable row level security;
+alter table job_lease     enable row level security;
+alter table app_state     enable row level security;

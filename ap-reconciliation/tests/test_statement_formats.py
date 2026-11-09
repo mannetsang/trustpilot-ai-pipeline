@@ -11,7 +11,7 @@ import zipfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "cloud_run"))
 
-from test_pipeline import ApiTestCase  # noqa: E402
+from test_pipeline import ApiTestCase, RBC_HEADER, build_xlsx, sample_rows  # noqa: E402
 import statements  # noqa: E402
 
 EXPORT_LINES = [
@@ -79,6 +79,22 @@ class HeaderlessExportTests(unittest.TestCase):
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
         self.check(result)
 
+    def test_the_banks_own_fees_are_fees_not_purchases(self):
+        lines = EXPORT_LINES + ['00000003,"4514xxxxxxxx7777",20260428,0,"OVERLIMIT FEE       ","USD",000000029.00',
+                                '00000003,"4514xxxxxxxx7777",20261001,0,"ANNUAL FEE          ","USD",000000065.00',
+                                '00000003,"4514xxxxxxxx7777",20261002,0,"FEES R US CONSULTING","USD",000000100.00']
+        txns = {t["description"]: t for t in statements.parse_statement("x.txt", "\n".join(lines).encode())["transactions"]}
+        self.assertEqual((txns["OVERLIMIT FEE"]["type"], txns["OVERLIMIT FEE"]["amount"]), ("fee", 29.0))
+        self.assertEqual(txns["ANNUAL FEE"]["type"], "fee")
+        self.assertEqual(txns["FEES R US CONSULTING"]["type"], "purchase")      # a supplier, not the bank
+        plain = {t["id"] for t in statements.parse_statement("x.txt", "\n".join(EXPORT_LINES).encode())["transactions"]}
+        self.assertTrue(plain <= set(t["id"] for t in txns.values()))          # ids do not depend on the type
+        # A table without a type column, charges negative: the sign is flipped first, then the fee named.
+        csv = b"Date,Description,Amount\n2026-03-01,ANNUAL FEE,-175.00\n2026-03-02,SQ *SQUARE PAID SERVICES,-45.20\n"
+        rows = {t["description"]: t for t in statements.parse_statement("x.csv", csv)["transactions"]}
+        self.assertEqual((rows["ANNUAL FEE"]["type"], rows["ANNUAL FEE"]["amount"]), ("fee", 175.0))
+        self.assertEqual(rows["SQ *SQUARE PAID SERVICES"]["type"], "purchase")
+
     def test_a_file_with_a_header_row_is_read_as_before(self):
         result = statements.parse_statement("x.docx", docx(["Date,Description,Amount", "2026-09-03,ANTHROPIC,150.00"]))
         self.assertEqual(result["format"], "table")
@@ -103,6 +119,113 @@ class HeaderlessExportTests(unittest.TestCase):
         self.assertIn("too large", str(ctx.exception))
 
 
+class BankExportTests(unittest.TestCase):
+    """Two more exports found in the Bank Transactions folder (made-up lines, the banks' layouts)."""
+
+    RBC_BANKING = (b"Account Type,Account Number,Transaction Date,Cheque Number,Description 1,Description 2,CAD$,USD$\r\n"
+                   b"Visa,4516070100670000,1/1/2026,,SQ *SQUARE PAID SERVICES square.com,,-237.3,\r\n"
+                   b"Visa,4516070100670000,1/3/2026,,ROGERS ******2689 888-764-3771,,-106.21,\r\n"
+                   b"Visa,4516070100670000,1/5/2026,,AMAZON WEB SERVICES,AWS.AMAZON.COM,,-12.50\r\n"
+                   b"Visa,4516070100670000,1/19/2026,,AUTOMATIC PAYMENT -THANK YOU,,1009.02,\r\n"
+                   b"Visa,4516070100670000,3/1/2026,,ANNUAL FEE,,-175,\r\n")
+
+    def test_rbc_online_banking_export(self):
+        """Account Number, Description 1 and 2, and an amount column per currency (CAD$, USD$), money
+        going out negative."""
+        r = statements.parse_statement("True Top 0000 Jan 1-Mar 31 2026.csv", self.RBC_BANKING)
+        rows = [(t["card_last4"], t["txn_date"], t["type"], t["amount"], t["currency"], t["description"])
+                for t in r["transactions"]]
+        self.assertEqual(rows, [
+            ("0000", "2026-01-01", "purchase", 237.3, "CAD", "SQ *SQUARE PAID SERVICES square.com"),
+            ("0000", "2026-01-03", "purchase", 106.21, "CAD", "ROGERS ******2689 888-764-3771"),
+            ("0000", "2026-01-05", "purchase", 12.5, "USD", "AMAZON WEB SERVICES AWS.AMAZON.COM"),
+            ("0000", "2026-01-19", "payment", -1009.02, "CAD", "AUTOMATIC PAYMENT -THANK YOU"),
+            ("0000", "2026-03-01", "fee", 175.0, "CAD", "ANNUAL FEE"),
+        ])
+
+    def test_rbc_online_banking_signs_hold_for_a_short_file(self):
+        """Mostly payments in a short file: the 80% rule alone would not flip it; the layout says how."""
+        data = (b"Account Type,Account Number,Transaction Date,Cheque Number,Description 1,Description 2,CAD$,USD$\n"
+                b"Visa,4516070100670000,2/17/2026,,AUTOMATIC PAYMENT -THANK YOU,,1009.02,\n"
+                b"Visa,4516070100670000,2/18/2026,,AUTOMATIC PAYMENT -THANK YOU,,500.00,\n"
+                b"Visa,4516070100670000,2/19/2026,,PETRO-CANADA 00453,,-109.98,\n")
+        types = [(t["type"], t["amount"]) for t in statements.parse_statement("x.csv", data)["transactions"]]
+        self.assertEqual(types, [("payment", -1009.02), ("payment", -500.0), ("purchase", 109.98)])
+
+    def test_chase_card_activity(self):
+        """No card column (the card is in the file name), no currency column (Chase accounts are USD),
+        Type Sale / Return / Payment / Fee, sales negative."""
+        data = (b"Transaction Date,Post Date,Description,Category,Type,Amount,Memo\r\n"
+                b"10/19/2026,10/21/2026,DELTA AIR   0067514863335,Travel,Sale,-188.4,\r\n"
+                b"09/08/2026,09/10/2026,ANCHOR YACHT CHARTERS,Entertainment,Return,2061.98,\r\n"
+                b"09/04/2026,09/06/2026,ANCHOR YACHT CHARTERS,Entertainment,Sale,-2061.98,\r\n"
+                b"09/15/2026,09/15/2026,Payment Thank You-Mobile,,Payment,3000.00,\r\n"
+                b"09/20/2026,09/20/2026,LATE FEE,Fees & Adjustments,Fee,-39.00,\r\n")
+        r = statements.parse_statement("US Chase4692_Activity_20260101-1022.csv", data)
+        rows = [(t["card_last4"], t["txn_date"], t["post_date"], t["type"], t["amount"], t["currency"])
+                for t in r["transactions"]]
+        self.assertEqual(rows, [
+            ("4692", "2026-10-19", "2026-10-21", "purchase", 188.4, "USD"),
+            ("4692", "2026-09-08", "2026-09-10", "credit", -2061.98, "USD"),
+            ("4692", "2026-09-04", "2026-09-06", "purchase", 2061.98, "USD"),
+            ("4692", "2026-09-15", "2026-09-15", "payment", -3000.0, "USD"),
+            ("4692", "2026-09-20", "2026-09-20", "fee", 39.0, "USD"),
+        ])
+        self.assertEqual(r["transactions"][0]["description"], "DELTA AIR   0067514863335")
+
+    def test_a_chase_layout_with_its_own_currency_column_keeps_it(self):
+        data = (b"Transaction Date,Post Date,Description,Category,Type,Amount,Memo,Currency\n"
+                b"10/19/2026,10/21/2026,DELTA AIR,Travel,Sale,-188.4,,CAD\n")
+        self.assertEqual(statements.parse_statement("x.csv", data)["transactions"][0]["currency"], "CAD")
+
+
+class BankExportEdgeTests(unittest.TestCase):
+    """What the review of the real files turned up."""
+
+    def test_chase_adjustments_payments_and_fees_without_any_sale(self):
+        """The layout fixes the signs, so a quiet month (no Sale line to judge by) reads the same way,
+        and an Adjustment (no telling word) follows its sign after the flip: a statement credit."""
+        data = (b"Card,Transaction Date,Post Date,Description,Category,Type,Amount,Memo\n"
+                b"9783,09/15/2026,09/16/2026,TRAVEL CREDIT $300/YEAR,Fees & Adjustments,Adjustment,202.26,\n"
+                b"9783,09/20/2026,09/20/2026,Payment Thank You - Web,,Payment,4000.00,\n"
+                b"9783,09/21/2026,09/21/2026,ANNUAL MEMBERSHIP FEE,Fees & Adjustments,Fee,-795.00,\n")
+        rows = [(t["type"], t["amount"], t["currency"]) for t in statements.parse_statement("x.csv", data)["transactions"]]
+        self.assertEqual(rows, [("credit", -202.26, "USD"), ("payment", -4000.0, "USD"), ("fee", 795.0, "USD")])
+
+    def test_chase_without_its_memo_column_is_still_chase(self):
+        data = (b"Transaction Date,Post Date,Description,Category,Type,Amount\n"
+                b"10/19/2026,10/21/2026,R&amp;R CORP,Travel,Sale,-188.40\n")
+        t = statements.parse_statement("US Chase4692_x.csv", data)["transactions"][0]
+        self.assertEqual((t["currency"], t["amount"], t["description"], t["supplier"]), ("USD", 188.4, "R&R CORP", "R&R CORP"))
+
+    def test_rbc_all_accounts_download_keeps_the_card_lines_only(self):
+        data = (b"Account Type,Account Number,Transaction Date,Cheque Number,Description 1,Description 2,CAD$,USD$\n"
+                b"Chequing,00102-1234567,2/17/2026,,ONLINE BANKING PAYMENT - 0000,RBC VISA,-1009.02,\n"
+                b"Chequing,00102-1234567,2/18/2026,,PAYROLL DEPOSIT,,5000.00,\n"
+                b"Visa,4516070100670000,2/19/2026,,PETRO-CANADA 00453,,-109.98,\n")
+        r = statements.parse_statement("x.csv", data)
+        self.assertEqual([(t["card_last4"], t["amount"]) for t in r["transactions"]], [("0000", 109.98)])
+        self.assertIn("2 lines of a chequing or savings account left out.", r["warnings"])
+        with self.assertRaises(statements.StatementError) as ctx:
+            statements.parse_statement("x.csv", b"\n".join(data.split(b"\n")[:3]))
+        self.assertIn("only chequing or savings", str(ctx.exception))
+
+    def test_rbc_foreign_purchase_keeps_its_original_amount(self):
+        data = (b"Account Type,Account Number,Transaction Date,Cheque Number,Description 1,Description 2,CAD$,USD$\n"
+                b"Visa,4516070100675018,4/9/2026,,Dyson Direct Inc Chicago,213.99 USD @ 1.42801,-305.58,\n"
+                b"Visa,4516070100675018,4/12/2026,,Vrbo Fee 512-759-0902,187.0 USD @ 1.362887,254.86,\n")
+        rows = [(t["type"], t["amount"], t["source_amount"], t["source_currency"], t["description"])
+                for t in statements.parse_statement("x.csv", data)["transactions"]]
+        self.assertEqual(rows, [("purchase", 305.58, 213.99, "USD", "Dyson Direct Inc Chicago"),
+                                ("credit", -254.86, -187.0, "USD", "Vrbo Fee 512-759-0902")])
+
+    def test_month_first_dates_the_file_proves_need_no_warning(self):
+        data = b"Date,Description,Amount\n1/19/2026,A,10.00\n2/3/2026,B,20.00\n"
+        self.assertFalse([w for w in statements.parse_statement("visa_1234.csv", data)["warnings"] if "month/day" in w])
+        data = b"Date,Description,Amount\n1/9/2026,A,10.00\n2/3/2026,B,20.00\n"
+        self.assertTrue([w for w in statements.parse_statement("visa_1234.csv", data)["warnings"] if "month/day" in w])
+
+
 class DocxUploadTests(ApiTestCase):
     def test_uploading_a_word_export_adds_its_card_and_lines(self):
         r = self.upload(docx(EXPORT_LINES), name="NFG_7777_Apr_1-Oct_21_2026.docx")
@@ -112,6 +235,97 @@ class DocxUploadTests(ApiTestCase):
         self.assertIn("7777", [c["last4"] for c in self.store.list_cards()])
         again = self.upload(docx(EXPORT_LINES), name="NFG_7777_Apr_1-Oct_21_2026.docx").get_json()
         self.assertEqual(again["new"], 0)
+
+
+# ---------------------------------------------------------------------------
+# Legacy Excel (.xls): RBC sends some months' Transaction Export as .xls
+# ---------------------------------------------------------------------------
+XLS_FIXTURE = os.path.join(HERE, "fixtures", "rbc_transaction_export.xls")   # sample_rows(), written with xlwt 1.3.0
+
+
+def summary(result):
+    return ([(t["id"], t["card_last4"], t["txn_date"], t["post_date"], t["type"], t["amount"], t["currency"],
+              t["source_amount"], t["source_currency"], t["description"]) for t in result["transactions"]],
+            result["cards"], result["period_start"], result["period_end"])
+
+
+def tsv(rows):
+    lines = ["\t".join(RBC_HEADER)]
+    for r in rows:
+        cells = []
+        for h in RBC_HEADER:
+            v = r.get(h)
+            cells.append("" if v is None else (v.strftime("%Y-%m-%d") if hasattr(v, "strftime") else str(v)))
+        lines.append("\t".join(cells))
+    return ("\r\n".join(lines) + "\r\n").encode()
+
+
+class LegacyXlsTests(unittest.TestCase):
+    def setUp(self):
+        with open(XLS_FIXTURE, "rb") as fh:
+            self.xls = fh.read()
+        self.from_xlsx = statements.parse_statement("Transaction Export.xlsx", build_xlsx(sample_rows()))
+
+    def test_an_xls_export_reads_exactly_like_the_same_export_as_xlsx(self):
+        result = statements.parse_statement("Visa 4894 Feb 2026 Transaction Export.xls", self.xls)
+        self.assertEqual(result["format"], "table")
+        self.assertEqual(summary(result), summary(self.from_xlsx))
+        self.assertEqual(result["warnings"], self.from_xlsx["warnings"])
+
+    def test_cells_come_back_as_openpyxl_gives_them(self):
+        rows = statements.read_xls(self.xls)
+        self.assertEqual(rows[0], list(RBC_HEADER))
+        first = dict(zip(rows[0], rows[1]))
+        self.assertEqual(first["Transaction date"], __import__("datetime").datetime(2026, 9, 4))
+        self.assertEqual(first["Amount"], 150)                     # a whole number: an int, as in .xlsx
+        self.assertIsInstance(first["Amount"], int)
+        self.assertEqual(first["Account"], "****-****-****-1610")
+        self.assertIsNone(first["Supplier address"])               # empty cell
+        usd = dict(zip(rows[0], rows[6]))
+        self.assertEqual((usd["Source amount"], usd["Amount"]), (70.4, 96.12))
+
+    def test_the_mime_type_alone_marks_an_xls(self):
+        result = statements.parse_statement("Transaction Export", self.xls, "application/vnd.ms-excel")
+        self.assertEqual(summary(result), summary(self.from_xlsx))
+
+    def test_an_xlsx_saved_under_an_xls_name_is_read_as_xlsx(self):
+        result = statements.parse_statement("Transaction Export.xls", build_xlsx(sample_rows()))
+        self.assertEqual(summary(result), summary(self.from_xlsx))
+
+    def test_a_tab_separated_text_export_named_xls_is_read_as_text(self):
+        result = statements.parse_statement("Transaction Export.xls", tsv(sample_rows()))
+        self.assertEqual(len(result["transactions"]), len(self.from_xlsx["transactions"]))
+        self.assertEqual(result["cards"].keys(), self.from_xlsx["cards"].keys())
+
+    def test_unicode_text_utf16_named_xls_is_read_as_text(self):
+        data = b"\xff\xfe" + tsv(sample_rows()).decode().encode("utf-16-le")
+        result = statements.parse_statement("Transaction Export.xls", data)
+        self.assertEqual(len(result["transactions"]), len(self.from_xlsx["transactions"]))
+
+    def test_a_web_page_named_xls_is_refused_with_what_to_do(self):
+        for data in (b"<html><table><tr><td>Date</td></tr></table></html>",
+                     b"\xef\xbb\xbf  <table><tr><td>Date</td></tr></table>",
+                     b"\xff\xfe" + "<html><table></table></html>".encode("utf-16-le")):
+            with self.assertRaises(statements.StatementError) as ctx:
+                statements.parse_statement("Transaction Export.xls", data)
+            self.assertIn("save it as .xlsx", str(ctx.exception))
+
+    def test_a_damaged_xls_is_refused(self):
+        with self.assertRaises(statements.StatementError) as ctx:
+            statements.parse_statement("statement.xls", statements.OLE_MAGIC + b"\x00" * 600)
+        self.assertIn("could not be opened", str(ctx.exception))
+
+
+class XlsUploadTests(ApiTestCase):
+    def test_uploading_an_xls_export_adds_its_lines_once(self):
+        with open(XLS_FIXTURE, "rb") as fh:
+            data = fh.read()
+        r = self.upload(data, name="Copy of Visa 4894 Feb 2026 Transaction Export.xls")
+        self.assertEqual(r.status_code, 200, r.get_json())
+        body = r.get_json()
+        self.assertEqual(body["new"], body["transactions"])
+        self.assertGreater(body["new"], 0)
+        self.assertEqual(self.upload(build_xlsx(sample_rows()), name="Transaction Export.xlsx").get_json()["new"], 0)
 
 
 if __name__ == "__main__":
