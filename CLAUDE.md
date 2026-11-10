@@ -179,8 +179,12 @@ Statements put in the Drive folder **Bank Transactions**
 editors may not share it) are imported by the Cloud Run job
 `ap-reconciliation-sync` (`python main.py sync`) every 15 minutes. It needs the
 folder shared with ap@ as a viewer, and a Cloud Scheduler job only an owner can
-create: claude-sessions has no Cloud Scheduler rights (neither job exists until
-Manne creates it; the README's one-time setup has both commands). It can deploy
+create: claude-sessions has no Cloud Scheduler rights (it cannot even list them;
+the audit log shows creations). Manne created `ap-reconciliation-sync` (every 15
+minutes) on 2026-11-06 and `ap-reconciliation-remind` (Mondays 14:00 UTC) on
+2026-11-10. Only cards 1610, 2887 and 4421 have a Chat webhook
+(`ap-reconciliation-card-webhooks`), so the Monday reminder posts for those and
+logs "no webhook" for the rest; it still re-matches every card. It can deploy
 and execute Cloud Run jobs and apply the schema. The job and the dashboard
 share a lease in `job_lease`, so their long steps never overlap. The same job
 also watches **Invoice/** through ap@'s Drive change feed: an invoice filed

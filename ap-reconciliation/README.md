@@ -714,7 +714,8 @@ this repo.
    missing or possible invoices is re-indexed, re-matched and notified
    again). Cloud Scheduler starts it on Mondays 14:00 UTC through the Cloud
    Run API as the compute service account, so no token and no path through
-   IAP are involved; the scheduler job is created once by an owner:
+   IAP are involved; the scheduler job is created once by an owner (done
+   2026-11-10; first run Monday 2026-11-16):
    `gcloud scheduler jobs create http ap-reconciliation-remind --location=us-central1 --project=shp-ai-bot-2026 --schedule="0 14 * * 1" --time-zone=Etc/UTC --uri="https://run.googleapis.com/v2/projects/shp-ai-bot-2026/locations/us-central1/jobs/ap-reconciliation-remind:run" --http-method=POST --oauth-service-account-email=304363458561-compute@developer.gserviceaccount.com`
    Test it with
    `gcloud scheduler jobs run ap-reconciliation-remind --location=us-central1 --project=shp-ai-bot-2026`
