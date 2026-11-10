@@ -2343,18 +2343,37 @@ def read_invoice_folder(store, drive, gemini, folder, log=print):
         for _ in range(MAX_INDEX_ROUNDS):
             result = invoice_index.index_invoices(store, drive, gemini, INVOICE_FOLDER_ID, month_folders=[folder],
                                                   limit=INDEX_BATCH, workers=INDEX_WORKERS, log=log)
-            ids = result.get("read_ids") or []
+            ids = (result.get("read_ids") or []) + (result.get("relabelled_ids") or [])
             if ids:
                 to_match = dict((store.get_state(INVOICE_WATCH) or {}).get("to_match") or {})
                 for iid in ids:
                     to_match.setdefault(iid, 0)
                 update_watch_state(store, to_match=to_match)
-            read += len(ids)
+            read += len(result.get("read_ids") or [])
             if not result.get("remaining"):
                 break
     state = store.get_state(INVOICE_WATCH) or {}
-    update_watch_state(store, folders_pending=[f for f in state.get("folders_pending") or [] if f != folder])
+    failures = {k: v for k, v in (state.get("folder_failures") or {}).items() if k != folder}
+    update_watch_state(store, folders_pending=[f for f in state.get("folders_pending") or [] if f != folder],
+                       folder_failures=failures)
     return read
+
+
+def watch_step_failed(store, folder, exc, log=print):
+    """A watch step raised: noted, and the run goes on with the next step. A month folder that fails
+    INVOICE_MAX_TRIES runs in a row is let go until something in it changes again."""
+    state = store.get_state(INVOICE_WATCH) or {}
+    failures = dict(state.get("folder_failures") or {})
+    pending = list(state.get("folders_pending") or [])
+    if folder is not None:
+        failures[folder] = failures.get(folder, 0) + 1
+        if failures[folder] >= INVOICE_MAX_TRIES:
+            log(f"invoices: giving up on {folder} after {failures[folder]} failed runs: {exc}")
+            pending = [f for f in pending if f != folder]
+            failures.pop(folder)
+    log(f"invoices: {folder or 'matching'} failed: {exc}")
+    update_watch_state(store, folders_pending=pending, folder_failures=failures,
+                       error=f"{folder or 'matching'}: {str(exc)[:280]}")
 
 
 def _read_failed(row):
@@ -2370,7 +2389,14 @@ def match_watched_invoices(store, gemini, log=print):
     if not to_match:
         return {"matched": 0, "possible": 0}
     rows = {r["id"]: r for r in store.list_invoices(ids=list(to_match))}
-    counts = matching.match_new_invoices(store, gemini, list(to_match), use_ai=not AI_DISABLED, log=log)
+    try:
+        counts = matching.match_new_invoices(store, gemini, list(to_match), use_ai=not AI_DISABLED, log=log)
+    except Exception as exc:  # noqa: BLE001
+        # Every invoice waiting spends one of its tries, so a step that keeps failing ends.
+        keep = {iid: tries + 1 for iid, tries in to_match.items() if tries + 1 < INVOICE_MAX_TRIES}
+        update_watch_state(store, to_match=keep)
+        watch_step_failed(store, None, exc, log)
+        return {"matched": 0, "possible": 0}
     unjudged, keep, refolder = set(counts.get("unjudged") or []), {}, set()
     for iid, tries in to_match.items():
         row = rows.get(iid)
@@ -2499,7 +2525,10 @@ def sync_bank_folder(log=print, now=None):
                     stopped = True
                     break
                 steps += 1
-                totals["read"] += read_invoice_folder(store, drive, gemini, folder, log)
+                try:
+                    totals["read"] += read_invoice_folder(store, drive, gemini, folder, log)
+                except Exception as exc:  # noqa: BLE001  (noted; the statement months still run)
+                    watch_step_failed(store, folder, exc, log)
             if not stopped and (store.get_state(INVOICE_WATCH) or {}).get("to_match"):
                 if steps and not turn():
                     stopped = True

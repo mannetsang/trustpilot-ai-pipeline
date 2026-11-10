@@ -248,8 +248,9 @@ class SupabaseStore:
 
     # -- invoices -----------------------------------------------------------
     def invoice_index(self):
-        """{file id: {modified_time, extraction_error}} for every invoice seen so far."""
-        rows = self.select("invoices", {"select": "id,modified_time,extraction_error,month_folder,removed_at",
+        """{file id: {modified_time, extraction_error, month_folder, vendor_folder, removed_at}} for every
+        invoice seen so far."""
+        rows = self.select("invoices", {"select": "id,modified_time,extraction_error,month_folder,vendor_folder,removed_at",
                                         "order": "id"})
         return {r["id"]: r for r in rows}
 
@@ -470,7 +471,8 @@ class MemoryStore:
 
     def invoice_index(self):
         return {i: {"modified_time": v.get("modified_time"), "extraction_error": v.get("extraction_error"),
-                    "month_folder": v.get("month_folder"), "removed_at": v.get("removed_at")}
+                    "month_folder": v.get("month_folder"), "vendor_folder": v.get("vendor_folder"),
+                    "removed_at": v.get("removed_at")}
                 for i, v in self.invoices.items()}
 
     def list_invoices(self, month_folders=None, ids=None):

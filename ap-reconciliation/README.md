@@ -181,7 +181,13 @@ updates its folder hints without another model call.
    right month, restored from the trash, or read first by someone's Rematch
    is matched too. One not read yet, whose read failed, or that a failed
    judge call could not place is tried again on the next runs (four in all;
-   a failed read queues its folder again). The watch runs only under the
+   a failed read queues its folder again). Invoices already read that a
+   moved or renamed vendor or month folder puts in a new month are matched
+   there too. A watch step that raises is noted on the import line and the
+   run goes on (the statement months still run); a month folder that fails
+   four runs in a row is let go until something in it changes, and a reading
+   the database refuses is stored as "could not be stored" without losing
+   the rest of its batch. The watch runs only under the
    job lease: a run that finds the lease taken does not read the feed, and
    the next one reads the same changes; a Drive rate limit or server error
    keeps the run's place in the feed. The first run starts the feed and

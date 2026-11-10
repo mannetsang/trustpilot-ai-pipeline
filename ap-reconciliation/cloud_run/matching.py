@@ -295,8 +295,12 @@ def ai_match(gemini, transactions, invoices, txn_batch=40, inv_batch=120, log=pr
                 failed.extend(t["id"] for t in chunk)
             continue
         matches = data.get("matches") if isinstance(data, dict) else data
+        if isinstance(matches, dict):
+            matches = [matches]                 # one pairing given as an object, not a list
         proposals = []
-        for m in matches or []:
+        for m in matches if isinstance(matches, list) else []:
+            if not isinstance(m, dict):
+                continue
             try:
                 conf = float(m.get("confidence") or 0)
             except (TypeError, ValueError):
@@ -574,12 +578,14 @@ def match_new_invoices(store, gemini, invoice_ids, use_ai=True, log=print):
         return counts
     inv_by_id = {i["id"]: i for i in new}
     held_ids = [t["invoice_id"] for t in pending if t.get("invoice_status") == "possible" and t.get("invoice_id")]
-    held_ok = {i["id"] for i in (store.list_invoices(ids=held_ids) if held_ids else []) if is_candidate(i)}
+    held = {i["id"]: i for i in (store.list_invoices(ids=held_ids) if held_ids else [])}
 
     def improves(t, status, conf):
         """Is (status, conf) better than what the purchase holds now? A possible match to an invoice
-        that is no longer a candidate (removed from Drive, not an invoice) counts as nothing."""
-        if t.get("invoice_status") != "possible" or not t.get("invoice_id") or t["invoice_id"] not in held_ok:
+        that could no longer be proposed (removed from Drive, not an invoice, refiled in a month the
+        purchase does not draw on) counts as nothing, as it does for the per-row Rematch."""
+        current = held.get(t.get("invoice_id")) if t.get("invoice_status") == "possible" else None
+        if current is None or not is_candidate(current) or not serves(t, current):
             return True
         return _better((status, conf), ("possible", t.get("match_confidence")))
 

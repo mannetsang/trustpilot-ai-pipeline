@@ -2884,6 +2884,7 @@
     if ((st.settling || []).length) bits.push('waiting for ' + count(st.settling.length, 'file', 'files') + ' still being edited');
     if ((st.months_pending || []).length && !st.running) bits.push(count(st.months_pending.length, 'month', 'months') + ' still to match');
     var iw = d.invoices || {};
+    if (iw.enabled && iw.error) bits.push('<span class="bank-warn">invoices filed in Drive: ' + esc(iw.error) + '</span>');
     if (iw.enabled && iw.last && (iw.last.matched || iw.last.possible || iw.last.read)) {
       bits.push('invoices filed in Drive: ' + count(iw.last.read, 'read', 'read') + ', ' +
                 count(iw.last.matched, 'matched', 'matched') + (iw.last.possible ? ', ' + count(iw.last.possible, 'possible', 'possible') : '') +

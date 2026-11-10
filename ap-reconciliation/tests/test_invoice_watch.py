@@ -255,9 +255,9 @@ class RobustnessTests(InvoiceWatchTestCase):
         self.drive.file_in("v09_anth", file_("f_anth", "Invoice-ANTH-1.pdf", modified=FILED))
         real = matching.match_new_invoices
         with mock.patch.object(matching, "match_new_invoices", side_effect=RuntimeError("Vertex timed out")):
-            with self.assertRaises(RuntimeError):
-                self.sync(NOW + dt.timedelta(minutes=15))
-        self.assertEqual((self.watch()["to_match"], self.watch()["folders_pending"]), ({"f_anth": 0}, []))
+            self.sync(NOW + dt.timedelta(minutes=15))           # noted, not raised
+        self.assertEqual((self.watch()["to_match"], self.watch()["folders_pending"]), ({"f_anth": 1}, []))
+        self.assertIn("Vertex timed out", self.watch()["error"])
         self.assertIsNone(self.store.get_lease(main.LEASE_NAME)["holder"])
         with mock.patch.object(matching, "match_new_invoices", side_effect=real):
             self.sync(NOW + dt.timedelta(minutes=30))
@@ -367,10 +367,9 @@ class ReviewFixTests(InvoiceWatchTestCase):
 
         with mock.patch.object(main, "INDEX_BATCH", 1), \
                 mock.patch.object(main.invoice_index, "index_invoices", side_effect=second_round_fails):
-            with self.assertRaises(DriveError):
-                self.sync(NOW + dt.timedelta(minutes=15))
-        first = [k for k in self.watch()["to_match"]]
-        self.assertEqual(len(first), 2)                     # both filed files, one read already
+            self.sync(NOW + dt.timedelta(minutes=15))
+        self.assertEqual(set(self.watch()["to_match"]) | {"f_anth"}, {"f_anth", "f_other"})
+        self.assertEqual(self.watch()["folders_pending"], ["2026 09"])          # read again next run
         self.sync(NOW + dt.timedelta(minutes=30))
         self.assertEqual(self.row("t_anth")["invoice_id"], "f_anth")
 
@@ -445,6 +444,80 @@ class ReviewFixTests(InvoiceWatchTestCase):
         self.sync()
         last = self.watch()["last"]
         self.assertEqual((last["read"], last["matched"]), (2, 1))
+
+
+class SecondReviewTests(InvoiceWatchTestCase):
+    """The cases the second review found."""
+
+    def test_a_vendor_folder_moved_into_the_right_month_is_matched_there(self):
+        self.baseline()
+        self.store.insert_transactions([
+            txn("t_ret", "2026-10-06", "RETELL AI", 96.12, source_amount=70.40, source_currency="USD")])
+        self.tree["inv_root"].append(folder("m08", "2026 08"))
+        self.tree["m08"] = [folder("v08_retell", "Retell AI")]
+        self.tree["v08_retell"] = []
+        self.drive.file_in("v08_retell", file_("f_ret", "Invoice-RET-1.pdf", modified=FILED))
+        self.sync(NOW + dt.timedelta(minutes=15))
+        self.assertEqual(self.row("t_ret")["invoice_status"], "missing")
+        self.drive.move("v08_retell", "m10")                   # the whole folder: one change, for the folder
+        self.sync(NOW + dt.timedelta(minutes=30))
+        self.assertEqual(self.store.get_invoice("f_ret")["month_folder"], "2026 10")
+        self.assertEqual(self.row("t_ret")["invoice_id"], "f_ret")
+
+    def test_a_step_that_keeps_failing_ends_and_the_statement_months_still_run(self):
+        self.baseline()
+        self.drive.file_in("v09_anth", file_("f_anth", "Invoice-ANTH-1.pdf", modified=FILED))
+        main.update_sync_state(self.store, months_pending=[[2026, 10]])
+        matched = []
+        with mock.patch.object(main.invoice_index, "index_invoices",
+                               side_effect=RuntimeError("Postgres refused the batch")), \
+                mock.patch.object(main, "index_month", return_value={}), \
+                mock.patch.object(main, "match_month", side_effect=lambda y, m, **k: matched.append((y, m)) or {}):
+            for n in range(main.INVOICE_MAX_TRIES):
+                self.sync(NOW + dt.timedelta(minutes=15 * (n + 1)))
+        self.assertEqual(matched, [(2026, 10)])                 # on the first run, despite the failing step
+        self.assertEqual(self.watch()["folders_pending"], [])   # let go after INVOICE_MAX_TRIES runs
+        self.assertEqual(self.watch()["folder_failures"], {})
+
+    def test_a_judge_answer_given_as_one_object_is_read(self):
+        self.baseline()
+        self.store.insert_transactions([
+            txn("t_gpt", "2026-09-11", "OPENAI *CHATGPT SUBSCR", 28.40, source_amount=20.00, source_currency="USD")])
+        self.judge_answer = lambda text: {"matches": {"transaction_id": "t_gpt", "invoice_id": "f_gpt",
+                                                      "confidence": 0.9, "reason": "ChatGPT Plus"}}
+        self.drive.file_in("v09_openai", file_("f_gpt", "ChatGPT Plus Receipt.pdf", modified=FILED))
+        self.sync(NOW + dt.timedelta(minutes=15))
+        self.assertEqual(self.row("t_gpt")["invoice_id"], "f_gpt")
+
+    def test_one_reading_the_database_refuses_does_not_lose_the_batch(self):
+        self.baseline()
+        self.store.insert_transactions([txn("t_anth", "2026-09-04", "Anthropic* Claude Team", 150.00)])
+        self.drive.file_in("v09_anth", file_("f_anth", "Invoice-ANTH-1.pdf", modified=FILED))
+        self.drive.file_in("v09_anth", file_("f_bad", "Invoice-RET-1.pdf", modified=FILED))
+        real = self.store.upsert_invoices
+
+        def refuse_bad(rows):
+            if any(r["id"] == "f_bad" and r.get("total") is not None for r in rows):
+                raise main.StoreError('POST invoices -> 400 {"code":"22003","message":"numeric field overflow"}')
+            return real(rows)
+
+        with mock.patch.object(self.store, "upsert_invoices", side_effect=refuse_bad):
+            self.sync(NOW + dt.timedelta(minutes=15))
+        self.assertEqual(self.row("t_anth")["invoice_id"], "f_anth")
+        bad = self.store.get_invoice("f_bad")
+        self.assertTrue(bad["extraction_error"].startswith("unsupported: the reading could not be stored"))
+        self.assertEqual(self.watch()["folders_pending"], [])
+
+    def test_a_possible_match_to_an_invoice_refiled_far_away_gives_way(self):
+        self.baseline()
+        self.store.upsert_invoices([inv("x_far", "Stripe", 150.0, "2026-09-03", month_folder="2026 11")])
+        self.tree["v11_anth"].append(file_("x_far", "x_far.pdf"))
+        held = dict(txn("t_paypal", "2026-09-06", "PAYPAL *PAYMENTS", 150.00, status="possible",
+                        invoice_id="x_far", method="rule"), match_confidence=0.65)
+        self.store.insert_transactions([held])
+        self.drive.file_in("v09_anth", file_("f_anth", "Invoice-ANTH-1.pdf", modified=FILED))
+        self.sync(NOW + dt.timedelta(minutes=15))
+        self.assertEqual(self.row("t_paypal")["invoice_id"], "f_anth")
 
 
 class MatchNewInvoicesTests(unittest.TestCase):

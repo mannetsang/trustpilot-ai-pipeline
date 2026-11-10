@@ -242,9 +242,58 @@ def index_invoices(store, drive, gemini, root_id, month_folders=None, limit=40, 
         # A file stamped removed while it was being read (Remove… on a dashboard upload, or another
         # run that found it gone) stays removed: the read's row would clear removed_at.
         now = {i["id"]: i for i in store.list_invoices(ids=[r["id"] for r in rows])}
-        store.upsert_invoices([r for r in rows if not (now.get(r["id"]) or {}).get("removed_at")
-                               or (known.get(r["id"]) or {}).get("removed_at")])
+        stored = _store_rows(store, [r for r in rows if not (now.get(r["id"]) or {}).get("removed_at")
+                                     or (known.get(r["id"]) or {}).get("removed_at")], log)
+        rows = [stored.get(r["id"], r) for r in rows]
+    # Files already read that now sit elsewhere (a vendor or month folder moved or renamed around them,
+    # a file restored from the trash): their content is the same, but a month they may serve is new.
+    relabelled = [r["id"] for r in moved
+                  if (known.get(r["id"]) or {}).get("removed_at")
+                  or (known.get(r["id"]) or {}).get("month_folder") != r["month_folder"]
+                  or (known.get(r["id"]) or {}).get("vendor_folder") != r["vendor_folder"]]
     return {"files_seen": len(files), "indexed": len(rows), "remaining": max(len(todo) - limit, 0),
             "retried": len(batch) - min(len(todo), limit), "removed": len(gone),
             "errors": errors, "month_folders": sorted(month_folders) if month_folders else "all",
-            "read_ids": [r["id"] for r in rows if not r.get("extraction_error")]}
+            "read_ids": [r["id"] for r in rows if not r.get("extraction_error")], "relabelled_ids": relabelled}
+
+
+ROW_METADATA = ("id", "file_name", "mime_type", "web_view_link", "folder_path", "month_folder", "vendor_folder",
+                "modified_time", "size", "extracted_at")
+
+
+def _store_rows(store, rows, log=print):
+    """Store a batch of readings: {id: the row stored}. When Postgres refuses the batch (one reading it
+    cannot take, a total too long for its column), the rows go one by one, and one still refused is
+    stored as its file's metadata with the reason, marked "unsupported" so it is not read again until
+    the file changes. Neither the rest of the batch nor that file comes back every run."""
+    if not rows:
+        return {}
+    try:
+        store.upsert_invoices(rows)
+        return {r["id"]: r for r in rows}
+    except Exception as exc:  # noqa: BLE001
+        if len(rows) == 1 and not _row_refused(exc):
+            raise
+        log(f"{len(rows)} reading(s) not stored together ({str(exc)[:200]}); storing them one by one")
+    out = {}
+    for r in rows:
+        try:
+            store.upsert_invoices([r])
+            out[r["id"]] = r
+        except Exception as exc:  # noqa: BLE001
+            if not _row_refused(exc):
+                raise
+            bare = {k: None for k in r}
+            bare.update({k: r.get(k) for k in ROW_METADATA})
+            bare["extraction_error"] = f"unsupported: the reading could not be stored ({str(exc)[:300]})"
+            store.upsert_invoices([bare])
+            log(f"{r.get('file_name')}: the reading could not be stored: {str(exc)[:200]}")
+            out[r["id"]] = bare
+    return out
+
+
+def _row_refused(exc):
+    """The database turned the row down (its content), as opposed to being out of reach."""
+    text = str(exc)
+    return bool(re.search(r"\b(400|409|422)\b", text)) or any(
+        w in text.lower() for w in ("violates", "out of range", "invalid input", "overflow", "too long"))
