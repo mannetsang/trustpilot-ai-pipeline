@@ -226,7 +226,17 @@ RATING_EMOJI = {5: "🟢", 4: "🟢", 3: "🟡", 2: "🟠", 1: "🔴"}
 REPLY_SIGNATURE = "SHP Team"
 # A sign-off the model added anyway ("- Superhairpieces", "The Superhairpieces Team"), replaced by ours.
 SIGN_OFF = r"(?:(?<=[.!?])|\s[-–—])\s*(?:the\s+)?(?:superhairpieces|shp)(?:\s+team)?\.?\s*$"
-STAMPED_REVIEWS_API = f"https://stamped.io/api/v2/{STAMPED_STORE_HASH}/dashboard/reviews"
+# One Stamped account per storefront: .ca (STAMPED_*) and .com (STAMPED_US_*). Review IDs are unique
+# across stores, so a review is looked up in each store until one knows it.
+STAMPED_STORES = [
+    {"name": name, "api": f"https://stamped.io/api/v2/{h}/dashboard/reviews", "auth": (pub, priv)}
+    for name, h, pub, priv in [
+        ("ca", STAMPED_STORE_HASH, STAMPED_PUBLIC_KEY, STAMPED_PRIVATE_KEY),
+        ("com", os.environ.get("STAMPED_US_HASH", ""), os.environ.get("STAMPED_US_PUBLIC_KEY", ""),
+         os.environ.get("STAMPED_US_PRIVATE_KEY", "")),
+    ]
+    if h and pub and priv
+]
 
 
 def auto_reply_five_star(review_id, rating, reply: str) -> str:
@@ -240,23 +250,28 @@ def auto_reply_five_star(review_id, rating, reply: str) -> str:
             or re.search(r"\breply\b[^.!?]{0,60}:", reply[:120], re.I):
         print(f"Auto-reply skipped for {review_id}: reply includes model preamble")
         return "skipped: AI reply included a preamble"
-    auth = (STAMPED_PUBLIC_KEY, STAMPED_PRIVATE_KEY)
     try:
-        r = requests.get(f"{STAMPED_REVIEWS_API}/{review_id}", auth=auth, timeout=30)
-        if r.status_code != 200:
-            print(f"Auto-reply skipped for {review_id}: review lookup HTTP {r.status_code}")
-            return f"failed: review lookup HTTP {r.status_code}"
+        store, r = None, None
+        for candidate in STAMPED_STORES:
+            r = requests.get(f"{candidate['api']}/{review_id}", auth=candidate["auth"], timeout=30)
+            if r.status_code == 200:
+                store = candidate
+                break
+        if store is None:
+            code = r.status_code if r is not None else "no store configured"
+            print(f"Auto-reply skipped for {review_id}: not found in any Stamped store (last HTTP {code})")
+            return f"failed: review lookup HTTP {code}"
         if (r.json().get("reply") or "").strip():
             return "skipped: already replied"
 
         message = re.sub(SIGN_OFF, "", reply.strip(), flags=re.I)
         message = f"{message} {REPLY_SIGNATURE}"
-        r = requests.post(f"{STAMPED_REVIEWS_API}/{review_id}/reply", auth=auth,
+        r = requests.post(f"{store['api']}/{review_id}/reply", auth=store["auth"],
                           json={"reply": message, "isPublicReply": True}, timeout=30)
         if r.status_code >= 300:
             print(f"Auto-reply failed for {review_id}: HTTP {r.status_code} {r.text[:300]}")
             return f"failed: Stamped HTTP {r.status_code}"
-        print(f"Auto-reply posted for {review_id}")
+        print(f"Auto-reply posted for {review_id} ({store['name']})")
         return "posted"
     except Exception as e:
         print(f"Auto-reply error for {review_id}: {e}")
@@ -454,21 +469,30 @@ def monitor():
         ).execute().get("values", [])
         known_ids = {row[0].strip() for row in known if row and row[0].strip()}
 
-        r = requests.get(STAMPED_REVIEWS_API, auth=(STAMPED_PUBLIC_KEY, STAMPED_PRIVATE_KEY),
-                         params={"page": 1, "take": 100}, timeout=30)
-        if r.status_code != 200:
-            print(f"Monitor: Stamped HTTP {r.status_code} {r.text[:200]}")
-            return jsonify({"status": "error", "stamped_status": r.status_code}), 502
         cutoff = (datetime.now(timezone.utc) - timedelta(days=MONITOR_DAYS)).strftime("%Y-%m-%d")
-        recent = [item.get("review", {}) for item in r.json().get("results", [])]
+        recent, failed = [], []
+        for store in STAMPED_STORES:
+            try:
+                r = requests.get(store["api"], auth=store["auth"], params={"page": 1, "take": 100}, timeout=30)
+            except requests.RequestException as e:
+                print(f"Monitor: Stamped {store['name']} error {e}")
+                failed.append(store["name"])
+                continue
+            if r.status_code != 200:
+                print(f"Monitor: Stamped {store['name']} HTTP {r.status_code} {r.text[:200]}")
+                failed.append(store["name"])
+                continue
+            recent += [item.get("review", {}) for item in r.json().get("results", [])]
         missing = [rev for rev in recent
                    if (rev.get("dateCreated") or "")[:10] >= cutoff and str(rev.get("id")) not in known_ids]
-        print(f"Monitor: {len(recent)} reviews checked, {len(missing)} missing")
+        print(f"Monitor: {len(recent)} reviews checked, {len(missing)} missing"
+              + (f", stores failed: {', '.join(failed)}" if failed else ""))
 
         for rev in sorted(missing, key=lambda x: x.get("dateCreated", "")):
             process_review(stamped_review_to_data(rev, "stamped-monitor"), "review/created")
             print(f"Monitor: processed {rev.get('author')} ({rev.get('rating')} stars, id={rev.get('id')})")
-        return jsonify({"status": "ok", "checked": len(recent), "processed": len(missing)})
+        return jsonify({"status": "ok" if not failed else "partial", "checked": len(recent),
+                        "processed": len(missing), "stores_failed": failed})
     except Exception as e:
         print(f"Monitor error: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
