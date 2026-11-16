@@ -22,7 +22,7 @@ BU_ID                = "5e44f707d7d8c700011eaa10"
 TP_AUTHOR_BUSINESS_USER_ID = "69e690a0b3b585ed447f64e3"
 GCP_PROJECT          = "shp-ai-bot-2026"
 VERTEX_LOCATION      = "us-central1"
-VERTEX_MODEL         = "gemini-2.5-pro"
+VERTEX_MODEL         = "gemini-2.5-flash"
 INVITATIONS_SHEET_ID = "193E74iZIvF1X3rvDfbEEObqaVOQFRTK8C0iRIReYTnw"
 
 # Cache the Trustpilot access token so we don't re-fetch on every request
@@ -1322,14 +1322,23 @@ def api_suggest_reply():
         rating  = body.get("rating") or body.get("stars") or 5
         name    = (body.get("name") or "the customer").strip() or "the customer"
         nonce   = (body.get("nonce") or "").strip()
-        if not comment:
-            return jsonify({"error": "comment is required"}), 400
         try:
             rating = int(rating)
         except (TypeError, ValueError):
             rating = 5
-        # Build a prompt per the existing get_reply_suggestion shape, with a one-line variation
-        # hint appended when the client is asking for an alternate wording.
+        # Some sources (website feedback, Google 5★ with no text) leave the comment blank — still
+        # a useful "say thanks" generation, so adapt the prompt instead of 400-ing.
+        if comment:
+            context_line = (
+                f"A customer named {name} left a {rating}-star review for Superhairpieces "
+                f"with the following comment:\n\"{comment}\"\n\n"
+            )
+        else:
+            context_line = (
+                f"A customer named {name} left a {rating}-star rating for Superhairpieces "
+                f"with no written comment.\n\n"
+            )
+        # Variation hint on re-clicks so the model produces different wording each time.
         hint = ""
         if nonce:
             hint = (
@@ -1338,11 +1347,10 @@ def api_suggest_reply():
                 "and specific."
             )
         prompt = (
-            f"A customer named {name} left a {rating}-star review for Superhairpieces "
-            f"with the following comment:\n\"{comment}\"\n\n"
+            context_line +
             "Write a warm, professional public reply from Superhairpieces to post publicly. "
-            "Keep it to 2-3 sentences. Thank them, address their specific feedback, and invite "
-            "them to reach out if needed. Do not use generic filler phrases. "
+            "Keep it to 2-3 sentences. Thank them, address their specific feedback when there is "
+            "any, and invite them to reach out if needed. Do not use generic filler phrases. "
             "Respond with only the reply text itself: no preamble, no options, no quotation "
             "marks, no sign-off."
             + hint
