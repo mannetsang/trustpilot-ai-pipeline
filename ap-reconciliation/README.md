@@ -181,6 +181,11 @@ updates its folder hints without another model call.
    right month, restored from the trash, or read first by someone's Rematch
    is matched too. One not read yet, whose read failed, or that a failed
    judge call could not place is tried again on the next runs (four in all;
+   at most `INVOICE_JUDGE_PER_RUN`, 15, new invoices go to the judge per run,
+   the most recently read first; the rest get the rules and wait their turn
+   without spending a try; a file the feed lists that was read before the
+   last run, as when a folder is shared and every file in it changes, is not
+   matched again;
    a failed read queues its folder again). Invoices already read that a
    moved or renamed vendor or month folder puts in a new month are matched
    there too. A watch step that raises is noted on the import line and the

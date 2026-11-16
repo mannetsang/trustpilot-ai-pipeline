@@ -547,7 +547,7 @@ def plausible(txn, inv):
     return deviation <= MAX_AI_AMOUNT_DEVIATION
 
 
-def match_new_invoices(store, gemini, invoice_ids, use_ai=True, log=print):
+def match_new_invoices(store, gemini, invoice_ids, use_ai=True, log=print, judge_limit=None):
     """Match invoices just filed in Drive (the Invoice folder watch): rules first, then the judge, only
     between these invoices and the purchases that may draw on their month folder and still need one
     (missing, or a possible match). Unlike match_month nothing is taken away: a purchase with no invoice
@@ -558,12 +558,16 @@ def match_new_invoices(store, gemini, invoice_ids, use_ai=True, log=print):
     plausibly document, so a few new invoices cost one small call, not a month's worth. Rows are
     written compare-and-set, so a Link, Confirm or upload made meanwhile is never overwritten.
 
-    Returns counts plus "known" (the ids found in the index) and "unjudged" (invoices left unmatched
-    because a judge call failed: worth trying again)."""
+    judge_limit, when given, caps the invoices the judge sees in this call (the most recently read
+    first); the rest still get the rules and are returned as "deferred", for the next call. A burst of
+    filings costs a few judge batches per run, not one run longer than the job may last.
+
+    Returns counts plus "known" (the ids found in the index), "unjudged" (invoices left unmatched
+    because a judge call failed: worth trying again) and "deferred"."""
     wanted = list(dict.fromkeys(invoice_ids or []))
     rows = store.list_invoices(ids=wanted) if wanted else []
     counts = {"invoices": 0, "checked": 0, "matched": 0, "possible": 0, "upgraded": 0, "skipped": 0,
-              "known": [r["id"] for r in rows], "unjudged": []}
+              "known": [r["id"] for r in rows], "unjudged": [], "deferred": []}
     used = store.used_invoice_ids()
     new = [i for i in rows if is_candidate(i) and i["id"] not in used and _month_of_folder(i.get("month_folder"))]
     counts["invoices"] = len(new)
@@ -593,6 +597,11 @@ def match_new_invoices(store, gemini, invoice_ids, use_ai=True, log=print):
                 rule_match(pending, new, allowed=serves, accept=improves).items()}
     taken = {found[0] for found, _ in accepted.values()}
     left_i = [i for i in new if i["id"] not in taken]
+    if use_ai and gemini is not None and judge_limit is not None and len(left_i) > judge_limit:
+        left_i.sort(key=lambda i: str(i.get("extracted_at") or ""), reverse=True)
+        counts["deferred"] = [i["id"] for i in left_i[judge_limit:]]
+        left_i = left_i[:judge_limit]
+        log(f"AI judge: {len(counts['deferred'])} invoice(s) left for the next run")
     left_t = [t for t in pending if t["id"] not in accepted
               and any(serves(t, i) and plausible(t, i) for i in left_i)]
     if use_ai and gemini is not None and left_t and left_i:

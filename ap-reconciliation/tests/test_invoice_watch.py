@@ -520,6 +520,47 @@ class SecondReviewTests(InvoiceWatchTestCase):
         self.assertEqual(self.row("t_paypal")["invoice_id"], "f_anth")
 
 
+class BurstTests(InvoiceWatchTestCase):
+    """A burst in the feed (a folder shared at once lists every file in it) and a burst of filings."""
+
+    def test_old_invoices_the_feed_lists_again_are_not_matched_again(self):
+        self.baseline()
+        self.store.insert_transactions([txn("t_x", "2026-09-04", "Some Shop", 150.00)])
+        old = [inv(f"old_{n}", "Some Vendor", 10.0 + n, "2026-09-0%d" % (n + 1)) for n in range(5)]
+        self.store.upsert_invoices(old)                         # read weeks ago (extracted_at 2026-10-01)
+        for row in old:
+            entry = file_(row["id"], row["file_name"])
+            self.tree["v09_anth"].append(entry)
+            self.drive.feed.append({"fileId": row["id"], "removed": False,
+                                    "file": dict(entry, parents=["v09_anth"], trashed=False)})
+        self.sync(NOW + dt.timedelta(minutes=15))
+        self.assertEqual(self.watch()["to_match"], {})
+        self.assertEqual(self.judge_prompts, [])
+        self.assertEqual(self.drive.downloads, [])              # unchanged files are not read again
+
+    def test_the_judge_sees_a_few_new_invoices_per_run_and_the_rest_wait_their_turn(self):
+        self.baseline()
+        self.store.insert_transactions([
+            txn("t_gpt", "2026-09-11", "OPENAI *CHATGPT SUBSCR", 28.40, source_amount=20.00, source_currency="USD"),
+            txn("t_gpt2", "2026-09-12", "OPENAI *CHATGPT SUBSCR", 28.40, source_amount=20.00, source_currency="USD")])
+        FACTS["ChatGPT Plus Receipt 2.pdf"] = dict(FACTS["ChatGPT Plus Receipt.pdf"], invoice_number="O-2",
+                                                   invoice_date="2026-09-12")
+        self.addCleanup(FACTS.pop, "ChatGPT Plus Receipt 2.pdf")
+        self.judge_answer = lambda text: {"matches": [
+            {"transaction_id": t, "invoice_id": i, "confidence": 0.9, "reason": "ChatGPT Plus"}
+            for t, i in (("t_gpt", "f_gpt"), ("t_gpt2", "f_gpt2")) if f'"{i}"' in text and f'"{t}"' in text]}
+        self.drive.file_in("v09_openai", file_("f_gpt", "ChatGPT Plus Receipt.pdf", modified=FILED))
+        self.drive.file_in("v09_openai", file_("f_gpt2", "ChatGPT Plus Receipt 2.pdf", modified=FILED))
+        with mock.patch.object(main, "INVOICE_JUDGE_PER_RUN", 1):
+            self.sync(NOW + dt.timedelta(minutes=15))
+            first = dict(self.watch()["to_match"])
+            self.assertEqual(len(first), 1)                     # one judged, one waiting
+            self.assertEqual(list(first.values()), [0])         # waiting is not a failed try
+            self.sync(NOW + dt.timedelta(minutes=30))
+        self.assertEqual(self.watch()["to_match"], {})
+        self.assertEqual({self.row("t_gpt")["invoice_id"], self.row("t_gpt2")["invoice_id"]}, {"f_gpt", "f_gpt2"})
+
+
 class MatchNewInvoicesTests(unittest.TestCase):
     """matching.match_new_invoices on its own."""
 
