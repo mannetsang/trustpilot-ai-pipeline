@@ -102,6 +102,46 @@ def write_to_sheet(row: list):
         print(f"Sheet write error: {e}")
 
 
+def append_rows(rows: list):
+    """Append several rows to the Reviews tab in one call."""
+    get_sheets_service().spreadsheets().values().append(
+        spreadsheetId=GOOGLE_SHEET_ID,
+        range="Reviews!A:X",
+        valueInputOption="USER_ENTERED",
+        insertDataOption="INSERT_ROWS",
+        body={"values": rows},
+    ).execute()
+
+
+def read_sheet_replies() -> dict:
+    """Map review ID -> (sheet row number, Reply column S) for every row in the Reviews tab."""
+    values = get_sheets_service().spreadsheets().values().get(
+        spreadsheetId=GOOGLE_SHEET_ID, range="Reviews!A:S"
+    ).execute().get("values", [])
+    out = {}
+    for n, row in enumerate(values, start=1):
+        if row and row[0].strip():
+            out[row[0].strip()] = (n, row[18].strip() if len(row) > 18 else "")
+    return out
+
+
+def sync_sheet_replies(reviews: list, sheet: dict) -> int:
+    """Copy each review's Stamped reply into column S where the sheet has a different one.
+    The reviews dashboard reads "Replied" / "Needs reply" from column S."""
+    updates = []
+    for rev in reviews:
+        reply = (rev.get("reply") or "").strip()
+        known = sheet.get(str(rev.get("id")))
+        if reply and known and known[1] != reply:
+            updates.append({"range": f"Reviews!S{known[0]}", "values": [[reply]]})
+    for i in range(0, len(updates), 500):
+        get_sheets_service().spreadsheets().values().batchUpdate(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            body={"valueInputOption": "RAW", "data": updates[i:i + 500]},
+        ).execute()
+    return len(updates)
+
+
 def get_vertex_token():
     creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
     creds.refresh(google.auth.transport.requests.Request())
@@ -239,8 +279,18 @@ STAMPED_STORES = [
 ]
 
 
-def auto_reply_five_star(review_id, rating, reply: str) -> str:
-    """Post the AI reply on a 5-star Stamped review. Returns a short status for the Chat card."""
+def auto_reply_five_star(review_id, rating, reply: str) -> tuple:
+    """Post the AI reply on a 5-star Stamped review.
+    Returns (short status for the Chat card, the message posted or "")."""
+    status = _auto_reply(review_id, rating, reply)
+    return (status, _posted_message(reply)) if status == "posted" else (status, "")
+
+
+def _posted_message(reply: str) -> str:
+    return f"{re.sub(SIGN_OFF, '', reply.strip(), flags=re.I)} {REPLY_SIGNATURE}"
+
+
+def _auto_reply(review_id, rating, reply: str) -> str:
     if int(rating or 0) != 5 or not review_id or not reply:
         return ""
     if re.search(r"[\[\]{}<>]", reply):
@@ -264,8 +314,7 @@ def auto_reply_five_star(review_id, rating, reply: str) -> str:
         if (r.json().get("reply") or "").strip():
             return "skipped: already replied"
 
-        message = re.sub(SIGN_OFF, "", reply.strip(), flags=re.I)
-        message = f"{message} {REPLY_SIGNATURE}"
+        message = _posted_message(reply)
         r = requests.post(f"{store['api']}/{review_id}/reply", auth=store["auth"],
                           json={"reply": message, "isPublicReply": True}, timeout=30)
         if r.status_code >= 300:
@@ -345,55 +394,57 @@ def send_to_gchat(data: dict, reply: str, suggestion: str, topic: str, auto_repl
         print(f"Google Chat error: {e}")
 
 
-def process_review(data: dict, topic: str):
-    author   = data.get("author", "A customer")
-    rating   = data.get("reviewRating", 0)
-    title    = data.get("reviewTitle", "") or ""
-    message  = data.get("reviewMessage", "") or ""
-    product  = data.get("productName", "") or ""
-    email    = data.get("customerEmail", "") or ""
-    location = data.get("location", "") or ""
-    verified = VERIFIED_MAP.get(data.get("reviewVerifiedType", 0), "Unknown")
-
+def ai_fields(author, rating, title: str, message: str, product: str) -> dict:
+    """Product alias/type plus the three Gemini fields the sheet and Chat card carry."""
     alias, product_type = get_product_info(product)
-
     has_content = len(title + message) > 5
-    reply       = get_reply_suggestion(author, rating, title, message, product) if has_content else ""
-    suggestion  = get_business_suggestion(rating, title, message, product) if has_content else ""
-    issue_type  = get_issue_type(rating, title, message) if has_content else ""
+    return {
+        "alias": alias,
+        "product_type": product_type,
+        "reply": get_reply_suggestion(author, rating, title, message, product) if has_content else "",
+        "suggestion": get_business_suggestion(rating, title, message, product) if has_content else "",
+        "issue_type": get_issue_type(rating, title, message) if has_content else "",
+    }
 
-    auto_reply = auto_reply_five_star(data.get("id"), rating, reply) if "creat" in topic else ""
-    send_to_gchat(data, reply, suggestion, topic, auto_reply)
 
-    date_created = (data.get("dateCreated") or "")[:10]
-
-    row = [
+def build_row(data: dict, ai: dict, posted_reply: str = "") -> list:
+    """One Reviews-tab row (A:X). `data` uses the webhook field names (see stamped_review_to_data)."""
+    return [
         str(data.get("id", "")),                          # A: Review ID
-        date_created,                                      # B: Date Created
-        alias,                                             # C: Product Alias
-        str(rating),                                       # D: Rating
-        title,                                             # E: Title
-        message,                                           # F: Body
-        author,                                            # G: Author
+        (data.get("dateCreated") or "")[:10],              # B: Date Created
+        ai["alias"],                                       # C: Product Alias
+        str(data.get("reviewRating", 0)),                  # D: Rating
+        data.get("reviewTitle", "") or "",                 # E: Title
+        data.get("reviewMessage", "") or "",               # F: Body
+        data.get("author", "A customer"),                  # G: Author
         "",                                                # H: First Name (not in webhook)
         "",                                                # I: Last Name (not in webhook)
-        email,                                             # J: Email
-        product_type,                                      # K: Product Type
-        location,                                          # L: Location
-        "",                                                # M: Country ISO (not in webhook)
+        data.get("customerEmail", "") or "",               # J: Email
+        ai["product_type"],                                # K: Product Type
+        data.get("location", "") or "",                    # L: Location
+        data.get("countryISO", "") or "",                  # M: Country ISO
         data.get("productUrl", "") or "",                  # N: Product URL
         "",                                                # O: Order ID (not in webhook)
         data.get("widgetType", "") or "stamped-webhook",   # P: Review Source
-        verified,                                          # Q: Verified Type
-        "Published",                                       # R: State
-        data.get("reviewReply", "") or "",                 # S: Reply (existing Stamped reply)
+        VERIFIED_MAP.get(data.get("reviewVerifiedType", 0), "Unknown"),  # Q: Verified Type
+        data.get("state", "Published"),                    # R: State
+        posted_reply or data.get("reviewReply", "") or "", # S: Reply posted on Stamped
         "",                                                # T: Is Featured
         "",                                                # U: Is Recommend
-        reply,                                             # V: AI Reply Suggestion
-        suggestion,                                        # W: Business Suggestion
-        issue_type,                                        # X: Issue Type
+        ai["reply"],                                       # V: AI Reply Suggestion
+        ai["suggestion"],                                  # W: Business Suggestion
+        ai["issue_type"],                                  # X: Issue Type
     ]
-    write_to_sheet(row)
+
+
+def process_review(data: dict, topic: str):
+    ai = ai_fields(data.get("author", "A customer"), data.get("reviewRating", 0),
+                   data.get("reviewTitle", "") or "", data.get("reviewMessage", "") or "",
+                   data.get("productName", "") or "")
+    status, posted = auto_reply_five_star(data.get("id"), data.get("reviewRating", 0), ai["reply"]) \
+        if "creat" in topic else ("", "")
+    send_to_gchat(data, ai["reply"], ai["suggestion"], topic, status)
+    write_to_sheet(build_row(data, ai, posted))
 
 
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
@@ -454,6 +505,8 @@ def stamped_review_to_data(rev: dict, source: str) -> dict:
         "dateCreated":        rev.get("dateCreated", ""),
         "widgetType":         source,
         "reviewReply":        rev.get("reply", "") or "",
+        "countryISO":         rev.get("countryISO", "") or "",
+        "state":              "Published" if rev.get("reviewState") == 1 else "Unpublished",
     }
 
 
@@ -464,10 +517,7 @@ def monitor():
     if not _monitor_lock.acquire(blocking=False):
         return jsonify({"status": "busy"}), 409
     try:
-        known = get_sheets_service().spreadsheets().values().get(
-            spreadsheetId=GOOGLE_SHEET_ID, range="Reviews!A:A"
-        ).execute().get("values", [])
-        known_ids = {row[0].strip() for row in known if row and row[0].strip()}
+        sheet = read_sheet_replies()
 
         cutoff = (datetime.now(timezone.utc) - timedelta(days=MONITOR_DAYS)).strftime("%Y-%m-%d")
         recent, failed = [], []
@@ -484,15 +534,18 @@ def monitor():
                 continue
             recent += [item.get("review", {}) for item in r.json().get("results", [])]
         missing = [rev for rev in recent
-                   if (rev.get("dateCreated") or "")[:10] >= cutoff and str(rev.get("id")) not in known_ids]
+                   if (rev.get("dateCreated") or "")[:10] >= cutoff and str(rev.get("id")) not in sheet]
         print(f"Monitor: {len(recent)} reviews checked, {len(missing)} missing"
               + (f", stores failed: {', '.join(failed)}" if failed else ""))
 
         for rev in sorted(missing, key=lambda x: x.get("dateCreated", "")):
             process_review(stamped_review_to_data(rev, "stamped-monitor"), "review/created")
             print(f"Monitor: processed {rev.get('author')} ({rev.get('rating')} stars, id={rev.get('id')})")
+        synced = sync_sheet_replies(recent, sheet)
+        if synced:
+            print(f"Monitor: copied {synced} Stamped replies into the sheet")
         return jsonify({"status": "ok" if not failed else "partial", "checked": len(recent),
-                        "processed": len(missing), "stores_failed": failed})
+                        "processed": len(missing), "replies_synced": synced, "stores_failed": failed})
     except Exception as e:
         print(f"Monitor error: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
