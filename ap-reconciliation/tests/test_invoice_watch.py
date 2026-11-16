@@ -561,6 +561,28 @@ class BurstTests(InvoiceWatchTestCase):
         self.assertEqual({self.row("t_gpt")["invoice_id"], self.row("t_gpt2")["invoice_id"]}, {"f_gpt", "f_gpt2"})
 
 
+    def test_a_new_version_of_an_old_invoice_whose_read_fails_is_tried_again(self):
+        self.baseline()
+        self.store.insert_transactions([txn("t_anth", "2026-09-04", "Anthropic* Claude Team", 150.00)])
+        self.store.upsert_invoices([dict(inv("f_anth", "Anthropic", 99.0, "2026-09-04"),
+                                         file_name="Invoice-ANTH-1.pdf")])     # an old reading, weeks ago
+        handler, failures = self.gemini.handler, []
+
+        def flaky(parts, model):
+            if "TRANSACTIONS:" not in "".join(p.get("text", "") for p in parts) and not failures:
+                failures.append(1)
+                raise RuntimeError("Vertex gave up after 4 attempts: 503")
+            return handler(parts, model)
+
+        self.gemini.handler = flaky
+        self.drive.file_in("v09_anth", file_("f_anth", "Invoice-ANTH-1.pdf", modified=FILED))   # new version
+        self.sync(NOW + dt.timedelta(minutes=15))
+        self.assertEqual(self.row("t_anth")["invoice_status"], "missing")
+        self.assertIn("f_anth", self.watch()["to_match"])
+        self.sync(NOW + dt.timedelta(minutes=30))
+        self.assertEqual(self.row("t_anth")["invoice_id"], "f_anth")
+
+
 class MatchNewInvoicesTests(unittest.TestCase):
     """matching.match_new_invoices on its own."""
 

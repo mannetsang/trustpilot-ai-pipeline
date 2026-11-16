@@ -2234,7 +2234,7 @@ def update_sync_state(store, **changes):
 INVOICE_WATCH = "invoice_watch"
 INVOICE_CATCH_UP_MONTHS = 2     # the first run reads this month's folder and the one before
 INVOICE_MAX_TRIES = 4           # runs an invoice waits in to_match (not read yet, read or judge failed)
-INVOICE_JUDGE_PER_RUN = int(os.environ.get("INVOICE_JUDGE_PER_RUN", "15"))   # invoices the judge sees per run
+INVOICE_JUDGE_PER_RUN = max(1, int(os.environ.get("INVOICE_JUDGE_PER_RUN", "15")))   # invoices judged per run
 
 
 def update_watch_state(store, **changes):
@@ -2281,9 +2281,10 @@ def invoice_month_of(drive, folder_id, cache, max_depth=8):
 
 def invoice_changes(drive, store, token, log=print):
     """(month folders under Invoice where a file was added, changed, renamed, moved in or out, trashed
-    or removed since `token`; the ids of the files now filed in a month folder; the next token)."""
+    or removed since `token`; {id: modifiedTime} of the files now filed in a month folder; the next
+    token)."""
     changes, next_token = drive.changes(token)
-    cache, months, ids, filed, outside = {}, set(), [], [], 0
+    cache, months, ids, filed, outside = {}, set(), [], {}, 0
     for change in changes:
         f = change.get("file") or {}
         fid = change.get("fileId") or f.get("id")
@@ -2297,7 +2298,7 @@ def invoice_changes(drive, store, token, log=print):
         if month:
             months.add(month)
             if not is_folder:
-                filed.append(fid)
+                filed[fid] = f.get("modifiedTime")
         elif month == "" and not is_folder:
             outside += 1
     if ids:
@@ -2306,23 +2307,26 @@ def invoice_changes(drive, store, token, log=print):
         months |= {i["month_folder"] for i in store.list_invoices(ids=ids) if i.get("month_folder")}
     if outside:
         log(f"invoices: {outside} file(s) under Invoice but in no month folder; they are not read")
-    return months, list(dict.fromkeys(filed)), next_token
+    return months, filed, next_token
 
 
-def fresh_filings(store, ids, since):
-    """The files of the feed worth matching: not read yet, or read since the last run (by someone's
-    Rematch, say). An invoice read before that has been through a match already; the feed lists it
-    again when only its sharing or other metadata changed (a whole folder shared at once lists every
-    file in it), and a move to another month comes back through the index's relabelled ids."""
-    if not ids:
+def fresh_filings(store, filed, since):
+    """The files of the feed worth matching ({id: modifiedTime} -> ids): not read yet, a new version
+    of one read before (the index reads it again, and its read may fail), or read since the last run
+    (by someone's Rematch, say). An invoice read before that, unchanged, has been through a match
+    already; the feed lists it again when only its sharing or other metadata changed (a whole folder
+    shared at once lists every file in it), and a move to another month comes back through the
+    index's relabelled ids."""
+    if not filed:
         return []
-    known = {r["id"]: r for r in store.list_invoices(ids=ids)}
+    known = {r["id"]: r for r in store.list_invoices(ids=list(filed))}
     cut = _when(since)
     out = []
-    for fid in ids:
+    for fid, modified in filed.items():
         row = known.get(fid)
         read = _when((row or {}).get("extracted_at"))
-        if row is None or cut is None or read is None or read >= cut:
+        changed = row is not None and modified and _when(row.get("modified_time")) != _when(modified)
+        if row is None or changed or cut is None or read is None or read >= cut:
             out.append(fid)
     return out
 
