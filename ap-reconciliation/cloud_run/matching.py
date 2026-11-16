@@ -167,16 +167,19 @@ def score_pair(txn, inv):
     return round(total, 4), a_score, v_score, days, note
 
 
-def rule_match(transactions, invoices, status_first=False):
+def rule_match(transactions, invoices, status_first=False, allowed=None, accept=None):
     """Greedy best-first pairing. Returns {txn_id: (inv_id, status, confidence, note)}.
 
     status_first (the per-row Rematch only) ranks a full match above any possible match before the
     score, so a vendor-confirmed invoice is not beaten by a same-amount invoice from another vendor
-    dated closer to the charge. The month-wide run keeps ranking by score alone."""
+    dated closer to the charge. The month-wide run keeps ranking by score alone. allowed(txn, inv),
+    when given, says which pairs may be considered at all; accept(txn, status, confidence) turns a
+    scored pair down before the greedy choice, so a pair the caller would not keep never takes the
+    invoice or the transaction from another pair."""
     pairs = []
     for t in transactions:
         for inv in invoices:
-            if rejected(t, inv):
+            if rejected(t, inv) or (allowed is not None and not allowed(t, inv)):
                 continue
             total, a_score, v_score, days, note = score_pair(t, inv)
             if a_score < 0.6:
@@ -193,6 +196,8 @@ def rule_match(transactions, invoices, status_first=False):
             elif a_score >= 0.6 and same_card_ok and v_score >= 0.5 and (days is not None and days <= 10):
                 status, conf = "possible", 0.65
             else:
+                continue
+            if accept is not None and not accept(t, status, conf):
                 continue
             pairs.append((total, conf, t["id"], inv["id"], status, note))
     if status_first:
@@ -252,8 +257,11 @@ def _inv_for_ai(inv):
             "currency": inv.get("currency"), "card_last4": inv.get("card_last4"), "summary": inv.get("summary")}
 
 
-def ai_match(gemini, transactions, invoices, txn_batch=40, inv_batch=120, log=print):
-    """Gemini judge. Returns {txn_id: (inv_id, status, confidence, note)}."""
+def ai_match(gemini, transactions, invoices, txn_batch=40, inv_batch=120, log=print, allowed=None, accept=None,
+             failed=None):
+    """Gemini judge. Returns {txn_id: (inv_id, status, confidence, note)}. allowed(txn, inv) and
+    accept(txn, status, confidence), when given, turn a proposed pair down before it takes the invoice;
+    failed, a list, gets the ids of the transactions of every batch the judge could not answer."""
     out, used_inv = {}, set()
     if not transactions or not invoices:
         return out
@@ -283,10 +291,16 @@ def ai_match(gemini, transactions, invoices, txn_batch=40, inv_batch=120, log=pr
             data = gemini.generate_json([gemini.text(prompt)], model=gemini.match_model)
         except Exception as exc:  # noqa: BLE001
             log(f"AI judge batch {batch_no} failed: {exc}")
+            if failed is not None:
+                failed.extend(t["id"] for t in chunk)
             continue
         matches = data.get("matches") if isinstance(data, dict) else data
+        if isinstance(matches, dict):
+            matches = [matches]                 # one pairing given as an object, not a list
         proposals = []
-        for m in matches or []:
+        for m in matches if isinstance(matches, list) else []:
+            if not isinstance(m, dict):
+                continue
             try:
                 conf = float(m.get("confidence") or 0)
             except (TypeError, ValueError):
@@ -299,7 +313,7 @@ def ai_match(gemini, transactions, invoices, txn_batch=40, inv_batch=120, log=pr
             if tid in out or iid in used_inv:
                 continue
             t, inv = txn_lookup[tid], inv_lookup[iid]
-            if rejected(t, inv):
+            if rejected(t, inv) or (allowed is not None and not allowed(t, inv)):
                 continue
             if inv.get("card_last4") and t.get("card_last4") and inv["card_last4"] != t["card_last4"]:
                 continue                        # the document names another card
@@ -309,6 +323,8 @@ def ai_match(gemini, transactions, invoices, txn_batch=40, inv_batch=120, log=pr
             if deviation is None or deviation > 0.02:
                 conf = min(conf, AI_MATCHED - 0.01)   # only a person confirms an inexact amount
             status = "matched" if conf >= AI_MATCHED else "possible"
+            if accept is not None and not accept(t, status, round(conf, 2)):
+                continue
             out[tid] = (iid, status, round(conf, 2), f"AI: {reason}")
             used_inv.add(iid)
         log(f"AI judge batch {batch_no} of {batches}: {len(out) - before} pairings kept of {len(proposals)} proposed")
@@ -374,10 +390,7 @@ def candidate_invoices(store, year, month):
     neighbours, real invoices with a total, not removed, not credit notes, and not a dashboard
     upload taken back (withdrawn or removed with Remove…: an index run may have cleared removed_at)."""
     folders = [month_folder_name(y, m) for y, m in neighbouring_months(int(year), int(month))]
-    return [i for i in store.list_invoices(month_folders=folders)
-            if i.get("is_invoice", True) is not False and i.get("total") is not None
-            and not i.get("removed_at") and (i.get("document_type") or "") != "credit_note"
-            and not str(i.get("extraction_error") or "").startswith("upload withdrawn")]
+    return [i for i in store.list_invoices(month_folders=folders) if is_candidate(i)]
 
 
 REMATCHABLE = ("missing", "possible", "matched")
@@ -494,6 +507,130 @@ def match_transaction(store, gemini, txn_id, use_ai=True, log=print, updated_by=
             "note": final.get("match_note"), "previous_status": own_status, "previous_invoice_id": own,
             "changed": changed, "invoices_considered": len(pool),
             "invoice": {k: inv.get(k) for k in ("vendor", "total", "currency", "invoice_date", "file_name")} if iid else None}
+
+
+def is_candidate(inv):
+    """An invoice a purchase may be matched with at all (candidate_invoices' test, one invoice)."""
+    return (inv.get("is_invoice", True) is not False and inv.get("total") is not None
+            and not inv.get("removed_at") and (inv.get("document_type") or "") != "credit_note"
+            and not str(inv.get("extraction_error") or "").startswith("upload withdrawn"))
+
+
+def _month_of_folder(name):
+    try:
+        year, month = str(name or "").split()
+        return int(year), int(month)
+    except ValueError:
+        return None
+
+
+def serves(txn, inv):
+    """Is the invoice filed in a month folder the purchase's month may draw on (its own or a neighbour)?"""
+    folders = {month_folder_name(y, m) for y, m in neighbouring_months(int(txn["year"]), int(txn["month"]))}
+    return inv.get("month_folder") in folders
+
+
+def plausible(txn, inv):
+    """Worth asking the judge about at all: the amounts are within what ai_match would accept (or not
+    comparable and the vendor resembles the descriptor), the document names no other card, and the
+    dates are not months apart."""
+    if rejected(txn, inv):
+        return False
+    if inv.get("card_last4") and txn.get("card_last4") and inv["card_last4"] != txn["card_last4"]:
+        return False
+    days = days_apart(txn, inv)
+    if days is not None and days > 45:
+        return False
+    deviation = amount_deviation(txn, inv)
+    if deviation is None:
+        return vendor_similarity(txn, inv) >= VENDOR_EVIDENCE
+    return deviation <= MAX_AI_AMOUNT_DEVIATION
+
+
+def match_new_invoices(store, gemini, invoice_ids, use_ai=True, log=print):
+    """Match invoices just filed in Drive (the Invoice folder watch): rules first, then the judge, only
+    between these invoices and the purchases that may draw on their month folder and still need one
+    (missing, or a possible match). Unlike match_month nothing is taken away: a purchase with no invoice
+    gets one, and a possible match is replaced only by a better one (a match beats a possible match,
+    then the higher confidence wins; any match beats an invoice that is no longer a candidate), its old
+    invoice let go. A pair that would not be kept is turned down before the greedy choice, so it never
+    takes an invoice another purchase needs. The judge sees only the purchases a new invoice could
+    plausibly document, so a few new invoices cost one small call, not a month's worth. Rows are
+    written compare-and-set, so a Link, Confirm or upload made meanwhile is never overwritten.
+
+    Returns counts plus "known" (the ids found in the index) and "unjudged" (invoices left unmatched
+    because a judge call failed: worth trying again)."""
+    wanted = list(dict.fromkeys(invoice_ids or []))
+    rows = store.list_invoices(ids=wanted) if wanted else []
+    counts = {"invoices": 0, "checked": 0, "matched": 0, "possible": 0, "upgraded": 0, "skipped": 0,
+              "known": [r["id"] for r in rows], "unjudged": []}
+    used = store.used_invoice_ids()
+    new = [i for i in rows if is_candidate(i) and i["id"] not in used and _month_of_folder(i.get("month_folder"))]
+    counts["invoices"] = len(new)
+    if not new:
+        return counts
+    months = sorted({ym for i in new for ym in neighbouring_months(*_month_of_folder(i["month_folder"]))})
+    pending = [t for y, m in months for t in store.list_transactions(y, m)
+               if t.get("type") == "purchase" and t.get("invoice_status") in ("missing", "possible")
+               and t.get("match_method") != "manual"]
+    counts["checked"] = len(pending)
+    if not pending:
+        return counts
+    inv_by_id = {i["id"]: i for i in new}
+    held_ids = [t["invoice_id"] for t in pending if t.get("invoice_status") == "possible" and t.get("invoice_id")]
+    held = {i["id"]: i for i in (store.list_invoices(ids=held_ids) if held_ids else [])}
+
+    def improves(t, status, conf):
+        """Is (status, conf) better than what the purchase holds now? A possible match to an invoice
+        that could no longer be proposed (removed from Drive, not an invoice, refiled in a month the
+        purchase does not draw on) counts as nothing, as it does for the per-row Rematch."""
+        current = held.get(t.get("invoice_id")) if t.get("invoice_status") == "possible" else None
+        if current is None or not is_candidate(current) or not serves(t, current):
+            return True
+        return _better((status, conf), ("possible", t.get("match_confidence")))
+
+    accepted = {tid: (found, "rule") for tid, found in
+                rule_match(pending, new, allowed=serves, accept=improves).items()}
+    taken = {found[0] for found, _ in accepted.values()}
+    left_i = [i for i in new if i["id"] not in taken]
+    left_t = [t for t in pending if t["id"] not in accepted
+              and any(serves(t, i) and plausible(t, i) for i in left_i)]
+    if use_ai and gemini is not None and left_t and left_i:
+        log(f"AI judge: {len(left_t)} purchases that {len(left_i)} new invoice(s) could document")
+        failed = []
+        judged = ai_match(gemini, left_t, left_i, log=log, allowed=lambda t, i: serves(t, i) and plausible(t, i),
+                          accept=improves, failed=failed)
+        for tid, found in judged.items():
+            accepted[tid] = (found, "ai")
+        if failed:
+            # A batch went unanswered: every new invoice it could have placed is tried again next time.
+            gone_t = set(failed)
+            taken |= {found[0] for found, _ in accepted.values()}
+            counts["unjudged"] = [i["id"] for i in left_i if i["id"] not in taken
+                                  and any(t["id"] in gone_t and serves(t, i) and plausible(t, i) for t in left_t)]
+
+    stamp = now_iso()
+    for t in pending:
+        if t["id"] not in accepted:
+            continue
+        (iid, status, conf, note), method = accepted[t["id"]]
+        patch = {"invoice_status": status, "invoice_id": iid, "match_confidence": conf,
+                 "match_method": method, "match_note": note[:500], "updated_at": stamp}
+        upgraded = bool(t.get("invoice_id"))
+        try:
+            written = store.update_transaction(t["id"], patch, expect=_snapshot(t))
+        except Exception as exc:  # noqa: BLE001  (the unique index: someone linked that invoice meanwhile)
+            log(f"new invoice not linked to {t['id']}: {exc}")
+            written = None
+        if written is None:
+            counts["skipped"] += 1
+            continue
+        counts[status] += 1
+        counts["upgraded"] += int(upgraded)
+        inv = inv_by_id.get(iid, {})
+        log(f"{status:8} {t['txn_date']} {str(t['description'])[:30]:30} {float(t['amount']):>10.2f} -> "
+            f"{inv.get('vendor')} {inv.get('total')} ({method} {conf}{', replaces a possible match' if upgraded else ''})")
+    return counts
 
 
 def match_month(store, gemini, year, month, card=None, use_ai=True, log=print):

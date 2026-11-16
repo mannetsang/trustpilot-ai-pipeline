@@ -158,6 +158,43 @@ updates its folder hints without another model call.
    reading, or this parser's before a fix changed a currency or a sign, both
    part of a line's id); the upload's warnings say how many such lines it
    met and how many read differently.
+7. **Invoice watch** (the same job, every run). An invoice filed under
+   `Invoice/YYYY MM/<vendor>/` since the last run is read and matched by
+   itself: the e-mail filer's copies of ap@'s attachments (they land in
+   `EmailattatchmentOriginal/YYYY MM/` first and reach `Invoice/` within a
+   few hours), invoices filed by hand, receipts uploaded from the dashboard.
+   Drive's change feed for ap@ says what moved (`app_state`
+   `invoice_watch` keeps its page token, the month folders still to read,
+   and `to_match`: every file the feed saw filed in a month folder, and
+   everything read, until it has been matched). Each month folder with a
+   new, changed, moved or removed file is read like step 2, then
+   `to_match` is matched by `matching.match_new_invoices`: rules first,
+   then the Gemini judge, only between those invoices and the purchases of
+   the months that may draw on their folder (its own and the months either
+   side) still missing an invoice or holding a possible match, and the
+   judge sees only the purchases a new invoice could document (amount within
+   15%, or not comparable and the vendor alike; no other card; dates under
+   45 days apart). Nothing is taken away: a possible match is replaced only
+   by a better one (or when its invoice is gone from Drive), a match or a
+   link made by hand is never touched, and a pair that would not be kept
+   never takes an invoice another purchase needs. An invoice moved to the
+   right month, restored from the trash, or read first by someone's Rematch
+   is matched too. One not read yet, whose read failed, or that a failed
+   judge call could not place is tried again on the next runs (four in all;
+   a failed read queues its folder again). Invoices already read that a
+   moved or renamed vendor or month folder puts in a new month are matched
+   there too. A watch step that raises is noted on the import line and the
+   run goes on (the statement months still run); a month folder that fails
+   four runs in a row is let go until something in it changes, and a reading
+   the database refuses is stored as "could not be stored" without losing
+   the rest of its batch. The watch runs only under the
+   job lease: a run that finds the lease taken does not read the feed, and
+   the next one reads the same changes; a Drive rate limit or server error
+   keeps the run's place in the feed. The first run starts the feed and
+   reads this month's folder and the one before. Files under `Invoice/` but
+   in no month folder are not read. The dashboard's import line says what
+   the last run read and matched, and the rows reload. `INVOICE_WATCH=0`
+   turns it off.
 
 `POST /api/statements?sync=1` runs steps 1-4 in one request (the CLI, curl
 and the tests use it); the dashboard's *Upload and process* button runs them
@@ -532,6 +569,7 @@ Job endpoints answer `409 {"status": "busy"}` while another job runs and
 | `STATEMENTS_FOLDER_ID` | empty | when set, uploads are copied to Drive under `<folder>/<YYYY MM>/` |
 | `BANK_FOLDER_ID` | empty: no Drive import | the folder whose statements `python main.py sync` imports (the Bank Transactions folder, `1MGenhujsY-zElpg6A0SGD8C1WqC516t3`); the workflow sets it on the service (for the dashboard's line) and the sync job |
 | `BANK_SETTLE_MINUTES` | `10` | a file modified more recently than this waits for the next run |
+| `INVOICE_WATCH` | `1` | `0`: the import run does not read and match invoices newly filed under the Invoice folder (pipeline step 7) |
 | `GOOGLE_WORKSPACE_AP_CLIENT_ID` / `_CLIENT_SECRET` / `_REFRESH_TOKEN` | | the AP user's OAuth triple for Drive; secrets. ADC when unset |
 | `CARD_WEBHOOKS_JSON` | | the webhook object above; secret |
 | `GCHAT_WEBHOOK_URL` | empty | optional single fallback webhook |
@@ -676,7 +714,8 @@ this repo.
    missing or possible invoices is re-indexed, re-matched and notified
    again). Cloud Scheduler starts it on Mondays 14:00 UTC through the Cloud
    Run API as the compute service account, so no token and no path through
-   IAP are involved; the scheduler job is created once by an owner:
+   IAP are involved; the scheduler job is created once by an owner (done
+   2026-11-10; first run Monday 2026-11-16):
    `gcloud scheduler jobs create http ap-reconciliation-remind --location=us-central1 --project=shp-ai-bot-2026 --schedule="0 14 * * 1" --time-zone=Etc/UTC --uri="https://run.googleapis.com/v2/projects/shp-ai-bot-2026/locations/us-central1/jobs/ap-reconciliation-remind:run" --http-method=POST --oauth-service-account-email=304363458561-compute@developer.gserviceaccount.com`
    Test it with
    `gcloud scheduler jobs run ap-reconciliation-remind --location=us-central1 --project=shp-ai-bot-2026`

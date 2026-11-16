@@ -73,6 +73,7 @@ request step.
 | K Reply Posted At | date of the owner reply on Google, synced every monitor pass |
 | L Review Name | full resource name, needed by `/api/reply` |
 | M Reply Text | the owner reply currently on Google, synced every monitor pass |
+| N Auto-Replied At | when `/monitor` posted the reply itself; blank means a person replied (or no reply yet) |
 
 Endpoints: `GET /monitor?days=N`, `POST /backfill?days=all&ai=1&limit=100`
 (seeds older reviews without Chat posts; repeat until `remaining` is 0),
@@ -118,6 +119,40 @@ Local runs read the root `.env` and never touch Chat or the Sheet:
 python google-business/cloud_run/main.py reviews --days 7
 python google-business/cloud_run/main.py monitor --days 3 --dry-run --ai
 ```
+
+### Automatic replies (since 2026-11-09)
+
+Manne asked for five-star reviews to be answered automatically. Each `/monitor`
+pass posts an AI-written public reply on Google for a review that:
+
+- is rated in `AUTO_REPLY_STARS` (`5`),
+- has no owner reply yet,
+- is categorized "Positive Experience" or "Rating only" (a five-star review that
+  names a problem waits for a person, and the Chat card says so),
+- was written in the last `AUTO_REPLY_MAX_AGE_DAYS` (`3`) days and is at least
+  `AUTO_REPLY_DELAY_HOURS` (`0`) hours old.
+
+The reply is 1-3 sentences, thanks the reviewer and any staff they name,
+invents nothing, is written in the language the customer used (stars-only
+reviews follow the listing's country: Madrid Spanish, Diemen Dutch) and ends
+with "– The <brand> Team", where the brand is the listing's own (Gen'C listings
+never say Superhairpieces). Output that fails the checks (length, missing
+sign-off, brackets, wrong brand, a preamble) is not posted and is retried on the
+next pass, as is a reply Google refuses. The Chat card shows the posted reply,
+column G and M hold it, and column N records the time.
+
+The settings live in `.github/workflows/deploy-gbp-reviews.yml`, because each
+deploy replaces the service's plain environment variables. To stop automatic
+replies, set `AUTO_REPLY_STARS: ""` there and push. For an immediate stop that
+lasts until the next deploy, run:
+
+```
+gcloud run services update gbp-reviews --region us-central1 --project shp-ai-bot-2026 --update-env-vars AUTO_REPLY_STARS=
+```
+
+Older five-star reviews without a reply (53 on 2026-11-09) are outside the age
+window and are not touched. Preview what would be posted, without posting:
+`python google-business/cloud_run/main.py autoreply-preview --limit 8`.
 
 ## Reviews Dashboard
 

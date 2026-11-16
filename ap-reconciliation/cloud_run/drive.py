@@ -17,6 +17,7 @@ import time
 import requests
 
 FILES = "https://www.googleapis.com/drive/v3/files"
+CHANGES = "https://www.googleapis.com/drive/v3/changes"
 UPLOAD = "https://www.googleapis.com/upload/drive/v3/files"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 FOLDER = "application/vnd.google-apps.folder"
@@ -34,6 +35,11 @@ EXPORT_AS_PDF = {
 
 class DriveError(RuntimeError):
     pass
+
+
+def _passing(r):
+    """A Drive answer worth asking again: 429, a 5xx, or a 403 that is a rate limit."""
+    return r.status_code == 429 or r.status_code >= 500 or (r.status_code == 403 and "ateLimit" in (r.text or ""))
 
 
 def _q(value):
@@ -83,6 +89,13 @@ class Drive:
         r = requests.request(method, url, params=params, headers=headers, timeout=timeout, **kwargs)
         if r.status_code == 401:
             headers["Authorization"] = f"Bearer {self.token(force=True)}"
+            r = requests.request(method, url, params=params, headers=headers, timeout=timeout, **kwargs)
+        # A read that hit a rate limit or a server error is tried twice more (writes are not: one that
+        # went through before the error would be made twice).
+        for wait in ((1, 3) if method == "GET" else ()):
+            if not _passing(r):
+                break
+            time.sleep(wait)
             r = requests.request(method, url, params=params, headers=headers, timeout=timeout, **kwargs)
         if r.status_code >= 400:
             raise DriveError(f"Drive {method} {url.split('/v3/')[-1][:60]} -> {r.status_code} {r.text[:300]}")
@@ -152,6 +165,32 @@ class Drive:
     def export(self, file_id, mime_type):
         """A Google Doc, Sheet or Slides file converted to mime_type (text/plain, an Office type, PDF)."""
         return self._request("GET", f"{FILES}/{file_id}/export", {"mimeType": mime_type}, timeout=300).content
+
+    # -- changes: what moved in the user's Drive since a saved point ----------------------
+    def start_page_token(self):
+        """The point to read changes from: everything after now."""
+        return self._request("GET", f"{CHANGES}/startPageToken", {"supportsAllDrives": "true"}).json()["startPageToken"]
+
+    def changes(self, token, max_pages=20):
+        """([change], next token): every change since `token` (a file created, edited, moved, renamed,
+        trashed or removed; each with fileId, removed, and the file's id, name, mimeType, parents,
+        trashed and modifiedTime). Reads at most max_pages pages; the token returned then points at
+        the rest, so nothing is skipped."""
+        out, params = [], {
+            "pageToken": token, "pageSize": 1000, "includeRemoved": "true", "spaces": "drive",
+            "supportsAllDrives": "true", "includeItemsFromAllDrives": "true",
+            "fields": "nextPageToken,newStartPageToken,changes(fileId,removed,time,"
+                      "file(id,name,mimeType,parents,trashed,modifiedTime))",
+        }
+        for _ in range(max_pages):
+            body = self._request("GET", CHANGES, params).json()
+            out.extend(body.get("changes") or [])
+            if body.get("newStartPageToken"):
+                return out, body["newStartPageToken"]
+            if not body.get("nextPageToken"):
+                return out, params["pageToken"]
+            params["pageToken"] = body["nextPageToken"]
+        return out, params["pageToken"]
 
     # -- writing: a copy of each uploaded statement, receipts added from the dashboard ----
     def find_child_folder(self, parent_id, name):

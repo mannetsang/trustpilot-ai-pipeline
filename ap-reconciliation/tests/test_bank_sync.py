@@ -66,7 +66,8 @@ class BankSyncTestCase(ApiTestCase):
         main.set_clients(store=self.store, drive=self.drive)
         self.patches = [mock.patch.object(main, "BANK_FOLDER_ID", "bank"),
                         mock.patch.object(main, "LEASE_HOLDER", "job:test:1"),
-                        mock.patch.object(main, "LEASE_GAP", 0), mock.patch.object(main, "LEASE_HOLD", 0)]
+                        mock.patch.object(main, "LEASE_GAP", 0), mock.patch.object(main, "LEASE_HOLD", 0),
+                        mock.patch.object(main, "INVOICE_WATCH_ON", False)]   # test_invoice_watch covers it
         for p in self.patches:
             p.start()
         self.drive.get = self._get
