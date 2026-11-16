@@ -1308,5 +1308,56 @@ def api_insights_summary():
         return jsonify({"error": str(e)}), 500
 
 
+# Per-review AI reply generator for the "Regenerate" button in the dashboard's reply modal.
+# Takes the review's text + metadata, returns a fresh Vertex AI suggestion. The optional nonce
+# varies the prompt so repeat calls are unlikely to echo the previous result verbatim even
+# though Vertex AI's default sampling already produces variety.
+@app.route("/api/suggest-reply", methods=["POST", "OPTIONS"])
+def api_suggest_reply():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    try:
+        body = request.get_json(silent=True) or {}
+        comment = (body.get("comment") or "").strip()
+        rating  = body.get("rating") or body.get("stars") or 5
+        name    = (body.get("name") or "the customer").strip() or "the customer"
+        nonce   = (body.get("nonce") or "").strip()
+        if not comment:
+            return jsonify({"error": "comment is required"}), 400
+        try:
+            rating = int(rating)
+        except (TypeError, ValueError):
+            rating = 5
+        # Build a prompt per the existing get_reply_suggestion shape, with a one-line variation
+        # hint appended when the client is asking for an alternate wording.
+        hint = ""
+        if nonce:
+            hint = (
+                "\nVary the wording from any previous suggestion for this review: lead with a "
+                "different sentence shape and pick different concrete words. Keep the tone warm "
+                "and specific."
+            )
+        prompt = (
+            f"A customer named {name} left a {rating}-star review for Superhairpieces "
+            f"with the following comment:\n\"{comment}\"\n\n"
+            "Write a warm, professional public reply from Superhairpieces to post publicly. "
+            "Keep it to 2-3 sentences. Thank them, address their specific feedback, and invite "
+            "them to reach out if needed. Do not use generic filler phrases. "
+            "Respond with only the reply text itself: no preamble, no options, no quotation "
+            "marks, no sign-off."
+            + hint
+        )
+        reply = (vertex_call(prompt) or "").strip()
+        # Strip wrapping quotes Vertex sometimes adds even when told not to.
+        if reply.startswith('"') and reply.endswith('"') and len(reply) > 1:
+            reply = reply[1:-1].strip()
+        if not reply:
+            return jsonify({"error": "Empty response from Vertex AI"}), 502
+        return jsonify({"reply": reply}), 200
+    except Exception as e:
+        print(f"suggest-reply error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
