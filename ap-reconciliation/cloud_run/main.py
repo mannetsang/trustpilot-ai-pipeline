@@ -123,9 +123,11 @@ BANK_SETTLE = int(os.environ.get("BANK_SETTLE_MINUTES", "10")) * 60   # a file e
 # The same run reads and matches invoices filed under the Invoice folder since the last run (by the
 # e-mail filer, by hand, or a receipt uploaded here). INVOICE_WATCH=0 turns that off.
 INVOICE_WATCH_ON = os.environ.get("INVOICE_WATCH", "1") != "0"
-AP_CLIENT_ID = os.environ.get("GOOGLE_WORKSPACE_AP_CLIENT_ID", "")
-AP_CLIENT_SECRET = os.environ.get("GOOGLE_WORKSPACE_AP_CLIENT_SECRET", "")
-AP_REFRESH_TOKEN = os.environ.get("GOOGLE_WORKSPACE_AP_REFRESH_TOKEN", "")
+# Stripped: a secret version saved from a text file often ends in a line break, which Google's token
+# endpoint does not forgive.
+AP_CLIENT_ID = os.environ.get("GOOGLE_WORKSPACE_AP_CLIENT_ID", "").strip()
+AP_CLIENT_SECRET = os.environ.get("GOOGLE_WORKSPACE_AP_CLIENT_SECRET", "").strip()
+AP_REFRESH_TOKEN = os.environ.get("GOOGLE_WORKSPACE_AP_REFRESH_TOKEN", "").strip()
 CARD_WEBHOOKS = chat.load_webhooks(os.environ.get("CARD_WEBHOOKS_JSON", ""), os.environ.get("GCHAT_WEBHOOK_URL", ""))
 # Identity-Aware Proxy signs every request it lets through; the JWT's audience names this
 # service: /projects/<project number>/locations/<region>/services/<service>.
