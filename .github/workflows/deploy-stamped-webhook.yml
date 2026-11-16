@@ -49,6 +49,21 @@ jobs:
             --update-secrets "STAMPED_US_HASH=STAMPED_US_HASH:latest,STAMPED_US_PUBLIC_KEY=STAMPED_US_PUBLIC_KEY:latest,STAMPED_US_PRIVATE_KEY=STAMPED_US_PRIVATE_KEY:latest" \
             --quiet
 
+      - name: Deploy the one-off history import job
+        # Same image and runtime account as the service; run it by hand with
+        # `gcloud run jobs execute stamped-history-import`. See import_history.py.
+        run: |
+          IMAGE=$(gcloud run services describe "$SERVICE" --region "$REGION" --project "$PROJECT" --format 'value(spec.template.spec.containers[0].image)')
+          SA=$(gcloud run services describe "$SERVICE" --region "$REGION" --project "$PROJECT" --format 'value(spec.template.spec.serviceAccountName)')
+          gcloud run jobs deploy stamped-history-import \
+            --image "$IMAGE" --service-account "$SA" \
+            --region "$REGION" --project "$PROJECT" \
+            --command python --args import_history.py \
+            --task-timeout 12h --max-retries 0 --memory 1Gi \
+            --set-env-vars "GOOGLE_SHEET_ID=1JjjHIGjRYOB-KKSrGDludeMDBBNtUeab-Ge3fxCxXDw,VERTEX_MODEL=gemini-2.5-flash" \
+            --set-secrets "STAMPED_STORE_HASH=STAMPED_STORE_HASH:latest,STAMPED_PUBLIC_KEY=STAMPED_PUBLIC_KEY:latest,STAMPED_PRIVATE_KEY=STAMPED_PRIVATE_KEY:latest,STAMPED_US_HASH=STAMPED_US_HASH:latest,STAMPED_US_PUBLIC_KEY=STAMPED_US_PUBLIC_KEY:latest,STAMPED_US_PRIVATE_KEY=STAMPED_US_PRIVATE_KEY:latest" \
+            --quiet
+
       - name: Upsert the 30-minute monitor job
         # claude-sessions may lack a Cloud Scheduler role; then an owner creates
         # the job once with the command printed in the warning.
