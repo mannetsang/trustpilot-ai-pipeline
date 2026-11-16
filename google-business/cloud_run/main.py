@@ -590,9 +590,19 @@ def send_to_gchat(f, location, reply, suggestion, auto=None):
 REGION_LANGUAGE = {"ES": "Spanish", "NL": "Dutch", "FR": "French", "DE": "German"}
 
 
+CORPORATE_SUFFIXES = (" inc.", " inc", " ltd.", " ltd", " llc", " corp.", " corp")
+
+
 def listing_brand(location):
-    """The brand the listing trades as: Superhairpieces, Gen'C Hair Center, Gen'C Beauty ..."""
-    return (location.get("title") or "Superhairpieces").split(" - ")[0].strip() or "Superhairpieces"
+    """The brand the listing trades as: Superhairpieces, Gen'C Hair Center, Gen'C Beauty, True Hair
+    Replacement & Cosmetic Center ... A legal suffix is dropped ("... Center Inc" signed replies
+    "The ... Center Inc Team")."""
+    brand = (location.get("title") or "").split(" - ")[0].strip()
+    for suffix in CORPORATE_SUFFIXES:
+        if brand.lower().endswith(suffix):
+            brand = brand[:-len(suffix)].rstrip(" ,")
+            break
+    return brand or "Superhairpieces"
 
 
 def review_original_text(comment):
@@ -628,7 +638,9 @@ def generate_auto_reply(f, location):
         f"Reviewer name: {name or '(not shown)'}.\n{review_part}\n\n"
         "This reply is posted automatically, with no one checking it first, so:\n"
         "- 1 to 3 short sentences, warm and specific to what they wrote.\n"
-        "- Thank them by first name if a name is shown.\n"
+        "- Thank them by first name if the reviewer name is a real person's name; if it is a "
+        "username, a business or a nickname (such as 'Lawl Cats' or 'Sweet Sexygirl'), use no name. "
+        "Capitalise names properly even if they did not.\n"
         "- If they name staff members, thank those people by name; never mention anyone else.\n"
         "- Do not invent details, offers, discounts, prices or promises.\n"
         f"- {lang_rule}\n"
