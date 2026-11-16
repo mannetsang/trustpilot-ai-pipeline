@@ -22,7 +22,7 @@ BU_ID                = "5e44f707d7d8c700011eaa10"
 TP_AUTHOR_BUSINESS_USER_ID = "69e690a0b3b585ed447f64e3"
 GCP_PROJECT          = "shp-ai-bot-2026"
 VERTEX_LOCATION      = "us-central1"
-VERTEX_MODEL         = "gemini-2.5-pro"
+VERTEX_MODEL         = "gemini-2.5-flash"
 INVITATIONS_SHEET_ID = "193E74iZIvF1X3rvDfbEEObqaVOQFRTK8C0iRIReYTnw"
 
 # Cache the Trustpilot access token so we don't re-fetch on every request
@@ -1305,6 +1305,65 @@ def api_insights_summary():
         return jsonify({**result, "cached": False, "cacheAgeSec": 0}), 200
     except Exception as e:
         print(f"insights-summary error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# Per-review AI reply generator for the "Regenerate" button in the dashboard's reply modal.
+# Takes the review's text + metadata, returns a fresh Vertex AI suggestion. The optional nonce
+# varies the prompt so repeat calls are unlikely to echo the previous result verbatim even
+# though Vertex AI's default sampling already produces variety.
+@app.route("/api/suggest-reply", methods=["POST", "OPTIONS"])
+def api_suggest_reply():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    try:
+        body = request.get_json(silent=True) or {}
+        comment = (body.get("comment") or "").strip()
+        rating  = body.get("rating") or body.get("stars") or 5
+        name    = (body.get("name") or "the customer").strip() or "the customer"
+        nonce   = (body.get("nonce") or "").strip()
+        try:
+            rating = int(rating)
+        except (TypeError, ValueError):
+            rating = 5
+        # Some sources (website feedback, Google 5★ with no text) leave the comment blank — still
+        # a useful "say thanks" generation, so adapt the prompt instead of 400-ing.
+        if comment:
+            context_line = (
+                f"A customer named {name} left a {rating}-star review for Superhairpieces "
+                f"with the following comment:\n\"{comment}\"\n\n"
+            )
+        else:
+            context_line = (
+                f"A customer named {name} left a {rating}-star rating for Superhairpieces "
+                f"with no written comment.\n\n"
+            )
+        # Variation hint on re-clicks so the model produces different wording each time.
+        hint = ""
+        if nonce:
+            hint = (
+                "\nVary the wording from any previous suggestion for this review: lead with a "
+                "different sentence shape and pick different concrete words. Keep the tone warm "
+                "and specific."
+            )
+        prompt = (
+            context_line +
+            "Write a warm, professional public reply from Superhairpieces to post publicly. "
+            "Keep it to 2-3 sentences. Thank them, address their specific feedback when there is "
+            "any, and invite them to reach out if needed. Do not use generic filler phrases. "
+            "Respond with only the reply text itself: no preamble, no options, no quotation "
+            "marks, no sign-off."
+            + hint
+        )
+        reply = (vertex_call(prompt) or "").strip()
+        # Strip wrapping quotes Vertex sometimes adds even when told not to.
+        if reply.startswith('"') and reply.endswith('"') and len(reply) > 1:
+            reply = reply[1:-1].strip()
+        if not reply:
+            return jsonify({"error": "Empty response from Vertex AI"}), 502
+        return jsonify({"reply": reply}), 200
+    except Exception as e:
+        print(f"suggest-reply error: {e}")
         return jsonify({"error": str(e)}), 500
 
 

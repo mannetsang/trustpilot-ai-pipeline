@@ -5,9 +5,10 @@ name: Deploy Stamped.io reviews service
 # longer sends review/created webhooks, so /monitor is how new reviews get a
 # Chat card, a Sheet row, and (for 5 stars) an automatic public reply.
 #
-# The service's environment (Stamped keys, Chat webhook, webhook secret) is
-# left exactly as it is on the running service: `gcloud run deploy --source`
-# keeps existing env vars when none are passed. Nothing sensitive lives here.
+# The service's existing environment (.ca Stamped keys, Chat webhook, webhook
+# secret) is left as it is; `gcloud run deploy --source` keeps env vars it is
+# not told to change. The .com store's keys come from Secret Manager
+# (STAMPED_US_*). Nothing sensitive lives here.
 
 on:
   push:
@@ -45,6 +46,7 @@ jobs:
             --source ./stamped-webhook \
             --region "$REGION" --project "$PROJECT" \
             --allow-unauthenticated --timeout 900 \
+            --update-secrets "STAMPED_US_HASH=STAMPED_US_HASH:latest,STAMPED_US_PUBLIC_KEY=STAMPED_US_PUBLIC_KEY:latest,STAMPED_US_PRIVATE_KEY=STAMPED_US_PRIVATE_KEY:latest" \
             --quiet
 
       - name: Upsert the 30-minute monitor job
