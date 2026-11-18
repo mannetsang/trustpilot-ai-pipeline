@@ -73,11 +73,31 @@ class ChargeMatchTests(unittest.TestCase):
         got = matching.charge_match([self.t2], [self.order], taken={"o1": {0}})
         self.assertEqual(got, {})
 
-    def test_a_single_listed_charge_links_the_whole_invoice(self):
+    def test_an_invoice_listing_one_charge_is_left_to_the_rules(self):
         one = amazon("o3", 365.70, [("2026-07-20", 365.70, "9456")], currency="USD", card="9456")
         t = txn("t", "2026-07-21", "AMAZON MKTPL*X", 365.70, card="9456", currency="USD")
-        self.assertEqual(matching.charge_match([t], [one])["t"][:2], ("o3", None))
-        self.assertEqual(matching.charge_match([t], [one], taken={"o3": {matching.WHOLE}}), {})
+        self.assertEqual(matching.charge_match([t], [one]), {})
+        store = MemoryStore()
+        store.upsert_invoices([one])
+        store.insert_transactions([t])
+        matching.match_month(store, None, 2026, 7, use_ai=False, log=lambda *a: None)
+        row = store.get_transaction("t")
+        self.assertEqual((row["invoice_status"], row["invoice_id"], row["invoice_part"]), ("matched", "o3", None))
+
+    def test_another_vendors_charge_of_the_same_amount_is_only_possible(self):
+        stripe = inv("s", "OpenAI", 40.0, "2026-09-15", month_folder="2026 09", currency="USD")
+        stripe["card_charges"] = [{"date": "2026-09-15", "amount": 20.0, "card_last4": None},
+                                  {"date": "2026-09-16", "amount": 20.0, "card_last4": None}]
+        t = txn("t", "2026-09-15", "CLAUDE.AI SUBSCRIPTION ANTHROPIC.COM", 26.8, source_amount=20.0, source_currency="USD")
+        got = matching.charge_match([t], [stripe])
+        self.assertEqual(got["t"][2:4], ("possible", 0.7))
+
+    def test_identical_charges_each_posted_a_day_late_each_find_theirs(self):
+        order = amazon("o5", 290.08, [("2026-10-01", 145.04, "1610"), ("2026-10-02", 145.04, "1610")],
+                       date="2026-09-30", month_folder="2026 09")
+        a, b = txn("a", "2026-10-02", "Amazon.Ca*1", 145.04), txn("b", "2026-10-03", "Amazon.Ca*2", 145.04)
+        got = matching.charge_match([a, b], [order])
+        self.assertEqual({k: v[1] for k, v in got.items()}, {"a": 0, "b": 1})
 
     def test_a_refund_listed_on_the_invoice_is_not_a_charge(self):
         refunded = amazon("o4", 20.0, [("2026-07-15", 20.0, "1610"), ("2026-07-20", -20.0, "1610")])
@@ -290,6 +310,27 @@ class RereadTests(ApiTestCase):
         self.assertIsNone(self.store.get_invoice("s1").get("card_charges"))   # another vendor is left alone
         pending = (self.store.get_state("bank_sync") or {}).get("months_pending")
         self.assertEqual(sorted(tuple(m) for m in pending), [(2026, 6), (2026, 7), (2026, 8)])
+
+
+class IndexSplitTests(unittest.TestCase):
+    def test_a_new_version_of_an_order_read_by_the_index_moves_its_whole_link_to_the_charge(self):
+        from test_pipeline import FakeDrive, FakeGemini, file_, folder
+        store = MemoryStore()
+        old = dict(inv("o1", "Amazon.ca", 152.66, "2026-07-15", month_folder="2026 07", vendor_folder="Amazon"),
+                   file_name="order.pdf", card_charges=[], modified_time="2026-07-20T00:00:00Z")
+        store.upsert_invoices([old])
+        store.insert_transactions([txn("t2", "2026-07-16", "Amzn Mktp Ca", 83.72, status="matched", invoice_id="o1",
+                                       method="manual"), txn("t1", "2026-07-16", "Amzn Mktp Ca", 68.94)])
+        drive = FakeDrive({"root": [folder("m07", "2026 07")], "m07": [folder("v", "Amazon")],
+                           "v": [file_("o1", "order.pdf", modified="2026-07-25T00:00:00Z")]})
+        facts = {"is_invoice": True, "vendor": "Amazon.ca", "invoice_date": "2026-07-15", "total": 152.66,
+                 "currency": "CAD", "card_charges": [{"date": "2026-07-16", "amount": 83.72, "card_last4": "1610"},
+                                                     {"date": "2026-07-15", "amount": 68.94, "card_last4": "1610"}]}
+        invoices.index_invoices(store, drive, FakeGemini(handler=lambda parts, model: dict(facts)), "root",
+                                month_folders=["2026 07"], log=lambda *a: None)
+        self.assertEqual(store.get_transaction("t2")["invoice_part"], 0)
+        matching.match_month(store, None, 2026, 7, use_ai=False, log=lambda *a: None)
+        self.assertEqual(store.get_transaction("t1")["invoice_part"], 1)
 
 
 if __name__ == "__main__":

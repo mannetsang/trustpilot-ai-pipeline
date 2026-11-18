@@ -268,38 +268,53 @@ def _day(value):
 
 
 def charge_match(transactions, invoices, taken=None, allowed=None, accept=None):
-    """Purchases paired with the card charges their invoices list: the same amount to the cent (as
-    billed, or the foreign amount when the invoice is in that currency), the same card when both show
-    one, and dates at most CHARGE_DAYS apart. Returns {txn_id: (inv_id, part, "matched", 0.99, note)}:
-    part is the charge's index when the invoice lists several (shared by several transactions), None
-    when it lists one (the whole invoice). taken: {invoice id: parts already linked, WHOLE for a whole
-    link}. The closest dates pair first; identical charges go to identical purchases in order."""
+    """Purchases paired with the card charges of invoices that list several (an Amazon order shipped
+    in parts): the same amount to the cent (as billed, or the foreign amount when the invoice is in
+    that currency), the same card (the charge's own digits first), and the purchase or posting date at
+    most CHARGE_DAYS from the charge's. An invoice that lists one charge is left to the rules, which
+    weigh the vendor. Returns {txn_id: (inv_id, part, status, confidence, note)}, part being the
+    charge's index in card_charges: matched (0.99) when the vendor agrees with the descriptor,
+    possible (0.7) when it does not. taken: {invoice id: parts already linked, WHOLE for a whole link};
+    an invoice linked whole gives none. As many purchases as possible are paired, the closest dates
+    first, so identical charges each posted a day late each find theirs."""
     taken = {k: set(v) for k, v in (taken or {}).items()}
-    pairs = []
+    edges = {}
     for t in transactions:
         for inv in invoices:
             charges = listed_charges(inv)
-            if not charges or rejected(t, inv) or (allowed is not None and not allowed(t, inv)):
+            held = taken.get(inv["id"]) or set()
+            if len(charges) < 2 or WHOLE in held or rejected(t, inv) or (allowed is not None and not allowed(t, inv)):
                 continue
-            many = len(charges) > 1
+            status, conf = ("matched", 0.99) if vendor_similarity(t, inv) >= VENDOR_EVIDENCE else ("possible", 0.7)
+            if accept is not None and not accept(t, status, conf):
+                continue
             cur = (inv.get("currency") or t.get("currency") or "").upper()
             for pos, (n, c) in enumerate(charges):
-                if not charge_fits(t, inv, c):
-                    continue
-                if accept is not None and not accept(t, "matched", 0.99):
+                if n in held or not charge_fits(t, inv, c):
                     continue
                 note = (f"card charge listed on the invoice: {_day(c.get('date')).isoformat()} {cur} "
-                        f"{float(c['amount']):.2f}" + (f" (charge {pos + 1} of {len(charges)})" if many else ""))
-                pairs.append((charge_days(t, c), str(inv["id"]), n, t["id"], inv["id"], n if many else None, note))
-    pairs.sort(key=lambda p: p[:3])
-    out = {}
-    for _days, _iid, _n, tid, iid, part, note in pairs:
-        key = WHOLE if part is None else part
-        if tid in out or key in taken.get(iid, set()) or (part is not None and WHOLE in taken.get(iid, set())):
-            continue
-        out[tid] = (iid, part, "matched", 0.99, note)
-        taken.setdefault(iid, set()).add(key)
-    return out
+                        f"{float(c['amount']):.2f} (charge {pos + 1} of {len(charges)})")
+                edges.setdefault(t["id"], []).append((status != "matched", charge_days(t, c), str(inv["id"]), n,
+                                                      inv["id"], status, conf, note))
+    for options in edges.values():
+        options.sort(key=lambda e: e[:4])
+    owner, choice = {}, {}
+
+    def assign(tid, seen):
+        """Kuhn's augmenting path: give tid a charge, moving earlier purchases to another of theirs."""
+        for e in edges[tid]:
+            key = (e[4], e[3])
+            if key in seen:
+                continue
+            seen.add(key)
+            if key not in owner or assign(owner[key], seen):
+                owner[key], choice[tid] = tid, e
+                return True
+        return False
+
+    for tid in sorted(edges, key=lambda tid: (edges[tid][0][:2], tid)):
+        assign(tid, set())
+    return {tid: (e[4], e[3], e[5], e[6], e[7]) for tid, e in choice.items()}
 
 
 def _key(t):
@@ -555,13 +570,16 @@ def _charge_view(inv, part):
 
 def split_whole_links(store, inv, log=print):
     """Purchases linked to `inv` whole before it was known to list several card charges (an Amazon
-    order read again): each takes the listed charge it is (same amount and card; the closest date,
-    the day either side first), compare-and-set. One that fits no free charge is set back to missing
+    order read again, or uploaded as a receipt): each takes the listed charge it is (same amount and
+    card; the closest date first), compare-and-set. One that fits no free charge is set back to missing
     unless a person linked it (a manual link stays as it is). Returns (moved to a charge, released)."""
     if not shared(inv):
         return 0, 0
-    holders = [t for t in store.transactions_for_invoice(inv["id"]) if t.get("invoice_part") is None]
-    taken = {n for n in (store.used_invoice_parts().get(inv["id"]) or set()) if n != WHOLE}
+    links = store.transactions_for_invoice(inv["id"])
+    holders = [t for t in links if t.get("invoice_part") is None]
+    if not holders:
+        return 0, 0
+    taken = {int(t["invoice_part"]) for t in links if t.get("invoice_part") is not None}
     moved = released = 0
     for t in sorted(holders, key=lambda t: str(t.get("txn_date") or "")):
         fits = [(charge_days(t, c) if charge_days(t, c) is not None else 99, n) for n, c in listed_charges(inv)

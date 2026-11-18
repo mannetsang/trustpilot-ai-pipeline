@@ -1451,6 +1451,8 @@ def read_receipt(record, data, mime):
         elif str((store.get_invoice(record["id"]) or {}).get("extraction_error") or "").startswith("upload withdrawn"):
             row.pop("extraction_error")         # removed meanwhile: a read error must not clear the marker
         store.upsert_invoices([row])
+        if matching.shared(row):
+            matching.split_whole_links(store, row)      # the upload linked it whole; it is one of its charges
         print(f"receipt read {record['id']}: " + (f"error {error}" if error
               else f"{row.get('vendor')} {row.get('total')} {row.get('currency')} {row.get('invoice_date')}"))
     except Exception as exc:  # noqa: BLE001
@@ -2692,24 +2694,27 @@ def reread_card_charges(vendor="amazon", limit=None, log=print):
             rows = list(pool.map(lambda rec: invoice_index.extract_invoice(gemini, drive, rec), records))
         good = [row for row in rows if not row.get("extraction_error") and row.get("card_charges") is not None]
         failed += len(rows) - len(good)
+        # Only the new column is written: the rest of each row may have changed since the list was
+        # taken (a Remove… meanwhile), and the old reading of vendor, total and date stays as it was.
+        now = {r["id"]: r for r in store.list_invoices(ids=[row["id"] for row in good])}
+        batch_months = set()
         for row in good:
-            # The rest of the row as it was (a receipt uploaded here keeps its created_at, and so on).
-            old = next(r for r in batch if r["id"] == row["id"])
-            row["removed_at"] = old.get("removed_at")
-        invoice_index._store_rows(store, good, log)
-        done += len(good)
-        for row in good:
-            if matching.shared(row):
+            current = now.get(row["id"])
+            if not current or current.get("removed_at") or current.get("card_charges") is not None:
+                continue
+            store.update_invoices([row["id"]], {"card_charges": row["card_charges"]})
+            done += 1
+            current = dict(current, card_charges=row["card_charges"])
+            if matching.shared(current):
+                y, m = current["month_folder"].split()
+                batch_months |= set(neighbouring_months(int(y), int(m)))
                 # Linked whole before its charges were known: each link moves to the charge it is.
-                matching.split_whole_links(store, row, log)
-        for row in good:
-            if len(row["card_charges"] or []) > 1 or any(r["id"] == row["id"] and (r.get("total") != row.get("total"))
-                                                          for r in batch):
-                y, m = row["month_folder"].split()
-                months |= set(neighbouring_months(int(y), int(m)))
+                matching.split_whole_links(store, current, log)
+        if batch_months:
+            queue_months(store, add=batch_months)       # now, not at the end: a run cut short keeps them
+            months |= batch_months
         log(f"reread: {done} read again, {failed} failed")
     if months:
-        queue_months(store, add=months)
         log(f"reread: {len(months)} month(s) queued for a full match")
     return {"to_read": len(todo), "read": done, "failed": failed, "months_queued": len(months)}
 
@@ -2737,7 +2742,7 @@ if __name__ == "__main__":
     ap.add_argument("--month", type=int)
     ap.add_argument("--card")
     ap.add_argument("--months", help="comma-separated 'YYYY MM' folders for index")
-    ap.add_argument("--limit", type=int, default=INDEX_BATCH)
+    ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--no-ai", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8080")))
@@ -2780,6 +2785,6 @@ if __name__ == "__main__":
     elif args.command == "sync":
         print(json.dumps(sync_bank_folder(), indent=2))
     elif args.command == "reread":
-        print(json.dumps(reread_card_charges(args.vendor, args.limit if args.limit != INDEX_BATCH else None), indent=2))
+        print(json.dumps(reread_card_charges(args.vendor, args.limit), indent=2))
     else:
         app.run(host="127.0.0.1", port=args.port, debug=False)

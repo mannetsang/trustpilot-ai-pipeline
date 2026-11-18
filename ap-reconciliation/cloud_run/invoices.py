@@ -271,6 +271,12 @@ def index_invoices(store, drive, gemini, root_id, month_folders=None, limit=40, 
         stored = _store_rows(store, [r for r in rows if not (now.get(r["id"]) or {}).get("removed_at")
                                      or (known.get(r["id"]) or {}).get("removed_at")], log)
         rows = [stored.get(r["id"], r) for r in rows]
+        import matching                   # here: matching does not import this module, but keep it lazy
+        for r in stored.values():
+            if matching.shared(r):
+                # Linked whole before its charges were read (a new version of an Amazon order): each link
+                # moves to the charge it is.
+                matching.split_whole_links(store, r, log)
     # Files already read that now sit elsewhere (a vendor or month folder moved or renamed around them,
     # a file restored from the trash): their content is the same, but a month they may serve is new.
     relabelled = [r["id"] for r in moved
