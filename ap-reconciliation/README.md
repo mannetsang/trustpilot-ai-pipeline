@@ -113,8 +113,29 @@ updates its folder hints without another model call.
    card digits and a one-line summary. `INDEX_BATCH` (30) files per call on
    `INDEX_WORKERS` (4) threads; the answer's `remaining` count tells the
    dashboard to call again until it is 0.
-3. **Match** (`POST /api/match`). Rules first, Gemini judge for the rest;
-   see the next section.
+3. **Match** (`POST /api/match`). Card charges an invoice lists first, then
+   rules, then the Gemini judge for the rest; see the next section.
+   **Orders charged in parts.** An Amazon order shipped in several boxes is
+   charged per shipment (item prices before tax, plus tax and any fees), and
+   the order PDF lists every charge under "Credit Card transactions" (card
+   digits, date, amount). The reading keeps that list
+   (`invoices.card_charges`), and `matching.charge_match` pairs each charge
+   with the purchase of the same amount to the cent, on the same card (the
+   charge's own digits), dated the day before, the same day or the day after
+   (the purchase or the posting date): matched, no judge involved. Such an
+   invoice is shared, one transaction per charge (`transactions.invoice_part`,
+   the charge's index), and is never linked whole; any other invoice links to
+   one transaction. The database refuses a second link of the same charge, a
+   second whole link, and a whole link beside charge links (indexes
+   `transactions_invoice_whole_unique` / `_part_unique` and the trigger
+   `transactions_invoice_link_guard`). *Link…* on such an order takes its free
+   charge on the purchase's card with the same amount (else the closest), and
+   says which; the picker shows "1 of 2 charges linked". Invoices read before
+   the list existed are read again once with `python main.py reread --vendor
+   amazon` (run as the sync job with `--args=main.py,reread`; it carries on
+   where it stopped when run again): links made whole to an order that turns
+   out split move to the charge they are, and the months those orders serve
+   are queued for a full match.
 4. **Notify** (`POST /api/notify`). One Chat card per credit card that still
    has purchases without an invoice, listing the missing purchases, the
    possible matches to confirm and the number of charges without a cost
@@ -632,12 +653,13 @@ this repo.
    organisation, region *East US (North Virginia)* (closest to `us-central1`),
    keep the database password in the password manager (nothing here uses it),
    and note the **project ref** (Project Settings, General).
-2. **Schema.** Applied to `bkkifrwfgtcnmfynbbdd` on 2026-10-09 (23 statements).
+2. **Schema.** Applied to `bkkifrwfgtcnmfynbbdd` on 2026-10-09 (23 statements);
+   re-applied 2026-11-18 for orders charged in parts (42 statements).
    To re-apply after a schema change: the Management API token is Secret
    Manager `SUPABASE_ACCESS_TOKEN` (or a personal token from avatar, *Account*,
    *Access Tokens*, in the gitignored root `.env` as `SUPABASE_ACCESS_TOKEN=...`), then
    `python ap-reconciliation\setup_db.py --project-ref bkkifrwfgtcnmfynbbdd`
-   and expect `ok: applied 23 statements from schema.sql to project bkkifrwfgtcnmfynbbdd`.
+   and expect `ok: applied 42 statements from schema.sql to project bkkifrwfgtcnmfynbbdd`.
    The Table Editor now shows `cards`, `statements`, `invoices`,
    `transactions`, `notifications`, `cost_centers` and the `month_summary`
    view. Delete the token from `.env` (or keep it for future schema changes).
