@@ -37,11 +37,36 @@ _insights_daily_cache = {}                          # /api/insights-summary (24h
 _INSIGHTS_CACHE_TTL = 24 * 60 * 60
 
 
+# Endpoints that act in the company's name (public Trustpilot replies, email from sales@) only
+# answer the Reviews Dashboard, so no other website can drive them from a visitor's browser.
+# Origin is not authentication (a script can send any Origin); send-website-reply also checks the
+# recipient against the feedback sheet. Read-only and suggestion endpoints stay open to scripts.
+ALLOWED_ORIGINS = {o.strip().rstrip("/") for o in os.environ.get(
+    "ALLOWED_ORIGINS",
+    "https://review.superhairpieces.com,"
+    "https://reviews-dashboard-d6e42sfhya-uc.a.run.app,"
+    "http://localhost:8765,http://127.0.0.1:8765").split(",") if o.strip()}
+
+
+@app.before_request
+def refuse_foreign_origins():
+    if request.path.startswith(("/api/reply/", "/api/send-website-reply")) and request.method != "OPTIONS":
+        origin = (request.headers.get("Origin") or "").rstrip("/")
+        if origin not in ALLOWED_ORIGINS:
+            print(f"refused {request.method} {request.path}: origin {origin or '(none)'!r}")
+            return jsonify({"error": "only the Reviews Dashboard may call this endpoint"}), 403
+
+
 @app.after_request
 def add_cors(response):
-    """Open CORS on /api/* endpoints so the dashboard (different origin) can call them."""
+    """CORS for /api/* so the dashboard (different origin) can call them."""
     if request.path.startswith("/api/"):
-        response.headers["Access-Control-Allow-Origin"]  = "*"
+        origin = (request.headers.get("Origin") or "").rstrip("/")
+        locked = request.path.startswith(("/api/reply/", "/api/send-website-reply"))
+        if locked and origin not in ALLOWED_ORIGINS:
+            return response
+        response.headers["Access-Control-Allow-Origin"]  = origin if locked else "*"
+        response.headers["Vary"]                         = "Origin"
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
         response.headers["Access-Control-Allow-Headers"] = "Content-Type"
         response.headers["Access-Control-Max-Age"]       = "3600"
@@ -778,10 +803,26 @@ def api_send_website_reply():
         to_email = (data.get("to") or "").strip()
         body = (data.get("body") or "").strip()
         subject = (data.get("subject") or "").strip() or "Re: your feedback on Superhairpieces"
-        sender = (data.get("from") or DEFAULT_REPLY_SENDER).strip()
-        sheet_row = data.get("sheetRow")  # optional 1-based row in website feedback sheet
+        # Always the shared sales mailbox: a caller-chosen sender would let anyone send mail as any
+        # superhairpieces.com address through domain-wide delegation.
+        sender = DEFAULT_REPLY_SENDER
+        sheet_row = data.get("sheetRow")  # 1-based row in the website feedback sheet
         if not to_email or "@" not in to_email:
             return jsonify({"error": "Valid 'to' email required"}), 400
+        # Only the customer who left that feedback row can be emailed (column G), so this endpoint
+        # cannot be used to send mail to arbitrary addresses.
+        try:
+            row_n = int(sheet_row)
+        except (TypeError, ValueError):
+            return jsonify({"error": "sheetRow required"}), 400
+        if row_n < 2:
+            return jsonify({"error": "sheetRow required"}), 400
+        row_email = (get_sheets_service().spreadsheets().values().get(
+            spreadsheetId=WEBSITE_SHEET_ID, range=f"G{row_n}"
+        ).execute().get("values") or [[""]])[0][0].strip()
+        if row_email.lower() != to_email.lower():
+            print(f"[send-website-reply] refused: 'to' does not match feedback row {row_n}")
+            return jsonify({"error": "'to' must be the email on that feedback row"}), 403
         if not body:
             return jsonify({"error": "Reply body can't be empty"}), 400
         if len(body) > 10000:
@@ -791,12 +832,12 @@ def api_send_website_reply():
         sent_at = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
 
         # Stamp column J ("Replied At") in the website feedback sheet so the row shows as replied.
-        if sheet_row:
+        if row_n:
             try:
                 svc = get_sheets_service()
                 svc.spreadsheets().values().update(
                     spreadsheetId=WEBSITE_SHEET_ID,
-                    range=f"J{int(sheet_row)}",
+                    range=f"J{row_n}",
                     valueInputOption="USER_ENTERED",
                     body={"values": [[sent_at]]},
                 ).execute()
