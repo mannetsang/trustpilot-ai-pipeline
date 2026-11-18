@@ -1073,6 +1073,28 @@ def linked_by_hand(t):
     return t.get("match_method") == "manual" and note.startswith(("receipt uploaded by ", "linked by "))
 
 
+def link_part(store, txn, inv):
+    """(part, note) for a Link of txn to inv by hand; (False, why) when the invoice has no room. An
+    invoice that lists several card charges (an Amazon order shipped in parts) takes one transaction
+    per charge: the free charge of the same amount, else the free one closest in amount, and the note
+    says which. Any other invoice is linked whole, and only when nothing else is linked to it."""
+    taken = matching.taken_parts(store, [txn])
+    held = taken.get(inv["id"]) or set()
+    if not matching.shared(inv):
+        if held:
+            return False, "that invoice is already linked to another transaction"
+        return None, ""
+    if matching.WHOLE in held:
+        return False, "that invoice is already linked to another transaction"
+    free = [(n, c) for n, c in matching.listed_charges(inv) if n not in held]
+    if not free:
+        return False, "every card charge that invoice lists is already linked to a transaction"
+    amounts = [abs(float(txn["amount"]))] + ([abs(float(txn["source_amount"]))] if txn.get("source_amount") is not None else [])
+    n, c = min(free, key=lambda nc: (min(abs(a - float(nc[1]["amount"])) for a in amounts), nc[0]))
+    count = len(inv.get("card_charges") or [])
+    return n, f"charge {n + 1} of {count} ({c.get('date') or 'undated'}, {float(c['amount']):.2f})"
+
+
 def with_invoices(store, txns):
     ids = sorted({t["invoice_id"] for t in txns if t.get("invoice_id")})
     invoices = {i["id"]: i for i in store.list_invoices(ids=ids)} if ids else {}
@@ -1089,6 +1111,10 @@ def with_invoices(store, txns):
                           if inv else None)
         if inv:
             row["invoice"]["reading"] = inv["id"] in reading
+            part = t.get("invoice_part")
+            charges = inv.get("card_charges") or []
+            if part is not None and 0 <= int(part) < len(charges):
+                row["invoice"]["charge"] = dict(charges[int(part)], number=int(part) + 1, of=len(charges))
         # What the receipt says against the charge, worked out each time from the stored facts: a
         # disagreement is shown, never turned into a status (the link stays as the person made it).
         row["checks"] = (matching.invoice_checks(t, inv, reading=inv["id"] in reading)
@@ -1348,10 +1374,11 @@ def save_receipt(user, txn_id, parts, vendor_text, upload_id):
     rejected = list(txn.get("rejected_invoice_ids") or [])
     if status == "possible" and txn.get("invoice_id") and txn["invoice_id"] not in rejected:
         rejected.append(txn["invoice_id"])      # the person's receipt replaces the proposal
-    patch = {"invoice_status": "matched", "invoice_id": meta["id"], "match_confidence": 1.0,
+    patch = {"invoice_status": "matched", "invoice_id": meta["id"], "invoice_part": None, "match_confidence": 1.0,
              "match_method": "manual", "match_note": f"receipt uploaded by {email}",
              "rejected_invoice_ids": rejected, "updated_by": email, "updated_at": now_iso()}
-    expect = {"invoice_status": status, "invoice_id": txn.get("invoice_id"), "match_method": txn.get("match_method")}
+    expect = {"invoice_status": status, "invoice_id": txn.get("invoice_id"), "invoice_part": txn.get("invoice_part"),
+              "match_method": txn.get("match_method")}
     try:
         linked = store.update_transaction(txn_id, patch, expect=expect)
     except StoreError as exc:                   # the unique index (that id is linked elsewhere), or a timeout
@@ -1457,8 +1484,8 @@ def remove_receipt(user, txn_id):
     # unlink fails with an error, the marker stays: the file is still linked, and Remove… can be retried.
     prior = store.get_invoice(invoice_id) or {}
     store.update_invoices([invoice_id], {"removed_at": now_iso(), "extraction_error": REMOVED})
-    patch = {"invoice_status": "missing", "invoice_id": None, "match_confidence": None, "match_method": None,
-             "match_note": None, "updated_by": user["email"], "updated_at": now_iso()}
+    patch = {"invoice_status": "missing", "invoice_id": None, "invoice_part": None, "match_confidence": None,
+             "match_method": None, "match_note": None, "updated_by": user["email"], "updated_at": now_iso()}
     updated = store.update_transaction(txn_id, patch, expect={"invoice_id": invoice_id, "match_method": "manual"})
     if updated is None:
         store.update_invoices([invoice_id], {"removed_at": prior.get("removed_at"),
@@ -1689,7 +1716,7 @@ def api_transaction_update(txn_id):
     expect = None
     if action == "waive":
         if status in ("missing", "possible"):
-            patch.update({"invoice_status": "waived", "invoice_id": None, "match_confidence": None,
+            patch.update({"invoice_status": "waived", "invoice_id": None, "invoice_part": None, "match_confidence": None,
                           "match_method": "manual", "match_note": "waived: " + (body.get("reason") or "no invoice available")[:200]})
     elif action == "unwaive":
         if status == "waived":
@@ -1708,18 +1735,19 @@ def api_transaction_update(txn_id):
             return jsonify({"error": "invoice not found"}), 404
         if user["role"] != "ap" and inv.get("card_last4") and inv["card_last4"] != txn["card_last4"]:
             return jsonify({"error": f"that invoice shows card ending {inv['card_last4']}; ask accounts payable to link it"}), 403
-        holder = store.used_invoice_ids()
-        if invoice_id in holder and txn.get("invoice_id") != invoice_id:
-            return jsonify({"error": "that invoice is already linked to another transaction"}), 409
-        patch.update({"invoice_status": "matched", "invoice_id": invoice_id, "match_confidence": 1.0,
-                      "match_method": "manual", "match_note": "linked by " + user["email"],
+        part, note = link_part(store, txn, inv)
+        if part is False:
+            return jsonify({"error": note}), 409
+        patch.update({"invoice_status": "matched", "invoice_id": invoice_id, "invoice_part": part,
+                      "match_confidence": 1.0, "match_method": "manual",
+                      "match_note": "linked by " + user["email"] + (f"; {note}" if note else ""),
                       "rejected_invoice_ids": [i for i in rejected if i != invoice_id]})
     elif action == "unlink":
         if txn.get("invoice_id") or status == "matched":
             # Remember the refusal so the matcher does not propose the same pair again.
             if txn.get("invoice_id") and txn["invoice_id"] not in rejected:
                 rejected.append(txn["invoice_id"])
-            patch.update({"invoice_status": "missing", "invoice_id": None, "match_confidence": None,
+            patch.update({"invoice_status": "missing", "invoice_id": None, "invoice_part": None, "match_confidence": None,
                           "match_method": None, "match_note": None, "rejected_invoice_ids": rejected})
     elif action:
         return jsonify({"error": f"unknown action '{action}'"}), 400
@@ -1838,15 +1866,20 @@ def api_invoices():
     store = get_store()
     folders = [month_folder_name(y, m) for y, m in neighbouring_months(year, month)]
     everything = request.args.get("all") == "1"
-    used = store.used_invoice_ids()
+    taken = store.used_invoice_parts()
     out = []
     for inv in store.list_invoices(month_folders=None if everything else folders):
-        if inv.get("removed_at") and inv["id"] not in used:
+        if inv.get("removed_at") and inv["id"] not in taken:
             continue
         row = {k: inv.get(k) for k in ("id", "file_name", "web_view_link", "month_folder", "vendor_folder", "vendor",
                                        "invoice_number", "invoice_date", "total", "currency", "card_last4",
                                        "summary", "is_invoice", "extraction_error", "document_type", "removed_at")}
-        row["linked"] = inv["id"] in used
+        # An invoice that lists several card charges is linked once every charge has its purchase.
+        row["linked"] = inv["id"] in taken and not matching.has_room(inv, taken)
+        if matching.shared(inv):
+            row["charges"] = len(matching.listed_charges(inv))
+            row["charges_linked"] = len([p for p in taken.get(inv["id"], ()) if p != matching.WHOLE])
+            row["card_charges"] = inv.get("card_charges")
         out.append(row)
     return jsonify({"invoices": out, "month_folders": "all" if everything else folders})
 
@@ -2591,6 +2624,62 @@ def sync_bank_folder(log=print, now=None):
             "invoice_folders_left": len(watch.get("folders_pending") or [])}
 
 
+# -- one-off: read again invoices read before card_charges existed ------------------------------
+REREAD_BUDGET = 50 * 60         # seconds; the job may run an hour, the rest is left for the next run
+
+
+def reread_card_charges(vendor="amazon", limit=None, log=print):
+    """Read again the invoices of a vendor (folder or name containing `vendor`) that were read before
+    the reading listed card charges (card_charges is null), so an order charged in parts (an Amazon
+    order shipped in several boxes) can be matched charge by charge; then queue the months they serve
+    for a full match by the import job (months_pending). A reading that fails keeps the old one. Run
+    again to carry on: what is done is not read again. Returns counts."""
+    store, drive, gemini = get_store(), get_drive(), get_gemini()
+    if gemini is None:
+        return {"skipped": "AI_DISABLED=1"}
+    word = (vendor or "").lower()
+    todo = [r for r in store.list_invoices()
+            if r.get("card_charges") is None and not r.get("removed_at") and r.get("month_folder")
+            and word in f"{r.get('vendor_folder') or ''} {r.get('vendor') or ''}".lower()]
+    todo.sort(key=lambda r: str(r.get("month_folder") or ""), reverse=True)     # recent months first
+    if limit:
+        todo = todo[:int(limit)]
+    started, done, failed, months = time.time(), 0, 0, set()
+    log(f"reread: {len(todo)} {vendor} invoice(s) to read again")
+    for start in range(0, len(todo), INDEX_BATCH):
+        if time.time() - started > REREAD_BUDGET:
+            log("reread: out of time; run it again to carry on")
+            break
+        batch = todo[start:start + INDEX_BATCH]
+        records = [dict({k: r.get(k) for k in ("id", "file_name", "mime_type", "web_view_link", "folder_path",
+                                                 "month_folder", "vendor_folder", "modified_time")},
+                        size=int(r.get("size") or 0),
+                        _file={"id": r["id"], "mimeType": r.get("mime_type"), "name": r.get("file_name")})
+                   for r in batch]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, INDEX_WORKERS)) as pool:
+            rows = list(pool.map(lambda rec: invoice_index.extract_invoice(gemini, drive, rec), records))
+        good = [row for row in rows if not row.get("extraction_error") and row.get("card_charges") is not None]
+        failed += len(rows) - len(good)
+        for row in good:
+            # The rest of the row as it was (a receipt uploaded here keeps its created_at, and so on).
+            old = next(r for r in batch if r["id"] == row["id"])
+            row["removed_at"] = old.get("removed_at")
+        invoice_index._store_rows(store, good, log)
+        done += len(good)
+        for row in good:
+            if len(row["card_charges"] or []) > 1 or any(r["id"] == row["id"] and (r.get("total") != row.get("total"))
+                                                          for r in batch):
+                y, m = row["month_folder"].split()
+                months |= set(neighbouring_months(int(y), int(m)))
+        log(f"reread: {done} read again, {failed} failed")
+    if months:
+        state = store.get_state("bank_sync") or {}
+        pending = {tuple(m) for m in state.get("months_pending") or []} | months
+        update_sync_state(store, months_pending=sorted(pending, reverse=True))
+        log(f"reread: {len(months)} month(s) queued for a full match")
+    return {"to_read": len(todo), "read": done, "failed": failed, "months_queued": len(months)}
+
+
 # ---------------------------------------------------------------------------
 # Local CLI (and the Cloud Run jobs, which run `remind` and `sync`)
 #   python main.py parse <file>                       print the parsed transactions
@@ -2600,12 +2689,15 @@ def sync_bank_folder(log=print, now=None):
 #   python main.py notify --year 2026 --month 9 [--dry-run]
 #   python main.py remind                             the weekly reminder (what the Cloud Run job runs)
 #   python main.py sync                               import new statements from the Bank Transactions folder
+#   python main.py reread [--vendor amazon]           read again invoices read before card_charges existed
 #   python main.py serve [--port 8080]
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("command", choices=["parse", "dry-run", "index", "match", "notify", "remind", "sync", "serve"])
+    ap.add_argument("command", choices=["parse", "dry-run", "index", "match", "notify", "remind", "sync", "reread",
+                                        "serve"])
+    ap.add_argument("--vendor", default="amazon", help="reread: vendor folder or name to read again")
     ap.add_argument("file", nargs="?")
     ap.add_argument("--year", type=int)
     ap.add_argument("--month", type=int)
@@ -2653,5 +2745,7 @@ if __name__ == "__main__":
         print(json.dumps(remind_latest(), indent=2))
     elif args.command == "sync":
         print(json.dumps(sync_bank_folder(), indent=2))
+    elif args.command == "reread":
+        print(json.dumps(reread_card_charges(args.vendor, args.limit if args.limit != INDEX_BATCH else None), indent=2))
     else:
         app.run(host="127.0.0.1", port=args.port, debug=False)

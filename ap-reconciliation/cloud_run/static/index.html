@@ -1581,6 +1581,10 @@
     if (inv) {
       var text = (inv.vendor || inv.vendor_folder || inv.file_name || 'invoice') + (inv.invoice_date ? ' · ' + fmtDate(inv.invoice_date) : '');
       var totalBit = inv.total !== null && inv.total !== undefined ? ' <span class="sub">' + esc(money(inv.total, inv.currency || '')) + '</span>' : '';
+      // One of several card charges the invoice lists (an Amazon order shipped in parts): that charge, of the order's total.
+      if (inv.charge) totalBit = ' <span class="sub" title="Card charge ' + inv.charge.number + ' of ' + inv.charge.of + ' listed on the invoice' +
+        (inv.charge.date ? ', ' + esc(fmtDate(inv.charge.date)) : '') + '">' + esc(money(inv.charge.amount, inv.currency || '')) + ' · charge ' + inv.charge.number + ' of ' + inv.charge.of +
+        (inv.total !== null && inv.total !== undefined ? ' (order ' + esc(money(inv.total, inv.currency || '')) + ')' : '') + '</span>';
       html += '<div class="mt-1 truncate" style="max-width: 260px;">' + (safeUrl(inv.web_view_link)
         ? '<a class="link" href="' + esc(safeUrl(inv.web_view_link)) + '" target="_blank" rel="noopener noreferrer" title="' + esc(inv.file_name || '') + '">' + esc(text) + ' ↗</a>'
         : '<span title="' + esc(inv.file_name || '') + '">' + esc(text) + '</span>') + totalBit + '</div>';
@@ -2065,7 +2069,8 @@
     catch (e) { report(e, 'Could not load invoices'); closeModal(); return; }
     var invoices = (data.invoices || []).slice();
     invoices.forEach(function (inv) {
-      inv._same = nearly(inv.total, t.amount) || (t.source_amount !== null && t.source_amount !== undefined && nearly(inv.total, t.source_amount));
+      var amounts = [inv.total].concat((inv.card_charges || []).map(function (c) { return c && c.amount; }));
+      inv._same = amounts.some(function (a) { return nearly(a, t.amount) || (t.source_amount !== null && t.source_amount !== undefined && nearly(a, t.source_amount)); });
     });
     invoices.sort(function (a, b) { return (b._same ? 1 : 0) - (a._same ? 1 : 0); });
     var head = '<div class="flex flex-wrap items-center gap-3 mb-3">' +
@@ -2088,6 +2093,9 @@
         var flags = '';
         if (isThis) flags += ' <span class="pill pill-up">this one</span>';
         else if (linked) flags += ' <span class="pill pill-grey">linked</span>';
+        if (inv.charges) flags += ' <span class="pill pill-grey" title="The invoice lists ' + inv.charges + ' card charges: ' +
+          esc((inv.card_charges || []).map(function (c) { return (c.date ? fmtDate(c.date) + ' ' : '') + money(c.amount, inv.currency || ''); }).join(', ')) +
+          '. Each can be linked to its own purchase.">' + inv.charges_linked + ' of ' + inv.charges + ' charges linked</span>';
         if (inv.is_invoice === false) flags += ' <span class="pill pill-warn" title="' + esc(inv.summary || '') + '">not an invoice</span>';
         if (inv.extraction_error) flags += ' <span class="pill pill-down" title="' + esc(inv.extraction_error) + '">unreadable</span>';
         if (inv._same) flags += ' <span class="pill pill-brand">same amount</span>';

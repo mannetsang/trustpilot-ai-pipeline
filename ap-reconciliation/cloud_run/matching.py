@@ -246,6 +246,31 @@ def charge_match(transactions, invoices, taken=None, allowed=None, accept=None):
     return out
 
 
+def _key(t):
+    return WHOLE if t.get("invoice_part") is None else int(t["invoice_part"])
+
+
+def taken_parts(store, free_rows=()):
+    """{invoice id: parts linked} (WHOLE for a whole link), leaving out the links of free_rows: the
+    rows being matched again, whose links are theirs to keep or give up."""
+    taken = store.used_invoice_parts()
+    for t in free_rows:
+        if t.get("invoice_id") and t["invoice_id"] in taken:
+            taken[t["invoice_id"]].discard(_key(t))
+            if not taken[t["invoice_id"]]:
+                del taken[t["invoice_id"]]
+    return taken
+
+
+def has_room(inv, taken):
+    """Can the invoice still take a link? One that lists several charges while one of them is free;
+    any other while nothing is linked to it."""
+    held = taken.get(inv["id"]) or set()
+    if shared(inv):
+        return WHOLE not in held and any(n not in held for n, _ in listed_charges(inv))
+    return not held
+
+
 def rule_match(transactions, invoices, status_first=False, allowed=None, accept=None):
     """Greedy best-first pairing. Returns {txn_id: (inv_id, status, confidence, note)}.
 
@@ -522,16 +547,26 @@ def match_transaction(store, gemini, txn_id, use_ai=True, log=print, updated_by=
     if why_not:
         raise RematchError(why_not)
     own, own_status = txn.get("invoice_id"), txn.get("invoice_status") or "missing"
-    used = store.used_invoice_ids() - ({own} if own else set())
-    pool = [i for i in candidate_invoices(store, txn["year"], txn["month"]) if i["id"] not in used]
-    inv_by_id = {i["id"]: i for i in pool}
+    own_part = txn.get("invoice_part")
+    taken = taken_parts(store, [txn])
+    candidates = candidate_invoices(store, txn["year"], txn["month"])
+    # Whole invoices for the rules and the judge: not linked to anything else, and not one that lists
+    # several card charges (those are shared one charge at a time, by charge_match only).
+    pool = [i for i in candidates if i["id"] not in taken and not shared(i)]
+    inv_by_id = {i["id"]: i for i in candidates if has_room(i, taken)}
     label = f"{txn.get('txn_date')} {str(txn.get('description') or '')[:40]} {float(txn['amount']):.2f}"
-    log(f"Rematch {label}: {len(pool)} invoices to consider")
+    log(f"Rematch {label}: {len(inv_by_id)} invoices to consider")
 
     if on_stage:
         on_stage("rules")
-    found, method = rule_match([txn], pool, status_first=True).get(txn["id"]), "rule"
-    if (not found or found[1] != "matched") and use_ai and gemini is not None and pool:
+    part = None
+    charged = charge_match([txn], list(inv_by_id.values()), taken=taken).get(txn["id"])
+    if charged:
+        found, method = (charged[0], charged[2], charged[3], charged[4]), "rule"
+        part = charged[1]
+    else:
+        found, method = rule_match([txn], pool, status_first=True).get(txn["id"]), "rule"
+    if not charged and (not found or found[1] != "matched") and use_ai and gemini is not None and pool:
         # Nothing, or only a weak possible match, by the rules: ask the judge too, keep the better.
         log(f"Rematch {label}: no clear rule match, asking {gemini.match_model}")
         if on_stage:
@@ -544,7 +579,7 @@ def match_transaction(store, gemini, txn_id, use_ai=True, log=print, updated_by=
 
     current_valid = bool(own) and own in inv_by_id and own_status in ("matched", "possible")
     current = (own_status, txn.get("match_confidence"))
-    if found and found[0] == own and current_valid:
+    if found and found[0] == own and part == own_part and current_valid:
         # The same invoice again: only a better status (possible -> matched) is worth writing; a
         # reworded note or a slightly different confidence is not news.
         outcome = "found" if STATUS_RANK[found[1]] > STATUS_RANK[own_status] else "same"
@@ -557,10 +592,10 @@ def match_transaction(store, gemini, txn_id, use_ai=True, log=print, updated_by=
 
     if outcome == "found":
         iid, status, conf, note = found
-        patch = {"invoice_status": status, "invoice_id": iid, "match_confidence": conf,
+        patch = {"invoice_status": status, "invoice_id": iid, "invoice_part": part, "match_confidence": conf,
                  "match_method": method, "match_note": note[:500]}
     elif outcome == "none":
-        patch = {"invoice_status": "missing", "invoice_id": None, "match_confidence": None,
+        patch = {"invoice_status": "missing", "invoice_id": None, "invoice_part": None, "match_confidence": None,
                  "match_method": None, "match_note": None}
     else:                                   # same or kept: the row stays as it is
         patch = {}
@@ -569,7 +604,8 @@ def match_transaction(store, gemini, txn_id, use_ai=True, log=print, updated_by=
         patch["updated_at"] = now_iso()
         if updated_by:
             patch["updated_by"] = updated_by
-        expect = {"invoice_status": txn.get("invoice_status"), "invoice_id": own, "match_method": txn.get("match_method")}
+        expect = {"invoice_status": txn.get("invoice_status"), "invoice_id": own, "invoice_part": own_part,
+                  "match_method": txn.get("match_method")}
         try:
             written = store.update_transaction(txn["id"], patch, expect=expect)
         except Exception as exc:  # noqa: BLE001  (the unique index: someone linked that invoice meanwhile)
@@ -647,8 +683,8 @@ def match_new_invoices(store, gemini, invoice_ids, use_ai=True, log=print, judge
     rows = store.list_invoices(ids=wanted) if wanted else []
     counts = {"invoices": 0, "checked": 0, "matched": 0, "possible": 0, "upgraded": 0, "skipped": 0,
               "known": [r["id"] for r in rows], "unjudged": [], "deferred": []}
-    used = store.used_invoice_ids()
-    new = [i for i in rows if is_candidate(i) and i["id"] not in used and _month_of_folder(i.get("month_folder"))]
+    taken = store.used_invoice_parts()
+    new = [i for i in rows if is_candidate(i) and has_room(i, taken) and _month_of_folder(i.get("month_folder"))]
     counts["invoices"] = len(new)
     if not new:
         return counts
@@ -672,10 +708,20 @@ def match_new_invoices(store, gemini, invoice_ids, use_ai=True, log=print, judge
             return True
         return _better((status, conf), ("possible", t.get("match_confidence")))
 
-    accepted = {tid: (found, "rule") for tid, found in
-                rule_match(pending, new, allowed=serves, accept=improves).items()}
-    taken = {found[0] for found, _ in accepted.values()}
-    left_i = [i for i in new if i["id"] not in taken]
+    # First the card charges the new invoices list (an Amazon order shipped in parts): exact, one each.
+    accepted, parts = {}, {}
+    for tid, (iid, part, status, conf, note) in charge_match(pending, new, taken=taken, allowed=serves,
+                                                             accept=improves).items():
+        accepted[tid] = ((iid, status, conf, note), "rule")
+        parts[tid] = part
+        taken.setdefault(iid, set()).add(WHOLE if part is None else part)
+    # Then whole invoices: nothing linked to them, and not one that lists several charges.
+    whole = [i for i in new if i["id"] not in taken and not shared(i)]
+    rest = [t for t in pending if t["id"] not in accepted]
+    for tid, found in rule_match(rest, whole, allowed=serves, accept=improves).items():
+        accepted[tid] = (found, "rule")
+    linked = {found[0] for found, _ in accepted.values()}
+    left_i = [i for i in whole if i["id"] not in linked]
     if use_ai and gemini is not None and judge_limit is not None and len(left_i) > judge_limit:
         left_i.sort(key=lambda i: str(i.get("extracted_at") or ""), reverse=True)
         counts["deferred"] = [i["id"] for i in left_i[judge_limit:]]
@@ -693,8 +739,8 @@ def match_new_invoices(store, gemini, invoice_ids, use_ai=True, log=print, judge
         if failed:
             # A batch went unanswered: every new invoice it could have placed is tried again next time.
             gone_t = set(failed)
-            taken |= {found[0] for found, _ in accepted.values()}
-            counts["unjudged"] = [i["id"] for i in left_i if i["id"] not in taken
+            linked |= {found[0] for found, _ in accepted.values()}
+            counts["unjudged"] = [i["id"] for i in left_i if i["id"] not in linked
                                   and any(t["id"] in gone_t and serves(t, i) and plausible(t, i) for t in left_t)]
 
     stamp = now_iso()
@@ -702,8 +748,8 @@ def match_new_invoices(store, gemini, invoice_ids, use_ai=True, log=print, judge
         if t["id"] not in accepted:
             continue
         (iid, status, conf, note), method = accepted[t["id"]]
-        patch = {"invoice_status": status, "invoice_id": iid, "match_confidence": conf,
-                 "match_method": method, "match_note": note[:500], "updated_at": stamp}
+        patch = {"invoice_status": status, "invoice_id": iid, "invoice_part": parts.get(t["id"]),
+                 "match_confidence": conf, "match_method": method, "match_note": note[:500], "updated_at": stamp}
         upgraded = bool(t.get("invoice_id"))
         try:
             written = store.update_transaction(t["id"], patch, expect=_snapshot(t))
@@ -728,12 +774,20 @@ def match_month(store, gemini, year, month, card=None, use_ai=True, log=print):
     txns = store.list_transactions(year, month, card)
     pending = [t for t in txns if t.get("type") == "purchase" and t.get("invoice_status") in ("missing", "possible")]
     invoices = candidate_invoices(store, year, month)
-    held_by_pending = {t["invoice_id"] for t in pending if t.get("invoice_id")}
-    used = store.used_invoice_ids() - held_by_pending
-    available = [i for i in invoices if i["id"] not in used]
-    inv_by_id = {i["id"]: i for i in available}
+    taken = taken_parts(store, pending)          # the pending rows' own links are theirs to keep or give up
+    inv_by_id = {i["id"]: i for i in invoices}
 
-    results = rule_match(pending, available)
+    # First the card charges invoices list (an Amazon order shipped in parts): exact, one charge each.
+    results = {}
+    for tid, (iid, part, status, conf, note) in charge_match(
+            pending, [i for i in invoices if has_room(i, taken)], taken=taken).items():
+        results[tid] = (iid, status, conf, note, part)
+        taken.setdefault(iid, set()).add(WHOLE if part is None else part)
+    # Then whole invoices: nothing linked to them, and not one that lists several charges.
+    available = [i for i in invoices if i["id"] not in taken and not shared(i)]
+    rest = [t for t in pending if t["id"] not in results]
+    for tid, (iid, status, conf, note) in rule_match(rest, available).items():
+        results[tid] = (iid, status, conf, note, None)
     leftovers_t = [t for t in pending if t["id"] not in results]
     leftovers_i = [i for i in available if i["id"] not in {r[0] for r in results.values()}]
     ai_results = {}
@@ -741,24 +795,25 @@ def match_month(store, gemini, year, month, card=None, use_ai=True, log=print):
         log(f"AI judge: {len(leftovers_t)} purchases without an obvious invoice, {len(leftovers_i)} invoices to consider")
         ai_results = ai_match(gemini, leftovers_t, leftovers_i, log=log)
     for tid, (iid, status, conf, note) in ai_results.items():
-        results[tid] = (iid, status, conf, "ai:" + note)
+        results[tid] = (iid, status, conf, "ai:" + note, None)
 
     counts = {"checked": len(pending), "matched": 0, "possible": 0, "missing": 0, "invoices_available": len(available)}
     stamp = now_iso()
     patches = []
     for t in pending:
         if t["id"] in results:
-            iid, status, conf, note = results[t["id"]]
+            iid, status, conf, note, part = results[t["id"]]
             method = "ai" if note.startswith("ai:") else "rule"
             note = note[3:] if method == "ai" else note
-            patch = {"invoice_status": status, "invoice_id": iid, "match_confidence": conf,
+            patch = {"invoice_status": status, "invoice_id": iid, "invoice_part": part, "match_confidence": conf,
                      "match_method": method, "match_note": note[:500], "updated_at": stamp}
             counts[status] += 1
             inv = inv_by_id.get(iid, {})
             log(f"{status:8} {t['txn_date']} {t['description'][:30]:30} {float(t['amount']):>10.2f} -> "
-                f"{inv.get('vendor')} {inv.get('total')} ({method} {conf})")
+                f"{inv.get('vendor')} {inv.get('total')} ({method} {conf}"
+                f"{'' if part is None else f', charge {part + 1}'})")
         else:
-            patch = {"invoice_status": "missing", "invoice_id": None, "match_confidence": None,
+            patch = {"invoice_status": "missing", "invoice_id": None, "invoice_part": None, "match_confidence": None,
                      "match_method": None, "match_note": None, "updated_at": stamp}
             counts["missing"] += 1
         if any(t.get(k) != v for k, v in patch.items() if k != "updated_at"):
@@ -769,8 +824,8 @@ def match_month(store, gemini, year, month, card=None, use_ai=True, log=print):
     # while the matcher ran, here or in the weekly remind job, is never overwritten.
     released, skipped = set(), {}
     for t, patch in patches:
-        if t.get("invoice_id") and patch.get("invoice_id") != t.get("invoice_id"):
-            if store.update_transaction(t["id"], {"invoice_id": None}, expect=_snapshot(t)) is None:
+        if t.get("invoice_id") and (patch.get("invoice_id"), patch.get("invoice_part")) != (t.get("invoice_id"), t.get("invoice_part")):
+            if store.update_transaction(t["id"], {"invoice_id": None, "invoice_part": None}, expect=_snapshot(t)) is None:
                 skipped[t["id"]] = "changed while the matcher ran"
             else:
                 released.add(t["id"])
@@ -780,6 +835,7 @@ def match_month(store, gemini, year, month, card=None, use_ai=True, log=print):
         expect = _snapshot(t)
         if t["id"] in released:
             expect["invoice_id"] = None
+            expect["invoice_part"] = None
         try:
             written = store.update_transaction(t["id"], patch, expect=expect)
             why = "changed while the matcher ran"
@@ -809,4 +865,4 @@ def match_month(store, gemini, year, month, card=None, use_ai=True, log=print):
 
 def _snapshot(t):
     return {"invoice_status": t.get("invoice_status"), "invoice_id": t.get("invoice_id"),
-            "match_method": t.get("match_method")}
+            "invoice_part": t.get("invoice_part"), "match_method": t.get("match_method")}

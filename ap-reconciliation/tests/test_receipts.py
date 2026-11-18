@@ -726,10 +726,10 @@ class MatchMonthCompareAndSetTests(unittest.TestCase):
         ])
         store.upsert_invoices([inv("inv_dm", "Dunder Mifflin", 33.00, "2026-09-05"),
                                inv("inv_cafe", "Corner Cafe", 33.00, "2026-09-01")])
-        stale_used = store.used_invoice_ids()
+        stale_used = store.used_invoice_parts()
         # Meanwhile someone links inv_dm by hand to an August purchase.
         store.update_transaction("t_aug", {"invoice_status": "matched", "invoice_id": "inv_dm", "match_method": "manual"})
-        with mock.patch.object(store, "used_invoice_ids", return_value=stale_used):
+        with mock.patch.object(store, "used_invoice_parts", return_value=stale_used):
             counts = matching.match_month(store, None, 2026, 9, log=quiet)
         t_dm = store.get_transaction("t_dm")
         self.assertEqual((t_dm["invoice_status"], t_dm["invoice_id"], t_dm["match_method"], t_dm["match_confidence"]),
@@ -775,14 +775,15 @@ class MatchMonthCompareAndSetTests(unittest.TestCase):
         new = txn("t_new", "2026-09-05", "Dunder Mifflin Paper", 33.00)
         with mock.patch.object(store, "list_transactions", return_value=[old, new]), \
                 mock.patch.object(store, "list_invoices", return_value=[inv("inv_x", "Dunder Mifflin", 33.00, "2026-09-05")]), \
-                mock.patch.object(store, "used_invoice_ids", return_value={"inv_x"}), \
+                mock.patch.object(store, "used_invoice_parts", return_value={"inv_x": {"whole"}}), \
                 mock.patch.object(store_module.requests, "request", fake_request):
             counts = matching.match_month(store, None, 2026, 9, log=quiet)
         patches = [(p, body) for method, p, body in calls if method == "PATCH"]
         self.assertEqual(patches[0], ({"id": "eq.t_old", "invoice_status": "eq.possible", "invoice_id": "eq.inv_x",
-                                       "match_method": "eq.rule"}, {"invoice_id": None}))
+                                       "invoice_part": "is.null", "match_method": "eq.rule"},
+                                      {"invoice_id": None, "invoice_part": None}))
         self.assertEqual(patches[1][0], {"id": "eq.t_new", "invoice_status": "eq.missing", "invoice_id": "is.null",
-                                         "match_method": "is.null"})
+                                         "invoice_part": "is.null", "match_method": "is.null"})
         self.assertEqual(len(patches), 2)        # t_old lost its release, so it is not written again
         self.assertEqual(counts["skipped"], 2)
 
