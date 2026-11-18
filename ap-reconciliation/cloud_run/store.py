@@ -22,15 +22,23 @@ TRANSACTION_FIELDS = (
     "description", "supplier", "city", "country", "merchant_category", "type", "amount", "currency",
     "source_amount", "source_currency", "invoice_status", "invoice_id", "match_confidence",
     "match_method", "match_note", "cost_center", "usage", "note", "updated_by", "updated_at",
-    "created_at", "raw", "rejected_invoice_ids",
+    "created_at", "raw", "rejected_invoice_ids", "invoice_part",
 )
 CARD_FIELDS = ("last4", "label", "holder_name", "owner_email", "chat_space", "active", "updated_at")
 INVOICE_FIELDS = (
     "id", "file_name", "mime_type", "web_view_link", "folder_path", "month_folder", "vendor_folder",
     "modified_time", "size", "vendor", "invoice_number", "invoice_date", "total", "currency",
     "card_last4", "payment_method", "summary", "is_invoice", "extracted_at", "extraction_error",
-    "document_type", "removed_at",
+    "document_type", "removed_at", "card_charges",
 )
+
+def _parts(rows):
+    out = {}
+    for r in rows:
+        part = r.get("invoice_part")
+        out.setdefault(r["invoice_id"], set()).add("whole" if part is None else int(part))
+    return out
+
 
 PAGE = 1000
 NEVER = "1970-01-01T00:00:00Z"
@@ -243,6 +251,12 @@ class SupabaseStore:
         rows = self.select("transactions", {"select": "invoice_id", "order": "id", "invoice_id": "not.is.null"})
         return {r["invoice_id"] for r in rows}
 
+    def used_invoice_parts(self):
+        """{invoice id: the parts linked}: the listed card charges' indexes, "whole" for a whole link."""
+        rows = self.select("transactions", {"select": "invoice_id,invoice_part", "order": "id",
+                                            "invoice_id": "not.is.null"})
+        return _parts(rows)
+
     def month_summary(self):
         return self.select("month_summary", {"order": "year.desc,month.desc,card_last4.asc"})
 
@@ -443,15 +457,23 @@ class MemoryStore:
                 return None
             if expect and any(t.get(k) != v for k, v in expect.items()):
                 return None                 # changed meanwhile: the caller's compare-and-set fails
-            wanted = patch.get("invoice_id")
-            if wanted and any(o["id"] != txn_id and o.get("invoice_id") == wanted for o in self.transactions.values()):
-                # Same rule as the unique index transactions_invoice_unique in schema.sql.
+            wanted = patch.get("invoice_id", t.get("invoice_id"))
+            part = patch.get("invoice_part", t.get("invoice_part") if "invoice_id" not in patch else None)
+            if wanted and any(o["id"] != txn_id and o.get("invoice_id") == wanted
+                              and (o.get("invoice_part") is None) == (part is None)
+                              and (part is None or o.get("invoice_part") == part)
+                              for o in self.transactions.values()):
+                # Same rules as the unique indexes transactions_invoice_whole_unique and
+                # transactions_invoice_part_unique in schema.sql.
                 raise StoreError(f"invoice {wanted} is already linked to another transaction")
             t.update(patch)
             return dict(t)
 
     def used_invoice_ids(self):
         return {t["invoice_id"] for t in self.transactions.values() if t.get("invoice_id")}
+
+    def used_invoice_parts(self):
+        return _parts([t for t in self.transactions.values() if t.get("invoice_id")])
 
     def month_summary(self):
         groups = {}

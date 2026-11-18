@@ -167,6 +167,85 @@ def score_pair(txn, inv):
     return round(total, 4), a_score, v_score, days, note
 
 
+CHARGE_DAYS = 1      # a card charge an invoice lists posts the day before, the same day or the day after
+WHOLE = "whole"      # the key a link to a whole invoice takes in the sets of parts taken
+
+
+def listed_charges(inv):
+    """[(index, charge)] for the card charges an invoice lists (an Amazon order's "Credit Card
+    transactions") that are charges, not refunds; [] when it lists none."""
+    out = []
+    for n, c in enumerate(inv.get("card_charges") or []):
+        try:
+            if isinstance(c, dict) and c.get("amount") is not None and float(c["amount"]) > 0:
+                out.append((n, c))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def shared(inv):
+    """Does the invoice list several card charges? Then several transactions share it, one per charge
+    (transactions.invoice_part, the charge's index), and none may take it whole."""
+    return len([c for c in (inv.get("card_charges") or []) if isinstance(c, dict) and c.get("amount") is not None]) > 1
+
+
+def _day(value):
+    try:
+        return dt.date.fromisoformat(str(value)[:10]) if value else None
+    except ValueError:
+        return None
+
+
+def charge_match(transactions, invoices, taken=None, allowed=None, accept=None):
+    """Purchases paired with the card charges their invoices list: the same amount to the cent (as
+    billed, or the foreign amount when the invoice is in that currency), the same card when both show
+    one, and dates at most CHARGE_DAYS apart. Returns {txn_id: (inv_id, part, "matched", 0.99, note)}:
+    part is the charge's index when the invoice lists several (shared by several transactions), None
+    when it lists one (the whole invoice). taken: {invoice id: parts already linked, WHOLE for a whole
+    link}. The closest dates pair first; identical charges go to identical purchases in order."""
+    taken = {k: set(v) for k, v in (taken or {}).items()}
+    pairs = []
+    for t in transactions:
+        t_day = _day(t.get("txn_date"))
+        for inv in invoices:
+            charges = listed_charges(inv)
+            if not charges or t_day is None or rejected(t, inv) or (allowed is not None and not allowed(t, inv)):
+                continue
+            if inv.get("card_last4") and t.get("card_last4") and inv["card_last4"] != t["card_last4"]:
+                continue
+            cur = (inv.get("currency") or "").upper()
+            amounts = []
+            if not cur or cur == (t.get("currency") or "").upper():
+                amounts.append(abs(float(t["amount"])))
+            if t.get("source_amount") is not None and (not cur or cur == (t.get("source_currency") or "").upper()):
+                amounts.append(abs(float(t["source_amount"])))
+            many = shared(inv)
+            for n, c in charges:
+                if c.get("card_last4") and t.get("card_last4") and c["card_last4"] != t["card_last4"]:
+                    continue
+                if not any(abs(a - float(c["amount"])) < 0.005 for a in amounts):
+                    continue
+                c_day = _day(c.get("date"))
+                if c_day is None or abs((t_day - c_day).days) > CHARGE_DAYS:
+                    continue
+                if accept is not None and not accept(t, "matched", 0.99):
+                    continue
+                count = len(inv.get("card_charges") or [])
+                note = (f"card charge listed on the invoice: {c_day.isoformat()} {cur or t.get('currency') or ''} "
+                        f"{float(c['amount']):.2f}" + (f" (charge {n + 1} of {count})" if many else "")).replace("  ", " ")
+                pairs.append((abs((t_day - c_day).days), str(inv["id"]), n, t["id"], inv["id"], n if many else None, note))
+    pairs.sort(key=lambda p: p[:3])
+    out = {}
+    for _days, _iid, _n, tid, iid, part, note in pairs:
+        key = WHOLE if part is None else part
+        if tid in out or key in taken.get(iid, set()) or (part is not None and WHOLE in taken.get(iid, set())):
+            continue
+        out[tid] = (iid, part, "matched", 0.99, note)
+        taken.setdefault(iid, set()).add(key)
+    return out
+
+
 def rule_match(transactions, invoices, status_first=False, allowed=None, accept=None):
     """Greedy best-first pairing. Returns {txn_id: (inv_id, status, confidence, note)}.
 

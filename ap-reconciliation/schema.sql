@@ -65,6 +65,9 @@ create table if not exists invoices (
 );
 alter table invoices add column if not exists document_type text;
 alter table invoices add column if not exists removed_at timestamptz;
+-- The card transactions the document lists ([{"date", "amount", "card_last4"}], e.g. an Amazon order's
+-- "Credit Card transactions"); null for a reading made before this column existed.
+alter table invoices add column if not exists card_charges jsonb;
 create index if not exists invoices_month_folder_idx on invoices (month_folder);
 
 create table if not exists transactions (
@@ -102,7 +105,16 @@ create table if not exists transactions (
 );
 alter table transactions add column if not exists rejected_invoice_ids text[];
 create index if not exists transactions_month_idx on transactions (year, month, card_last4);
-create unique index if not exists transactions_invoice_unique on transactions (invoice_id) where invoice_id is not null;
+-- invoice_part: which of the invoice's listed card charges (its index in invoices.card_charges) the
+-- transaction is; null for a link to the whole invoice. An invoice that lists several charges (an Amazon
+-- order shipped in parts) is shared that way, one transaction per charge; any other invoice is linked to
+-- at most one transaction.
+alter table transactions add column if not exists invoice_part integer;
+drop index if exists transactions_invoice_unique;
+create unique index if not exists transactions_invoice_whole_unique on transactions (invoice_id)
+  where invoice_id is not null and invoice_part is null;
+create unique index if not exists transactions_invoice_part_unique on transactions (invoice_id, invoice_part)
+  where invoice_id is not null and invoice_part is not null;
 
 create table if not exists notifications (
   id              bigserial primary key,
