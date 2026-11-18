@@ -185,9 +185,79 @@ def listed_charges(inv):
 
 
 def shared(inv):
-    """Does the invoice list several card charges? Then several transactions share it, one per charge
-    (transactions.invoice_part, the charge's index), and none may take it whole."""
-    return len([c for c in (inv.get("card_charges") or []) if isinstance(c, dict) and c.get("amount") is not None]) > 1
+    """Does the invoice list several card charges (refunds aside)? Then several transactions share it,
+    one per charge (transactions.invoice_part, the charge's index in card_charges), and none may take
+    it whole."""
+    return len(listed_charges(inv)) > 1
+
+
+def charge_of(inv, part):
+    """(the listed charge at index `part`, its number among the charges, how many) or None when the
+    index is not a charge of that invoice (a re-read listed the charges differently)."""
+    listed = listed_charges(inv)
+    for pos, (n, c) in enumerate(listed):
+        if n == part:
+            return c, pos + 1, len(listed)
+    return None
+
+
+def charge_amounts(txn, inv):
+    """The purchase's amounts comparable with a charge listed on inv: as billed, or the foreign amount
+    when the invoice is in that currency."""
+    cur = (inv.get("currency") or "").upper()
+    amounts = []
+    if not cur or cur == (txn.get("currency") or "").upper():
+        amounts.append(abs(float(txn["amount"])))
+    if txn.get("source_amount") is not None and (not cur or cur == (txn.get("source_currency") or "").upper()):
+        amounts.append(abs(float(txn["source_amount"])))
+    return amounts
+
+
+def charge_fits(txn, inv, c, days=CHARGE_DAYS):
+    """Same amount to the cent, same card when both show one (the charge's own digits first, else the
+    invoice's), and the purchase or posting date at most `days` from the charge's (days=None: any)."""
+    card = c.get("card_last4") or inv.get("card_last4")
+    if card and txn.get("card_last4") and str(card) != str(txn["card_last4"]):
+        return False
+    if not any(abs(a - float(c["amount"])) < 0.005 for a in charge_amounts(txn, inv)):
+        return False
+    if days is None:
+        return True
+    gap = charge_days(txn, c)
+    return gap is not None and gap <= days
+
+
+def charge_days(txn, c):
+    """Days between the charge and the purchase: the smaller of the purchase date's and the posting
+    date's gap (a statement may show either), None when undated."""
+    c_day = _day(c.get("date"))
+    gaps = [abs((d - c_day).days) for d in (_day(txn.get("txn_date")), _day(txn.get("post_date"))) if d and c_day]
+    return min(gaps) if gaps else None
+
+
+def link_valid(txn, inv):
+    """Is the purchase's link to inv still sound? A whole link to an invoice that lists several charges
+    is not (it was made before the charges were read), nor a part link whose charge is gone or no
+    longer has the purchase's amount (a re-read listed the charges differently)."""
+    if not inv:
+        return False
+    part = txn.get("invoice_part")
+    if part is None:
+        return not shared(inv)
+    found = charge_of(inv, int(part))
+    return bool(found) and charge_fits(txn, inv, found[0], days=None)
+
+
+def link_view(txn, inv):
+    """The invoice as the purchase's link sees it: for a link to one listed charge, that charge's
+    amount, date and card in place of the order's total, date and card (for the checks a person sees)."""
+    part = txn.get("invoice_part")
+    found = charge_of(inv, int(part)) if inv and part is not None else None
+    if not found:
+        return inv
+    c = found[0]
+    return dict(inv, total=c["amount"], invoice_date=c.get("date") or inv.get("invoice_date"),
+                card_last4=c.get("card_last4") or inv.get("card_last4"))
 
 
 def _day(value):
@@ -207,34 +277,20 @@ def charge_match(transactions, invoices, taken=None, allowed=None, accept=None):
     taken = {k: set(v) for k, v in (taken or {}).items()}
     pairs = []
     for t in transactions:
-        t_day = _day(t.get("txn_date"))
         for inv in invoices:
             charges = listed_charges(inv)
-            if not charges or t_day is None or rejected(t, inv) or (allowed is not None and not allowed(t, inv)):
+            if not charges or rejected(t, inv) or (allowed is not None and not allowed(t, inv)):
                 continue
-            if inv.get("card_last4") and t.get("card_last4") and inv["card_last4"] != t["card_last4"]:
-                continue
-            cur = (inv.get("currency") or "").upper()
-            amounts = []
-            if not cur or cur == (t.get("currency") or "").upper():
-                amounts.append(abs(float(t["amount"])))
-            if t.get("source_amount") is not None and (not cur or cur == (t.get("source_currency") or "").upper()):
-                amounts.append(abs(float(t["source_amount"])))
-            many = shared(inv)
-            for n, c in charges:
-                if c.get("card_last4") and t.get("card_last4") and c["card_last4"] != t["card_last4"]:
-                    continue
-                if not any(abs(a - float(c["amount"])) < 0.005 for a in amounts):
-                    continue
-                c_day = _day(c.get("date"))
-                if c_day is None or abs((t_day - c_day).days) > CHARGE_DAYS:
+            many = len(charges) > 1
+            cur = (inv.get("currency") or t.get("currency") or "").upper()
+            for pos, (n, c) in enumerate(charges):
+                if not charge_fits(t, inv, c):
                     continue
                 if accept is not None and not accept(t, "matched", 0.99):
                     continue
-                count = len(inv.get("card_charges") or [])
-                note = (f"card charge listed on the invoice: {c_day.isoformat()} {cur or t.get('currency') or ''} "
-                        f"{float(c['amount']):.2f}" + (f" (charge {n + 1} of {count})" if many else "")).replace("  ", " ")
-                pairs.append((abs((t_day - c_day).days), str(inv["id"]), n, t["id"], inv["id"], n if many else None, note))
+                note = (f"card charge listed on the invoice: {_day(c.get('date')).isoformat()} {cur} "
+                        f"{float(c['amount']):.2f}" + (f" (charge {pos + 1} of {len(charges)})" if many else ""))
+                pairs.append((charge_days(t, c), str(inv["id"]), n, t["id"], inv["id"], n if many else None, note))
     pairs.sort(key=lambda p: p[:3])
     out = {}
     for _days, _iid, _n, tid, iid, part, note in pairs:
@@ -489,6 +545,47 @@ def invoice_checks(txn, inv, reading=False):
     return checks
 
 
+def _charge_view(inv, part):
+    found = charge_of(inv, int(part)) if inv and part is not None else None
+    if not found:
+        return None
+    c, number, count = found
+    return dict(c, number=number, of=count)
+
+
+def split_whole_links(store, inv, log=print):
+    """Purchases linked to `inv` whole before it was known to list several card charges (an Amazon
+    order read again): each takes the listed charge it is (same amount and card; the closest date,
+    the day either side first), compare-and-set. One that fits no free charge is set back to missing
+    unless a person linked it (a manual link stays as it is). Returns (moved to a charge, released)."""
+    if not shared(inv):
+        return 0, 0
+    holders = [t for t in store.transactions_for_invoice(inv["id"]) if t.get("invoice_part") is None]
+    taken = {n for n in (store.used_invoice_parts().get(inv["id"]) or set()) if n != WHOLE}
+    moved = released = 0
+    for t in sorted(holders, key=lambda t: str(t.get("txn_date") or "")):
+        fits = [(charge_days(t, c) if charge_days(t, c) is not None else 99, n) for n, c in listed_charges(inv)
+                if n not in taken and charge_fits(t, inv, c, days=None)]
+        expect = {"invoice_id": inv["id"], "invoice_part": None, "invoice_status": t.get("invoice_status"),
+                  "match_method": t.get("match_method")}
+        if fits:
+            n = min(fits)[1]
+            found = charge_of(inv, n)
+            note = f"; charge {found[1]} of {found[2]} listed on the invoice"
+            if store.update_transaction(t["id"], {"invoice_part": n, "match_note": (str(t.get("match_note") or "") + note)[:500]},
+                                        expect=expect) is not None:
+                taken.add(n)
+                moved += 1
+        elif t.get("match_method") != "manual":
+            if store.update_transaction(t["id"], {"invoice_status": "missing", "invoice_id": None, "invoice_part": None,
+                                                  "match_confidence": None, "match_method": None, "match_note": None,
+                                                  "updated_at": now_iso()}, expect=expect) is not None:
+                released += 1
+    if moved or released:
+        log(f"{inv.get('file_name')}: {moved} link(s) moved to the charge they are, {released} let go")
+    return moved, released
+
+
 def candidate_invoices(store, year, month):
     """Invoices a purchase of (year, month) may be matched with: the month's folder and its
     neighbours, real invoices with a total, not removed, not credit notes, and not a dashboard
@@ -577,7 +674,8 @@ def match_transaction(store, gemini, txn_id, use_ai=True, log=print, updated_by=
     if not found:
         method = None
 
-    current_valid = bool(own) and own in inv_by_id and own_status in ("matched", "possible")
+    current_valid = (bool(own) and own_status in ("matched", "possible")
+                     and link_valid(txn, inv_by_id.get(own) or next((i for i in candidates if i["id"] == own), None)))
     current = (own_status, txn.get("match_confidence"))
     if found and found[0] == own and part == own_part and current_valid:
         # The same invoice again: only a better status (possible -> matched) is worth writing; a
@@ -621,12 +719,14 @@ def match_transaction(store, gemini, txn_id, use_ai=True, log=print, updated_by=
             "method": final.get("match_method"), "confidence": final.get("match_confidence"),
             "note": final.get("match_note"), "previous_status": own_status, "previous_invoice_id": own,
             "changed": changed, "invoices_considered": len(pool),
-            "invoice": {k: inv.get(k) for k in ("vendor", "total", "currency", "invoice_date", "file_name")} if iid else None}
+            "invoice": (dict({k: inv.get(k) for k in ("vendor", "total", "currency", "invoice_date", "file_name")},
+                             charge=_charge_view(inv, final.get("invoice_part"))) if iid else None),
+            "invoice_part": final.get("invoice_part"), "previous_invoice_part": own_part}
 
 
 def is_candidate(inv):
     """An invoice a purchase may be matched with at all (candidate_invoices' test, one invoice)."""
-    return (inv.get("is_invoice", True) is not False and inv.get("total") is not None
+    return (inv.get("is_invoice", True) is not False and (inv.get("total") is not None or listed_charges(inv))
             and not inv.get("removed_at") and (inv.get("document_type") or "") != "credit_note"
             and not str(inv.get("extraction_error") or "").startswith("upload withdrawn"))
 
@@ -704,7 +804,7 @@ def match_new_invoices(store, gemini, invoice_ids, use_ai=True, log=print, judge
         that could no longer be proposed (removed from Drive, not an invoice, refiled in a month the
         purchase does not draw on) counts as nothing, as it does for the per-row Rematch."""
         current = held.get(t.get("invoice_id")) if t.get("invoice_status") == "possible" else None
-        if current is None or not is_candidate(current) or not serves(t, current):
+        if current is None or not is_candidate(current) or not serves(t, current) or not link_valid(t, current):
             return True
         return _better((status, conf), ("possible", t.get("match_confidence")))
 
@@ -797,7 +897,8 @@ def match_month(store, gemini, year, month, card=None, use_ai=True, log=print):
     for tid, (iid, status, conf, note) in ai_results.items():
         results[tid] = (iid, status, conf, "ai:" + note, None)
 
-    counts = {"checked": len(pending), "matched": 0, "possible": 0, "missing": 0, "invoices_available": len(available)}
+    counts = {"checked": len(pending), "matched": 0, "possible": 0, "missing": 0,
+              "invoices_available": len(available) + len([i for i in invoices if shared(i) and has_room(i, taken)])}
     stamp = now_iso()
     patches = []
     for t in pending:

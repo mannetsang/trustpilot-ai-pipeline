@@ -1089,10 +1089,16 @@ def link_part(store, txn, inv):
     free = [(n, c) for n, c in matching.listed_charges(inv) if n not in held]
     if not free:
         return False, "every card charge that invoice lists is already linked to a transaction"
-    amounts = [abs(float(txn["amount"]))] + ([abs(float(txn["source_amount"]))] if txn.get("source_amount") is not None else [])
-    n, c = min(free, key=lambda nc: (min(abs(a - float(nc[1]["amount"])) for a in amounts), nc[0]))
-    count = len(inv.get("card_charges") or [])
-    return n, f"charge {n + 1} of {count} ({c.get('date') or 'undated'}, {float(c['amount']):.2f})"
+    mine = [(n, c) for n, c in free if not (c.get("card_last4") and txn.get("card_last4")
+                                             and str(c["card_last4"]) != str(txn["card_last4"]))]
+    if not mine:
+        return False, "the charges of that invoice still free are on another card"
+    amounts = matching.charge_amounts(txn, inv) or [abs(float(txn["amount"]))]
+    n, c = min(mine, key=lambda nc: (round(min(abs(a - float(nc[1]["amount"])) for a in amounts), 2),
+                                     matching.charge_days(txn, nc[1]) if matching.charge_days(txn, nc[1]) is not None else 999,
+                                     nc[0]))
+    _c, number, count = matching.charge_of(inv, n)
+    return n, f"charge {number} of {count} ({c.get('date') or 'undated'}, {float(c['amount']):.2f})"
 
 
 def with_invoices(store, txns):
@@ -1111,13 +1117,12 @@ def with_invoices(store, txns):
                           if inv else None)
         if inv:
             row["invoice"]["reading"] = inv["id"] in reading
-            part = t.get("invoice_part")
-            charges = inv.get("card_charges") or []
-            if part is not None and 0 <= int(part) < len(charges):
-                row["invoice"]["charge"] = dict(charges[int(part)], number=int(part) + 1, of=len(charges))
+            charge = matching._charge_view(inv, t.get("invoice_part"))
+            if charge:
+                row["invoice"]["charge"] = charge
         # What the receipt says against the charge, worked out each time from the stored facts: a
         # disagreement is shown, never turned into a status (the link stays as the person made it).
-        row["checks"] = (matching.invoice_checks(t, inv, reading=inv["id"] in reading)
+        row["checks"] = (matching.invoice_checks(t, matching.link_view(t, inv), reading=inv["id"] in reading)
                          if inv and linked_by_hand(t) else [])
         row["status_label"] = STATUS_LABELS.get(t.get("invoice_status"), t.get("invoice_status"))
         out.append(row)
@@ -1727,13 +1732,22 @@ def api_transaction_update(txn_id):
                           "match_note": "confirmed by " + user["email"]})
             # Only the proposal this request read: a match run may have released or moved it meanwhile,
             # and confirming then would leave the row matched without an invoice.
-            expect = {"invoice_status": "possible", "invoice_id": txn["invoice_id"]}
+            expect = {"invoice_status": "possible", "invoice_id": txn["invoice_id"],
+                      "invoice_part": txn.get("invoice_part")}
+            proposed = store.get_invoice(txn["invoice_id"]) or {}
+            if txn.get("invoice_part") is None and matching.shared(proposed):
+                # Proposed whole before the order's charges were read: confirm the charge it is.
+                part, note = link_part(store, txn, proposed)
+                if part is False:
+                    return jsonify({"error": note + "; use Rematch"}), 409
+                patch.update({"invoice_part": part, "match_note": patch["match_note"] + f"; {note}"})
     elif action == "link":
         invoice_id = str(body.get("invoice_id") or "").strip()
         inv = store.get_invoice(invoice_id) if invoice_id else None
         if not inv:
             return jsonify({"error": "invoice not found"}), 404
-        if user["role"] != "ap" and inv.get("card_last4") and inv["card_last4"] != txn["card_last4"]:
+        if user["role"] != "ap" and inv.get("card_last4") and inv["card_last4"] != txn["card_last4"] \
+                and not matching.shared(inv):
             return jsonify({"error": f"that invoice shows card ending {inv['card_last4']}; ask accounts payable to link it"}), 403
         part, note = link_part(store, txn, inv)
         if part is False:
@@ -1754,7 +1768,12 @@ def api_transaction_update(txn_id):
     if not patch:
         return jsonify({"error": "nothing to update"}), 400
     patch.update({"updated_by": user["email"], "updated_at": now_iso()})
-    updated = store.update_transaction(txn_id, patch, expect=expect)
+    try:
+        updated = store.update_transaction(txn_id, patch, expect=expect)
+    except StoreError as exc:
+        if "already linked" in str(exc) or "23505" in str(exc) or "unique" in str(exc).lower():
+            return jsonify({"error": "that invoice was linked to another transaction meanwhile; reload."}), 409
+        raise
     if updated is None:
         return jsonify({"error": "This purchase changed meanwhile; reload."}), 409
     row = with_invoices(store, [updated])[0]
@@ -1878,8 +1897,9 @@ def api_invoices():
         row["linked"] = inv["id"] in taken and not matching.has_room(inv, taken)
         if matching.shared(inv):
             row["charges"] = len(matching.listed_charges(inv))
-            row["charges_linked"] = len([p for p in taken.get(inv["id"], ()) if p != matching.WHOLE])
-            row["card_charges"] = inv.get("card_charges")
+            row["charges_taken"] = sorted(p for p in taken.get(inv["id"], ()) if p != matching.WHOLE)
+            row["charges_linked"] = len(row["charges_taken"])
+            row["card_charges"] = [dict(c, index=n) for n, c in matching.listed_charges(inv)]
         out.append(row)
     return jsonify({"invoices": out, "month_folders": "all" if everything else folders})
 
@@ -2247,6 +2267,17 @@ def import_bank_file(drive, f, seen, uploaded_by, log=print):
     return row, summary
 
 
+def queue_months(store, add=(), done=()):
+    """Months still to match (app_state "bank_sync" months_pending), changed in place: the stored list
+    plus `add`, less `done`. Two writers (an import run and the reread command) each keep the other's
+    months. Returns the list."""
+    state = store.get_state("bank_sync") or {}
+    pending = ({tuple(m) for m in state.get("months_pending") or []} | {tuple(m) for m in add}) - {tuple(m) for m in done}
+    months = sorted(pending, reverse=True)
+    update_sync_state(store, months_pending=months)
+    return months
+
+
 def update_sync_state(store, **changes):
     """Merge `changes` into app_state "bank_sync" as it stands now: a run only writes the keys it
     owns, so an overlapping run's progress is not put back to an older copy."""
@@ -2577,8 +2608,8 @@ def sync_bank_folder(log=print, now=None):
                 else:
                     months = summary["months"]
                 pending |= {tuple(m) for m in months}
-                update_sync_state(store, months_pending=sorted(pending, reverse=True),
-                                  last_import={"name": row["name"], "at": row["checked_at"], "new": row["new_count"]})
+                queue_months(store, add=pending)
+                update_sync_state(store, last_import={"name": row["name"], "at": row["checked_at"], "new": row["new_count"]})
         # Invoices filed since the last run: a quick step per month folder, then one match step, before
         # the long full matches. The run's totals are what the dashboard's line reports.
         if INVOICE_WATCH_ON:
@@ -2614,7 +2645,7 @@ def sync_bank_folder(log=print, now=None):
                     break
             match_month(year, month, log=log)
             pending.discard((year, month))
-            update_sync_state(store, months_pending=sorted(pending, reverse=True))
+            queue_months(store, done=[(year, month)])
     finally:
         if lease is not None:
             lease.release()
@@ -2640,6 +2671,7 @@ def reread_card_charges(vendor="amazon", limit=None, log=print):
     word = (vendor or "").lower()
     todo = [r for r in store.list_invoices()
             if r.get("card_charges") is None and not r.get("removed_at") and r.get("month_folder")
+            and not r.get("extraction_error") and r.get("extracted_at")
             and word in f"{r.get('vendor_folder') or ''} {r.get('vendor') or ''}".lower()]
     todo.sort(key=lambda r: str(r.get("month_folder") or ""), reverse=True)     # recent months first
     if limit:
@@ -2667,15 +2699,17 @@ def reread_card_charges(vendor="amazon", limit=None, log=print):
         invoice_index._store_rows(store, good, log)
         done += len(good)
         for row in good:
+            if matching.shared(row):
+                # Linked whole before its charges were known: each link moves to the charge it is.
+                matching.split_whole_links(store, row, log)
+        for row in good:
             if len(row["card_charges"] or []) > 1 or any(r["id"] == row["id"] and (r.get("total") != row.get("total"))
                                                           for r in batch):
                 y, m = row["month_folder"].split()
                 months |= set(neighbouring_months(int(y), int(m)))
         log(f"reread: {done} read again, {failed} failed")
     if months:
-        state = store.get_state("bank_sync") or {}
-        pending = {tuple(m) for m in state.get("months_pending") or []} | months
-        update_sync_state(store, months_pending=sorted(pending, reverse=True))
+        queue_months(store, add=months)
         log(f"reread: {len(months)} month(s) queued for a full match")
     return {"to_read": len(todo), "read": done, "failed": failed, "months_queued": len(months)}
 

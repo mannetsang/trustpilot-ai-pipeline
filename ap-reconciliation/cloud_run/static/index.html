@@ -1823,7 +1823,10 @@
   // last4: the purchase's card; on a card with receipt upload the advice is Add receipt… instead of Link… or Drive.
   function rematchMessage(r, last4) {
     var upload = receiptsOn(last4);
-    var inv = r.invoice, what = inv ? (inv.vendor || inv.file_name || 'an invoice') + (inv.total !== null && inv.total !== undefined ? ' ' + money(inv.total, inv.currency || '') : '') : '';
+    // One of several card charges an order lists: name that charge, not the order's total.
+    var inv = r.invoice, amt = inv && inv.charge ? inv.charge.amount : inv && inv.total;
+    var what = inv ? (inv.vendor || inv.file_name || 'an invoice') + (amt !== null && amt !== undefined ? ' ' + money(amt, inv.currency || '') : '') +
+      (inv.charge ? ', charge ' + inv.charge.number + ' of ' + inv.charge.of : '') : '';
     var read = r.invoices_read ? ' ' + count(r.invoices_read, 'new invoice was', 'new invoices were') + ' read first.' : '';
     var possible = r.status === 'possible' ? ' Confirm it or click Not this.' : '';
     switch (r.outcome) {
@@ -1843,8 +1846,8 @@
   }
   // The job's row is a snapshot from its end; take only the invoice fields from it, so a cost
   // centre or usage saved on this row in the meantime is not shown as undone.
-  var REMATCH_FIELDS = ['invoice_status', 'invoice_id', 'invoice', 'status_label', 'match_confidence', 'match_method',
-                        'match_note', 'rejected_invoice_ids'];
+  var REMATCH_FIELDS = ['invoice_status', 'invoice_id', 'invoice_part', 'invoice', 'status_label', 'match_confidence',
+                        'match_method', 'match_note', 'rejected_invoice_ids'];
   function mergeRematchedRow(fresh) {
     var local = txnById(fresh.id);
     if (!local) return fresh;
@@ -2069,7 +2072,10 @@
     catch (e) { report(e, 'Could not load invoices'); closeModal(); return; }
     var invoices = (data.invoices || []).slice();
     invoices.forEach(function (inv) {
-      var amounts = [inv.total].concat((inv.card_charges || []).map(function (c) { return c && c.amount; }));
+      // An order that lists several card charges: its free charges (this purchase's own counts as free).
+      var taken = (inv.charges_taken || []).filter(function (n) { return !(t.invoice_id === inv.id && t.invoice_part === n); });
+      var amounts = inv.charges ? (inv.card_charges || []).filter(function (c) { return taken.indexOf(c.index) < 0; }).map(function (c) { return c.amount; })
+                                : [inv.total];
       inv._same = amounts.some(function (a) { return nearly(a, t.amount) || (t.source_amount !== null && t.source_amount !== undefined && nearly(a, t.source_amount)); });
     });
     invoices.sort(function (a, b) { return (b._same ? 1 : 0) - (a._same ? 1 : 0); });
@@ -2085,7 +2091,8 @@
       var q = ($('#invSearch', body).value || '').trim().toLowerCase();
       var rows = invoices.filter(function (inv) {
         if (!q) return true;
-        return [inv.vendor, inv.vendor_folder, inv.month_folder, inv.file_name, inv.invoice_number, inv.summary, inv.total !== null && inv.total !== undefined ? String(inv.total) : ''].join(' ').toLowerCase().indexOf(q) >= 0;
+        return [inv.vendor, inv.vendor_folder, inv.month_folder, inv.file_name, inv.invoice_number, inv.summary, inv.total !== null && inv.total !== undefined ? String(inv.total) : '']
+          .concat((inv.card_charges || []).map(function (c) { return String(c.amount); })).join(' ').toLowerCase().indexOf(q) >= 0;
       });
       $('#invBody', body).innerHTML = rows.length ? rows.map(function (inv) {
         var isThis = t.invoice_id === inv.id;
@@ -2093,7 +2100,7 @@
         var flags = '';
         if (isThis) flags += ' <span class="pill pill-up">this one</span>';
         else if (linked) flags += ' <span class="pill pill-grey">linked</span>';
-        if (inv.charges) flags += ' <span class="pill pill-grey" title="The invoice lists ' + inv.charges + ' card charges: ' +
+        if (inv.charges && !(inv.linked && !inv.charges_linked)) flags += ' <span class="pill pill-grey" title="The invoice lists ' + inv.charges + ' card charges: ' +
           esc((inv.card_charges || []).map(function (c) { return (c.date ? fmtDate(c.date) + ' ' : '') + money(c.amount, inv.currency || ''); }).join(', ')) +
           '. Each can be linked to its own purchase.">' + inv.charges_linked + ' of ' + inv.charges + ' charges linked</span>';
         if (inv.is_invoice === false) flags += ' <span class="pill pill-warn" title="' + esc(inv.summary || '') + '">not an invoice</span>';
@@ -2667,7 +2674,8 @@
   function rvFoundHtml(t) {
     var inv = t.invoice || {}, by = uploadedBy(t);
     var what = [inv.vendor || inv.vendor_folder || inv.file_name || 'Invoice'];
-    if (inv.total !== null && inv.total !== undefined) what.push(money(inv.total, inv.currency || ''));
+    if (inv.charge) what.push(money(inv.charge.amount, inv.currency || '') + ', charge ' + inv.charge.number + ' of ' + inv.charge.of);
+    else if (inv.total !== null && inv.total !== undefined) what.push(money(inv.total, inv.currency || ''));
     var where = ['Invoice', inv.month_folder, inv.vendor_folder].filter(Boolean).join(' › ');
     var file = safeUrl(inv.web_view_link)
       ? '<a class="link" href="' + esc(safeUrl(inv.web_view_link)) + '" target="_blank" rel="noopener noreferrer" title="Open the file in Drive">' + esc(what.join(' · ')) + ' ↗</a>'

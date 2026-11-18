@@ -180,6 +180,88 @@ class SharedInvoiceApiTests(ApiTestCase):
         self.assertTrue(o1["linked"])
 
 
+class MapFixTests(ApiTestCase):
+    """The gaps the map of one-invoice-per-charge code found."""
+
+    def order(self, iid="o1", charges=(("2026-07-16", 83.72, "1610"), ("2026-07-15", 68.94, "1610"))):
+        row = amazon(iid, 152.66, list(charges))
+        self.store.upsert_invoices([row])
+        return row
+
+    def test_a_relink_without_a_part_is_whole_and_whole_plus_parts_is_refused(self):
+        self.order()
+        self.store.upsert_invoices([inv("z", "Staples", 20.0, "2026-07-10", month_folder="2026 07")])
+        self.store.insert_transactions([txn("a", "2026-07-16", "Amzn", 68.94), txn("b", "2026-07-16", "Amzn", 83.72)])
+        self.store.update_transaction("a", {"invoice_id": "o1", "invoice_part": 1})
+        self.store.update_transaction("a", {"invoice_id": "z"})                       # no part named: whole
+        self.assertIsNone(self.store.get_transaction("a")["invoice_part"])
+        self.store.update_transaction("b", {"invoice_id": "o1", "invoice_part": 0})
+        with self.assertRaises(StoreError):
+            self.store.update_transaction("a", {"invoice_id": "o1"})                 # whole beside a part
+
+    def test_whole_links_made_before_the_charges_were_read_move_to_their_charge(self):
+        row = self.order()
+        self.store.insert_transactions([
+            dict(txn("t1", "2026-07-16", "Amzn Mktp Ca", 83.72, status="matched", invoice_id="o1", method="ai"),
+                 match_confidence=0.9),
+            txn("t2", "2026-07-16", "Amzn Mktp Ca", 68.94)])
+        moved, released = matching.split_whole_links(self.store, row, log=lambda *a: None)
+        self.assertEqual((moved, released), (1, 0))
+        self.assertEqual(self.store.get_transaction("t1")["invoice_part"], 0)
+        matching.match_month(self.store, None, 2026, 7, use_ai=False, log=lambda *a: None)
+        self.assertEqual(self.store.get_transaction("t2")["invoice_part"], 1)    # the sibling is free now
+
+    def test_a_whole_link_that_is_no_charge_is_let_go_unless_a_person_made_it(self):
+        row = self.order()
+        self.store.insert_transactions([
+            txn("ai", "2026-07-16", "Amzn Mktp Ca", 152.66, status="possible", invoice_id="o1", method="ai")])
+        self.assertEqual(matching.split_whole_links(self.store, row, log=lambda *a: None), (0, 1))
+        self.assertEqual(self.store.get_transaction("ai")["invoice_status"], "missing")
+        self.store.update_transaction("ai", {"invoice_status": "matched", "invoice_id": "o1", "match_method": "manual"})
+        self.assertEqual(matching.split_whole_links(self.store, row, log=lambda *a: None), (0, 0))
+        self.assertEqual(self.store.get_transaction("ai")["invoice_id"], "o1")
+
+    def test_an_order_paid_with_two_cards_matches_each_charge_on_its_own_card(self):
+        row = amazon("o2", 100.0, [("2026-07-16", 60.0, "1610"), ("2026-07-16", 40.0, "2887")], card="1610")
+        a, b = txn("a", "2026-07-16", "Amzn", 60.0), txn("b", "2026-07-16", "Amzn", 40.0, card="2887")
+        got = matching.charge_match([a, b], [row])
+        self.assertEqual({k: v[1] for k, v in got.items()}, {"a": 0, "b": 1})
+
+    def test_the_posting_date_counts_too(self):
+        row = self.order()
+        late = dict(txn("p", "2026-07-18", "Amzn Mktp Ca", 83.72), post_date="2026-07-17")
+        self.assertEqual(matching.charge_match([late], [row])["p"][1], 0)
+
+    def test_a_charge_linked_by_hand_is_checked_against_that_charge_not_the_order(self):
+        self.order()
+        self.store.insert_transactions([txn("t2", "2026-07-16", "Amzn Mktp Ca", 83.72)])
+        row = self.patch("t2", {"action": "link", "invoice_id": "o1"})["transaction"]
+        self.assertEqual([c for c in row["checks"] if c["level"] == "warn"], [])
+
+    def test_confirming_a_whole_proposal_of_a_split_order_confirms_its_charge(self):
+        self.order()
+        self.store.insert_transactions([
+            dict(txn("t1", "2026-07-16", "Amzn Mktp Ca", 68.94, status="possible", invoice_id="o1", method="ai"),
+                 match_confidence=0.7)])
+        row = self.patch("t1", {"action": "confirm"})["transaction"]
+        self.assertEqual((row["invoice_status"], row["invoice_part"]), ("matched", 1))
+
+    def test_months_queued_by_two_writers_are_all_kept(self):
+        import main
+        main.queue_months(self.store, add=[(2026, 7)])
+        main.queue_months(self.store, add=[(2026, 6)])
+        self.assertEqual(main.queue_months(self.store, done=[(2026, 7)]), [(2026, 6)])
+
+    def test_the_rematch_drops_a_whole_link_to_an_order_that_turned_out_split(self):
+        self.order()
+        self.store.insert_transactions([
+            dict(txn("t1", "2026-07-16", "Amzn Mktp Ca", 68.94, status="possible", invoice_id="o1", method="ai"),
+                 match_confidence=0.7)])
+        out = matching.match_transaction(self.store, None, "t1", use_ai=False, log=lambda *a: None)
+        self.assertEqual((out["outcome"], out["invoice_part"]), ("found", 1))
+        self.assertEqual(out["invoice"]["charge"]["amount"], 68.94)
+
+
 class RereadTests(ApiTestCase):
     def test_amazon_invoices_read_before_are_read_again_and_their_months_queued(self):
         import main

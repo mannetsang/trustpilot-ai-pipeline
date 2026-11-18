@@ -32,6 +32,14 @@ INVOICE_FIELDS = (
     "document_type", "removed_at", "card_charges",
 )
 
+def _whole_unless_part(patch):
+    """A patch that sets invoice_id without saying which charge links the whole invoice: invoice_part is
+    cleared, so a row never keeps the part of a link it no longer has (a PATCH leaves unnamed columns)."""
+    if "invoice_id" in patch and "invoice_part" not in patch:
+        return dict(patch, invoice_part=None)
+    return patch
+
+
 def _parts(rows):
     out = {}
     for r in rows:
@@ -240,7 +248,9 @@ class SupabaseStore:
 
     def update_transaction(self, txn_id, patch, expect=None):
         """The updated row, or None when there is no such row or, with `expect` ({column: value}),
-        when the row no longer holds those values (someone changed it meanwhile): compare and set."""
+        when the row no longer holds those values (someone changed it meanwhile): compare and set.
+        A patch that sets invoice_id without invoice_part links the whole invoice (the part is cleared)."""
+        patch = _whole_unless_part(patch)
         filters = {"id": f"eq.{txn_id}"}
         for column, value in (expect or {}).items():
             filters[column] = "is.null" if value is None else f"eq.{value}"
@@ -256,6 +266,9 @@ class SupabaseStore:
         rows = self.select("transactions", {"select": "invoice_id,invoice_part", "order": "id",
                                             "invoice_id": "not.is.null"})
         return _parts(rows)
+
+    def transactions_for_invoice(self, invoice_id):
+        return self.select("transactions", {"invoice_id": f"eq.{invoice_id}", "order": "id"})
 
     def month_summary(self):
         return self.select("month_summary", {"order": "year.desc,month.desc,card_last4.asc"})
@@ -457,17 +470,21 @@ class MemoryStore:
                 return None
             if expect and any(t.get(k) != v for k, v in expect.items()):
                 return None                 # changed meanwhile: the caller's compare-and-set fails
-            wanted = patch.get("invoice_id", t.get("invoice_id"))
-            part = patch.get("invoice_part", t.get("invoice_part") if "invoice_id" not in patch else None)
+            patch = _whole_unless_part(patch)
+            after = dict(t, **patch)
+            wanted, part = after.get("invoice_id"), after.get("invoice_part")
             if wanted and any(o["id"] != txn_id and o.get("invoice_id") == wanted
-                              and (o.get("invoice_part") is None) == (part is None)
-                              and (part is None or o.get("invoice_part") == part)
+                              and (part is None or o.get("invoice_part") is None or o.get("invoice_part") == part)
                               for o in self.transactions.values()):
-                # Same rules as the unique indexes transactions_invoice_whole_unique and
-                # transactions_invoice_part_unique in schema.sql.
+                # Same rules as schema.sql: the unique indexes transactions_invoice_whole_unique and
+                # transactions_invoice_part_unique, and the trigger that keeps an invoice from being
+                # linked whole and by charge at once.
                 raise StoreError(f"invoice {wanted} is already linked to another transaction")
             t.update(patch)
             return dict(t)
+
+    def transactions_for_invoice(self, invoice_id):
+        return [dict(t) for t in self.transactions.values() if t.get("invoice_id") == invoice_id]
 
     def used_invoice_ids(self):
         return {t["invoice_id"] for t in self.transactions.values() if t.get("invoice_id")}

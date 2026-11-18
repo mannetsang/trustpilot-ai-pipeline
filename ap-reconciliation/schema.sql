@@ -115,6 +115,24 @@ create unique index if not exists transactions_invoice_whole_unique on transacti
   where invoice_id is not null and invoice_part is null;
 create unique index if not exists transactions_invoice_part_unique on transactions (invoice_id, invoice_part)
   where invoice_id is not null and invoice_part is not null;
+-- ... and never both: an invoice linked whole is not also linked by charge. The lock serializes two
+-- writers of the same invoice, so neither can pass the check while the other's row is uncommitted.
+create or replace function transactions_invoice_link_guard() returns trigger language plpgsql as $$
+begin
+  if new.invoice_id is not null then
+    perform pg_advisory_xact_lock(hashtext('transactions.invoice_id:' || new.invoice_id));
+    if exists (select 1 from transactions o
+               where o.invoice_id = new.invoice_id and o.id <> new.id
+                 and (o.invoice_part is null) <> (new.invoice_part is null)) then
+      raise exception 'invoice % is already linked to another transaction (whole and by charge)', new.invoice_id
+        using errcode = 'unique_violation';
+    end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists transactions_invoice_link_guard on transactions;
+create trigger transactions_invoice_link_guard before insert or update of invoice_id, invoice_part on transactions
+  for each row execute function transactions_invoice_link_guard();
 
 create table if not exists notifications (
   id              bigserial primary key,

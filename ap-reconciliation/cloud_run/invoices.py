@@ -43,7 +43,7 @@ Extract the facts needed to match it to a credit-card charge. Return strict JSON
   "currency": "CAD",
   "card_last4": "last four digits of the card if printed, else null",
   "payment_method": "e.g. Visa ending 1610, PayPal, bank transfer, or null",
-  "card_charges": [{{"date": "YYYY-MM-DD", "amount": 12.34, "card_last4": "1610"}}],
+  "card_charges": [{{"date": "YYYY-MM-DD", "amount": 12.34, "card_last4": "the four digits shown, or null"}}],
   "summary": "one line: what was bought"}}
 
 Rules:
@@ -199,7 +199,7 @@ def extract_invoice(gemini, drive, record, content=None):
             "currency": (clean(facts.get("currency")) or "").upper()[:3] or None,
             "card_last4": last4(facts.get("card_last4")) or None,
             "payment_method": clean(facts.get("payment_method"))[:100] or None,
-            "card_charges": card_charges(facts.get("card_charges")),
+            "card_charges": card_charges(facts.get("card_charges")) or [],
             "summary": clean(facts.get("summary"))[:500],
         })
     except Exception as exc:  # noqa: BLE001 - stored per file, the run goes on
