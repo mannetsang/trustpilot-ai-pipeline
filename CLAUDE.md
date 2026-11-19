@@ -188,11 +188,19 @@ logs "no webhook" for the rest; it still re-matches every card. It can deploy
 and execute Cloud Run jobs and apply the schema. The job and the dashboard
 share a lease in `job_lease`, so their long steps never overlap. The same job
 also watches **Invoice/** through ap@'s Drive change feed: an invoice filed
-there (ap@'s e-mail attachments land in `EmailattatchmentOriginal/YYYY MM/`
-and something outside this repo files the invoices into
-`Invoice/YYYY MM/<vendor>/` within hours) is read and matched on the next
-run by `matching.match_new_invoices`, which only adds or improves links
-(`app_state` `invoice_watch`; `INVOICE_WATCH=0` turns it off).
+there is read and matched on the next run by `matching.match_new_invoices`,
+which only adds or improves links (`app_state` `invoice_watch`;
+`INVOICE_WATCH=0` turns it off). E-mailed invoices get there through the
+**invoice filer** in `mannetsang/ap-automation` (`invoice-filer/`, GitHub
+Actions, scheduled hourly but GitHub often runs it only every few hours): it
+reads ap@'s **Gmail** directly, files PDFs into `Invoice/YYYY MM/<vendor>/`
+and labels the mail `Invoice Filer/Filed` or `Not invoice`. It shares the
+`google-workspace-ap-*` OAuth triple with this service, so a replacement
+refresh token must carry **both** `gmail.modify` and `drive`: a Drive-only
+token keeps this service working but stops the filer with `403
+ACCESS_TOKEN_SCOPE_INSUFFICIENT` (Nov 16-19 2026). `EmailattatchmentOriginal/`
+is a separate attachment dump the filer does not read, mirrored into
+`EmailAttatchmentCopy/` by ap@'s Apps Script "Untitled project".
 
 ### Known data-quality caveats
 

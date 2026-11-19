@@ -181,9 +181,11 @@ updates its folder hints without another model call.
    met and how many read differently.
 7. **Invoice watch** (the same job, every run). An invoice filed under
    `Invoice/YYYY MM/<vendor>/` since the last run is read and matched by
-   itself: the e-mail filer's copies of ap@'s attachments (they land in
-   `EmailattatchmentOriginal/YYYY MM/` first and reach `Invoice/` within a
-   few hours), invoices filed by hand, receipts uploaded from the dashboard.
+   itself: invoices the e-mail filer (`mannetsang/ap-automation`,
+   `invoice-filer/`) saves from ap@'s Gmail, invoices filed by hand,
+   receipts uploaded from the dashboard. The filer reads Gmail, not
+   `EmailattatchmentOriginal/`; if e-mailed invoices stop arriving, check its
+   GitHub Actions runs first.
    Drive's change feed for ap@ says what moved (`app_state`
    `invoice_watch` keeps its page token, the month folders still to read,
    and `to_match`: every file the feed saw filed in a month folder, and
@@ -626,7 +628,7 @@ secret* otherwise):
 | `ap-reconciliation-supabase-service-key` | `SUPABASE_SERVICE_KEY` | service-role key of the AP Supabase project; bypasses RLS, server side only |
 | `google-workspace-ap-client-id` | `GOOGLE_WORKSPACE_AP_CLIENT_ID` | already exists: the OAuth client that issued the AP user's refresh token |
 | `google-workspace-ap-client-secret` | `GOOGLE_WORKSPACE_AP_CLIENT_SECRET` | already exists; the three stay together |
-| `google-workspace-ap-refresh-token` | `GOOGLE_WORKSPACE_AP_REFRESH_TOKEN` | already exists: `ap@superhairpieces.com`'s refresh token with the Drive scope |
+| `google-workspace-ap-refresh-token` | `GOOGLE_WORKSPACE_AP_REFRESH_TOKEN` | already exists: `ap@superhairpieces.com`'s refresh token with the `gmail.modify` and `drive` scopes. This service needs only Drive, but the invoice filer in `mannetsang/ap-automation` reads ap@'s Gmail with the same token |
 | `ap-reconciliation-card-webhooks` | `CARD_WEBHOOKS_JSON` | the JSON object of Chat webhooks |
 | `ap-reconciliation-dashboard-password` | `DASHBOARD_PASSWORD` | password mode only; not mounted while IAP is on (the workflow's `SECRETS` omits it). A new version changes it on the next instance and signs everyone out |
 | `SUPABASE_ACCESS_TOKEN` | (not mounted) | Supabase personal access token for `setup_db.py` only; optional, a local `.env` entry does the same |
@@ -870,7 +872,7 @@ next idle period, or at once with *Run workflow*.
 | `409 {"status": "busy"}` from an upload, index, match or notify | one job at a time per instance; wait for it (`/health` shows `last_job`) and retry. The dashboard retries by itself |
 | Invoice listed in the picker with *unsupported file type* | Word, Excel, zip or e-mail files are not read; save as PDF into the same folder. Files over 15 MB likewise. Such files are not retried; any other extraction error is retried on the next index |
 | Index keeps reporting the same `remaining` count | the files that fail are listed in the job log (`errors`); fix or remove them. The dashboard stops after two stalled rounds |
-| *AP token refresh failed ... invalid_grant* | the AP user's refresh token was revoked (password change, app removed under the account's third-party access, token unused for six months while the OAuth app is in *testing*). Mint a new one with the same client (OAuth Playground, scope `https://www.googleapis.com/auth/drive`, signed in as `ap@`), add it as a new version of `google-workspace-ap-refresh-token`, redeploy |
+| *AP token refresh failed ... invalid_grant* | the AP user's refresh token was revoked (password change, app removed under the account's third-party access, token unused for six months while the OAuth app is in *testing*). Mint a new one with the same client (OAuth Playground, scopes `https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/drive` - **both**: a Drive-only token stops the invoice filer in `mannetsang/ap-automation` with `403 ACCESS_TOKEN_SCOPE_INSUFFICIENT` - signed in as `ap@`), add it as a new version of `google-workspace-ap-refresh-token`, redeploy |
 | *Google Drive error ... 404* on the Invoice folder | the folder id is wrong, or the service is on ADC and the folder is not shared with the compute service account |
 | `database error: GET transactions -> 401` (PostgREST) | `SUPABASE_SERVICE_KEY` is wrong: the anon key instead of `service_role`, or the key was rotated in Supabase. Add the right one as a new secret version and redeploy |
 | `database error: ... 404 ... relation "..." does not exist` | the schema is not applied to this project: `setup_db.py --project-ref <ref>` |
