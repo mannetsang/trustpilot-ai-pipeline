@@ -162,6 +162,74 @@ class SharedInvoiceMatchingTests(unittest.TestCase):
         self.assertEqual(self.store.used_invoice_parts(), {"o1": {0, 1}})
 
 
+class FarChargeTests(unittest.TestCase):
+    """An item shipped, and charged, months after the order: order 111-6082563-0655443 is filed in
+    2026 01 and lists a charge of 226.98 on Apr 12; the statement line is in April."""
+
+    def setUp(self):
+        self.store = MemoryStore()
+        self.order = amazon("o1", 326.98, [("2026-01-21", 100.00, "9456"), ("2026-04-12", 226.98, "9456")],
+                            date="2026-01-20", month_folder="2026 01", card="9456")
+        self.store.upsert_invoices([self.order])
+        self.quiet = dict(use_ai=False, log=lambda *a: None)
+
+    def test_the_month_of_the_charge_matches_it_whatever_month_the_order_is_filed_in(self):
+        self.store.insert_transactions([txn("t", "2026-04-12", "AMAZON.CA*AB12", 226.98, card="9456")])
+        matching.match_month(self.store, None, 2026, 4, **self.quiet)
+        t = self.store.get_transaction("t")
+        self.assertEqual((t["invoice_status"], t["invoice_id"], t["invoice_part"]), ("matched", "o1", 1))
+
+    def test_a_charge_a_day_from_the_month_counts_two_days_does_not(self):
+        self.store.upsert_invoices([amazon("o2", 90.0, [("2026-01-05", 40.0, "9456"), ("2026-03-31", 50.0, "9456")],
+                                           date="2026-01-04", month_folder="2026 01", card="9456"),
+                                    amazon("o3", 90.0, [("2026-01-05", 40.0, "9456"), ("2026-03-30", 60.0, "9456")],
+                                           date="2026-01-04", month_folder="2026 01", card="9456")])
+        ids = {i["id"] for i in matching.candidate_invoices(self.store, 2026, 4)}
+        self.assertEqual(ids, {"o1", "o2"})                  # Mar 31 is a day from April; Mar 30 is two
+        self.store.insert_transactions([txn("t", "2026-04-01", "AMAZON.CA*CD34", 50.0, card="9456")])
+        matching.match_month(self.store, None, 2026, 4, **self.quiet)
+        self.assertEqual(self.store.get_transaction("t")["invoice_id"], "o2")
+
+    def test_a_far_order_is_never_offered_whole_nor_one_listing_a_single_charge(self):
+        single = amazon("o4", 75.0, [("2026-04-12", 75.0, "9456")], date="2026-01-20", month_folder="2026 01",
+                        card="9456")
+        self.store.upsert_invoices([single])
+        self.assertEqual({i["id"] for i in matching.candidate_invoices(self.store, 2026, 4)}, {"o1"})
+        self.store.insert_transactions([txn("w", "2026-04-12", "AMAZON.CA*EF56", 326.98, card="9456"),
+                                        txn("s", "2026-04-12", "AMAZON.CA*GH78", 75.0, card="9456")])
+        matching.match_month(self.store, None, 2026, 4, **self.quiet)
+        self.assertEqual(self.store.get_transaction("w")["invoice_status"], "missing")    # the order's total
+        self.assertEqual(self.store.get_transaction("s")["invoice_status"], "missing")    # filed too far away
+
+    def test_a_removed_order_is_not_found_by_its_charges(self):
+        self.store.update_invoices(["o1"], {"removed_at": "2026-11-01T00:00:00Z"})
+        self.assertEqual(matching.candidate_invoices(self.store, 2026, 4), [])
+
+    def test_the_per_row_rematch_finds_the_far_charge_and_keeps_it(self):
+        self.store.insert_transactions([txn("t", "2026-04-13", "AMAZON.CA*AB12", 226.98, card="9456")])
+        out = matching.match_transaction(self.store, None, "t", **self.quiet)
+        self.assertEqual((out["outcome"], out["invoice_id"]), ("found", "o1"))
+        again = matching.match_transaction(self.store, None, "t", **self.quiet)
+        self.assertEqual((again["outcome"], again["invoice_id"]), ("same", "o1"))
+
+    def test_the_watch_matches_a_new_orders_charge_in_a_far_month(self):
+        self.store.insert_transactions([txn("t1", "2026-01-21", "AMAZON.CA*AA11", 100.00, card="9456"),
+                                        txn("t2", "2026-04-12", "AMAZON.CA*AB12", 226.98, card="9456")])
+        counts = matching.match_new_invoices(self.store, None, ["o1"], **self.quiet)
+        self.assertEqual(counts["matched"], 2)
+        self.assertEqual(self.store.used_invoice_parts(), {"o1": {0, 1}})
+
+    def test_serves_and_the_months_to_match(self):
+        far = txn("t", "2026-04-12", "AMAZON.CA*AB12", 226.98, card="9456")
+        other = txn("u", "2026-04-12", "AMAZON.CA*AB12", 99.99, card="9456")
+        self.assertTrue(matching.serves(far, self.order))
+        self.assertFalse(matching.serves(other, self.order))          # no charge of its amount
+        self.assertEqual(matching.months_to_match(self.order),
+                         [(2025, 12), (2026, 1), (2026, 2), (2026, 4)])
+        plain = inv("p", "Staples", 20.0, "2026-01-20", month_folder="2026 01")
+        self.assertEqual(matching.months_to_match(plain), [(2025, 12), (2026, 1), (2026, 2)])
+
+
 class SharedInvoiceApiTests(ApiTestCase):
     def setUp(self):
         super().setUp()
@@ -321,6 +389,25 @@ class RereadTests(ApiTestCase):
         self.assertIsNone(self.store.get_invoice("s1").get("card_charges"))   # another vendor is left alone
         pending = (self.store.get_state("bank_sync") or {}).get("months_pending")
         self.assertEqual(sorted(tuple(m) for m in pending), [(2026, 6), (2026, 7), (2026, 8)])
+
+    def test_the_month_of_a_charge_long_after_the_order_is_queued_too(self):
+        import main
+        from unittest import mock
+        from test_pipeline import FakeDrive, FakeGemini, file_, folder
+        old = dict(inv("o1", "Amazon.ca", 326.98, "2026-01-20", month_folder="2026 01", vendor_folder="Amazon"),
+                   file_name="2026-01-20_111-6082563-0655443.pdf")
+        self.store.upsert_invoices([old])
+        drive = FakeDrive({"root": [folder("m01", "2026 01")], "m01": [folder("v", "Amazon")],
+                           "v": [file_("o1", old["file_name"])]})
+        facts = {"is_invoice": True, "vendor": "Amazon.ca", "invoice_number": "111-6082563-0655443",
+                 "invoice_date": "2026-01-20", "total": 326.98, "currency": "CAD", "card_last4": "9456",
+                 "card_charges": [{"date": "2026-01-21", "amount": 100.00, "card_last4": "9456"},
+                                  {"date": "2026-04-12", "amount": 226.98, "card_last4": "9456"}]}
+        main.set_clients(drive=drive, gemini=FakeGemini(handler=lambda parts, model: dict(facts)))
+        with mock.patch.object(main, "AI_DISABLED", False):
+            main.reread_card_charges("amazon", log=lambda *a: None)
+        pending = (self.store.get_state("bank_sync") or {}).get("months_pending")
+        self.assertEqual(sorted(tuple(m) for m in pending), [(2025, 12), (2026, 1), (2026, 2), (2026, 4)])
 
 
 class IndexSplitTests(unittest.TestCase):

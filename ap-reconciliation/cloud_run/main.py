@@ -2721,8 +2721,7 @@ def reread_card_charges(vendor="amazon", limit=None, log=print):
             done += 1
             current = dict(current, card_charges=row["card_charges"])
             if matching.shared(current):
-                y, m = current["month_folder"].split()
-                batch_months |= set(neighbouring_months(int(y), int(m)))
+                batch_months |= set(matching.months_to_match(current))
                 # Linked whole before its charges were known: each link moves to the charge it is.
                 matching.split_whole_links(store, current, log)
         if batch_months:

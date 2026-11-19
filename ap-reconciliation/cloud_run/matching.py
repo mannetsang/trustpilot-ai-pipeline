@@ -267,6 +267,41 @@ def _day(value):
         return None
 
 
+def charged_between(inv, start, end):
+    """Does the invoice list a card charge dated from start to end (dates, both included)?"""
+    return any(d and start <= d <= end for d in (_day(c.get("date")) for _, c in listed_charges(inv)))
+
+
+def charge_months(inv):
+    """The months whose purchases may be one of the card charges an order lists (CHARGE_DAYS either
+    side of each charge's date): [] unless it lists several. An Amazon item can ship, and be charged,
+    months after the order is filed."""
+    if not shared(inv):
+        return []
+    pad = dt.timedelta(days=CHARGE_DAYS)
+    months = set()
+    for _, c in listed_charges(inv):
+        d = _day(c.get("date"))
+        if d:
+            months |= {(x.year, x.month) for x in (d - pad, d, d + pad)}
+    return sorted(months)
+
+
+def months_to_match(inv):
+    """The months whose purchases may draw on the invoice: its folder's month and the months either
+    side, and the months of the card charges it lists."""
+    ym = _month_of_folder(inv.get("month_folder"))
+    return sorted(set(neighbouring_months(*ym) if ym else []) | set(charge_months(inv)))
+
+
+def _month_span(year, month, pad_days=0):
+    """(first day, last day) of the month, widened by pad_days each way."""
+    first = dt.date(int(year), int(month), 1)
+    nxt = dt.date(first.year + first.month // 12, first.month % 12 + 1, 1)
+    pad = dt.timedelta(days=pad_days)
+    return first - pad, nxt - dt.timedelta(days=1) + pad
+
+
 def charge_match(transactions, invoices, taken=None, allowed=None, accept=None):
     """Purchases paired with the card charges of invoices that list several (an Amazon order shipped
     in parts): the same amount to the cent (as billed, or the foreign amount when the invoice is in
@@ -607,9 +642,18 @@ def split_whole_links(store, inv, log=print):
 def candidate_invoices(store, year, month):
     """Invoices a purchase of (year, month) may be matched with: the month's folder and its
     neighbours, real invoices with a total, not removed, not credit notes, and not a dashboard
-    upload taken back (withdrawn or removed with Remove…: an index run may have cleared removed_at)."""
+    upload taken back (withdrawn or removed with Remove…: an index run may have cleared removed_at).
+    Also, filed in any other month, the orders that list a card charge dated in this one (CHARGE_DAYS
+    either side): an Amazon item shipped and charged months after the order. Those list several
+    charges, so only charge_match uses them; the rules and the judge never see them whole."""
     folders = [month_folder_name(y, m) for y, m in neighbouring_months(int(year), int(month))]
-    return [i for i in store.list_invoices(month_folders=folders) if is_candidate(i)]
+    rows = store.list_invoices(month_folders=folders)
+    start, end = _month_span(year, month, CHARGE_DAYS)
+    far = [r["id"] for r in store.split_invoice_charges()
+           if r.get("month_folder") not in folders and shared(r) and charged_between(r, start, end)]
+    if far:
+        rows += store.list_invoices(ids=far)
+    return [i for i in rows if is_candidate(i)]
 
 
 REMATCHABLE = ("missing", "possible", "matched")
@@ -758,9 +802,13 @@ def _month_of_folder(name):
 
 
 def serves(txn, inv):
-    """Is the invoice filed in a month folder the purchase's month may draw on (its own or a neighbour)?"""
+    """May the purchase draw on the invoice? It is filed in the purchase's month folder or a neighbour,
+    or it lists several card charges and one of them is the purchase's (same amount and card, within
+    CHARGE_DAYS), however long after the order that charge came."""
     folders = {month_folder_name(y, m) for y, m in neighbouring_months(int(txn["year"]), int(txn["month"]))}
-    return inv.get("month_folder") in folders
+    if inv.get("month_folder") in folders:
+        return True
+    return shared(inv) and any(charge_fits(txn, inv, c) for _, c in listed_charges(inv))
 
 
 def plausible(txn, inv):
@@ -806,7 +854,7 @@ def match_new_invoices(store, gemini, invoice_ids, use_ai=True, log=print, judge
     counts["invoices"] = len(new)
     if not new:
         return counts
-    months = sorted({ym for i in new for ym in neighbouring_months(*_month_of_folder(i["month_folder"]))})
+    months = sorted({ym for i in new for ym in months_to_match(i)})
     pending = [t for y, m in months for t in store.list_transactions(y, m)
                if t.get("type") == "purchase" and t.get("invoice_status") in ("missing", "possible")
                and t.get("match_method") != "manual"]

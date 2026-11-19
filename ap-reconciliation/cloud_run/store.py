@@ -270,6 +270,13 @@ class SupabaseStore:
     def transactions_for_invoice(self, invoice_id):
         return self.select("transactions", {"invoice_id": f"eq.{invoice_id}", "order": "id"})
 
+    def split_invoice_charges(self):
+        """[{id, month_folder, card_charges}] for the invoices not removed that list two or more card
+        charges (refunds included: matching.shared decides): what the matcher needs to find the orders
+        charged in a month, whatever month they are filed in."""
+        return self.select("invoices", {"select": "id,month_folder,card_charges", "order": "id",
+                                        "removed_at": "is.null", "card_charges->1": "not.is.null"})
+
     def month_summary(self):
         return self.select("month_summary", {"order": "year.desc,month.desc,card_last4.asc"})
 
@@ -491,6 +498,11 @@ class MemoryStore:
 
     def used_invoice_parts(self):
         return _parts([t for t in self.transactions.values() if t.get("invoice_id")])
+
+    def split_invoice_charges(self):
+        return [{"id": r["id"], "month_folder": r.get("month_folder"), "card_charges": r.get("card_charges")}
+                for r in sorted(self.invoices.values(), key=lambda r: r["id"])
+                if not r.get("removed_at") and isinstance(r.get("card_charges"), list) and len(r["card_charges"]) > 1]
 
     def month_summary(self):
         groups = {}
