@@ -1089,8 +1089,8 @@ def link_part(store, txn, inv):
     free = [(n, c) for n, c in matching.listed_charges(inv) if n not in held]
     if not free:
         return False, "every card charge that invoice lists is already linked to a transaction"
-    mine = [(n, c) for n, c in free if not (c.get("card_last4") and txn.get("card_last4")
-                                             and str(c["card_last4"]) != str(txn["card_last4"]))]
+    matching.refresh_card_aliases(store)
+    mine = [(n, c) for n, c in free if not matching.cards_differ(c.get("card_last4"), txn.get("card_last4"))]
     if not mine:
         return False, "the charges of that invoice still free are on another card"
     amounts = matching.charge_amounts(txn, inv) or [abs(float(txn["amount"]))]
@@ -1104,6 +1104,8 @@ def link_part(store, txn, inv):
 def with_invoices(store, txns):
     ids = sorted({t["invoice_id"] for t in txns if t.get("invoice_id")})
     invoices = {i["id"]: i for i in store.list_invoices(ids=ids)} if ids else {}
+    if invoices:
+        matching.refresh_card_aliases(store)     # a reissued card's number is no "other card"
     with _reading_lock:
         reading = set(_reading)
     out = []
@@ -1145,13 +1147,23 @@ def month_list(store):
     return [months[k] for k in sorted(months, reverse=True)]
 
 
-def card_view(c):
+def card_view(c, aliases=None):
+    """aliases: {number receipts show: statement card} (matching.card_aliases): the numbers merchants
+    may show for this card since it was reissued."""
     return {"last4": c["last4"], "label": c.get("label") or f"Card ending {c['last4']}",
+            "receipts_show": sorted(n for n, card in (aliases or {}).items() if card == c["last4"]),
             "holder_name": c.get("holder_name") or "", "owner_email": c.get("owner_email") or "",
             "chat_space": c.get("chat_space") or "", "active": c.get("active", True) is not False,
             "webhook_configured": bool(CARD_WEBHOOKS.get(c["last4"])),
             "webhook_default": bool(chat.webhook_for(CARD_WEBHOOKS, c["last4"])),
             "receipt_upload": receipt_upload_enabled(c["last4"])}
+
+
+def card_views(cards, seen=None):
+    """The cards for the dashboard; with seen (the card numbers invoices show), each card's reissue
+    numbers that receipts actually show (the Cards dialog)."""
+    aliases = {n: c for n, c in matching.card_aliases([c["last4"] for c in cards]).items() if n in (seen or ())}
+    return [card_view(c, aliases) for c in cards]
 
 
 # ---------------------------------------------------------------------------
@@ -1656,7 +1668,7 @@ def api_me():
 def api_months():
     require_user()
     store = get_store()
-    return jsonify({"months": month_list(store), "cards": [card_view(c) for c in store.list_cards()],
+    return jsonify({"months": month_list(store), "cards": card_views(store.list_cards()),
                     "cost_centers": store.list_cost_centers()})
 
 
@@ -1683,7 +1695,7 @@ def api_transactions():
     for row in rows:
         row["editable"] = user["role"] == "ap" or row["card_last4"] in owned
     return jsonify({"year": year, "month": month, "transactions": rows,
-                    "cards": [card_view(c) for c in cards], "cost_centers": store.list_cost_centers(),
+                    "cards": card_views(cards), "cost_centers": store.list_cost_centers(),
                     "statements": store.list_statements(year, month),
                     "notifications": store.list_notifications(year, month)[:20]})
 
@@ -1748,7 +1760,8 @@ def api_transaction_update(txn_id):
         inv = store.get_invoice(invoice_id) if invoice_id else None
         if not inv:
             return jsonify({"error": "invoice not found"}), 404
-        if user["role"] != "ap" and inv.get("card_last4") and inv["card_last4"] != txn["card_last4"] \
+        matching.refresh_card_aliases(store)
+        if user["role"] != "ap" and matching.cards_differ(inv.get("card_last4"), txn["card_last4"]) \
                 and not matching.shared(inv):
             return jsonify({"error": f"that invoice shows card ending {inv['card_last4']}; ask accounts payable to link it"}), 403
         part, note = link_part(store, txn, inv)
@@ -1909,7 +1922,8 @@ def api_invoices():
 @app.route("/api/cards", methods=["GET"])
 def api_cards():
     require_user()
-    return jsonify({"cards": [card_view(c) for c in get_store().list_cards()]})
+    store = get_store()
+    return jsonify({"cards": card_views(store.list_cards(), store.invoice_card_numbers())})
 
 
 @app.route("/api/cards", methods=["POST"])
@@ -1935,7 +1949,8 @@ def api_cards_update():
         row["active"] = bool(body.get("active"))
     get_store().upsert_cards([row])
     print(f"card {last4} updated by {user['email']}")
-    return jsonify({"cards": [card_view(c) for c in get_store().list_cards()]})
+    store = get_store()
+    return jsonify({"cards": card_views(store.list_cards(), store.invoice_card_numbers())})
 
 
 @app.route("/api/statements", methods=["GET"])

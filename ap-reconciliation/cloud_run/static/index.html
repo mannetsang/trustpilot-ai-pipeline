@@ -2791,11 +2791,12 @@
 
   // -- Cards settings ------------------------------------------------------------
   function cardsModalHtml() {
-    return '<div class="sub mb-3">Labels show in the dashboard and in the Chat cards. The owners (one address, or several separated by commas) may code the card\'s transactions and add its receipts. The Chat space name is for reference; the webhook itself is configured on the server.</div>' +
+    return '<div class="sub mb-3">Labels show in the dashboard and in the Chat cards. The owners (one address, or several separated by commas) may code the card\'s transactions and add its receipts. The Chat space name is for reference; the webhook itself is configured on the server. A card shown with "receipts show" was reissued: merchants that keep it on file print the new number, and those receipts are matched to it.</div>' +
       '<div class="list-wrap"><table class="list" id="cardsTable"><thead><tr><th>Card</th><th>Label</th><th>Holder</th><th>Owner email</th><th>Chat space</th><th>Active</th><th>Webhook</th><th></th></tr></thead><tbody>' +
       (state.cards.length ? state.cards.map(function (c) {
         return '<tr data-last4="' + esc(c.last4) + '">' +
-          '<td class="font-medium" style="white-space:nowrap;">•••• ' + esc(c.last4) + '</td>' +
+          '<td class="font-medium" style="white-space:nowrap;">•••• ' + esc(c.last4) +
+            ((c.receipts_show || []).length ? '<div class="sub" style="font-weight:400;" title="The card was reissued: merchants that keep it on file show the new number. Their receipts are matched to this card.">receipts show ' + c.receipts_show.map(esc).join(', ') + '</div>' : '') + '</td>' +
           '<td><input class="inp" data-cf="label" value="' + esc(c.label || '') + '" style="min-width:160px;" /></td>' +
           '<td><input class="inp" data-cf="holder_name" value="' + esc(c.holder_name || '') + '" style="min-width:130px;" /></td>' +
           '<td><input class="inp" data-cf="owner_email" type="email" multiple value="' + esc(c.owner_email || '') + '" placeholder="name@superhairpieces.com" title="One address, or several separated by commas" style="min-width:220px;" /></td>' +
@@ -2806,7 +2807,11 @@
       }).join('') : '<tr><td colspan="8"><div class="empty" style="padding: 24px;">No cards yet; they appear after the first upload.</div></td></tr>') +
       '</tbody></table></div>';
   }
-  function openCardsModal() {
+  async function openCardsModal() {
+    try {
+      var fresh = await api('/api/cards');            // with the reissued numbers receipts show
+      state.cards = fresh.cards || state.cards;
+    } catch (e) { /* the list already loaded will do */ }
     var body = openModal('Cards', cardsModalHtml(), true);
     body.addEventListener('click', async function (ev) {
       var b = ev.target.closest('button[data-save-card]'); if (!b || b.disabled) return;

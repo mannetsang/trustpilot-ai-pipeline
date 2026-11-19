@@ -270,6 +270,21 @@ class SupabaseStore:
     def transactions_for_invoice(self, invoice_id):
         return self.select("transactions", {"invoice_id": f"eq.{invoice_id}", "order": "id"})
 
+    def invoice_card_numbers(self):
+        """The card numbers (last four) invoices not removed show."""
+        rows = self.select("invoices", {"select": "card_last4", "order": "id", "removed_at": "is.null",
+                                        "card_last4": "not.is.null"})
+        return {r["card_last4"] for r in rows if r.get("card_last4")}
+
+    def record_inferred_charges(self, invoice_id, charges, read_charges, read_extracted_at):
+        """Set card_charges to charges the matcher inferred, only while the invoice still holds the
+        reading they were worked out from (no re-read since). True when written."""
+        filters = {"id": f"eq.{invoice_id}", "removed_at": "is.null",
+                   "extracted_at": f"eq.{read_extracted_at}" if read_extracted_at else "is.null"}
+        if read_charges is None:
+            filters["card_charges"] = "is.null"
+        return bool(self.patch("invoices", filters, {"card_charges": charges}))
+
     def split_invoice_charges(self):
         """[{id, month_folder, card_charges}] for the invoices not removed that list two or more card
         charges (refunds included: matching.shared decides): what the matcher needs to find the orders
@@ -498,6 +513,18 @@ class MemoryStore:
 
     def used_invoice_parts(self):
         return _parts([t for t in self.transactions.values() if t.get("invoice_id")])
+
+    def invoice_card_numbers(self):
+        return {r["card_last4"] for r in self.invoices.values() if r.get("card_last4") and not r.get("removed_at")}
+
+    def record_inferred_charges(self, invoice_id, charges, read_charges, read_extracted_at):
+        with self.lock:
+            r = self.invoices.get(invoice_id)
+            if (not r or r.get("removed_at") or r.get("extracted_at") != read_extracted_at
+                    or (read_charges is None and r.get("card_charges") is not None)):
+                return False
+            r["card_charges"] = [dict(c) for c in charges]
+            return True
 
     def split_invoice_charges(self):
         return [{"id": r["id"], "month_folder": r.get("month_folder"), "card_charges": r.get("card_charges")}
