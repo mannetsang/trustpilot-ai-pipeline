@@ -168,6 +168,10 @@ def score_pair(txn, inv):
 
 
 CHARGE_DAYS = 1      # a card charge an invoice lists posts the day before, the same day or the day after
+POST_LAG_DAYS = 7    # a statement line posts up to a week after the purchase (5,166 of 5,167 lines, Nov 2026)
+# How far either side of a charge's date its purchase may be dated, given that charge_fits accepts the
+# posting date too: the reach of the searches for orders filed far from the charge (never the test).
+CHARGE_REACH_DAYS = CHARGE_DAYS + POST_LAG_DAYS
 WHOLE = "whole"      # the key a link to a whole invoice takes in the sets of parts taken
 
 
@@ -273,17 +277,23 @@ def charged_between(inv, start, end):
 
 
 def charge_months(inv):
-    """The months whose purchases may be one of the card charges an order lists (CHARGE_DAYS either
-    side of each charge's date): [] unless it lists several. An Amazon item can ship, and be charged,
-    months after the order is filed."""
+    """The months whose purchases may be one of the card charges an order lists (CHARGE_REACH_DAYS
+    either side of each charge's date: a purchase dated earlier still fits by its posting date): []
+    unless it lists several. An Amazon item can ship, and be charged, months after the order is filed.
+    A date at the very end of the calendar (a misreading) is skipped, not an error."""
     if not shared(inv):
         return []
-    pad = dt.timedelta(days=CHARGE_DAYS)
+    pad = dt.timedelta(days=CHARGE_REACH_DAYS)
     months = set()
     for _, c in listed_charges(inv):
         d = _day(c.get("date"))
-        if d:
-            months |= {(x.year, x.month) for x in (d - pad, d, d + pad)}
+        if not d:
+            continue
+        try:
+            span = (d - pad, d, d + pad)            # the reach is under a month: its ends and middle cover it
+        except OverflowError:
+            continue
+        months |= {(x.year, x.month) for x in span}
     return sorted(months)
 
 
@@ -643,12 +653,13 @@ def candidate_invoices(store, year, month):
     """Invoices a purchase of (year, month) may be matched with: the month's folder and its
     neighbours, real invoices with a total, not removed, not credit notes, and not a dashboard
     upload taken back (withdrawn or removed with Remove…: an index run may have cleared removed_at).
-    Also, filed in any other month, the orders that list a card charge dated in this one (CHARGE_DAYS
-    either side): an Amazon item shipped and charged months after the order. Those list several
-    charges, so only charge_match uses them; the rules and the judge never see them whole."""
+    Also, filed in any other month, the orders that list a card charge dated in this one
+    (CHARGE_REACH_DAYS either side, as a purchase may fit a charge by its posting date): an Amazon
+    item shipped and charged months after the order. Those list several charges, so only charge_match
+    uses them, which still wants the charge within CHARGE_DAYS; the rules and the judge never see them."""
     folders = [month_folder_name(y, m) for y, m in neighbouring_months(int(year), int(month))]
     rows = store.list_invoices(month_folders=folders)
-    start, end = _month_span(year, month, CHARGE_DAYS)
+    start, end = _month_span(year, month, CHARGE_REACH_DAYS)
     far = [r["id"] for r in store.split_invoice_charges()
            if r.get("month_folder") not in folders and shared(r) and charged_between(r, start, end)]
     if far:

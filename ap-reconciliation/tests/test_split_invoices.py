@@ -182,13 +182,45 @@ class FarChargeTests(unittest.TestCase):
     def test_a_charge_a_day_from_the_month_counts_two_days_does_not(self):
         self.store.upsert_invoices([amazon("o2", 90.0, [("2026-01-05", 40.0, "9456"), ("2026-03-31", 50.0, "9456")],
                                            date="2026-01-04", month_folder="2026 01", card="9456"),
-                                    amazon("o3", 90.0, [("2026-01-05", 40.0, "9456"), ("2026-03-30", 60.0, "9456")],
+                                    amazon("o3", 100.0, [("2026-01-05", 40.0, "9456"), ("2026-03-30", 60.0, "9456")],
+                                           date="2026-01-04", month_folder="2026 01", card="9456"),
+                                    amazon("o4", 110.0, [("2026-01-05", 40.0, "9456"), ("2026-03-20", 70.0, "9456")],
                                            date="2026-01-04", month_folder="2026 01", card="9456")])
         ids = {i["id"] for i in matching.candidate_invoices(self.store, 2026, 4)}
-        self.assertEqual(ids, {"o1", "o2"})                  # Mar 31 is a day from April; Mar 30 is two
-        self.store.insert_transactions([txn("t", "2026-04-01", "AMAZON.CA*CD34", 50.0, card="9456")])
+        self.assertEqual(ids, {"o1", "o2", "o3"})            # within reach of April; Mar 20 is not
+        self.store.insert_transactions([txn("t", "2026-04-01", "AMAZON.CA*CD34", 50.0, card="9456"),
+                                        txn("u", "2026-04-01", "AMAZON.CA*EF56", 60.0, card="9456")])
         matching.match_month(self.store, None, 2026, 4, **self.quiet)
-        self.assertEqual(self.store.get_transaction("t")["invoice_id"], "o2")
+        self.assertEqual(self.store.get_transaction("t")["invoice_id"], "o2")     # Mar 31: a day
+        self.assertEqual(self.store.get_transaction("u")["invoice_status"], "missing")   # Mar 30: two days
+
+    def test_a_purchase_fitting_a_far_charge_by_its_posting_date_is_found(self):
+        # Bought Apr 29, posted May 2; Amazon dates the charge May 2. And the other way: bought Apr 2,
+        # posted Mar 31, charged Mar 30 (the posting date is a day from the charge).
+        fwd = amazon("f", 300.0, [("2026-01-21", 100.0, "9456"), ("2026-05-02", 200.0, "9456")],
+                     date="2026-01-20", month_folder="2026 01", card="9456")
+        back = amazon("b", 400.0, [("2026-01-21", 150.0, "9456"), ("2026-03-30", 250.0, "9456")],
+                      date="2026-01-20", month_folder="2026 01", card="9456")
+        self.store.upsert_invoices([fwd, back])
+        self.store.insert_transactions([dict(txn("t1", "2026-04-29", "AMAZON.CA*AA", 200.0, card="9456"),
+                                             post_date="2026-05-02"),
+                                        dict(txn("t2", "2026-04-02", "AMAZON.CA*BB", 250.0, card="9456"),
+                                             post_date="2026-03-31")])
+        matching.match_month(self.store, None, 2026, 4, **self.quiet)
+        self.assertEqual(self.store.get_transaction("t1")["invoice_id"], "f")
+        self.assertEqual(self.store.get_transaction("t2")["invoice_id"], "b")
+        self.assertIn((2026, 4), matching.months_to_match(fwd))
+        self.assertIn((2026, 4), matching.months_to_match(back))
+
+    def test_a_charge_dated_at_the_end_of_the_calendar_is_skipped_not_an_error(self):
+        odd = amazon("x", 30.0, [("9999-12-31", 10.0, "9456"), ("0001-01-01", 20.0, "9456")],
+                     date="2026-04-10", month_folder="2026 04", card="9456")
+        self.store.upsert_invoices([odd])
+        self.assertEqual(matching.charge_months(odd), [])
+        self.assertEqual(matching.months_to_match(odd), [(2026, 3), (2026, 4), (2026, 5)])
+        self.assertIn("x", {i["id"] for i in matching.candidate_invoices(self.store, 2026, 4)})
+        counts = matching.match_new_invoices(self.store, None, ["x"], **self.quiet)
+        self.assertEqual(counts["matched"], 0)
 
     def test_a_far_order_is_never_offered_whole_nor_one_listing_a_single_charge(self):
         single = amazon("o4", 75.0, [("2026-04-12", 75.0, "9456")], date="2026-01-20", month_folder="2026 01",
