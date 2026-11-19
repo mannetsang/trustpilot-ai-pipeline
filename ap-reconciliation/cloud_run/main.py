@@ -2269,14 +2269,28 @@ def import_bank_file(drive, f, seen, uploaded_by, log=print):
     return row, summary
 
 
-def queue_months(store, add=(), done=()):
+def queue_months(store, add=(), done=(), started=None):
     """Months still to match (app_state "bank_sync" months_pending), changed in place: the stored list
     plus `add`, less `done`. Two writers (an import run and the reread command) each keep the other's
-    months. Returns the list."""
+    months. A month done is kept when it was queued again after `started` (when its match began): the
+    match did not see what made it queued again (an order whose charges were read meanwhile).
+    Returns the list."""
     state = store.get_state("bank_sync") or {}
-    pending = ({tuple(m) for m in state.get("months_pending") or []} | {tuple(m) for m in add}) - {tuple(m) for m in done}
+    pending = {tuple(m) for m in state.get("months_pending") or []}
+    queued_at = dict(state.get("months_queued_at") or {})
+    stamp = now_iso()
+    for m in add:
+        pending.add(tuple(m))
+        queued_at[month_folder_name(*m)] = stamp
+    for m in done:
+        key = month_folder_name(*m)
+        if started is not None and (queued_at.get(key) or "") > started:
+            continue
+        pending.discard(tuple(m))
+        queued_at.pop(key, None)
     months = sorted(pending, reverse=True)
-    update_sync_state(store, months_pending=months)
+    update_sync_state(store, months_pending=months,
+                      months_queued_at={k: v for k, v in queued_at.items() if tuple(map(int, k.split())) in pending})
     return months
 
 
@@ -2642,12 +2656,13 @@ def sync_bank_folder(log=print, now=None):
                 break
             steps += 1
             log(f"sync: reading invoices and matching {year}-{month:02d}")
+            began = now_iso()
             for _ in range(MAX_INDEX_ROUNDS):
                 if not index_month(year, month, log=log).get("remaining"):
                     break
             match_month(year, month, log=log)
             pending.discard((year, month))
-            queue_months(store, done=[(year, month)])
+            queue_months(store, done=[(year, month)], started=began)
     finally:
         if lease is not None:
             lease.release()

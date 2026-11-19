@@ -272,6 +272,17 @@ class MapFixTests(ApiTestCase):
         main.queue_months(self.store, add=[(2026, 6)])
         self.assertEqual(main.queue_months(self.store, done=[(2026, 7)]), [(2026, 6)])
 
+    def test_a_month_queued_again_while_it_was_being_matched_stays_queued(self):
+        import main
+        from unittest import mock
+        with mock.patch.object(main, "now_iso", return_value="2026-11-18T23:10:00Z"):
+            main.queue_months(self.store, add=[(2026, 10)])
+        began = "2026-11-18T23:16:39Z"                      # the import run starts matching October
+        with mock.patch.object(main, "now_iso", return_value="2026-11-18T23:20:00Z"):
+            main.queue_months(self.store, add=[(2026, 10)])     # reread: a September order's charges, read now
+        self.assertEqual(main.queue_months(self.store, done=[(2026, 10)], started=began), [(2026, 10)])
+        self.assertEqual(main.queue_months(self.store, done=[(2026, 10)], started="2026-11-18T23:31:00Z"), [])
+
     def test_the_rematch_drops_a_whole_link_to_an_order_that_turned_out_split(self):
         self.order()
         self.store.insert_transactions([
