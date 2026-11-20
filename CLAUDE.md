@@ -194,7 +194,13 @@ which only adds or improves links (`app_state` `invoice_watch`;
 **invoice filer** in `mannetsang/ap-automation` (`invoice-filer/`, GitHub
 Actions, scheduled hourly but GitHub often runs it only every few hours): it
 reads ap@'s **Gmail** directly, files PDFs into `Invoice/YYYY MM/<vendor>/`
-and labels the mail `Invoice Filer/Filed` or `Not invoice`. It shares the
+and labels the mail `Invoice Filer/Filed` or `Not invoice`. Since 2026-11-20
+it also files bills that are the email itself (Square's "Tax Invoice for
+Square Services", receipts, order confirmations: printed to PDF, 60 a run,
+oldest first) and receipt photos in an email (filed as the image); a bill
+whose amount the email does not print gets `Invoice Filer/Needs review`.
+Replies in a thread whose bill is already filed, a receipt for a filed
+invoice and a second PDF of one bill are not filed again. It shares the
 `google-workspace-ap-*` OAuth triple with this service, so a replacement
 refresh token must carry **both** `gmail.modify` and `drive`: a Drive-only
 token keeps this service working but stops the filer with `403
