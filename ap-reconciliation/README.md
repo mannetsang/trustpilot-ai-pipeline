@@ -136,6 +136,21 @@ updates its folder hints without another model call.
    where it stopped when run again): links made whole to an order that turns
    out split move to the charge they are, and the months those orders serve
    are queued for a full match.
+   **Bills charged later (pre-authorized payments).** A bill may say when its
+   total is charged to the card: TELUS prints "The total due will be charged
+   to your credit card on October 09" (account 606763692) or "...15 days
+   from your bill" (TELUS Mobility). The reading keeps that date
+   (`invoices.charge_date`; worked out when it is given in days; dropped
+   unless it falls 7 days before to 62 days after the bill), and the rules
+   and the judge compare a purchase with it instead of the bill date. A
+   purchase more than 10 days from it (`CHARGE_DATE_DAYS`) is never paired
+   with that bill: TELUS charges $50.85 every month, and the October 13
+   charge pays the September 16 bill, not the October 16 one dated three
+   days later. Bills read before the date existed are read again with
+   `python main.py reread-charge-dates --vendor telus` (as the sync job:
+   `--args=main.py,reread-charge-dates,--vendor,telus`), which also lets go
+   of the links that fall outside their bill's date and pairs those
+   purchases again (links made by hand stay).
    **Invoices paid in charges they do not list.** Square bills its
    subscriptions on one tax invoice (CAD 818.12) and charges each separately
    (535.62, 237.30 and 45.20 the same day). After the charge and rule passes,

@@ -68,6 +68,10 @@ alter table invoices add column if not exists removed_at timestamptz;
 -- The card transactions the document lists ([{"date", "amount", "card_last4"}], e.g. an Amazon order's
 -- "Credit Card transactions"); null for a reading made before this column existed.
 alter table invoices add column if not exists card_charges jsonb;
+-- charge_date: when the document says its total is charged to the card automatically (a pre-authorized
+-- bill: TELUS prints "will be charged to your credit card on October 09", or "15 days from your bill");
+-- the matcher compares a purchase with this date instead of invoice_date. null when it says nothing.
+alter table invoices add column if not exists charge_date date;
 create index if not exists invoices_month_folder_idx on invoices (month_folder);
 
 create table if not exists transactions (

@@ -2789,6 +2789,86 @@ def reread_card_charges(vendor="amazon", limit=None, log=print):
     return {"to_read": len(todo), "read": done, "failed": failed, "months_queued": len(months)}
 
 
+def reread_charge_dates(vendor, limit=None, log=print):
+    """Read again the invoices of a vendor (folder or name containing `vendor`) read before
+    invoices.charge_date existed, to learn the date each says it is charged automatically (a
+    pre-authorized bill: TELUS "will be charged to your credit card on October 09"); then pair them
+    again. A purchase the matcher linked to one of them that falls more than CHARGE_DATE_DAYS from its
+    charge date is let go (compare-and-set; links made by hand stay), and every purchase from that
+    vendor around those dates that still needs an invoice is matched again with the rules, oldest
+    first, as Rematch does. A reading that fails or states no charge date changes nothing. Run again to
+    carry on. Returns counts."""
+    store, drive, gemini = get_store(), get_drive(), get_gemini()
+    if gemini is None:
+        return {"skipped": "AI_DISABLED=1"}
+    word = (vendor or "").strip().lower()
+    if not word:
+        return {"skipped": "name a vendor (--vendor)"}
+    todo = [r for r in store.list_invoices()
+            if r.get("charge_date") is None and not r.get("removed_at") and r.get("month_folder")
+            and not r.get("extraction_error") and r.get("extracted_at") and r.get("total") is not None
+            and word in f"{r.get('vendor_folder') or ''} {r.get('vendor') or ''}".lower()]
+    todo.sort(key=lambda r: str(r.get("month_folder") or ""))
+    if limit:
+        todo = todo[:int(limit)]
+    log(f"reread: {len(todo)} {vendor} invoice(s) to read for the date they are charged")
+    started, dated, failed = time.time(), [], 0
+    for start in range(0, len(todo), INDEX_BATCH):
+        if time.time() - started > REREAD_BUDGET:
+            log("reread: out of time; run it again to carry on")
+            break
+        batch = todo[start:start + INDEX_BATCH]
+        records = [dict({k: r.get(k) for k in ("id", "file_name", "mime_type", "web_view_link", "folder_path",
+                                                 "month_folder", "vendor_folder", "modified_time")},
+                        size=int(r.get("size") or 0),
+                        _file={"id": r["id"], "mimeType": r.get("mime_type"), "name": r.get("file_name")})
+                   for r in batch]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, INDEX_WORKERS)) as pool:
+            rows = list(pool.map(lambda rec: invoice_index.extract_invoice(gemini, drive, rec), records))
+        failed += sum(1 for row in rows if row.get("extraction_error"))
+        now = {r["id"]: r for r in store.list_invoices(ids=[row["id"] for row in rows if row.get("charge_date")])}
+        for row in rows:
+            current = now.get(row["id"])
+            # Only the new column is written, and only while the stored reading is the one listed.
+            if not row.get("charge_date") or not current or current.get("removed_at") or current.get("charge_date"):
+                continue
+            store.update_invoices([row["id"]], {"charge_date": row["charge_date"]})
+            dated.append(dict(current, charge_date=row["charge_date"]))
+            log(f"reread: {current.get('file_name')} is charged on {row['charge_date']}")
+    matching.refresh_card_aliases(store, force=True)
+    released = 0
+    for inv in dated:
+        for t in store.transactions_for_invoice(inv["id"]):
+            if t.get("match_method") == "manual" or not matching.beyond_charge_date(t, inv):
+                continue
+            expect = {"invoice_id": inv["id"], "invoice_part": t.get("invoice_part"),
+                      "invoice_status": t.get("invoice_status"), "match_method": t.get("match_method")}
+            if store.update_transaction(t["id"], {"invoice_status": "missing", "invoice_id": None, "invoice_part": None,
+                                                  "match_confidence": None, "match_method": None, "match_note": None,
+                                                  "updated_at": now_iso()}, expect=expect) is not None:
+                released += 1
+                log(f"reread: {t['txn_date']} {float(t['amount']):.2f} let go of {inv.get('file_name')} "
+                    f"(charged {inv['charge_date']})")
+    months = set()
+    for inv in dated:
+        months |= set(matching.months_to_match(inv))
+        day = matching._day(inv["charge_date"])
+        months |= {(day.year, day.month)} if day else set()
+    candidates = [t for y, m in sorted(months) for t in store.list_transactions(y, m)
+                  if t.get("type") == "purchase" and t.get("invoice_status") in ("missing", "possible")
+                  and t.get("match_method") != "manual"
+                  and any(matching.vendor_similarity(t, inv) >= matching.VENDOR_EVIDENCE for inv in dated)]
+    found = 0
+    for t in sorted(candidates, key=lambda t: (str(t.get("txn_date")), t["id"])):
+        try:
+            out = matching.match_transaction(store, None, t["id"], use_ai=False, log=log, updated_by="reread")
+        except matching.RematchError:
+            continue
+        found += out["outcome"] == "found"
+    return {"to_read": len(todo), "dated": len(dated), "failed": failed, "released": released,
+            "rematched": len(candidates), "found": found}
+
+
 # ---------------------------------------------------------------------------
 # Local CLI (and the Cloud Run jobs, which run `remind` and `sync`)
 #   python main.py parse <file>                       print the parsed transactions
@@ -2799,14 +2879,17 @@ def reread_card_charges(vendor="amazon", limit=None, log=print):
 #   python main.py remind                             the weekly reminder (what the Cloud Run job runs)
 #   python main.py sync                               import new statements from the Bank Transactions folder
 #   python main.py reread [--vendor amazon]           read again invoices read before card_charges existed
+#   python main.py reread-charge-dates --vendor telus  read a vendor's bills for the date they are charged, re-pair
 #   python main.py serve [--port 8080]
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=["parse", "dry-run", "index", "match", "notify", "remind", "sync", "reread",
+                                        "reread-charge-dates",
                                         "serve"])
-    ap.add_argument("--vendor", default="amazon", help="reread: vendor folder or name to read again")
+    ap.add_argument("--vendor", default="amazon",
+                    help="reread / reread-charge-dates: vendor folder or name to read again")
     ap.add_argument("file", nargs="?")
     ap.add_argument("--year", type=int)
     ap.add_argument("--month", type=int)
@@ -2856,5 +2939,7 @@ if __name__ == "__main__":
         print(json.dumps(sync_bank_folder(), indent=2))
     elif args.command == "reread":
         print(json.dumps(reread_card_charges(args.vendor, args.limit), indent=2))
+    elif args.command == "reread-charge-dates":
+        print(json.dumps(reread_charge_dates(args.vendor, args.limit), indent=2))
     else:
         app.run(host="127.0.0.1", port=args.port, debug=False)

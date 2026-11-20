@@ -30,7 +30,7 @@ INVOICE_FIELDS = (
     "id", "file_name", "mime_type", "web_view_link", "folder_path", "month_folder", "vendor_folder",
     "modified_time", "size", "vendor", "invoice_number", "invoice_date", "total", "currency",
     "card_last4", "payment_method", "summary", "is_invoice", "extracted_at", "extraction_error",
-    "document_type", "removed_at", "card_charges",
+    "document_type", "removed_at", "card_charges", "charge_date",
 )
 
 def _whole_unless_part(patch):
