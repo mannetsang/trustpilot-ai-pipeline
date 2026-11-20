@@ -183,8 +183,9 @@ def collect(stores=None, days=480, want_sales=True, want_merchant_feed=True, ver
     try:
         import merchant  # noqa: PLC0415
         feed_markets = merchant.markets(accounts)
+        unreadable = merchant.unreadable_markets(accounts)
     except Exception as exc:  # noqa: BLE001
-        feed_markets = {}
+        feed_markets, unreadable = {}, {}
         if verbose:
             print(f"  merchant markets unavailable: {exc}")
     if verbose:
@@ -199,14 +200,30 @@ def collect(stores=None, days=480, want_sales=True, want_merchant_feed=True, ver
         "stores": store_data,
         "merchant_accounts": accounts,
         "merchant_markets": feed_markets,
+        "merchant_unreadable": unreadable,
         "merchant": feed,
-        "coverage": coverage(store_data, search, feed_markets),
+        "coverage": coverage(store_data, search, feed_markets, unreadable),
     }
 
 
-def merchant_cell(entry):
-    """The Shopping column for one market: offers in a feed, or why there are none."""
+def merchant_cell(entry, closed=None):
+    """The Shopping column for one market: offers, a closed door, or nothing.
+
+    Three answers, not two. "We cannot read the account that holds this feed"
+    is not "this storefront is not in Shopping", and conflating them had the
+    page recommending four EU feeds be built when the accounts already exist.
+    """
     if not entry or not entry.get("offers"):
+        if closed:
+            named = f"account {closed['id']}" if closed.get("id") else "an account"
+            return {
+                "ok": False,
+                "detail": f"{closed['name']} ({named}) is not readable from here",
+                "fix": "this storefront has its own Merchant Center account and we are "
+                       "not a user on it, so whether it has a feed is unknown. Merchant "
+                       "Center > People and access > add claude-sessions@shp-ai-bot-2026"
+                       ".iam.gserviceaccount.com",
+            }
         return {
             "ok": False,
             "detail": "no offers in Shopping",
@@ -227,7 +244,7 @@ def merchant_cell(entry):
     }
 
 
-def coverage(store_data, search, feed_markets):
+def coverage(store_data, search, feed_markets, unreadable=None):
     """One row per market per source: connected, or the reason and the fix.
 
     Merchant Center is judged on offers, not on access. Being able to open the
@@ -263,7 +280,7 @@ def coverage(store_data, search, feed_markets):
                 "fix": "" if "sales" in store else
                        "BigCommerce > Settings > API accounts: this token needs Orders (read-only)",
             },
-            "merchant_center": merchant_cell(feed_markets.get(key)),
+            "merchant_center": merchant_cell(feed_markets.get(key), (unreadable or {}).get(key)),
         })
     return rows
 

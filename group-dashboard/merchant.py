@@ -37,13 +37,32 @@ FEED_MARKET = {"CA": "ca", "US": "com", "NL": "nl", "FR": "fr", "ES": "es", "DE"
 # what it happens to hold. Gen'C Beauty is a separate brand on its own domain:
 # 4,117 of its offers carry feed label CA, and crediting those to
 # superhairpieces.ca would double the .ca feed with another company's products.
+#
+# The EU storefronts have Merchant Center accounts of their own, found in
+# Business Manager on 2026-11-20 and listed here because leaving them out made
+# this page say something false. accounts.list returns only the three the
+# service account is a user on, so an EU market looked like "no feed" when the
+# truth was "a feed we cannot see". Those are not the same answer and the page
+# must not round one into the other: a market with no feed needs one built, a
+# market we cannot read needs one grant.
 ACCOUNTS = [
     {"id": "5298296396", "name": "Superhairpieces.ca", "scope": "superhairpieces.ca",
      "markets": ["ca"]},
-    {"id": "289630622", "name": "Superhairpieces", "scope": "superhairpieces.com and the EU storefronts",
-     "markets": ["com", "nl", "fr", "es", "de"]},
+    {"id": "289630622", "name": "Superhairpieces", "scope": "superhairpieces.com",
+     "markets": ["com"]},
     {"id": "670525760", "name": "Gen'C Beauty", "scope": "gencbeauty.com",
      "markets": []},
+    {"id": "5439346997", "name": "Superhairpieces.es", "scope": "superhairpieces.es",
+     "markets": ["es"]},
+    {"id": "5443876496", "name": "superhairpieces.nl", "scope": "superhairpieces.nl",
+     "markets": ["nl"]},
+    # Business Manager carries an organisation named "Superhairpieces France";
+    # its Merchant Center id has not been read off the console yet. Listed with
+    # no id so the page reports a market whose account exists but is unknown to
+    # us, rather than implying France has nothing. Fill the id in when it is
+    # known and this row starts answering like the others.
+    {"id": None, "name": "Superhairpieces France", "scope": "superhairpieces.fr",
+     "markets": ["fr"]},
 ]
 
 PERF_DAYS = 365
@@ -165,6 +184,13 @@ def _performance(rows):
 def account(entry, verbose=True):
     """Everything one Merchant Center account can say about itself."""
     out = dict(entry)
+    if not entry.get("id"):
+        out.update(connected=False, known=True,
+                   reason="this storefront has a Merchant Center account of its own; "
+                          "its id has not been recorded here yet")
+        if verbose:
+            print(f"  merchant {entry['name']}: id unknown")
+        return out
     parent = f"accounts/{entry['id']}"
     try:
         from google.api_core import exceptions as gexc
@@ -184,7 +210,12 @@ def account(entry, verbose=True):
         out.update(connected=True, account_name=live.account_name,
                    time_zone=live.time_zone.id or None, language=live.language_code or None)
     except gexc.GoogleAPICallError as exc:
-        out.update(connected=False, reason=type(exc).__name__)
+        # Unauthenticated here means the account is real and we are not on it -
+        # a grant away, not a feed away. Say which, because the fix differs.
+        denied = type(exc).__name__ in ("Unauthenticated", "PermissionDenied")
+        out.update(connected=False, known=True, reason=(
+            "the service account has not been added to this account"
+            if denied else type(exc).__name__))
         if verbose:
             print(f"  merchant {entry['id']}: {out['reason']}")
         return out
@@ -223,6 +254,22 @@ def account(entry, verbose=True):
         perf = out.get("performance") or {}
         print(f"  merchant {entry['id']}: {cat.get('offers', 0):,} offers, "
               f"{perf.get('clicks', 0):,} clicks in {PERF_DAYS}d")
+    return out
+
+
+def unreadable_markets(accounts):
+    """Markets whose Merchant Center account exists but is closed to us.
+
+    Keeps "we cannot see it" out of "there is nothing there". Without this the
+    Coverage tab told the business to build four EU feeds that may already
+    exist.
+    """
+    out = {}
+    for a in accounts:
+        if a.get("connected") or not a.get("known"):
+            continue
+        for market in a.get("markets") or []:
+            out[market] = {"id": a.get("id"), "name": a["name"], "reason": a.get("reason")}
     return out
 
 
