@@ -57,6 +57,8 @@ class ChargeDateReadingTests(unittest.TestCase):
 
     def test_the_reading_asks_for_it_and_stores_it(self):
         self.assertIn("charge_date", invoice_index.INVOICE_PROMPT)
+        # Intact prints a due date and lists auto-pay among the ways to pay: that is no charge date.
+        self.assertIn("A due\n  date", invoice_index.INVOICE_PROMPT)
         gemini = FakeGemini([{"is_invoice": True, "document_type": "invoice", "vendor": "TELUS",
                               "invoice_date": "2026-09-16", "charge_date": "2026-10-09", "total": 50.85,
                               "currency": "CAD"}])
@@ -139,6 +141,32 @@ class RereadChargeDatesTests(unittest.TestCase):
         with mock.patch.object(main, "AI_DISABLED", False):
             main.reread_charge_dates("telus", log=lambda *a: None)
         self.assertEqual(self.store.get_transaction("c05")["invoice_id"], "b05")
+
+    def test_a_run_cut_short_after_dating_the_bills_is_finished_by_the_next(self):
+        real = self.store.transactions_for_invoice
+        calls = {"n": 0}
+
+        def flaky(iid):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise main.StoreError("GET transactions -> 503")
+            return real(iid)
+        with mock.patch.object(main, "AI_DISABLED", False), \
+                mock.patch.object(self.store, "transactions_for_invoice", side_effect=flaky):
+            with self.assertRaises(main.StoreError):
+                main.reread_charge_dates("telus", log=lambda *a: None)
+        self.assertEqual(self.store.get_invoice("b03")["charge_date"], BILLS["03"])   # dated, not re-paired
+        with mock.patch.object(main, "AI_DISABLED", False):
+            out = main.reread_charge_dates("telus", log=lambda *a: None)
+        self.assertEqual((out["to_read"], out["dated"]), (0, 0))
+        self.assertEqual(pairs(self.store), EXPECTED)
+
+    def test_the_command_line_needs_a_vendor(self):
+        import subprocess
+        env = dict(os.environ, STORE="memory", AI_DISABLED="1", AUTH_DISABLED="1")
+        out = subprocess.run([sys.executable, os.path.join(HERE, "..", "cloud_run", "main.py"), "reread-charge-dates"],
+                             capture_output=True, text=True, env=env, timeout=120)
+        self.assertIn("name a vendor", out.stdout, out.stderr[-500:])
 
     def test_a_vendor_must_be_named(self):
         with mock.patch.object(main, "AI_DISABLED", False):

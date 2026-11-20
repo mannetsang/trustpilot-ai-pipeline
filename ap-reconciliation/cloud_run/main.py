@@ -2798,12 +2798,12 @@ def reread_charge_dates(vendor, limit=None, log=print):
     vendor around those dates that still needs an invoice is matched again with the rules, oldest
     first, as Rematch does. A reading that fails or states no charge date changes nothing. Run again to
     carry on. Returns counts."""
-    store, drive, gemini = get_store(), get_drive(), get_gemini()
-    if gemini is None:
-        return {"skipped": "AI_DISABLED=1"}
     word = (vendor or "").strip().lower()
     if not word:
         return {"skipped": "name a vendor (--vendor)"}
+    store, drive, gemini = get_store(), get_drive(), get_gemini()
+    if gemini is None:
+        return {"skipped": "AI_DISABLED=1"}
     todo = [r for r in store.list_invoices()
             if r.get("charge_date") is None and not r.get("removed_at") and r.get("month_folder")
             and not r.get("extraction_error") and r.get("extracted_at") and r.get("total") is not None
@@ -2835,6 +2835,12 @@ def reread_charge_dates(vendor, limit=None, log=print):
             store.update_invoices([row["id"]], {"charge_date": row["charge_date"]})
             dated.append(dict(current, charge_date=row["charge_date"]))
             log(f"reread: {current.get('file_name')} is charged on {row['charge_date']}")
+    # Pair from what is stored, not from this run's writes: a run cut short after dating bills (a
+    # timeout) is finished by the next one.
+    newly = len(dated)
+    dated = [r for r in store.list_invoices()
+             if r.get("charge_date") and not r.get("removed_at") and r.get("month_folder")
+             and word in f"{r.get('vendor_folder') or ''} {r.get('vendor') or ''}".lower()]
     matching.refresh_card_aliases(store, force=True)
     released = 0
     for inv in dated:
@@ -2864,8 +2870,11 @@ def reread_charge_dates(vendor, limit=None, log=print):
             out = matching.match_transaction(store, None, t["id"], use_ai=False, log=log, updated_by="reread")
         except matching.RematchError:
             continue
+        except StoreError as exc:           # one failed request costs that purchase; a rerun finishes it
+            log(f"reread: {t['id']} not matched again: {exc}")
+            continue
         found += out["outcome"] == "found"
-    return {"to_read": len(todo), "dated": len(dated), "failed": failed, "released": released,
+    return {"to_read": len(todo), "dated": newly, "failed": failed, "released": released,
             "rematched": len(candidates), "found": found}
 
 
@@ -2888,8 +2897,8 @@ if __name__ == "__main__":
     ap.add_argument("command", choices=["parse", "dry-run", "index", "match", "notify", "remind", "sync", "reread",
                                         "reread-charge-dates",
                                         "serve"])
-    ap.add_argument("--vendor", default="amazon",
-                    help="reread / reread-charge-dates: vendor folder or name to read again")
+    ap.add_argument("--vendor", default=None,
+                    help="reread (default amazon) / reread-charge-dates (required): vendor folder or name")
     ap.add_argument("file", nargs="?")
     ap.add_argument("--year", type=int)
     ap.add_argument("--month", type=int)
@@ -2938,7 +2947,7 @@ if __name__ == "__main__":
     elif args.command == "sync":
         print(json.dumps(sync_bank_folder(), indent=2))
     elif args.command == "reread":
-        print(json.dumps(reread_card_charges(args.vendor, args.limit), indent=2))
+        print(json.dumps(reread_card_charges(args.vendor or "amazon", args.limit), indent=2))
     elif args.command == "reread-charge-dates":
         print(json.dumps(reread_charge_dates(args.vendor, args.limit), indent=2))
     else:
