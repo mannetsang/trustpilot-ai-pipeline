@@ -242,6 +242,28 @@ class ReviewFixTests(unittest.TestCase):
         matching.match_month(other, None, 2026, 11, **QUIET)
         self.assertIsNone(other.get_invoice("ic").get("card_charges"))
 
+    def test_a_rematch_leaves_two_invoices_needing_one_purchase_for_a_person(self):
+        # A's only set is {x, y}, B's is {y, z}: the month run records neither, and so must a click.
+        for clicked in ("x", "z"):
+            store = store_with_cards("1610")
+            store.upsert_invoices([inv("A", "Freightcom", 100.00, "2026-11-03", month_folder="2026 11", card="1610"),
+                                   inv("B", "Freightcom", 70.00, "2026-11-03", month_folder="2026 11", card="1610")])
+            store.insert_transactions([txn("x", "2026-11-03", "FREIGHTCOM INC", 60.00),
+                                       txn("y", "2026-11-03", "FREIGHTCOM INC", 40.00),
+                                       txn("z", "2026-11-03", "FREIGHTCOM INC", 30.00)])
+            matching.match_transaction(store, None, clicked, **QUIET)
+            self.assertEqual((store.get_invoice("A").get("card_charges"), store.get_invoice("B").get("card_charges")),
+                             (None, None), clicked)
+
+    def test_the_watch_weighs_older_invoices_a_purchase_is_the_whole_of(self):
+        store = store_with_cards("4805")
+        store.upsert_invoices([square("rcpt", 237.30, "2026-12-01", "2026 12")])     # filed earlier, unlinked
+        store.insert_transactions([sq("t1", "2026-12-01", 237.30), sq("t2", "2026-12-01", 45.20),
+                                   sq("t3", "2026-12-01", 535.62)])
+        store.upsert_invoices([square("tax", 818.12, "2026-12-01", "2026 12")])
+        matching.match_new_invoices(store, None, ["tax"], **QUIET)
+        self.assertIsNone(store.get_invoice("tax").get("card_charges"))
+
     def test_a_card_added_by_a_statement_is_its_own_card_in_the_next_match(self):
         store = store_with_cards("4805")                    # 4821 is 4805's +2 number for now
         store.upsert_cards([{"last4": "4821"}])             # a statement brings a real card 4821

@@ -484,11 +484,11 @@ def _charge_candidate(t, inv, card, day):
     """The purchase's amounts in cents comparable with inv when it could be one of its charges (a
     purchase, not refused for it, on its card or the card it is a reissue of, from a vendor resembling
     it, within CHARGE_DAYS of its date by purchase or posting date); [] when it could not."""
-    if (t.get("type") != "purchase" or rejected(t, inv) or cards_differ(card, t.get("card_last4"))
-            or vendor_similarity(t, inv) < VENDOR_EVIDENCE):
+    if t.get("type") != "purchase":
         return []
-    gap = charge_days(t, {"date": day.isoformat()})
-    if gap is None or gap > CHARGE_DAYS:
+    gap = charge_days(t, {"date": day.isoformat()})     # the cheap test first: it turns down nearly all
+    if (gap is None or gap > CHARGE_DAYS or rejected(t, inv) or cards_differ(card, t.get("card_last4"))
+            or vendor_similarity(t, inv) < VENDOR_EVIDENCE):
         return []
     return [_cents(a) for a in charge_amounts(t, inv)]
 
@@ -573,14 +573,17 @@ def infer_split_charges(transactions, invoices, taken=None, others=None, must_in
                 sets += _subset_sums(pool, target, 2 - len(sets))
             if len(sets) > 1:
                 break
-        if len(sets) != 1 or (must_include and all(t["id"] != must_include for t, _ in sets[0])):
+        if len(sets) != 1:
             continue
         found[inv["id"]] = sets[0]
         for t, _ in sets[0]:
             claims.setdefault(t["id"], set()).add(inv["id"])
     out = {}
     for iid, members in found.items():
+        # A purchase two invoices' sets need is left for a person, whichever one is asked about.
         if any(len(claims[t["id"]]) > 1 for t, _ in members):
+            continue
+        if must_include and all(t["id"] != must_include for t, _ in members):
             continue
         members.sort(key=lambda m: (-m[1], str(m[0].get("txn_date")), m[0]["id"]))
         out[iid] = [{"date": str(t.get("txn_date"))[:10], "amount": cents / 100,
@@ -614,16 +617,17 @@ def split_purchases(store, invoices, rows=None):
     return out
 
 
-def split_leftovers(store, invoices, busy, claimed, rows=None, log=print):
+def split_leftovers(store, invoices, busy, claimed, rows=None, log=print, others=None):
     """After the exact passes (charge_match, rule_match): record the charges of the invoices paid in
     several charges they do not list (Square), among `invoices` nothing is linked to (busy: the ids
     linked in the store or by this run), out of the purchases still needing an invoice that this run
-    did not match (claimed: their ids). Returns the invoices written, for charge_match."""
+    did not match (claimed: their ids). others: the invoices a purchase may instead be the whole of
+    (default `invoices`). Returns the invoices written, for charge_match."""
     open_ = [i for i in invoices if split_eligible(i, busy)]
     if not open_:
         return []
     pool = [t for t in split_purchases(store, open_, rows) if t["id"] not in claimed]
-    others = [i for i in invoices if i["id"] not in busy]
+    others = [i for i in (invoices if others is None else others) if i["id"] not in busy]
     written = set(record_split_charges(store, open_, infer_split_charges(pool, open_, busy, others), log))
     return [i for i in open_ if i["id"] in written]
 
@@ -1057,9 +1061,13 @@ def match_transaction(store, gemini, txn_id, use_ai=True, log=print, updated_by=
         mine = [i for i in candidates if split_eligible(i, taken)
                 and _charge_candidate(txn, i, _split_card(i), _day(i["invoice_date"]))]
         if mine:
+            # Every eligible invoice is weighed, so one whose only set needs the same purchase
+            # makes it ambiguous here as in the month run; only this purchase's are recorded.
+            rivals = [i for i in candidates if split_eligible(i, taken)]
             free = [i for i in candidates if i["id"] not in taken]
-            record_split_charges(store, mine, infer_split_charges(split_purchases(store, mine), mine, taken, free,
-                                                                  must_include=txn["id"]), log)
+            inferred = infer_split_charges(split_purchases(store, rivals), rivals, taken, free,
+                                           must_include=txn["id"])
+            record_split_charges(store, mine, inferred, log)
     # Whole invoices for the rules and the judge: not linked to anything else, and not one that lists
     # several card charges (those are shared one charge at a time, by charge_match only).
     pool = [i for i in candidates if i["id"] not in taken and not shared(i)]
@@ -1242,8 +1250,16 @@ def match_new_invoices(store, gemini, invoice_ids, use_ai=True, log=print, judge
     # Then, of what those left, the invoices paid in several charges they do not list (Square): their
     # charges are recorded and linked one each like an Amazon order's.
     claimed = {tid for tid, (found, _) in accepted.items() if found[1] == "matched"}
-    split = split_leftovers(store, new, set(taken) | {found[0] for found, _ in accepted.values()}, claimed,
-                            rows=fetched, log=log)
+    busy = set(taken) | {found[0] for found, _ in accepted.values()}
+    around = None
+    if any(split_eligible(i, busy) for i in new):
+        # A purchase that is the whole of an older invoice nothing is linked to is that invoice's,
+        # as in the month run: weigh the candidates around the new invoices, not only this batch.
+        folders = sorted({month_folder_name(*ym) for i in new for ym in neighbouring_months(*_month_of_folder(i["month_folder"]))})
+        around = {i["id"]: i for i in store.list_invoices(month_folders=folders) if is_candidate(i)}
+        around.update(inv_by_id)
+        around = list(around.values())
+    split = split_leftovers(store, new, busy, claimed, rows=fetched, log=log, others=around)
     if split:
         loose = [t for t in pending if t["id"] not in claimed]
         for tid, (iid, part, status, conf, note) in charge_match(loose, split, taken=taken, allowed=serves,
