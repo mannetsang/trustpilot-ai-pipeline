@@ -32,7 +32,10 @@ Endpoints
   GET  /api/months               year/month navigation with per-card counts
   GET  /api/transactions?year&month[&card]
   GET  /api/transactions/<id>    one row (the page polls it while an uploaded receipt is being read)
-  PATCH /api/transactions/<id>   cost_center, usage, note, action=waive|unwaive|confirm|link|unlink
+  PATCH /api/transactions/<id>   cost_center, usage, note, person_id ("" clears it),
+                                 action=waive|unwaive|confirm|link|unlink
+  GET  /api/people               the people a transaction can be assigned to
+  POST /api/people               {name[, email]}: add one (201), or the one already named so (200)
   POST /api/transactions/<id>/rematch  read new invoices, then look for this purchase's invoice again (202, a job)
   GET  /api/transactions/<id>/receipt-target  where Add receipt… would save: month and vendor folder, folders
   POST /api/transactions/<id>/receipt   multipart file (1-10 pages), vendor_folder, upload_id: save the
@@ -1670,7 +1673,7 @@ def api_months():
     require_user()
     store = get_store()
     return jsonify({"months": month_list(store), "cards": card_views(store.list_cards()),
-                    "cost_centers": store.list_cost_centers()})
+                    "cost_centers": store.list_cost_centers(), "people": store.list_people()})
 
 
 def _year_month():
@@ -1697,8 +1700,39 @@ def api_transactions():
         row["editable"] = user["role"] == "ap" or row["card_last4"] in owned
     return jsonify({"year": year, "month": month, "transactions": rows,
                     "cards": card_views(cards), "cost_centers": store.list_cost_centers(),
-                    "statements": store.list_statements(year, month),
+                    "people": store.list_people(), "statements": store.list_statements(year, month),
                     "notifications": store.list_notifications(year, month)[:20]})
+
+
+PERSON_NAME_MAX = 100
+
+
+@app.route("/api/people", methods=["GET"])
+def api_people():
+    require_user()
+    return jsonify({"people": get_store().list_people()})
+
+
+@app.route("/api/people", methods=["POST"])
+def api_people_create():
+    """Add a person transactions can be assigned to. Anyone who can open the dashboard may; a name
+    already there (case and extra spaces aside) gives that person back instead of a second one."""
+    user = require_user()
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": "the body must be a JSON object"}), 400
+    name = " ".join(str(body.get("name") or "").split())
+    if not name:
+        return jsonify({"error": "a name is required"}), 400
+    if len(name) > PERSON_NAME_MAX:
+        return jsonify({"error": f"the name is longer than {PERSON_NAME_MAX} characters"}), 400
+    email = str(body.get("email") or "").strip().lower() or None
+    if email and not EMAIL_RE.match(email):
+        return jsonify({"error": f"'{email[:80]}' is not an e-mail address"}), 400
+    person, created = get_store().create_person(name, email, user["email"])
+    if created:
+        print(f"person {name!r} added by {user['email']}")
+    return jsonify({"person": person, "created": created}), 201 if created else 200
 
 
 @app.route("/api/transactions/<txn_id>", methods=["GET"])
@@ -1730,6 +1764,11 @@ def api_transaction_update(txn_id):
         if field in body:
             value = str(body.get(field) or "").strip()
             patch[field] = value[:limit] or None
+    if "person_id" in body:
+        person_id = str(body.get("person_id") or "").strip()
+        if person_id and not store.get_person(person_id):
+            return jsonify({"error": "that person does not exist; add them first"}), 400
+        patch["person_id"] = person_id or None
     action = str(body.get("action") or "").strip().lower()
     status = txn.get("invoice_status")
     rejected = list(txn.get("rejected_invoice_ids") or [])

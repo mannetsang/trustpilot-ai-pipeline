@@ -110,6 +110,19 @@ create index if not exists transactions_month_idx on transactions (year, month, 
 -- order shipped in parts) is shared that way, one transaction per charge; any other invoice is linked to
 -- at most one transaction.
 alter table transactions add column if not exists invoice_part integer;
+-- People a transaction can be assigned to (who made the purchase, or answers for it). Anyone who can
+-- open the dashboard may add one; names are unique ignoring case. person_id is cleared if the person
+-- is deleted.
+create table if not exists people (
+  id         uuid primary key default gen_random_uuid(),
+  name       text not null,
+  email      text,
+  created_by text,
+  created_at timestamptz not null default now()
+);
+create unique index if not exists people_name_unique on people (lower(name));
+alter table transactions add column if not exists person_id uuid references people(id) on delete set null;
+create index if not exists transactions_person_idx on transactions (person_id);
 drop index if exists transactions_invoice_unique;
 create unique index if not exists transactions_invoice_whole_unique on transactions (invoice_id)
   where invoice_id is not null and invoice_part is null;
@@ -219,7 +232,7 @@ group by year, month, card_last4;
 -- public API roles away from everything: only the service-role key is used.
 alter view month_summary set (security_invoker = true);
 revoke all on cards, statements, invoices, transactions, notifications, cost_centers, month_summary,
-  statement_sources, job_lease, app_state
+  statement_sources, job_lease, app_state, people
   from anon, authenticated;
 
 -- The service uses the service-role key, which bypasses RLS. Enabling RLS with
@@ -233,3 +246,4 @@ alter table cost_centers  enable row level security;
 alter table statement_sources enable row level security;
 alter table job_lease     enable row level security;
 alter table app_state     enable row level security;
+alter table people        enable row level security;

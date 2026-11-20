@@ -13,6 +13,7 @@ numeric(12,2) in Postgres; dates are ISO strings ("2026-09-04").
 
 import datetime as dt
 import json
+import re
 import threading
 
 import requests
@@ -22,7 +23,7 @@ TRANSACTION_FIELDS = (
     "description", "supplier", "city", "country", "merchant_category", "type", "amount", "currency",
     "source_amount", "source_currency", "invoice_status", "invoice_id", "match_confidence",
     "match_method", "match_note", "cost_center", "usage", "note", "updated_by", "updated_at",
-    "created_at", "raw", "rejected_invoice_ids", "invoice_part",
+    "created_at", "raw", "rejected_invoice_ids", "invoice_part", "person_id",
 )
 CARD_FIELDS = ("last4", "label", "holder_name", "owner_email", "chat_space", "active", "updated_at")
 INVOICE_FIELDS = (
@@ -59,6 +60,15 @@ def now_iso():
 def stamp(when):
     """A UTC time as PostgREST and the lease compare it: 2026-11-02T14:05:00Z."""
     return when.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+
+def person_named(people, name):
+    """The person in `people` with this name, ignoring case and extra spaces, else None."""
+    key = " ".join(str(name or "").split()).lower()
+    return next((p for p in people if " ".join(str(p.get("name") or "").split()).lower() == key), None)
 
 
 def month_folder_name(year, month):
@@ -192,10 +202,10 @@ class SupabaseStore:
 
     def delete_statement(self, statement_id):
         """Remove an upload and its transactions that nobody has touched (no cost
-        centre, usage, note or manual invoice decision). Returns the counts."""
+        centre, usage, note, person or manual invoice decision). Returns the counts."""
         removed = self.delete("transactions", {
             "statement_id": f"eq.{statement_id}", "cost_center": "is.null", "usage": "is.null",
-            "note": "is.null", "or": "(match_method.is.null,match_method.neq.manual)"})
+            "note": "is.null", "person_id": "is.null", "or": "(match_method.is.null,match_method.neq.manual)"})
         kept = self.select("transactions", {"select": "id", "statement_id": f"eq.{statement_id}", "order": "id"})
         for t in kept:
             self.patch("transactions", {"id": f"eq.{t['id']}"}, {"statement_id": None})
@@ -349,6 +359,31 @@ class SupabaseStore:
     def list_cost_centers(self):
         return [r["name"] for r in self.select("cost_centers", {"order": "sort.asc,name.asc"})]
 
+    # -- people a transaction can be assigned to -----------------------------
+    def list_people(self):
+        return self.select("people", {"select": "id,name,email", "order": "name.asc"})
+
+    def get_person(self, person_id):
+        if not UUID_RE.match(str(person_id or "")):
+            return None                     # not an id Postgres would even parse
+        rows = self.select("people", {"select": "id,name,email", "id": f"eq.{person_id}"})
+        return rows[0] if rows else None
+
+    def create_person(self, name, email=None, created_by=None):
+        """(person, created): a new person, or the one already named so (case aside)."""
+        same = person_named(self.list_people(), name)
+        if same:
+            return same, False
+        try:
+            row = self.insert("people", [{"name": name, "email": email, "created_by": created_by}],
+                              returning=True)[0]
+        except StoreError:
+            same = person_named(self.list_people(), name)   # added by someone else a moment ago
+            if same:
+                return same, False
+            raise
+        return {k: row.get(k) for k in ("id", "name", "email")}, True
+
     # -- the Drive import: one row per file read, and its last check -------
     def list_statement_sources(self):
         return self.select("statement_sources", {"order": "file_id"})
@@ -423,6 +458,7 @@ class MemoryStore:
         self.statements, self.notifications = [], []
         self.statement_sources, self.state, self.leases = {}, {}, {}
         self.cost_centers = list(DEFAULT_COST_CENTERS)
+        self.people = {}
         self._seq = 0
 
     def list_cards(self):
@@ -443,7 +479,7 @@ class MemoryStore:
     def delete_statement(self, statement_id):
         with self.lock:
             removable = [t["id"] for t in self.transactions.values() if t.get("statement_id") == statement_id
-                         and not (t.get("cost_center") or t.get("usage") or t.get("note"))
+                         and not (t.get("cost_center") or t.get("usage") or t.get("note") or t.get("person_id"))
                          and t.get("match_method") != "manual"]
             for tid in removable:
                 del self.transactions[tid]
@@ -590,6 +626,23 @@ class MemoryStore:
 
     def list_cost_centers(self):
         return list(self.cost_centers)
+
+    def list_people(self):
+        return sorted((dict(p) for p in self.people.values()), key=lambda p: p["name"].lower())
+
+    def get_person(self, person_id):
+        p = self.people.get(str(person_id or ""))
+        return dict(p) if p else None
+
+    def create_person(self, name, email=None, created_by=None):
+        import uuid
+        with self.lock:
+            same = person_named(self.people.values(), name)
+            if same:
+                return dict(same), False
+            person = {"id": str(uuid.uuid4()), "name": name, "email": email}
+            self.people[person["id"]] = person
+            return dict(person), True
 
     def list_statement_sources(self):
         return [dict(r) for _, r in sorted(self.statement_sources.items())]

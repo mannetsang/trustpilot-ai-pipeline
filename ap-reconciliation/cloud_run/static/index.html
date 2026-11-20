@@ -236,14 +236,15 @@
     .lbl-long { display: none; }
     /* Phones: the table would push the Invoice column (the status) off the screen, so each purchase is a
        block instead: date, description and amount, then the status with its file and buttons, then cost
-       centre and usage, then card and who changed it; a coloured edge says the status at a glance. */
+       centre and usage, the person it is assigned to, then card and who changed it; a coloured edge says
+       the status at a glance. */
     @media (max-width: 640px) {
       .table-wrap { overflow-x: visible; }
       table.txns { display: block; width: 100% !important; font-size: 13px; }
       table.txns thead, table.txns colgroup { display: none; }
       table.txns tbody { display: block; }
       table.txns tr[data-id] { display: grid; grid-template-columns: 54px minmax(0, 1fr) minmax(0, 1fr) auto;
-        grid-template-areas: "date desc desc amount" "inv inv inv inv" "cost cost usage usage" "card card by by";
+        grid-template-areas: "date desc desc amount" "inv inv inv inv" "cost cost usage usage" "person person person person" "card card by by";
         column-gap: 10px; row-gap: 6px; padding: 10px 12px 12px 16px; border-bottom: 1px solid var(--border-subtle); position: relative; }
       table.txns tr[data-id] > td { display: block; padding: 0; border: 0; min-width: 0; overflow: visible; background: none !important; }
       table.txns tr[data-id]::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 12px; width: 4px; border-radius: 0 3px 3px 0; background: var(--border); }
@@ -263,6 +264,7 @@
       .lbl-long { display: inline; }
       table.txns td[data-col="cost"] { grid-area: cost; }
       table.txns td[data-col="usage"] { grid-area: usage; }
+      table.txns td[data-col="person"] { grid-area: person; }
       table.txns td[data-col="card"] { grid-area: card; }
       table.txns td[data-col="by"] { grid-area: by; text-align: right; font-size: 11.5px; color: var(--text-mute); }
       table.txns td[data-col="by"] > div { display: inline; }
@@ -573,7 +575,7 @@
         <div class="card">
           <div class="toolbar">
             <div class="seg" id="statusSeg"></div>
-            <input id="search" class="inp" type="search" placeholder="Search description, amount, cost centre, usage" style="max-width: 320px; flex: 1; min-width: 180px;" />
+            <input id="search" class="inp" type="search" placeholder="Search description, amount, cost centre, usage, person" style="max-width: 320px; flex: 1; min-width: 180px;" />
             <select id="cardSelect" class="inp" style="width: auto; min-width: 150px;" aria-label="Card"></select>
             <div id="rowCount" class="sub ml-auto"></div>
             <button id="receiptsBtn" class="btn btn-secondary btn-xs hidden" type="button" title="This card's purchases that still need a receipt, one block each, made for a phone">Receipts list</button>
@@ -633,7 +635,7 @@
 
   var state = {
     config: null, me: null,
-    months: [], cards: [], costCenters: [],
+    months: [], cards: [], costCenters: [], people: [],
     year: null, month: null, card: '', view: '', status: 'all', q: '',     // view: '' (the table) or 'receipts'
     txns: [], statements: [], notifications: [],
     loaded: false, jobRunning: false,
@@ -1126,6 +1128,7 @@
     state.months = data.months || [];
     state.cards = data.cards || [];
     state.costCenters = data.cost_centers || [];
+    state.people = data.people || [];
     renderSidebar();
   }
 
@@ -1136,6 +1139,7 @@
     state.notifications = (data.notifications || []).slice().sort(function (a, b) { return String(b.sent_at || '').localeCompare(String(a.sent_at || '')); });
     if (data.cards) state.cards = data.cards;
     if (data.cost_centers) state.costCenters = data.cost_centers;
+    if (data.people) state.people = data.people;
     var cardsHere = {};
     state.txns.forEach(function (t) { cardsHere[t.card_last4] = true; });
     var hadView = state.view;
@@ -1275,7 +1279,7 @@
   }
   function matchesSearch(t, q) {
     if (!q) return true;
-    var hay = [t.description, t.supplier, t.city, t.country, t.merchant_category, t.cost_center, t.usage, t.note, t.updated_by,
+    var hay = [t.description, t.supplier, t.city, t.country, t.merchant_category, t.cost_center, t.usage, t.note, t.updated_by, personName(t.person_id),
       String(t.amount), money(t.amount, t.currency), t.source_amount !== null && t.source_amount !== undefined ? String(t.source_amount) : '',
       t.invoice && t.invoice.vendor, t.invoice && t.invoice.invoice_number].join(' ').toLowerCase();
     return hay.indexOf(q) >= 0;
@@ -1297,6 +1301,7 @@
     { key: 'invoice', label: 'Invoice', width: 240 },
     { key: 'cost', label: 'Cost centre', width: 150 },
     { key: 'usage', label: 'Usage', width: 180 },
+    { key: 'person', label: 'Person', width: 150 },
     { key: 'by', label: 'Updated by', width: 130 },
   ];
   var COLS_KEY = 'ap_recon_columns';
@@ -1308,10 +1313,11 @@
   function shownColumns() { return visibleColumns().filter(function (c) { return !(c.key === 'card' && state.card); }); }
   // How far each column may give way when the window is narrow, before the table scrolls sideways.
   // The invoice column keeps room for its three buttons on one line (Receipt… or Link…, No invoice,
-  // Rematch). With every column at its minimum (980px) the table still fits a 1280px window that shows
-  // a 15-17px scrollbar, as Windows does (981-983px of room).
+  // Rematch). With every column at its minimum (1076px) the table fits a 1366px window; on a 1280px one
+  // it scrolls sideways a little while the Card column shows (all cards), and fits once a card is picked
+  // (992px less Card's 84). Hide a column with Columns to make room.
   // Date and Updated by keep room for "posted May 10" and "May 10, 00:00"; Amount for "-CAD 12,345.67".
-  var MIN_WIDTH = { date: 98, card: 84, desc: 140, amount: 116, invoice: 232, cost: 112, usage: 100, by: 98 };
+  var MIN_WIDTH = { date: 98, card: 84, desc: 130, amount: 116, invoice: 232, cost: 106, usage: 96, person: 116, by: 98 };
   function minWidth(key) { return MIN_WIDTH[key]; }
   // Never narrower than the minimum by default.
   function colWidth(c) { return Math.max(60, Number(cols.widths[c.key]) || Math.max(c.width, minWidth(c.key) || 0)); }
@@ -1374,6 +1380,7 @@
     invoice: function (t) { var inv = t.invoice; return (STATUS_RANK[t.invoice_status] === undefined ? 9 : STATUS_RANK[t.invoice_status]) + '|' + ((inv && (inv.vendor || inv.file_name)) || '').toLowerCase(); },
     cost: function (t) { return (t.cost_center || '\uffff').toLowerCase(); },      // empty ones last
     usage: function (t) { return (t.usage || '\uffff').toLowerCase(); },
+    person: function (t) { return (personName(t.person_id) || '\uffff').toLowerCase(); },
     by: function (t) { return (t.updated_at || '') + ' ' + (t.updated_by || ''); },
   };
   function sortRows(rows) {
@@ -1638,6 +1645,22 @@
     return st === 'matched' && t.match_method !== 'manual';
   }
 
+  function personName(id) {
+    if (!id) return '';
+    var p = state.people.find(function (x) { return x.id === id; });
+    return p ? p.name : '';
+  }
+  function personCell(t) {
+    var current = t.person_id || '';
+    var opts = '<option value="">— none —</option>' + state.people.map(function (p) {
+      return '<option value="' + esc(p.id) + '"' + (p.id === current ? ' selected' : '') + '>' + esc(p.name) + '</option>';
+    }).join('');
+    if (current && !personName(current)) opts += '<option value="' + esc(current) + '" selected>(someone not on the list)</option>';
+    opts += t.editable ? '<option value="__new__">New person…</option>' : '';
+    return '<select class="inp" data-field="person_id" aria-label="Person" title="' + esc(personName(current) || 'Not assigned') + '"' +
+      (t.editable ? '' : ' disabled') + '>' + opts + '</select>';
+  }
+
   function costCenterCell(t) {
     var current = t.cost_center || '';
     var list = state.costCenters.slice();
@@ -1666,6 +1689,7 @@
     },
     invoice: function (t) { return '<td class="td-inv">' + invoiceCell(t) + '</td>'; },
     cost: function (t) { return '<td>' + costCenterCell(t) + '</td>'; },
+    person: function (t) { return '<td>' + personCell(t) + '</td>'; },
     usage: function (t) {
       return '<td><input class="inp" data-field="usage" aria-label="Usage" placeholder="' + (t.type !== 'purchase' ? '' : 'What was this for?') + '" value="' + esc(t.usage || '') + '" data-original="' + esc(t.usage || '') + '"' + (t.editable ? '' : ' disabled') + ' /></td>';
     },
@@ -1899,7 +1923,8 @@
     var body = {}; body[field] = value;
     var ok = false;
     try {
-      await patchTxn(id, body, field === 'usage' ? 'Usage saved' : 'Cost centre saved');
+      await patchTxn(id, body, field === 'usage' ? 'Usage saved' : field === 'person_id'
+        ? (value ? 'Assigned to ' + personName(value) : 'Person cleared') : 'Cost centre saved');
       ok = true;
     } catch (e) {
       report(e, 'Could not save');
@@ -1925,6 +1950,53 @@
     input.focus();
   }
 
+  function swapToNewPersonInput(select) {
+    var td = select.parentNode;
+    var input = document.createElement('input');
+    input.className = 'inp';
+    input.setAttribute('data-field', 'person_new');
+    input.placeholder = 'New person\u2019s name';
+    input.setAttribute('aria-label', 'Name of the new person');
+    input.maxLength = 100;
+    td.innerHTML = '';
+    td.appendChild(input);
+    input.focus();
+  }
+  // Every row's person list, after someone was added (the row being typed in is left alone).
+  function refreshPersonCells() {
+    $all('#txnBody tr[data-id]').forEach(function (tr) {
+      var td = tr.querySelector('td[data-col="person"]'), t = txnById(tr.dataset.id);
+      if (!td || !t || td.contains(document.activeElement)) return;
+      var tpl = document.createElement('template');
+      tpl.innerHTML = CELLS.person(t).replace(/^<td/, '<td data-col="person"');
+      td.replaceWith(tpl.content.firstElementChild);
+    });
+  }
+  // Add the person (or find the one already named so), then assign this row to them.
+  async function createAndAssignPerson(input) {
+    var name = input.value.replace(/\s+/g, ' ').trim();
+    var id = input.closest('tr').dataset.id;
+    if (!name) { restoreRow(id); return; }
+    if (input.dataset.saving === '1') return;
+    input.dataset.saving = '1';
+    input.classList.add('saving');
+    try {
+      var data = await api('/api/people', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name }),
+      });
+      var person = data.person;
+      if (!state.people.some(function (p) { return p.id === person.id; })) {
+        state.people.push(person);
+        state.people.sort(function (a, b) { return a.name.toLowerCase().localeCompare(b.name.toLowerCase()); });
+        refreshPersonCells();
+      }
+      await patchTxn(id, { person_id: person.id }, (data.created ? 'Added ' : 'Assigned to ') + person.name);
+    } catch (e) {
+      report(e, 'Could not add the person');
+      restoreRow(id);
+    }
+  }
+
   $('#txnBody').addEventListener('click', function (ev) {
     var btn = ev.target.closest('button[data-action]');
     if (!btn || btn.disabled) return;
@@ -1942,6 +2014,10 @@
       if (el.value === '__custom__') { swapToCustomInput(el); return; }
       saveField(el, 'cost_center');
     }
+    if (el.matches('select[data-field="person_id"]')) {
+      if (el.value === '__new__') { swapToNewPersonInput(el); return; }
+      saveField(el, 'person_id');
+    }
   });
   $('#txnBody').addEventListener('focusout', function (ev) {
     var el = ev.target;
@@ -1951,6 +2027,9 @@
       if (el.dataset.cancelled === '1') return;
       if (el.value.trim()) saveField(el, 'cost_center');
       else { var t = txnById(el.closest('tr').dataset.id); if (t) replaceTxn(t); }
+    } else if (el.matches('input[data-field="person_new"]')) {
+      if (el.dataset.cancelled === '1') return;
+      createAndAssignPerson(el);
     }
   });
   $('#txnBody').addEventListener('keydown', function (ev) {
@@ -1959,7 +2038,13 @@
     if (ev.key === 'Enter') { ev.preventDefault(); el.blur(); }
     if (ev.key === 'Escape') {
       ev.preventDefault();
-      if (el.dataset.field === 'cost_center_custom') { el.dataset.cancelled = '1'; var t = txnById(el.closest('tr').dataset.id); if (t) replaceTxn(t); }
+      if (el.dataset.field === 'cost_center_custom' || el.dataset.field === 'person_new') {
+        // Let go of the box first: a row redrawn while one of its cells has the focus keeps that cell.
+        var t = txnById(el.closest('tr').dataset.id);
+        el.dataset.cancelled = '1';
+        el.blur();
+        if (t) replaceTxn(t);
+      }
       else { el.value = el.dataset.original || ''; el.blur(); }
     }
   });

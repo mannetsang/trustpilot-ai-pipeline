@@ -444,7 +444,7 @@ Two other modes exist, one edit of the deploy workflow away (step 5):
 - **Card chips** ("1610 - Yin Wei", the full label on hover; one line that
   scrolls sideways when there are more cards than fit) and a status filter
   (all, missing, possible, matched, waived, no cost centre), a search box
-  over description, amounts, cost centre and usage, and on phones also a
+  over description, amounts, cost centre, usage and person, and on phones also a
   card drop-down (the chips, with their counts, still show above it).
 - **Transaction table** (click a header to sort, drag its right edge to
   resize, *Columns* to hide columns or reset; the browser remembers all
@@ -457,10 +457,20 @@ Two other modes exist, one edit of the deploy workflow away (step 5):
   as the page scrolls. The Card column is left out while one card is
   picked. Columns: date, card, description with city/country, amount
   (with the original foreign amount), cost centre dropdown (the
-  `cost_centers` table, with an *Other...* free text), usage, note, and the
+  `cost_centers` table, with an *Other...* free text), usage, note, the
+  **person** the transaction is assigned to, and the
   invoice column: the linked file with vendor, number and total, or the
   buttons *Confirm* / *Not this* on a possible match, *Link...* / *No
   invoice* on a missing one, *Undo* on a waived one. Edits save on change.
+- **Person** (the `people` table; `transactions.person_id`). Each transaction
+  can be assigned to a person - who made the purchase, or answers for it -
+  from a drop-down of everyone added so far; *— none —* clears it. *New
+  person…* turns the cell into a name box: Enter (or leaving it) adds the
+  person and assigns the row, Esc gives up. A name already there, case and
+  extra spaces aside, assigns that person instead of adding a second. Anyone
+  who can open the dashboard may add a person; assigning follows the other
+  edits (AP on any card, a card's owners on theirs). A line assigned to
+  someone is kept when its upload is removed, like one with a cost centre.
 - **Voice mode** (*Voice* in the top bar, remembered per browser). The page
   says what is happening: a step of an upload, *Re-run matching* or *Send
   reminders* starting, finishing or failing, a *Rematch* result, an error
@@ -584,9 +594,11 @@ phone. Chat cards posted before keep their old button until the next send.
 | `POST /api/login` | none, but `X-Requested-With: XMLHttpRequest` in password mode (403 without) | password mode: `{"password": "..."}` sets the session cookie (401 wrong, 429 after too many wrong ones); a no-op in the other modes |
 | `POST /api/logout` | none, but `X-Requested-With: XMLHttpRequest` in every mode (403 without) | clears the session cookie (*Lock*) |
 | `GET /api/me` | signed in | e-mail, name, role, cards owned |
-| `GET /api/months` | signed in | month navigation with per-card counts, cards, cost centres |
-| `GET /api/transactions?year&month[&card]` | signed in | the month's transactions with their invoice, `editable` flag, uploads and recent notifications |
-| `PATCH /api/transactions/<id>` | signed in, AP or the card's owner | body: `cost_center`, `usage`, `note`, and/or `action` (`waive` with `reason`, `unwaive`, `confirm`, `link` with `invoice_id`, `unlink`) |
+| `GET /api/months` | signed in | month navigation with per-card counts, cards, cost centres, people |
+| `GET /api/transactions?year&month[&card]` | signed in | the month's transactions with their invoice, `editable` flag, `person_id`, the people list, uploads and recent notifications |
+| `PATCH /api/transactions/<id>` | signed in, AP or the card's owner | body: `cost_center`, `usage`, `note`, `person_id` (a person's id, or `""` to clear; 400 for one that does not exist), and/or `action` (`waive` with `reason`, `unwaive`, `confirm`, `link` with `invoice_id`, `unlink`) |
+| `GET /api/people` | signed in | `{"people": [{"id", "name", "email"}]}`, by name |
+| `POST /api/people` | signed in | `{"name"[, "email"]}`: adds a person (`201 {"person", "created": true}`), or answers `200` with the one already named so (case and extra spaces aside); 400 for an empty name, one over 100 characters or a bad e-mail |
 | `POST /api/ask?year&month[&card]` | signed in | voice mode: `{"question": "..."}` (up to 500 characters; `card` is four digits) answered as `{"answer", "source": "gemini" \| "summary"}` for the browser to read aloud; read only |
 | `POST /api/transactions/<id>/rematch` | signed in, AP or the card's owner | *Rematch*: reads new invoices for the purchase's months, then looks for its invoice again, as a background job (202 with the job, polled through `/api/jobs/current?id=`; 409 while another job runs; 400 for a waived, non-purchase or hand-linked row). The job's result has `outcome` (`found`, `same`, `kept`, `none` or `conflict`), the status and invoice the row now has, `changed`, `invoices_read`, `read_errors` with `read_error_files`, and the updated row; its progress has `stage` and `percent` |
 | `GET /api/transactions/<id>` | signed in | one row as the table shows it (with `checks` and `invoice.reading`); the receipt dialog polls it while the file is read |
