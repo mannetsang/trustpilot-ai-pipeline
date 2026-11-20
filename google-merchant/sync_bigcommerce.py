@@ -78,14 +78,10 @@ from merchant_api import (
 )
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from lib.secrets import get_secret  # noqa: E402
+from lib.stores import by_feed_label  # noqa: E402
 
 # BigCommerce store behind each feed label. Only the .ca store is known so far;
 # add the others here once their store hashes and tokens exist.
-STORES = {
-    "CA": {"store_hash": "gmosz3ja", "brand_default": "Superhairpieces"},
-}
-
 BC_API = "https://api.bigcommerce.com/stores/{hash}"
 
 # Google product taxonomy ids (taxonomy-with-ids.en-US.txt). Rules are tried in
@@ -102,21 +98,65 @@ GOOGLE_CATEGORIES = {
     "hair_care_kits": "8452",    # Health & Beauty > Personal Care > Hair Care > Hair Care Kits
     "cosmetic_tools": "2619",    # Health & Beauty > Personal Care > Cosmetics > Cosmetic Tools
 }
+# The storefronts name the same products in five languages, and these rules used
+# to speak only English: FR, NL and ES mapped barely two thirds of their
+# catalogues, and an unmapped offer is one Google categorises by guesswork -
+# which is how toupees first landed under Hats. Local terms sit alongside the
+# English ones in each rule so the ordering and the vetoes still hold.
 CATEGORY_RULES = [
     # (key, match regex, veto regex) tried in order on "category paths | name", lowercase.
     # A rule only fires when the match hits and the veto (if any) does not.
-    ("mannequins", r"mannequin|styling block|wig head|wig holder|wig stand", None),
-    ("cosmetic_tools", r"microblad|microshad|lip blush|eyelash|makeup|academy|training kit", None),
-    ("hair_care_kits", r"gift set|\bkit\b", r"extension|toupee|hairpiece|starter"),
-    ("wig_accessories", r"\bclips?\b|\bcombs?\b|wig cap|hook needle|colou?r ring|needle|hair ?net", r"topper|toupee|\bextensions?\b|hair system|\bwigs?\b"),
-    ("hair_extensions", r"\bextensions?\b|\bweft\b|tape[- ]in\b|nail[- ]tip|i-?tip|micro ?link|clip[- ]in\b|\bhalo\b|pony ?tail", r"topper|toupee|\bwigs?\b|\btabs?\b|remover|\brolls?\b|pliers|\btools?\b|beads"),
-    ("wig_glue_tape", r"\btapes?\b|\bglue\b|adhesive|solvent|remover|scalp protector|\bliner\b|\bbond\b|knot sealer|c-22|no shine|attachment & removal", None),
-    ("wigs", r"toupee|topper|hair system|\bwigs?\b|sheitel|hair unit|hairpieces?\b|hair replacement", r"\bclips?\b|\bcombs?\b|\bstand\b|catalog"),
-    ("wig_accessories", r"scissor|brush|applicator|glove|template|swatch|spray bottle|\btools?\b", None),
-    ("hair_loss", r"thinning|hair loss|regrowth|minoxidil", None),
-    ("hair_care", r"shampoo|conditioner|mousse|\bgel\b|serum|hair care|styling|leave-in|spray|cream|\boil\b|detangl|\bperm\b|color|colour|dye", None),
-    ("wig_accessories", r"supplies", None),
-    ("wigs", r"\bmen\b|\bwomen\b|frontal|closure|\bbase\b|\blace\b|\bdensity\b", None),
+    ("mannequins", r"mannequin|styling block|wig head|wig holder|wig stand"
+                   r"|t[eê]te\s+(?:de\s+)?mannequin|porte[- ]perruque"
+                   r"|pruikenkop|pruikenstandaard|cabeza\s+de\s+maniqu[íi]|soporte\s+para\s+peluca"
+                   r"|per[üu]ckenkopf|per[üu]ckenst[äa]nder", None),
+    ("cosmetic_tools", r"microblad|microshad|lip blush|eyelash|makeup|academy|training kit"
+                       r"|maquillage|formation|maquillaje|schmink|wimper|pesta[ñn]a", None),
+    ("hair_care_kits", r"gift set|\bkit\b|coffret|geschenkset|set\s+de\s+regalo",
+                       r"extension|toupee|hairpiece|starter|perruque|pruik|peluca|per[üu]cke"),
+    ("wig_accessories", r"\bclips?\b|\bcombs?\b|wig cap|hook needle|colou?r ring|needle|hair ?net"
+                        r"|pince|peigne|bonnet|anneau\s+de\s+couleur|filet\s+[àa]\s+cheveux|aiguille"
+                        r"|klem|kam|pruikmuts|kleurenring|haarnet(?:je)?"
+                        r"|clip|peine|gorro|anillo\s+de\s+color|redecilla|aguja"
+                        r"|klammer|kamm|per[üu]ckenkappe|farbring|farbmuster|haarnetz|nadel",
+                        r"topper|toupee|\bextensions?\b|hair system|\bwigs?\b"
+                        r"|perruque|postiche|pruik|haarstuk|peluca|per[üu]cke|haarteil"),
+    ("hair_extensions", r"\bextensions?\b|\bweft\b|tape[- ]in\b|nail[- ]tip|i-?tip|micro ?link|clip[- ]in\b|\bhalo\b|pony ?tail"
+                        r"|m[èe]ches?|rajouts?|queue\s+de\s+cheval"
+                        r"|haarextensies|inhaar|paardenstaart"
+                        r"|extensiones|coleta"
+                        r"|haarverl[äa]ngerung|tressen|pferdeschwanz",
+                        r"topper|toupee|\bwigs?\b|\btabs?\b|remover|\brolls?\b|pliers|\btools?\b|beads"
+                        r"|perruque|pruik|peluca|per[üu]cke"),
+    ("wig_glue_tape", r"\btapes?\b|\bglue\b|adhesive|solvent|remover|scalp protector|\bliner\b|\bbond\b|knot sealer|c-22|no shine|attachment & removal"
+                      r"|colle|ruban|adh[ée]sif|dissolvant|d[ée]collant"
+                      r"|lijm|kleefband|plakband|verwijderaar"
+                      r"|pegamento|cinta|adhesivo|disolvente|removedor"
+                      r"|kleber|klebeband|haftband|l[öo]ser|entferner", None),
+    ("wigs", r"toupee|topper|hair system|\bwigs?\b|sheitel|hair unit|hairpieces?\b|hair replacement"
+             r"|perruques?|postiche|compl[ée]ment\s+capillaire|proth[èe]se\s+capillaire|pi[èe]ce\s+capillaire"
+             r"|pruik(?:en)?|haarstuk(?:je)?|haarwerk"
+             r"|pelucas?|bis[oñn]u?[ée]|pr[óo]tesis\s+capilar"
+             r"|per[üu]cke(?:n)?|haarteil|toupet|haarersatz|zweitfrisur",
+             r"\bclips?\b|\bcombs?\b|\bstand\b|catalog|klammer|standaard|soporte"),
+    ("wig_accessories", r"scissor|brush|applicator|glove|template|swatch|spray bottle|\btools?\b"
+                        r"|ciseaux|brosse|gant|gabarit|[ée]chantillon|vaporisateur"
+                        r"|schaar|borstel|handschoen|sjabloon|staalkaart"
+                        r"|tijeras|cepillo|guante|plantilla|muestra"
+                        r"|schere|b[üu]rste|handschuh|schablone", None),
+    ("hair_loss", r"thinning|hair loss|regrowth|minoxidil"
+                  r"|repousse|alop[ée]cie|haargroei|crecimiento|haarwuchs", None),
+    ("hair_care", r"shampoo|conditioner|mousse|\bgel\b|serum|hair care|styling|leave-in|spray|cream|\boil\b|detangl|\bperm\b|color|colour|dye"
+                  r"|shampooing|apr[èe]s[- ]shampooing|soin|huile|cr[èe]me|d[ée]m[êe]l"
+                  r"|conditioner|verzorging|olie|cr[èe]me"
+                  r"|champ[úu]|acondicionador|aceite|crema|cuidado"
+                  r"|sp[üu]lung|pflege|[öo]l|creme|haarfarbe", None),
+    ("wig_accessories", r"supplies|fournitures|benodigdheden|suministros|zubeh[öo]r", None),
+    ("wigs", r"\bmen\b|\bwomen\b|frontal|closure|\bbase\b|\blace\b|\bdensity\b"
+             r"|homme|femme|dentelle|densit[ée]"
+             r"|heren|dames|kant|dichtheid"
+             r"|hombre|mujer|encaje|densidad"
+             r"|herren|damen|spitze|dichte", None),
 ]
 # Products that exist in BigCommerce for internal ordering and must never reach Google.
 INTERNAL_CATEGORY = re.compile(r"office supplies|services?$", re.I)
@@ -128,6 +168,14 @@ INTERNAL_NAME = re.compile(
 )
 SAFE_ID = re.compile(r"^[A-Za-z0-9._-]{1,50}$")
 WEIGHT_UNITS = {"LBS": "lb", "KGS": "kg", "Ounces": "oz", "Grams": "g", "Pounds": "lb", "Kilograms": "kg"}
+# Used only when /v2/store is forbidden, which is the .nl, .fr and .de tokens.
+# Not a guess: .es is the one EU token broad enough to answer and it reports
+# KGS, where .ca and .com report LBS, so the EU storefronts are configured
+# metric and these three are assumed to match .es rather than .ca. Reading it
+# backwards would misstate every shipping weight by a factor of 2.2. The feed
+# follows the storefront's own setting so Google and the site agree; whether
+# that setting is right is a separate question - see docs and CLAUDE.md.
+DEFAULT_WEIGHT_UNIT = {"CA": "lb", "US": "lb", "NL": "kg", "FR": "kg", "ES": "kg", "DE": "kg"}
 TITLE_MAX = 150
 DESCRIPTION_MAX = 5000
 MAX_ADDITIONAL_IMAGES = 10
@@ -145,6 +193,40 @@ HARDSHIP = re.compile(
     + r"(?:(?:\s*(?:and|&|,|/|or)\s*|\s+)" + _HARDSHIP_QUAL + _HARDSHIP_TERM + r"\b)*",
     re.I,
 )
+
+# Google enforces Personal Hardships in the feed's own language, and the EU
+# storefronts describe the same products in their own words: a French page says
+# "perte de cheveux" where the Canadian one says "hair loss". The English
+# pattern above would have let all four EU feeds through untouched, which is
+# how Gen'C Beauty collected 66 personal_hardships_policy_violation offers.
+#
+# Each storefront is matched against English *as well as* its own language,
+# because imported copy routinely mixes the two inside one description.
+#
+# Deliberately absent from these: the local words for "medical". English can
+# afford it with a lookahead for "medical grade"; "qualite medicale",
+# "medizinische Qualitat" and "calidad medica" are ordinary product copy, and
+# stripping them would damage good descriptions to no purpose. The policy is
+# about targeting hardship, not about the word medical.
+_HARDSHIP_LANG = {
+    "fr": r"perte\s+de\s+cheveux|chute\s+de\s+cheveux|cheveux\s+clairsem[ée]s?|"
+          r"alop[ée]cie|chimioth[ée]rapie|cancer|calvitie|d[ée]garnie?s?|"
+          r"cheveux\s+fins\s+et\s+clairsem[ée]s?",
+    "nl": r"haaruitval|haarverlies|dunner\s+wordend\s+haar|dunnend\s+haar|"
+          r"alopecia|chemotherapie|kanker|kaalheid|kalend|kaal\s+worden",
+    "es": r"p[ée]rdida\s+d(?:e|el)\s+(?:cabello|pelo)|ca[íi]da\s+d(?:e|el)\s+(?:cabello|pelo)|"
+          r"cabello\s+ralo|pelo\s+ralo|alopecia|quimioterapia|c[áa]ncer|calvicie",
+    "de": r"haarausfall|haarverlust|d[üu]nner\s+werdendes?\s+haar|lichtes?\s+haar|"
+          r"alopezie|chemotherapie|krebs|glatze|geheimratsecken",
+}
+HARDSHIP_BY_LANG = {
+    lang: re.compile(
+        r"(?:\b(?:pour|contre|en cas de|voor|bij|para|por|f[üu]r|bei|gegen)\s+)?"
+        r"\b(?:" + terms + r")\b",
+        re.I,
+    )
+    for lang, terms in _HARDSHIP_LANG.items()
+}
 
 # Shipping weight in grams by Google product category, used only when
 # BigCommerce holds no weight. The account's shipping rates are weight-based,
@@ -208,12 +290,34 @@ class BigCommerce:
             page += 1
 
 
-def load_store(bc):
-    store = bc.get("/v2/store")
+def load_store(bc, shop):
+    """Store URL, currency and weight unit - from the API, or the registry.
+
+    /v2/store needs a scope the .nl, .fr and .de tokens do not carry: they are
+    catalogue-only and answer 403, the same way they do on /v2/orders. That is
+    not a reason to refuse to build a feed, because lib/stores.py already holds
+    the two facts that matter - the canonical origin and the currency - and the
+    weight unit has a safe default. A storefront whose token is narrow still
+    gets a correct feed; only the weight unit is assumed, and it is reported.
+    """
+    try:
+        store = bc.get("/v2/store")
+    except urllib.error.HTTPError as exc:
+        if exc.code not in (401, 403):
+            raise
+        print(f"note: /v2/store is {exc.code} for this token (catalogue-only scope); "
+              f"using lib/stores.py and assuming {DEFAULT_WEIGHT_UNIT.get(shop.market, 'kg')} weights")
+        return {
+            "url": shop.origin,
+            "currency": shop.currency,
+            "weight_unit": DEFAULT_WEIGHT_UNIT.get(shop.market, "kg"),
+            "store_api": False,
+        }
     return {
         "url": store["secure_url"].rstrip("/"),
         "currency": store["currency"],
         "weight_unit": WEIGHT_UNITS.get(store["weight_units"], "lb"),
+        "store_api": True,
     }
 
 
@@ -260,11 +364,78 @@ def clean_text(raw, limit):
     return text[:limit].rstrip()
 
 
-def neutralize(text):
-    """Remove Personal Hardships phrasing from feed text and tidy what is left."""
-    if not text or not HARDSHIP.search(text):
+# Function words in all five feed languages. Removing a noun phrase from the
+# middle of a clause leaves these stranded, and a run of them is the signature
+# of the hole: German and Dutch park the verb at the end, so "um Haarausfall
+# oder dunner werdendes Haar zu kaschieren" becomes "um oder zu kaschieren" -
+# damage in the middle of a sentence that still ends perfectly well.
+_FUNCTION_WORD = (
+    r"and|or|for|with|to|of|the|a|an|due|from|caused|by|after|during|in|on"
+    r"|et|ou|de|du|des|la|le|les|une?|aux?|pour|contre|dues?|li[ée]e?s?|en|dans"
+    r"|of|om|te|voor|bij|het|een|met|naar"
+    r"|y|o|del|el|los|las|para|por|con|una?"
+    r"|und|oder|um|zu|von|f[üu]r|der|die|das|den|dem|bei|gegen|mit"
+)
+_DANGLING = re.compile(r"\b(?:" + _FUNCTION_WORD + r")[\s,;:]*[.!?]?$", re.I)
+_RUN = re.compile(r"\b(?:" + _FUNCTION_WORD + r")\b(?:\s+\b(?:" + _FUNCTION_WORD + r")\b){2,}", re.I)
+
+
+def _dangles(text):
+    """True when the sentence now ends on a connector, article or preposition."""
+    return bool(_DANGLING.search(text))
+
+
+def _collapsed(before, after):
+    """True when the removal pushed function words together mid-sentence.
+
+    Three in a row is vanishingly rare in real copy and almost certain after a
+    noun phrase is cut out from between them. Compared against the original so
+    a sentence that genuinely reads that way is left alone.
+    """
+    return bool(_RUN.search(after)) and not _RUN.search(before)
+
+
+def neutralize(text, lang="en"):
+    """Remove Personal Hardships phrasing from feed text and tidy what is left.
+
+    Always strips the English phrasings, then the storefront's own language on
+    top. A .fr description that quotes an English spec sheet carries both.
+    """
+    if not text:
         return text
-    out = HARDSHIP.sub(" ", text)
+    patterns = [HARDSHIP]
+    local = HARDSHIP_BY_LANG.get((lang or "en").lower())
+    if local:
+        patterns.append(local)
+    if not any(p.search(text) for p in patterns):
+        return text
+
+    # Sentence by sentence, because removing a phrase mid-clause wrecks the
+    # grammar around it and the tidy-up below only speaks English. Real copy:
+    # "Couvre la zone clairsemee ou la calvitie due a la perte de cheveux."
+    # holds two hardship terms in one clause, and stripping both leaves
+    # "Couvre la zone clairsemee ou la due a la." A sentence left that short,
+    # or ending on a connector, is dropped whole - which is what an editor
+    # would do, and what the policy wants anyway.
+    kept = []
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        stripped = sentence
+        for pattern in patterns:
+            stripped = pattern.sub(" ", stripped)
+        if stripped == sentence:
+            kept.append(sentence)
+            continue
+        tidy = re.sub(r"\s+", " ", stripped).strip()
+        words = re.findall(r"\w+", tidy)
+        if len(words) < 4 or _dangles(tidy) or _collapsed(sentence, tidy):
+            continue
+        kept.append(stripped)
+    out = " ".join(kept)
+    if not re.sub(r"\W+", "", out):
+        # Everything was hardship. Better a bare phrase than an empty field.
+        out = text
+        for pattern in patterns:
+            out = pattern.sub(" ", out)
     out = re.sub(r"\(\s*\)|\[\s*\]", " ", out)  # brackets emptied by the removal
     out = re.sub(r"\s+([,.;:)\]])", r"\1", out)  # space left before punctuation
     out = re.sub(r"\b(?:for|with|and|or|to|of)\s*(?=[)\]\-\u2013|,.;:]|$)", "", out, flags=re.I)  # dangling connectors
@@ -372,7 +543,8 @@ def build_offers(product, ctx, brands, category_paths, stats=None):
     images = sorted(product.get("images") or [], key=lambda i: (not i.get("is_thumbnail"), i.get("sort_order", 0)))
     image_urls = [i["url_zoom"] for i in images if i.get("url_zoom")]
     raw_name, raw_description = product["name"].strip(), clean_text(product.get("description"), DESCRIPTION_MAX)
-    name, description = neutralize(raw_name), neutralize(raw_description)
+    lang = ctx.get("language", "en")
+    name, description = neutralize(raw_name, lang), neutralize(raw_description, lang)
     description = description or name
     if (name, description) != (raw_name, raw_description or raw_name):
         stats["neutralized_text"] += 1
@@ -513,24 +685,40 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     label = args.label.upper()
+    # lib/stores.py is the one registry: hash, language, market, brand and the
+    # token's Secret Manager id, for all six storefronts. This script used to
+    # carry a STORES dict holding only "CA", which is why it could sync one
+    # market and died on any other.
+    shop = by_feed_label(label)
     storefront = next((s for s in STOREFRONTS if s[1] == label), None)
-    if not storefront or label not in STORES:
-        sys.exit(f"error: no BigCommerce store configured for feed label {label!r}; known: {sorted(STORES)}")
-    store_cfg = STORES[label]
+    if not storefront:
+        sys.exit(f"error: feed label {label!r} is not in STOREFRONTS")
     account = resolve_account(args)
     parent = account_parent(account)
 
-    token = get_secret(f"BIGCOMMERCE_{store_cfg['store_hash']}_ACCESS_TOKEN", env_var="BC_ACCESS_TOKEN")
-    bc = BigCommerce(store_cfg["store_hash"], token)
-    store = load_store(bc)
+    token = shop.token()
+    if not token:
+        sys.exit(f"error: no BigCommerce token stored for {shop.key} "
+                 f"({shop.token_secret}); see docs/credentials.md")
+    bc = BigCommerce(shop.hash, token)
+    store = load_store(bc, shop)
+    # The storefront's own currency is the only one its prices may be stated in.
+    # A mismatch means the token points at the wrong store, and sending USD
+    # prices to a EUR feed would be worse than failing. Only worth checking
+    # when the store API answered; otherwise the currency came from the
+    # registry and is trivially equal.
+    if store.get("store_api") and store["currency"] != shop.currency:
+        sys.exit(f"error: {shop.key} is {shop.currency} in lib/stores.py but the "
+                 f"BigCommerce store reports {store['currency']}; refusing to sync")
     ctx = {
         **store,
-        "brand_default": store_cfg["brand_default"],
+        "brand_default": shop.brand,
         "feed_label": label,
-        "language": storefront[2],
-        "country": storefront[3][0],
+        "language": shop.language,
+        "country": shop.market,
     }
-    print(f"store {store_cfg['store_hash']} ({store['url']}, {store['currency']}) -> {parent} feed {label}")
+    print(f"store {shop.hash} ({store['url']}, {store['currency']}) -> {parent} "
+          f"feed {label} ({shop.language}/{shop.market})")
 
     brands = load_brands(bc)
     category_paths, _ = load_categories(bc)

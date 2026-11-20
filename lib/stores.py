@@ -35,6 +35,10 @@ class Store:
     feed_label: str     # Merchant Center feed label
     token_env: str      # env var in the project-root .env
     token_secret: str   # Secret Manager id
+    # The brand to send Google when a product carries none of its own. Every
+    # storefront sells the same brand; it is a field rather than a constant so
+    # a future storefront that does not can say so.
+    brand: str = "Superhairpieces"
 
     @property
     def api_base(self) -> str:
@@ -108,6 +112,15 @@ STORES = [
 ]
 
 BY_KEY = {s.key: s for s in STORES}
+BY_FEED_LABEL = {s.feed_label: s for s in STORES}
+
+
+def by_feed_label(label):
+    """Resolve a Merchant Center feed label (CA, US, NL, FR, ES, DE) to a store."""
+    store = BY_FEED_LABEL.get((label or "").upper())
+    if not store:
+        raise SystemExit(f"unknown feed label {label!r}; known: {', '.join(BY_FEED_LABEL)}")
+    return store
 
 
 def select(keys=None):
