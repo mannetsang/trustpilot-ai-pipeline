@@ -169,6 +169,17 @@ def cards_differ(a, b):
     return bool(a) and bool(b) and not same_card(a, b)
 
 
+def forget_card_aliases():
+    """The cards changed (a statement or Cards… added one): read them again on the next match."""
+    _card_aliases["at"] = 0.0
+
+
+def _canonical_card(card):
+    """The statement card a number is: itself, or the card it is the reissue of."""
+    c = str(card or "")
+    return _card_aliases["map"].get(c, c)
+
+
 def amount_score(txn, inv):
     """(score, note). Exact 1.0, within 1% 0.6, within 5% 0.3, else 0."""
     total = inv.get("total")
@@ -448,59 +459,123 @@ def _cents(value):
     return int(round(float(value) * 100))
 
 
-def infer_split_charges(transactions, invoices, taken=None):
+def _split_card(inv):
+    """The card an invoice's charges were on: the digits it shows, else those of the one charge it lists."""
+    listed = listed_charges(inv)
+    return inv.get("card_last4") or (listed[0][1].get("card_last4") if listed else None)
+
+
+def split_eligible(inv, taken=()):
+    """Could the invoice be one paid in several card charges it does not list? It has a date and a
+    positive total, nothing is linked to it (taken: the invoice ids linked), it is an invoice and not
+    a credit note, and it lists no charge, or only the one of its whole total."""
+    if (inv["id"] in taken or not _day(inv.get("invoice_date")) or inv.get("is_invoice") is False
+            or (inv.get("document_type") or "") == "credit_note"):
+        return False
+    try:
+        target = _cents(inv.get("total"))
+    except (TypeError, ValueError):
+        return False
+    listed = listed_charges(inv)
+    return target > 0 and (not listed or (len(listed) == 1 and _cents(listed[0][1]["amount"]) == target))
+
+
+def _charge_candidate(t, inv, card, day):
+    """The purchase's amounts in cents comparable with inv when it could be one of its charges (a
+    purchase, not refused for it, on its card or the card it is a reissue of, from a vendor resembling
+    it, within CHARGE_DAYS of its date by purchase or posting date); [] when it could not."""
+    if (t.get("type") != "purchase" or rejected(t, inv) or cards_differ(card, t.get("card_last4"))
+            or vendor_similarity(t, inv) < VENDOR_EVIDENCE):
+        return []
+    gap = charge_days(t, {"date": day.isoformat()})
+    if gap is None or gap > CHARGE_DAYS:
+        return []
+    return [_cents(a) for a in charge_amounts(t, inv)]
+
+
+def _whole_elsewhere(t, cents, inv, others):
+    """Is the purchase, by its amount, the whole of another invoice nothing is linked to (same card,
+    a vendor resembling it, dated within POST_LAG_DAYS)? Then it is that invoice's, not a charge of inv."""
+    for o in others:
+        if o["id"] == inv["id"] or o.get("total") is None:
+            continue
+        try:
+            if _cents(o["total"]) != cents:
+                continue
+        except (TypeError, ValueError):
+            continue
+        gap = charge_days(t, {"date": o.get("invoice_date")})
+        if (gap is not None and gap <= POST_LAG_DAYS and not cards_differ(_split_card(o), t.get("card_last4"))
+                and vendor_similarity(t, o) >= VENDOR_EVIDENCE):
+            return True
+    return False
+
+
+def _subset_sums(pool, target, want):
+    """Up to `want` sets of two to SUM_MAX_CHARGES members of pool [(txn, cents)] adding up to target."""
+    sets = []
+
+    def search(start, chosen, rest):
+        if len(sets) >= want:
+            return
+        if rest == 0 and len(chosen) >= 2:
+            sets.append(list(chosen))
+            return
+        if rest <= 0 or len(chosen) == SUM_MAX_CHARGES:
+            return
+        for k in range(start, len(pool)):
+            chosen.append(pool[k])
+            search(k + 1, chosen, rest - pool[k][1])
+            chosen.pop()
+
+    search(0, [], target)
+    return sets
+
+
+def infer_split_charges(transactions, invoices, taken=None, others=None, must_include=None):
     """Invoices paid in several card charges they do not list: Square bills its subscriptions on one
     tax invoice (CAD 818.12) and charges each separately (237.30, 45.20 and 535.62 the same day).
-    For an invoice nothing is linked to that lists at most one charge, the purchases on its card (or
-    the card it is a reissue of) from a vendor resembling it, within CHARGE_DAYS of its date, of
-    which two to SUM_MAX_CHARGES add up to its total to the cent. Returns {invoice id: the charges to
-    record on it, [{"date", "amount", "card_last4", "inferred": True}]}; charge_match then links each
-    purchase to its own. Exactly one such set per invoice, and no purchase in two invoices' sets:
-    anything ambiguous is left for a person."""
+    For each invoice split_eligible allows, the purchases in `transactions` that could be its charges
+    (_charge_candidate), of which two to SUM_MAX_CHARGES, all on one card, add up to its total to the
+    cent. Returns {invoice id: the charges to record on it, [{"date", "amount", "card_last4",
+    "inferred": True}]}; charge_match then links each purchase to its own.
+
+    Only what nothing else explains: an invoice one purchase pays whole is left to the rules, and a
+    purchase that is by its amount the whole of another invoice nothing is linked to (others, default
+    invoices) is no charge of this one. Exactly one set per invoice, on one card (an invoice that shows
+    no card could be made up on two), and no purchase in two invoices' sets: anything ambiguous is left
+    for a person. transactions must hold every purchase that could be a charge (split_purchases), or a
+    set may look unique that is not. must_include: a purchase id every set kept must contain."""
     taken = taken or {}
+    others = [o for o in (invoices if others is None else others) if o["id"] not in taken and not shared(o)]
     found, claims = {}, {}
     for inv in invoices:
-        total = inv.get("total")
-        if (total is None or float(total) <= 0 or inv["id"] in taken or len(listed_charges(inv)) > 1
-                or (inv.get("document_type") or "") == "credit_note" or inv.get("is_invoice") is False):
+        if not split_eligible(inv, taken):
             continue
-        listed = listed_charges(inv)
-        if listed and _cents(listed[0][1]["amount"]) != _cents(total):
-            continue                            # it lists one charge, and not of its total: trust it
-        inv_day = _day(inv.get("invoice_date"))
-        if not inv_day:
-            continue
-        pool = []
+        day, card, target = _day(inv["invoice_date"]), _split_card(inv), _cents(inv["total"])
+        groups, whole = {}, False
         for t in transactions:
-            if (t.get("type") != "purchase" or rejected(t, inv) or cards_differ(inv.get("card_last4"), t.get("card_last4"))
-                    or vendor_similarity(t, inv) < VENDOR_EVIDENCE):
+            amounts = _charge_candidate(t, inv, card, day)
+            if target in amounts:
+                whole = True                    # one purchase pays it whole: the rules', not a split
+                break
+            if not amounts or not 0 < amounts[0] < target or _whole_elsewhere(t, amounts[0], inv, others):
                 continue
-            gap = charge_days(t, {"date": inv_day.isoformat()})
-            amounts = charge_amounts(t, inv)
-            if gap is None or gap > CHARGE_DAYS or not amounts or not 0 < amounts[0] < float(total):
-                continue
-            pool.append((t, _cents(amounts[0])))
-        if len(pool) < 2 or len(pool) > SUM_MAX_POOL:
+            groups.setdefault(_canonical_card(t.get("card_last4")), []).append((t, amounts[0]))
+        if whole:
             continue
-        target, sets = _cents(total), []
-
-        def search(start, chosen, rest):
+        sets = []
+        for pool in groups.values():
+            if len(pool) > SUM_MAX_POOL:
+                sets = [None, None]             # too many to guess from
+                break
+            if len(pool) >= 2:
+                sets += _subset_sums(pool, target, 2 - len(sets))
             if len(sets) > 1:
-                return
-            if rest == 0 and len(chosen) >= 2:
-                sets.append(list(chosen))
-                return
-            if rest <= 0 or len(chosen) == SUM_MAX_CHARGES:
-                return
-            for k in range(start, len(pool)):
-                chosen.append(pool[k])
-                search(k + 1, chosen, rest - pool[k][1])
-                chosen.pop()
-
-        search(0, [], target)
-        if len(sets) != 1:
+                break
+        if len(sets) != 1 or (must_include and all(t["id"] != must_include for t, _ in sets[0])):
             continue
-        found[inv["id"]] = [(t, cents) for t, cents in sets[0]]
+        found[inv["id"]] = sets[0]
         for t, _ in sets[0]:
             claims.setdefault(t["id"], set()).add(inv["id"])
     out = {}
@@ -511,6 +586,46 @@ def infer_split_charges(transactions, invoices, taken=None):
         out[iid] = [{"date": str(t.get("txn_date"))[:10], "amount": cents / 100,
                      "card_last4": t.get("card_last4") or None, "inferred": True} for t, cents in members]
     return out
+
+
+def split_purchases(store, invoices, rows=None):
+    """Every purchase that may still be one of the charges of these invoices: missing or possible, not
+    linked by hand, dated where a charge of theirs could be (CHARGE_REACH_DAYS before an invoice's date,
+    as a purchase may fit by its posting date, to CHARGE_DAYS after), whatever its month or card. A split
+    is judged on all of them, never on the few a caller happened to read. rows: {(year, month): the
+    transactions of that month} already read."""
+    rows = dict(rows or {})
+    months = set()
+    for inv in invoices:
+        d = _day(inv.get("invoice_date"))
+        if not d:
+            continue
+        try:
+            span = (d - dt.timedelta(days=CHARGE_REACH_DAYS), d + dt.timedelta(days=CHARGE_DAYS))
+        except OverflowError:
+            continue
+        months |= {(x.year, x.month) for x in span}    # the reach is under a month: its ends cover it
+    out = []
+    for ym in sorted(months):
+        if ym not in rows:
+            rows[ym] = store.list_transactions(*ym)
+        out += [t for t in rows[ym] if t.get("type") == "purchase" and t.get("match_method") != "manual"
+                and t.get("invoice_status") in ("missing", "possible")]
+    return out
+
+
+def split_leftovers(store, invoices, busy, claimed, rows=None, log=print):
+    """After the exact passes (charge_match, rule_match): record the charges of the invoices paid in
+    several charges they do not list (Square), among `invoices` nothing is linked to (busy: the ids
+    linked in the store or by this run), out of the purchases still needing an invoice that this run
+    did not match (claimed: their ids). Returns the invoices written, for charge_match."""
+    open_ = [i for i in invoices if split_eligible(i, busy)]
+    if not open_:
+        return []
+    pool = [t for t in split_purchases(store, open_, rows) if t["id"] not in claimed]
+    others = [i for i in invoices if i["id"] not in busy]
+    written = set(record_split_charges(store, open_, infer_split_charges(pool, open_, busy, others), log))
+    return [i for i in open_ if i["id"] in written]
 
 
 def record_split_charges(store, invoices, inferred, log=print):
@@ -792,6 +907,7 @@ def split_whole_links(store, inv, log=print):
     holders = [t for t in links if t.get("invoice_part") is None]
     if not holders:
         return 0, 0
+    refresh_card_aliases(store)             # a job's first call: the reissued numbers decide the fit
     taken = {int(t["invoice_part"]) for t in links if t.get("invoice_part") is not None}
     moved = released = 0
     for t in sorted(holders, key=lambda t: str(t.get("txn_date") or "")):
@@ -815,6 +931,51 @@ def split_whole_links(store, inv, log=print):
     if moved or released:
         log(f"{inv.get('file_name')}: {moved} link(s) moved to the charge they are, {released} let go")
     return moved, released
+
+
+def release_stale_parts(store, inv, log=print):
+    """Purchases linked to one of inv's card charges that its stored reading no longer lists (or lists
+    with another amount or card): set back to missing, compare-and-set, unless a person linked them, so
+    the matcher looks for them again (and may work the charges out again). Returns how many."""
+    links = [t for t in store.transactions_for_invoice(inv["id"])
+             if t.get("invoice_part") is not None and t.get("match_method") != "manual"]
+    if not links:
+        return 0
+    refresh_card_aliases(store)
+    released = 0
+    for t in links:
+        if link_valid(t, inv):
+            continue
+        expect = {"invoice_id": inv["id"], "invoice_part": t.get("invoice_part"),
+                  "invoice_status": t.get("invoice_status"), "match_method": t.get("match_method")}
+        if store.update_transaction(t["id"], {"invoice_status": "missing", "invoice_id": None, "invoice_part": None,
+                                              "match_confidence": None, "match_method": None, "match_note": None,
+                                              "updated_at": now_iso()}, expect=expect) is not None:
+            released += 1
+    if released:
+        log(f"{inv.get('file_name')}: {released} link(s) to a charge it no longer lists let go")
+    return released
+
+
+def carry_inferred_charges(prior, row):
+    """A file read again (renamed, a new Drive version) keeps the charges the matcher worked out for it
+    (Square's subscriptions: the reading never lists them) when the new reading lists none of its own
+    but perhaps the one of its whole total, and agrees on the total, currency and date. Sets them on
+    row; True when it did."""
+    old = (prior or {}).get("card_charges") or []
+    if not old or not all(isinstance(c, dict) and c.get("inferred") for c in old) or row.get("extraction_error"):
+        return False
+    try:
+        same_total = _cents(row.get("total")) == _cents(prior.get("total"))
+    except (TypeError, ValueError):
+        return False
+    listed = listed_charges(row)
+    if (not same_total or len(listed) > 1 or (listed and _cents(listed[0][1]["amount"]) != _cents(row["total"]))
+            or (row.get("currency") or "").upper() != (prior.get("currency") or "").upper()
+            or str(row.get("invoice_date") or "")[:10] != str(prior.get("invoice_date") or "")[:10]):
+        return False
+    row["card_charges"] = [dict(c) for c in old]
+    return True
 
 
 def candidate_invoices(store, year, month):
@@ -863,26 +1024,6 @@ def _better(a, b):
     return (STATUS_RANK[a[0]], a[1] or 0) > (STATUS_RANK[b[0]], b[1] or 0)
 
 
-def _purchases_around(store, txn):
-    """The purchases dated within a few days of txn (txn among them) that a match may still change:
-    missing or possible, not linked by hand."""
-    day = _day(txn.get("txn_date"))
-    if not day:
-        return [txn]
-    reach = dt.timedelta(days=CHARGE_DAYS + 1)
-    months = sorted({(d.year, d.month) for d in (day - reach, day, day + reach)})
-    out = []
-    for y, m in months:
-        for t in store.list_transactions(y, m):
-            d = _day(t.get("txn_date"))
-            if (t.get("type") == "purchase" and t.get("invoice_status") in ("missing", "possible")
-                    and t.get("match_method") != "manual" and d and abs((d - day).days) <= reach.days):
-                out.append(t)
-    if not any(t["id"] == txn["id"] for t in out):
-        out.append(txn)
-    return out
-
-
 def match_transaction(store, gemini, txn_id, use_ai=True, log=print, updated_by=None, on_stage=None):
     """Look for the invoice of one purchase again: rules first, then the Gemini judge, against the
     invoices of its month and the months either side that no other transaction holds. Invoices
@@ -906,13 +1047,19 @@ def match_transaction(store, gemini, txn_id, use_ai=True, log=print, updated_by=
         raise RematchError(why_not)
     own, own_status = txn.get("invoice_id"), txn.get("invoice_status") or "missing"
     own_part = txn.get("invoice_part")
-    refresh_card_aliases(store)
+    refresh_card_aliases(store, force=True)
     taken = taken_parts(store, [txn])
     candidates = candidate_invoices(store, txn["year"], txn["month"])
-    # The invoice may be one paid in several charges it does not list (Square): the purchases around
-    # this one that still need an invoice say whether they add up to it.
-    around = _purchases_around(store, txn)
-    record_split_charges(store, candidates, infer_split_charges(around, candidates, taken_parts(store, around)), log)
+    if own_status in ("missing", "possible"):
+        # Its invoice may be one paid in several charges it does not list (Square): every purchase that
+        # still needs an invoice around such an invoice says whether they add up to it, this one among
+        # them. A matched purchase keeps its invoice out of this (a rematch never loses a good link).
+        mine = [i for i in candidates if split_eligible(i, taken)
+                and _charge_candidate(txn, i, _split_card(i), _day(i["invoice_date"]))]
+        if mine:
+            free = [i for i in candidates if i["id"] not in taken]
+            record_split_charges(store, mine, infer_split_charges(split_purchases(store, mine), mine, taken, free,
+                                                                  must_include=txn["id"]), log)
     # Whole invoices for the rules and the judge: not linked to anything else, and not one that lists
     # several card charges (those are shared one charge at a time, by charge_match only).
     pool = [i for i in candidates if i["id"] not in taken and not shared(i)]
@@ -1059,7 +1206,8 @@ def match_new_invoices(store, gemini, invoice_ids, use_ai=True, log=print, judge
     if not new:
         return counts
     months = sorted({ym for i in new for ym in months_to_match(i)})
-    pending = [t for y, m in months for t in store.list_transactions(y, m)
+    fetched = {ym: store.list_transactions(*ym) for ym in months}
+    pending = [t for ym in months for t in fetched[ym]
                if t.get("type") == "purchase" and t.get("invoice_status") in ("missing", "possible")
                and t.get("match_method") != "manual"]
     counts["checked"] = len(pending)
@@ -1078,9 +1226,7 @@ def match_new_invoices(store, gemini, invoice_ids, use_ai=True, log=print, judge
             return True
         return _better((status, conf), ("possible", t.get("match_confidence")))
 
-    refresh_card_aliases(store)
-    # Paid in several charges it does not list (Square): record them, then link them one each below.
-    record_split_charges(store, new, infer_split_charges(pending, new, taken), log)
+    refresh_card_aliases(store, force=True)
     # First the card charges the new invoices list (an Amazon order shipped in parts): exact, one each.
     accepted, parts = {}, {}
     for tid, (iid, part, status, conf, note) in charge_match(pending, new, taken=taken, allowed=serves,
@@ -1093,8 +1239,20 @@ def match_new_invoices(store, gemini, invoice_ids, use_ai=True, log=print, judge
     rest = [t for t in pending if t["id"] not in accepted]
     for tid, found in rule_match(rest, whole, allowed=serves, accept=improves).items():
         accepted[tid] = (found, "rule")
+    # Then, of what those left, the invoices paid in several charges they do not list (Square): their
+    # charges are recorded and linked one each like an Amazon order's.
+    claimed = {tid for tid, (found, _) in accepted.items() if found[1] == "matched"}
+    split = split_leftovers(store, new, set(taken) | {found[0] for found, _ in accepted.values()}, claimed,
+                            rows=fetched, log=log)
+    if split:
+        loose = [t for t in pending if t["id"] not in claimed]
+        for tid, (iid, part, status, conf, note) in charge_match(loose, split, taken=taken, allowed=serves,
+                                                                 accept=improves).items():
+            accepted[tid] = ((iid, status, conf, note), "rule")
+            parts[tid] = part
+            taken.setdefault(iid, set()).add(part)
     linked = {found[0] for found, _ in accepted.values()}
-    left_i = [i for i in whole if i["id"] not in linked]
+    left_i = [i for i in whole if i["id"] not in linked and not shared(i)]
     if use_ai and gemini is not None and judge_limit is not None and len(left_i) > judge_limit:
         left_i.sort(key=lambda i: str(i.get("extracted_at") or ""), reverse=True)
         counts["deferred"] = [i["id"] for i in left_i[judge_limit:]]
@@ -1144,15 +1302,12 @@ def match_month(store, gemini, year, month, card=None, use_ai=True, log=print):
     """Run both passes for one month (optionally one card). Returns counts; counts["skipped"], present
     only when it is not 0, is how many rows changed while the run was thinking and were left alone."""
     year, month = int(year), int(month)
-    refresh_card_aliases(store)
+    refresh_card_aliases(store, force=True)
     txns = store.list_transactions(year, month, card)
     pending = [t for t in txns if t.get("type") == "purchase" and t.get("invoice_status") in ("missing", "possible")]
     invoices = candidate_invoices(store, year, month)
     taken = taken_parts(store, pending)          # the pending rows' own links are theirs to keep or give up
     inv_by_id = {i["id"]: i for i in invoices}
-    # An invoice paid in several charges it does not list (Square): record them, then they are linked
-    # one each like an Amazon order's.
-    record_split_charges(store, invoices, infer_split_charges(pending, invoices, taken), log)
 
     # First the card charges invoices list (an Amazon order shipped in parts): exact, one charge each.
     results = {}
@@ -1165,6 +1320,17 @@ def match_month(store, gemini, year, month, card=None, use_ai=True, log=print):
     rest = [t for t in pending if t["id"] not in results]
     for tid, (iid, status, conf, note) in rule_match(rest, available).items():
         results[tid] = (iid, status, conf, note, None)
+    # Then, of what those left, the invoices paid in several charges they do not list (Square): their
+    # charges are recorded and linked one each like an Amazon order's.
+    claimed = {tid for tid, r in results.items() if r[1] == "matched"}
+    split = split_leftovers(store, invoices, set(taken) | {r[0] for r in results.values()}, claimed,
+                            rows={(year, month): txns} if not card else None, log=log)
+    if split:
+        loose = [t for t in pending if t["id"] not in claimed]
+        for tid, (iid, part, status, conf, note) in charge_match(loose, split, taken=taken).items():
+            results[tid] = (iid, status, conf, note, part)
+            taken.setdefault(iid, set()).add(part)
+        available = [i for i in available if not shared(i)]
     leftovers_t = [t for t in pending if t["id"] not in results]
     leftovers_i = [i for i in available if i["id"] not in {r[0] for r in results.values()}]
     ai_results = {}

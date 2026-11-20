@@ -283,6 +283,8 @@ class SupabaseStore:
                    "extracted_at": f"eq.{read_extracted_at}" if read_extracted_at else "is.null"}
         if read_charges is None:
             filters["card_charges"] = "is.null"
+        else:
+            filters["card_charges->0->>inferred"] = "is.null"     # never over charges inferred meanwhile
         return bool(self.patch("invoices", filters, {"card_charges": charges}))
 
     def split_invoice_charges(self):
@@ -520,8 +522,10 @@ class MemoryStore:
     def record_inferred_charges(self, invoice_id, charges, read_charges, read_extracted_at):
         with self.lock:
             r = self.invoices.get(invoice_id)
+            held = r.get("card_charges") if r else None
             if (not r or r.get("removed_at") or r.get("extracted_at") != read_extracted_at
-                    or (read_charges is None and r.get("card_charges") is not None)):
+                    or (read_charges is None and held is not None)
+                    or (held and isinstance(held[0], dict) and held[0].get("inferred"))):
                 return False
             r["card_charges"] = [dict(c) for c in charges]
             return True

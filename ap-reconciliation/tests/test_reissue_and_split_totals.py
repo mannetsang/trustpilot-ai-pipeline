@@ -160,6 +160,149 @@ class SplitTotalTests(unittest.TestCase):
         self.assertFalse(self.store.record_inferred_charges("nov", charges, None, "2026-11-18T19:00:00+00:00"))
 
 
+def fresh_process():
+    """The alias cache as a new job process starts with: never read."""
+    matching._card_aliases.update(map={}, at=0.0, store=None)
+
+
+class ReviewFixTests(unittest.TestCase):
+    """The cases the review of the reissue and split-total change reproduced."""
+
+    def test_an_invoice_one_purchase_pays_whole_is_not_split_out_of_smaller_ones(self):
+        # Three Amazon orders the same day, each paid by its own charge; the 49.98 lists its one charge.
+        store = store_with_cards("5018")
+        big = inv("big", "Amazon.ca", 49.98, "2026-11-10", month_folder="2026 11", card="5018")
+        big["card_charges"] = [{"date": "2026-11-10", "amount": 49.98, "card_last4": "5018"}]
+        store.upsert_invoices([big, inv("oa", "Amazon.ca", 24.99, "2026-11-10", month_folder="2026 11", card="5018"),
+                               inv("ob", "Amazon.ca", 24.99, "2026-11-10", month_folder="2026 11", card="5018")])
+        store.insert_transactions([txn("p_big", "2026-11-10", "AMZN Mktp CA*1", 49.98, card="5018"),
+                                   txn("p_a", "2026-11-10", "AMZN Mktp CA*2", 24.99, card="5018"),
+                                   txn("p_b", "2026-11-10", "AMZN Mktp CA*3", 24.99, card="5018")])
+        matching.match_month(store, None, 2026, 11, **QUIET)
+        self.assertEqual(store.get_transaction("p_big")["invoice_id"], "big")
+        self.assertEqual({store.get_transaction(t)["invoice_id"] for t in ("p_a", "p_b")}, {"oa", "ob"})
+        self.assertEqual(store.get_invoice("big")["card_charges"], big["card_charges"])
+
+    def test_the_watch_filing_the_big_order_first_links_it_whole(self):
+        store = store_with_cards("5018")
+        store.insert_transactions([txn("p_big", "2026-11-10", "AMZN Mktp CA*1", 49.98, card="5018"),
+                                   txn("p_a", "2026-11-10", "AMZN Mktp CA*2", 24.99, card="5018"),
+                                   txn("p_b", "2026-11-10", "AMZN Mktp CA*3", 24.99, card="5018")])
+        store.upsert_invoices([inv("big", "Amazon.ca", 49.98, "2026-11-10", month_folder="2026 11", card="5018")])
+        matching.match_new_invoices(store, None, ["big"], **QUIET)
+        self.assertEqual(store.get_transaction("p_big")["invoice_id"], "big")
+        self.assertIsNone(store.get_invoice("big").get("card_charges"))
+
+    def test_a_rematch_of_a_matched_purchase_keeps_its_invoice_whole(self):
+        store = store_with_cards("1610")
+        store.upsert_invoices([inv("x", "Freightcom", 100.00, "2026-11-03", month_folder="2026 11", card="1610")])
+        store.insert_transactions([txn("p", "2026-11-03", "FREIGHTCOM INC", 100.00, status="matched",
+                                       invoice_id="x", method="rule"),
+                                   txn("h1", "2026-11-03", "FREIGHTCOM INC", 50.00),
+                                   txn("h2", "2026-11-03", "FREIGHTCOM INC", 50.00)])
+        out = matching.match_transaction(store, None, "p", **QUIET)
+        self.assertIn(out["outcome"], ("same", "kept"))
+        self.assertEqual(store.get_transaction("p")["invoice_id"], "x")
+        self.assertIsNone(store.get_invoice("x").get("card_charges"))
+
+    def test_a_rematch_never_splits_an_invoice_its_purchase_is_no_charge_of(self):
+        # Month-wide the 100.00 is made two ways (60+40 on the 3rd, or with the 60 of the 4th).
+        store = store_with_cards("1610")
+        store.upsert_invoices([inv("x", "Freightcom", 100.00, "2026-11-03", month_folder="2026 11", card="1610")])
+        store.insert_transactions([txn("a", "2026-11-03", "FREIGHTCOM INC", 60.00),
+                                   txn("b", "2026-11-03", "FREIGHTCOM INC", 40.00),
+                                   txn("c", "2026-11-04", "FREIGHTCOM INC", 60.00),
+                                   txn("st", "2026-11-01", "STAPLES 123", 25.00)])
+        matching.match_transaction(store, None, "st", **QUIET)
+        matching.match_transaction(store, None, "b", **QUIET)
+        self.assertIsNone(store.get_invoice("x").get("card_charges"))
+
+    def test_a_split_is_judged_on_the_purchases_of_the_month_before_too(self):
+        store = store_with_cards("1610")
+        store.upsert_invoices([inv("x", "Freightcom", 100.00, "2026-11-01", month_folder="2026 11", card="1610")])
+        store.insert_transactions([txn("p", "2026-10-31", "FREIGHTCOM INC", 60.00),
+                                   txn("q", "2026-11-01", "FREIGHTCOM INC", 40.00),
+                                   txn("r", "2026-11-01", "FREIGHTCOM INC", 60.00)])
+        matching.match_month(store, None, 2026, 11, **QUIET)
+        self.assertIsNone(store.get_invoice("x").get("card_charges"))
+
+    def test_an_invoice_showing_no_card_is_not_made_up_across_cards(self):
+        store = store_with_cards("1610", "2887", "4421")
+        store.upsert_invoices([inv("ic", "Staples", 100.00, "2026-11-05", month_folder="2026 11")])
+        store.insert_transactions([txn("a", "2026-11-05", "STAPLES 123", 60.00, card="1610"),
+                                   txn("b", "2026-11-05", "STAPLES 123", 40.00, card="2887"),
+                                   txn("c", "2026-11-05", "STAPLES 123", 100.00, card="4421")])
+        matching.match_new_invoices(store, None, ["ic"], **QUIET)
+        self.assertIsNone(store.get_invoice("ic").get("card_charges"))
+        self.assertEqual(store.get_transaction("c")["invoice_id"], "ic")
+        other = store_with_cards("1610", "2887")
+        other.upsert_invoices([inv("ic", "Staples", 100.00, "2026-11-05", month_folder="2026 11")])
+        other.insert_transactions([txn("a", "2026-11-05", "STAPLES 123", 60.00, card="1610"),
+                                   txn("b", "2026-11-05", "STAPLES 123", 40.00, card="2887")])
+        matching.match_month(other, None, 2026, 11, **QUIET)
+        self.assertIsNone(other.get_invoice("ic").get("card_charges"))
+
+    def test_a_card_added_by_a_statement_is_its_own_card_in_the_next_match(self):
+        store = store_with_cards("4805")                    # 4821 is 4805's +2 number for now
+        store.upsert_cards([{"last4": "4821"}])             # a statement brings a real card 4821
+        store.upsert_invoices([square("r", 99.00, "2026-11-01", "2026 11", card="4805")])
+        store.insert_transactions([sq("t", "2026-11-01", 99.00, card="4821")])
+        matching.match_month(store, None, 2026, 11, **QUIET)
+        self.assertNotEqual(store.get_transaction("t")["invoice_status"], "matched")
+
+    def test_a_fresh_process_moves_a_reissue_link_to_its_charge_on_a_reread(self):
+        store = MemoryStore()
+        store.upsert_cards([{"last4": "5018"}])
+        o1 = inv("o1", "Amazon.ca", 40.00, "2026-07-20", month_folder="2026 07", card="5026")
+        store.upsert_invoices([o1])
+        store.insert_transactions([txn("c", "2026-07-21", "AMZN Mktp CA*3", 40.00, card="5018", status="matched",
+                                       invoice_id="o1", method="rule")])
+        fresh_process()
+        reread = dict(o1, card_charges=[{"date": "2026-07-21", "amount": 40.00, "card_last4": "5026"},
+                                        {"date": "2026-07-25", "amount": 12.00, "card_last4": "5026"}])
+        store.upsert_invoices([reread])
+        self.assertEqual(matching.split_whole_links(store, reread, log=lambda *a: None), (1, 0))
+        c = store.get_transaction("c")
+        self.assertEqual((c["invoice_status"], c["invoice_id"], c["invoice_part"]), ("matched", "o1", 0))
+
+
+class ReReadTests(unittest.TestCase):
+    """A split invoice read again (renamed, a new Drive version) through the Invoice folder index."""
+
+    def setUp(self):
+        self.store = store_with_cards("4805")
+        self.store.upsert_invoices([square("nov", 818.12, "2026-11-01", "2026 11")])
+        self.store.insert_transactions([sq("t1", "2026-11-01", 237.30), sq("t2", "2026-11-01", 45.20),
+                                        sq("t3", "2026-11-01", 535.62)])
+        matching.match_month(self.store, None, 2026, 11, **QUIET)
+        self.charges = self.store.get_invoice("nov")["card_charges"]
+        self.assertEqual(len(self.charges), 3)
+
+    def reread(self, **reading):
+        import invoices as invoice_index
+        from unittest import mock
+        old = self.store.get_invoice("nov")
+        rec = {k: old[k] for k in ("id", "file_name", "web_view_link", "folder_path", "month_folder", "vendor_folder")}
+        rec.update(mime_type="application/pdf", modified_time="2026-11-19T10:00:00Z", size=1000)
+        row = dict(old, modified_time=rec["modified_time"], extracted_at="2026-11-19T10:01:00+00:00",
+                   **dict({"card_charges": []}, **reading))
+        with mock.patch.object(invoice_index, "walk", lambda *a, **k: [dict(rec)]), \
+                mock.patch.object(invoice_index, "extract_invoice", lambda *a, **k: dict(row)):
+            invoice_index.index_invoices(self.store, None, object(), "root", month_folders=["2026 11"],
+                                         log=lambda *a: None)
+        return {t: self.store.get_transaction(t) for t in ("t1", "t2", "t3")}
+
+    def test_a_reread_that_agrees_keeps_the_charges_and_the_links(self):
+        rows = self.reread(card_charges=[{"date": "2026-11-01", "amount": 818.12, "card_last4": "4813"}])
+        self.assertEqual(self.store.get_invoice("nov")["card_charges"], self.charges)
+        self.assertTrue(all(r["invoice_status"] == "matched" and r["invoice_id"] == "nov" for r in rows.values()))
+
+    def test_a_reread_with_another_total_lets_the_links_go_for_the_matcher(self):
+        rows = self.reread(total=900.00)
+        self.assertEqual(self.store.get_invoice("nov")["card_charges"], [])
+        self.assertTrue(all(r["invoice_status"] == "missing" and r["invoice_id"] is None for r in rows.values()))
+
+
 class CardsApiTests(ApiTestCase):
     def test_the_cards_dialog_lists_the_reissued_numbers_receipts_show(self):
         self.store.upsert_cards([{"last4": "5018"}, {"last4": "1610"}])

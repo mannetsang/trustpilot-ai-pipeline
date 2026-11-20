@@ -136,6 +136,28 @@ updates its folder hints without another model call.
    where it stopped when run again): links made whole to an order that turns
    out split move to the charge they are, and the months those orders serve
    are queued for a full match.
+   **Invoices paid in charges they do not list.** Square bills its
+   subscriptions on one tax invoice (CAD 818.12) and charges each separately
+   (535.62, 237.30 and 45.20 the same day). After the charge and rule passes,
+   `matching.infer_split_charges` looks at each invoice still unlinked that
+   lists no charge (or only its whole total). If exactly one set of 2 to 6
+   purchases adds up to its total to the cent, the set is recorded as its
+   `card_charges` (each marked `inferred`) and linked like an Amazon order's
+   charges. The purchases must be on one card, from a vendor resembling it,
+   within a day of its date, and still need an invoice. The month before and
+   the month after are searched too. Nothing is recorded in these cases:
+   - one purchase pays the invoice whole;
+   - a purchase is the whole of another unlinked invoice;
+   - the total can be made two ways;
+   - a purchase would serve two invoices.
+   A re-read that agrees on the total, currency and date keeps the inferred
+   charges. Any other re-read lets the links go so the matcher looks again.
+   **Reissued cards.** A merchant may show a card's new number while the
+   statement still shows the old one (Amazon 5026 for 5018, Square 4813 for
+   4805, Freightcom 7444 for 7436). The account number moves by one or two
+   and the check digit is recomputed (Luhn). A number no statement card has
+   that is the reissue of exactly one statement card counts as that card;
+   *Cards…* lists them under "receipts show".
 4. **Notify** (`POST /api/notify`). One Chat card per credit card that still
    has purchases without an invoice, listing the missing purchases, the
    possible matches to confirm and the number of charges without a cost

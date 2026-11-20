@@ -859,6 +859,7 @@ def ingest_statement(file_name, data, mime_type, uploaded_by, source=None):
         elif info.get("holder_name") and not existing_cards[last4].get("holder_name"):
             card_rows.append({"last4": last4, "holder_name": info["holder_name"]})
     store.upsert_cards(card_rows)
+    matching.forget_card_aliases()          # a new card is no longer a reissued number of another
 
     existing_ids = store.existing_transaction_ids([t["id"] for t in txns])
     elsewhere = stored_under_other_ids(store, [t for t in txns if t["id"] not in existing_ids], {t["id"] for t in txns})
@@ -1948,6 +1949,7 @@ def api_cards_update():
     if "active" in body:
         row["active"] = bool(body.get("active"))
     get_store().upsert_cards([row])
+    matching.forget_card_aliases()
     print(f"card {last4} updated by {user['email']}")
     store = get_store()
     return jsonify({"cards": card_views(store.list_cards(), store.invoice_card_numbers())})

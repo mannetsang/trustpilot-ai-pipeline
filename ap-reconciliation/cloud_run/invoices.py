@@ -268,10 +268,19 @@ def index_invoices(store, drive, gemini, root_id, month_folders=None, limit=40, 
         # A file stamped removed while it was being read (Remove… on a dashboard upload, or another
         # run that found it gone) stays removed: the read's row would clear removed_at.
         now = {i["id"]: i for i in store.list_invoices(ids=[r["id"] for r in rows])}
+        import matching                   # here: matching does not import this module, but keep it lazy
+        for r in rows:
+            # Charges the matcher worked out (Square's: no reading lists them) outlive a re-read that
+            # agrees on the total, currency and date.
+            matching.carry_inferred_charges(now.get(r["id"]), r)
         stored = _store_rows(store, [r for r in rows if not (now.get(r["id"]) or {}).get("removed_at")
                                      or (known.get(r["id"]) or {}).get("removed_at")], log)
         rows = [stored.get(r["id"], r) for r in rows]
-        import matching                   # here: matching does not import this module, but keep it lazy
+        recharged = [i for i, prior in now.items() if i in stored and matching.listed_charges(prior)
+                     and stored[i].get("card_charges") != prior.get("card_charges")]
+        for r in (store.list_invoices(ids=recharged) if recharged else []):
+            # The charges it lists changed: a purchase linked to one no longer there looks again.
+            matching.release_stale_parts(store, r, log)
         for r in stored.values():
             if matching.shared(r):
                 # Linked whole before its charges were read (a new version of an Amazon order): each link
