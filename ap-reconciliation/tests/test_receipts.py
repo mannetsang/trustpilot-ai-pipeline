@@ -781,7 +781,7 @@ class MatchMonthCompareAndSetTests(unittest.TestCase):
         patches = [(p, body) for method, p, body in calls if method == "PATCH"]
         self.assertEqual(patches[0], ({"id": "eq.t_old", "invoice_status": "eq.possible", "invoice_id": "eq.inv_x",
                                        "invoice_part": "is.null", "match_method": "eq.rule"},
-                                      {"invoice_id": None, "invoice_part": None}))
+                                      {"invoice_id": None, "invoice_part": None, "also_invoice_ids": []}))
         self.assertEqual(patches[1][0], {"id": "eq.t_new", "invoice_status": "eq.missing", "invoice_id": "is.null",
                                          "invoice_part": "is.null", "match_method": "is.null"})
         self.assertEqual(len(patches), 2)        # t_old lost its release, so it is not written again

@@ -167,6 +167,71 @@ updates its folder hints without another model call.
    - a purchase would serve two invoices.
    A re-read that agrees on the total, currency and date keeps the inferred
    charges. Any other re-read lets the links go so the matcher looks again.
+   **Invoices charged late.** A billing centre may charge a weekly invoice
+   weeks after it: in 2026 UPS 449087 and Purolator 3190186 took up to 61
+   days. An invoice dated 22 to 70 days before a purchase (`LATE_PAYMENT_DAYS`)
+   is its payment (`matched`, 0.9, "paid N days after the invoice date") when
+   all of these hold:
+   - same amount to the cent, in the same currency;
+   - a vendor the descriptor resembles, and no other card shown;
+   - no other invoice of the vendor with that amount in the window, whether
+     or not it is linked (a monthly bill of one amount is no late payment);
+   - no other purchase of that amount on the card in the 70 days after the
+     invoice;
+   - the card's statements reach the end of those 70 days.
+
+   Invoices filed up to three months back are loaded for this alone
+   (`only_late`): no "possible" match, no split and no judge draws on them.
+   **One charge paying several invoices.** UPS charges a week's customs-
+   brokerage invoices as one payment (117.31 + 20.23 = 137.54); a billing
+   centre catching up pays several weeks at once (Purolator 7,149.19 for three
+   invoices). A purchase still without a match is linked when 2 to 4 unlinked
+   invoices meet all of these:
+   - one vendor folder, in its currency;
+   - dated 0 to 70 days before it and within 35 days of each other;
+   - their totals add up to it to the cent;
+   - no single invoice of that vendor has the amount;
+   - this is the only such set, or the only set whose invoices are all dated
+     the same day (UPS bills a 20.23 fee most weeks);
+   - none of the invoices is wanted by another purchase.
+
+   The largest invoice is `invoice_id`. The others go in
+   `transactions.also_invoice_ids`, the documents paid or confirmed with it,
+   and the dashboard lists them under the invoice.
+   **Statements that list their payments.** A Google Ads monthly statement
+   ("Payments received") and an insurer's premium payment history (Cigna)
+   are no invoices (`is_invoice` false). The reading lists the card payments
+   they record as `card_charges`, and such a statement is shared one payment
+   at a time like an Amazon order. Statements listing fewer than two payments
+   stay out of matching.
+   **Payment confirmations.** A UPS "Payment Confirmation" e-mail or a billing
+   centre's receipt says a payment was made; the invoice it pays says what was
+   bought. The reading types it `payment_confirmation`, with the invoice
+   numbers it names (`invoices.paid_invoice_numbers`). A purchase the rules
+   find on a confirmation is linked to the invoice instead when that is in
+   Drive:
+   - the invoices it names, when they add up to the purchase;
+   - otherwise the one unlinked invoice of its vendor folder with the exact
+     amount, dated 0 to 21 days before it, or paid late as above.
+
+   The confirmation goes in `also_invoice_ids`. A purchase linked to an
+   invoice also gets the unlinked confirmations that name that invoice, or
+   that have the exact amount and are dated within three days of it. The month
+   run, the Invoice watch and *Rematch* do this, also for purchases the rules
+   or the judge matched earlier, but never for links made by hand.
+   Documents read before these types existed are read again with
+   `python main.py reread-documents --vendor ups` (as the sync job:
+   `--args=main.py,reread-documents,--vendor,ups`). It writes only the type,
+   the invoice numbers and a statement's payments, and queues the months they
+   serve. A document in `also_invoice_ids` counts as linked. The database
+   refuses it as another row's invoice or `also` document (trigger
+   `transactions_invoice_link_guard`), and a row has none without an invoice.
+   When one leaves Drive or is read again (`matching.release_stale_also`):
+   - a confirmation that is gone is dropped;
+   - if an invoice paid with the charge is gone, or the invoices no longer add
+     up, the purchase is matched again.
+
+   Links made by hand stay; their checks show the difference.
    **Reissued cards.** A merchant may show a card's new number while the
    statement still shows the old one (Amazon 5026 for 5018, Square 4813 for
    4805, Freightcom 7444 for 7436). The account number moves by one or two
@@ -282,8 +347,10 @@ few seconds.
 
 Every purchase is `matched`, `possible`, `missing` or `waived`; credits,
 payments and fees are `not_required`. Matching only ever touches purchases
-that are `missing` or `possible`: a manual link, confirmation or waiver is
-never undone by a re-run.
+that are `missing` or `possible`, and those the rules or the judge matched to
+a payment confirmation (moved to the invoice it pays) or to an invoice (given
+its confirmations): a manual link, confirmation or waiver is never undone by
+a re-run.
 
 **Rule pass.** Each pending purchase is scored against every unused invoice
 of the surrounding month folders:
@@ -320,6 +387,8 @@ dropped, and one that is off by more than 2% can only be `possible`. The
 **Manual actions** (the `action` field of `PATCH /api/transactions/<id>`):
 `confirm` a possible match, `link` an invoice chosen from the picker,
 `unlink`, `waive` (no invoice exists, with a reason) and `unwaive`.
+`unlink` (*Not this*) refuses the invoice and every document that came with
+it (`also_invoice_ids`); `link` replaces them all with the one invoice chosen.
 `confirm` applies only to the proposal the dashboard showed: if a match run
 released or moved it meanwhile, the answer is `409` *This purchase changed
 meanwhile; reload.* A receipt added with *Add receipt...* is a manual link

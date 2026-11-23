@@ -23,30 +23,61 @@ TRANSACTION_FIELDS = (
     "description", "supplier", "city", "country", "merchant_category", "type", "amount", "currency",
     "source_amount", "source_currency", "invoice_status", "invoice_id", "match_confidence",
     "match_method", "match_note", "cost_center", "usage", "note", "updated_by", "updated_at",
-    "created_at", "raw", "rejected_invoice_ids", "invoice_part", "person_id",
+    "created_at", "raw", "rejected_invoice_ids", "invoice_part", "person_id", "also_invoice_ids",
 )
 CARD_FIELDS = ("last4", "label", "holder_name", "owner_email", "chat_space", "active", "updated_at")
 INVOICE_FIELDS = (
     "id", "file_name", "mime_type", "web_view_link", "folder_path", "month_folder", "vendor_folder",
     "modified_time", "size", "vendor", "invoice_number", "invoice_date", "total", "currency",
     "card_last4", "payment_method", "summary", "is_invoice", "extracted_at", "extraction_error",
-    "document_type", "removed_at", "card_charges", "charge_date",
+    "document_type", "removed_at", "card_charges", "charge_date", "paid_invoice_numbers",
 )
 
 def _whole_unless_part(patch):
     """A patch that sets invoice_id without saying which charge links the whole invoice: invoice_part is
-    cleared, so a row never keeps the part of a link it no longer has (a PATCH leaves unnamed columns)."""
+    cleared, so a row never keeps the part of a link it no longer has (a PATCH leaves unnamed columns).
+    Likewise the documents paid with it (also_invoice_ids): a new link, or none, starts without them."""
     if "invoice_id" in patch and "invoice_part" not in patch:
-        return dict(patch, invoice_part=None)
+        patch = dict(patch, invoice_part=None)
+    if "invoice_id" in patch and "also_invoice_ids" not in patch:
+        patch = dict(patch, also_invoice_ids=[])
+    if "also_invoice_ids" in patch:              # one spelling of a set: sorted, no repeats, never null
+        patch = dict(patch, also_invoice_ids=sorted({d for d in patch["also_invoice_ids"] or () if d}))
     return patch
 
 
 def _parts(rows):
+    """{invoice id: parts linked}: a listed charge's index, "whole" for a whole link, and "whole" for every
+    document a row's charge also pays (also_invoice_ids)."""
     out = {}
     for r in rows:
-        part = r.get("invoice_part")
-        out.setdefault(r["invoice_id"], set()).add("whole" if part is None else int(part))
+        if r.get("invoice_id"):
+            part = r.get("invoice_part")
+            out.setdefault(r["invoice_id"], set()).add("whole" if part is None else int(part))
+        for doc in r.get("also_invoice_ids") or ():
+            out.setdefault(doc, set()).add("whole")
     return out
+
+
+def _also_conflict(rows, txn_id, after):
+    """The document a row's link would share with another row, or None. The rules of schema.sql's
+    transactions_invoice_link_guard and unique indexes: an invoice is linked whole to one row, or one row
+    per listed charge, never both; and a row's also document is nobody else's invoice or also document."""
+    wanted, part = after.get("invoice_id"), after.get("invoice_part")
+    also = set(after.get("also_invoice_ids") or ())
+    if wanted and wanted in also:
+        return wanted
+    for o in rows:
+        if o["id"] == txn_id:
+            continue
+        theirs = set(o.get("also_invoice_ids") or ())
+        if wanted and (wanted in theirs or (o.get("invoice_id") == wanted and (
+                part is None or o.get("invoice_part") is None or o.get("invoice_part") == part))):
+            return wanted
+        clash = also & (theirs | ({o["invoice_id"]} if o.get("invoice_id") else set()))
+        if clash:
+            return sorted(clash)[0]
+    return None
 
 
 PAGE = 1000
@@ -240,6 +271,8 @@ class SupabaseStore:
                 row[key] = row.get(key) or None
             if row.get("rejected_invoice_ids") is None:
                 row["rejected_invoice_ids"] = []
+            if row.get("also_invoice_ids") is None:
+                row["also_invoice_ids"] = []
             shaped.append(row)
         self.insert("transactions", shaped)
 
@@ -263,22 +296,51 @@ class SupabaseStore:
         patch = _whole_unless_part(patch)
         filters = {"id": f"eq.{txn_id}"}
         for column, value in (expect or {}).items():
-            filters[column] = "is.null" if value is None else f"eq.{value}"
+            if isinstance(value, (list, tuple, set)):      # an array column: its exact value, sorted
+                filters[column] = "eq.{" + ",".join('"' + str(v).replace('"', '\\"') + '"' for v in sorted(value)) + "}"
+            else:
+                filters[column] = "is.null" if value is None else f"eq.{value}"
         rows = self.patch("transactions", filters, patch)
         return rows[0] if rows else None
 
     def used_invoice_ids(self):
-        rows = self.select("transactions", {"select": "invoice_id", "order": "id", "invoice_id": "not.is.null"})
-        return {r["invoice_id"] for r in rows}
+        """The ids of the documents linked to a transaction: its invoice, and the documents it also pays."""
+        return set(self.used_invoice_parts())
 
     def used_invoice_parts(self):
-        """{invoice id: the parts linked}: the listed card charges' indexes, "whole" for a whole link."""
-        rows = self.select("transactions", {"select": "invoice_id,invoice_part", "order": "id",
+        """{invoice id: the parts linked}: the listed card charges' indexes, "whole" for a whole link and for
+        a document a charge also pays (also_invoice_ids)."""
+        rows = self.select("transactions", {"select": "invoice_id,invoice_part,also_invoice_ids", "order": "id",
                                             "invoice_id": "not.is.null"})
         return _parts(rows)
 
     def transactions_for_invoice(self, invoice_id):
+        """The transactions linked to the document as their invoice."""
         return self.select("transactions", {"invoice_id": f"eq.{invoice_id}", "order": "id"})
+
+    def transactions_with_also(self, ids):
+        """The transactions that hold any of these documents in also_invoice_ids (paid or confirmed with
+        their invoice)."""
+        ids = list(ids)
+        out = {}
+        for start in range(0, len(ids), 50):
+            quoted = ",".join('"' + str(i).replace('"', '\\"') + '"' for i in ids[start:start + 50])
+            for r in self.select("transactions", {"also_invoice_ids": f"ov.{{{quoted}}}", "order": "id"}):
+                out[r["id"]] = r
+        return list(out.values())
+
+    def last_txn_date(self, card):
+        """The date of the card's last statement line, or None: how far its statements reach."""
+        r = self._req("GET", "transactions", {"select": "txn_date", "card_last4": f"eq.{card}",
+                                               "order": "txn_date.desc", "limit": 1})
+        return str(r[0]["txn_date"])[:10] if r else None
+
+    def purchases_of_amount(self, amount, start, end):
+        """The purchases of exactly this amount (as billed) dated from start to end (ISO dates, both included),
+        whatever their card or month: whether a payment is the only one of its amount."""
+        return self.select("transactions", {"amount": f"eq.{float(amount):.2f}", "type": "eq.purchase",
+                                            "txn_date": f"gte.{start}", "and": f"(txn_date.lte.{end})",
+                                            "order": "txn_date.asc,id.asc"})
 
     def invoice_card_numbers(self):
         """The card numbers (last four) invoices not removed show."""
@@ -509,7 +571,7 @@ class MemoryStore:
             for r in rows:
                 if r["id"] in self.transactions:
                     raise StoreError(f"duplicate transaction id {r['id']}")
-                self.transactions[r["id"]] = dict(r)
+                self.transactions[r["id"]] = dict(r, also_invoice_ids=sorted(r.get("also_invoice_ids") or ()))
 
     def list_transactions(self, year, month, card=None, statuses=None):
         rows = [t for t in self.transactions.values()
@@ -528,29 +590,41 @@ class MemoryStore:
             t = self.transactions.get(txn_id)
             if not t:
                 return None
-            if expect and any(t.get(k) != v for k, v in expect.items()):
+            if expect and any((sorted(t.get(k) or ()) != sorted(v) if isinstance(v, (list, tuple, set)) else t.get(k) != v)
+                              for k, v in expect.items()):
                 return None                 # changed meanwhile: the caller's compare-and-set fails
             patch = _whole_unless_part(patch)
             after = dict(t, **patch)
-            wanted, part = after.get("invoice_id"), after.get("invoice_part")
-            if wanted and any(o["id"] != txn_id and o.get("invoice_id") == wanted
-                              and (part is None or o.get("invoice_part") is None or o.get("invoice_part") == part)
-                              for o in self.transactions.values()):
-                # Same rules as schema.sql: the unique indexes transactions_invoice_whole_unique and
-                # transactions_invoice_part_unique, and the trigger that keeps an invoice from being
-                # linked whole and by charge at once.
-                raise StoreError(f"invoice {wanted} is already linked to another transaction")
+            # Same rules as schema.sql: the unique indexes transactions_invoice_whole_unique and
+            # transactions_invoice_part_unique, and the trigger that keeps an invoice from being linked
+            # whole and by charge at once, or a document a charge also pays from being anyone else's.
+            clash = _also_conflict(self.transactions.values(), txn_id, after)
+            if clash:
+                raise StoreError(f"invoice {clash} is already linked to another transaction")
             t.update(patch)
             return dict(t)
 
     def transactions_for_invoice(self, invoice_id):
         return [dict(t) for t in self.transactions.values() if t.get("invoice_id") == invoice_id]
 
+    def transactions_with_also(self, ids):
+        ids = set(ids)
+        return [dict(t) for t in self.transactions.values() if ids & set(t.get("also_invoice_ids") or ())]
+
+    def last_txn_date(self, card):
+        dates = [str(t["txn_date"])[:10] for t in self.transactions.values() if t.get("card_last4") == card]
+        return max(dates) if dates else None
+
     def used_invoice_ids(self):
-        return {t["invoice_id"] for t in self.transactions.values() if t.get("invoice_id")}
+        return set(self.used_invoice_parts())
 
     def used_invoice_parts(self):
         return _parts([t for t in self.transactions.values() if t.get("invoice_id")])
+
+    def purchases_of_amount(self, amount, start, end):
+        return [dict(t) for t in sorted(self.transactions.values(), key=lambda t: (str(t.get("txn_date")), t["id"]))
+                if t.get("type") == "purchase" and abs(float(t["amount"]) - float(amount)) < 0.005
+                and start <= str(t.get("txn_date"))[:10] <= end]
 
     def invoice_card_numbers(self):
         return {r["card_last4"] for r in self.invoices.values() if r.get("card_last4") and not r.get("removed_at")}

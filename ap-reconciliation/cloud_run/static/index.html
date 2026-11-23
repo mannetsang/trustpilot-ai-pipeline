@@ -1283,7 +1283,9 @@
     if (!q) return true;
     var hay = [t.description, t.supplier, t.city, t.country, t.merchant_category, t.cost_center, t.usage, t.note, t.updated_by, personName(t.person_id),
       String(t.amount), money(t.amount, t.currency), t.source_amount !== null && t.source_amount !== undefined ? String(t.source_amount) : '',
-      t.invoice && t.invoice.vendor, t.invoice && t.invoice.invoice_number].join(' ').toLowerCase();
+      t.invoice && t.invoice.vendor, t.invoice && t.invoice.invoice_number]
+      .concat((t.also_invoices || []).map(function (a) { return (a.invoice_number || '') + ' ' + (a.file_name || ''); }))
+      .join(' ').toLowerCase();
     return hay.indexOf(q) >= 0;
   }
   function visibleTxns() {
@@ -1597,6 +1599,16 @@
       html += '<div class="mt-1 truncate" style="max-width: 260px;">' + (safeUrl(inv.web_view_link)
         ? '<a class="link" href="' + esc(safeUrl(inv.web_view_link)) + '" target="_blank" rel="noopener noreferrer" title="' + esc(inv.file_name || '') + '">' + esc(text) + ' ↗</a>'
         : '<span title="' + esc(inv.file_name || '') + '">' + esc(text) + '</span>') + totalBit + '</div>';
+      // The other invoices the one charge pays (UPS charges a week's brokerage invoices together), and the
+      // payment confirmations kept with the invoice.
+      (t.also_invoices || []).forEach(function (a) {
+        var label = (a.document_type === 'payment_confirmation' ? 'Payment confirmation' : 'Paid with it: ' + (a.vendor || a.vendor_folder || 'invoice')) +
+          (a.invoice_date ? ' · ' + fmtDate(a.invoice_date) : '');
+        var amount = a.total !== null && a.total !== undefined ? ' <span class="sub">' + esc(money(a.total, a.currency || '')) + '</span>' : '';
+        html += '<div class="sub truncate" style="max-width: 260px;">+ ' + (safeUrl(a.web_view_link)
+          ? '<a class="link" href="' + esc(safeUrl(a.web_view_link)) + '" target="_blank" rel="noopener noreferrer" title="' + esc(a.file_name || '') + '">' + esc(label) + ' ↗</a>'
+          : '<span title="' + esc(a.file_name || '') + '">' + esc(label) + '</span>') + amount + '</div>';
+      });
     }
     var by = st === 'matched' ? uploadedBy(t) : '';
     if (by) {
@@ -1852,8 +1864,9 @@
     var upload = receiptsOn(last4);
     // One of several card charges an order lists: name that charge, not the order's total.
     var inv = r.invoice, amt = inv && inv.charge ? inv.charge.amount : inv && inv.total;
+    var more = (r.also_invoice_ids || []).length;
     var what = inv ? (inv.vendor || inv.file_name || 'an invoice') + (amt !== null && amt !== undefined ? ' ' + money(amt, inv.currency || '') : '') +
-      (inv.charge ? ', charge ' + inv.charge.number + ' of ' + inv.charge.of : '') : '';
+      (inv.charge ? ', charge ' + inv.charge.number + ' of ' + inv.charge.of : '') + (more ? ' (+' + more + ' more)' : '') : '';
     var read = r.invoices_read ? ' ' + count(r.invoices_read, 'new invoice was', 'new invoices were') + ' read first.' : '';
     var possible = r.status === 'possible' ? ' Confirm it or click Not this.' : '';
     switch (r.outcome) {
@@ -1874,7 +1887,7 @@
   // The job's row is a snapshot from its end; take only the invoice fields from it, so a cost
   // centre or usage saved on this row in the meantime is not shown as undone.
   var REMATCH_FIELDS = ['invoice_status', 'invoice_id', 'invoice_part', 'invoice', 'status_label', 'match_confidence',
-                        'match_method', 'match_note', 'rejected_invoice_ids'];
+                        'match_method', 'match_note', 'rejected_invoice_ids', 'also_invoice_ids', 'also_invoices', 'checks'];
   function mergeRematchedRow(fresh) {
     var local = txnById(fresh.id);
     if (!local) return fresh;

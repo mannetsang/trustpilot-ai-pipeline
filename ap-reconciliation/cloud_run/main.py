@@ -1105,8 +1105,13 @@ def link_part(store, txn, inv):
     return n, f"charge {number} of {count} ({c.get('date') or 'undated'}, {float(c['amount']):.2f})"
 
 
+ALSO_FIELDS = ("id", "file_name", "web_view_link", "vendor", "invoice_number", "invoice_date", "total", "currency",
+               "document_type", "month_folder", "vendor_folder")
+
+
 def with_invoices(store, txns):
-    ids = sorted({t["invoice_id"] for t in txns if t.get("invoice_id")})
+    ids = sorted({t["invoice_id"] for t in txns if t.get("invoice_id")}
+                 | {d for t in txns for d in t.get("also_invoice_ids") or ()})
     invoices = {i["id"]: i for i in store.list_invoices(ids=ids)} if ids else {}
     if invoices:
         matching.refresh_card_aliases(store)     # a reissued card's number is no "other card"
@@ -1126,9 +1131,13 @@ def with_invoices(store, txns):
             charge = matching._charge_view(inv, t.get("invoice_part"))
             if charge:
                 row["invoice"]["charge"] = charge
+        # The other documents the charge pays (invoices paid together) or is confirmed by.
+        row["also_invoices"] = [{k: invoices[d].get(k) for k in ALSO_FIELDS}
+                                for d in t.get("also_invoice_ids") or () if d in invoices]
         # What the receipt says against the charge, worked out each time from the stored facts: a
         # disagreement is shown, never turned into a status (the link stays as the person made it).
-        row["checks"] = (matching.invoice_checks(t, matching.link_view(t, inv), reading=inv["id"] in reading)
+        row["checks"] = (matching.invoice_checks(t, matching.link_view(t, inv), reading=inv["id"] in reading,
+                                                 also=[invoices.get(d) for d in t.get("also_invoice_ids") or ()])
                          if inv and linked_by_hand(t) else [])
         row["status_label"] = STATUS_LABELS.get(t.get("invoice_status"), t.get("invoice_status"))
         out.append(row)
@@ -1813,9 +1822,11 @@ def api_transaction_update(txn_id):
                       "rejected_invoice_ids": [i for i in rejected if i != invoice_id]})
     elif action == "unlink":
         if txn.get("invoice_id") or status == "matched":
-            # Remember the refusal so the matcher does not propose the same pair again.
-            if txn.get("invoice_id") and txn["invoice_id"] not in rejected:
-                rejected.append(txn["invoice_id"])
+            # Remember the refusal so the matcher does not propose the same pair again: the invoice and
+            # every document it came with (invoices paid together, its payment confirmation).
+            for refused in [txn.get("invoice_id")] + list(txn.get("also_invoice_ids") or ()):
+                if refused and refused not in rejected:
+                    rejected.append(refused)
             patch.update({"invoice_status": "missing", "invoice_id": None, "invoice_part": None, "match_confidence": None,
                           "match_method": None, "match_note": None, "rejected_invoice_ids": rejected})
     elif action:
@@ -2789,6 +2800,78 @@ def reread_card_charges(vendor="amazon", limit=None, log=print):
     return {"to_read": len(todo), "read": done, "failed": failed, "months_queued": len(months)}
 
 
+def reread_documents(vendor, limit=None, log=print):
+    """Read again a vendor's documents (folder or name containing `vendor`) read before the reading told
+    payment confirmations from bills (paid_invoice_numbers is null): a UPS "Payment Confirmation" e-mail
+    or a billing centre's receipt becomes document_type payment_confirmation with the invoice numbers it
+    pays, and a statement that lists the card payments it records (Google Ads, an insurer's premium
+    history) gets them as card_charges. Only those columns are written (the rest of the old reading
+    stays), and card charges only where none are stored or the matcher worked them out. The months the
+    documents serve are queued for a full match. A reading that fails keeps the old one; run again to
+    carry on. Returns counts."""
+    word = (vendor or "").strip().lower()
+    if not word:
+        return {"skipped": "name a vendor (--vendor ups)"}
+    store, drive, gemini = get_store(), get_drive(), get_gemini()
+    if gemini is None:
+        return {"skipped": "AI_DISABLED=1"}
+    todo = [r for r in store.list_invoices()
+            if r.get("paid_invoice_numbers") is None and not r.get("removed_at") and r.get("month_folder")
+            and not r.get("extraction_error") and r.get("extracted_at")
+            and word in f"{r.get('vendor_folder') or ''} {r.get('vendor') or ''}".lower()]
+    todo.sort(key=lambda r: str(r.get("month_folder") or ""), reverse=True)     # recent months first
+    if limit:
+        todo = todo[:int(limit)]
+    started, done, failed, typed, listed, months = time.time(), 0, 0, 0, 0, set()
+    log(f"reread: {len(todo)} {vendor} document(s) to read again")
+    for start in range(0, len(todo), INDEX_BATCH):
+        if time.time() - started > REREAD_BUDGET:
+            log("reread: out of time; run it again to carry on")
+            break
+        batch = todo[start:start + INDEX_BATCH]
+        records = [dict({k: r.get(k) for k in ("id", "file_name", "mime_type", "web_view_link", "folder_path",
+                                                 "month_folder", "vendor_folder", "modified_time")},
+                        size=int(r.get("size") or 0),
+                        _file={"id": r["id"], "mimeType": r.get("mime_type"), "name": r.get("file_name")})
+                   for r in batch]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, INDEX_WORKERS)) as pool:
+            rows = list(pool.map(lambda rec: invoice_index.extract_invoice(gemini, drive, rec), records))
+        good = [row for row in rows if not row.get("extraction_error") and row.get("paid_invoice_numbers") is not None]
+        failed += len(rows) - len(good)
+        now = {r["id"]: r for r in store.list_invoices(ids=[row["id"] for row in good])}
+        batch_months = set()
+        for row in good:
+            current = now.get(row["id"])
+            if not current or current.get("removed_at") or current.get("paid_invoice_numbers") is not None:
+                continue
+            patch = {"paid_invoice_numbers": row["paid_invoice_numbers"]}
+            if row.get("document_type") == matching.CONFIRMATION or current.get("document_type") == matching.CONFIRMATION:
+                # Typed anew: a confirmation's own number replaces the number of the invoice it pays (a
+                # Purolator receipt was read as that invoice's number), and it counts as a receipt.
+                patch.update({"document_type": row.get("document_type"), "is_invoice": row.get("is_invoice"),
+                              "invoice_number": row.get("invoice_number")})
+            held = current.get("card_charges") or []
+            inferred = bool(held) and all(isinstance(c, dict) and c.get("inferred") for c in held)
+            if len(matching.listed_charges(row)) > 1 and not inferred and len(matching.listed_charges(current)) < 2:
+                patch["card_charges"] = row["card_charges"]
+                listed += 1
+            store.update_invoices([row["id"]], patch)
+            done += 1
+            typed += int(patch.get("document_type") == matching.CONFIRMATION)
+            current = dict(current, **patch)
+            if patch.keys() - {"paid_invoice_numbers"}:
+                batch_months |= set(matching.months_to_match(current))
+                if matching.shared(current):
+                    matching.split_whole_links(store, current, log)
+        if batch_months:
+            queue_months(store, add=batch_months)       # now, not at the end: a run cut short keeps them
+            months |= batch_months
+        log(f"reread: {done} read again ({typed} payment confirmation(s), {listed} statement(s) listing "
+            f"payments), {failed} failed")
+    return {"to_read": len(todo), "read": done, "confirmations": typed, "statements": listed, "failed": failed,
+            "months_queued": len(months)}
+
+
 def reread_charge_dates(vendor, limit=None, log=print):
     """Read again the invoices of a vendor (folder or name containing `vendor`) read before
     invoices.charge_date existed, to learn the date each says it is charged automatically (a
@@ -2845,7 +2928,8 @@ def reread_charge_dates(vendor, limit=None, log=print):
     released = 0
     for inv in dated:
         for t in store.transactions_for_invoice(inv["id"]):
-            if t.get("match_method") == "manual" or not matching.beyond_charge_date(t, inv):
+            if t.get("invoice_id") != inv["id"] or t.get("match_method") == "manual" \
+                    or not matching.beyond_charge_date(t, inv):
                 continue
             expect = {"invoice_id": inv["id"], "invoice_part": t.get("invoice_part"),
                       "invoice_status": t.get("invoice_status"), "match_method": t.get("match_method")}
@@ -2895,10 +2979,10 @@ if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=["parse", "dry-run", "index", "match", "notify", "remind", "sync", "reread",
-                                        "reread-charge-dates",
+                                        "reread-charge-dates", "reread-documents",
                                         "serve"])
     ap.add_argument("--vendor", default=None,
-                    help="reread (default amazon) / reread-charge-dates (required): vendor folder or name")
+                    help="reread (default amazon) / reread-charge-dates, reread-documents (required): vendor folder or name")
     ap.add_argument("file", nargs="?")
     ap.add_argument("--year", type=int)
     ap.add_argument("--month", type=int)
@@ -2950,5 +3034,7 @@ if __name__ == "__main__":
         print(json.dumps(reread_card_charges(args.vendor or "amazon", args.limit), indent=2))
     elif args.command == "reread-charge-dates":
         print(json.dumps(reread_charge_dates(args.vendor, args.limit), indent=2))
+    elif args.command == "reread-documents":
+        print(json.dumps(reread_documents(args.vendor, args.limit), indent=2))
     else:
         app.run(host="127.0.0.1", port=args.port, debug=False)

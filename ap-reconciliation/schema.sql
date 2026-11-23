@@ -59,7 +59,7 @@ create table if not exists invoices (
   is_invoice       boolean,
   extracted_at     timestamptz,
   extraction_error text,
-  document_type    text,                      -- invoice | receipt | credit_note | statement | other
+  document_type    text,                      -- invoice | receipt | payment_confirmation | credit_note | statement | other
   removed_at       timestamptz,               -- set when the file is no longer found in Drive
   created_at       timestamptz not null default now()
 );
@@ -132,24 +132,55 @@ create unique index if not exists transactions_invoice_whole_unique on transacti
   where invoice_id is not null and invoice_part is null;
 create unique index if not exists transactions_invoice_part_unique on transactions (invoice_id, invoice_part)
   where invoice_id is not null and invoice_part is not null;
--- ... and never both: an invoice linked whole is not also linked by charge. The lock serializes two
--- writers of the same invoice, so neither can pass the check while the other's row is uncommitted.
+-- also_invoice_ids: the other documents the one charge pays or is evidenced by, next to invoice_id: the
+-- second and third invoice of a payment that settles several at once (UPS charges a week's customs-brokerage
+-- invoices as one; Purolator's billing centre three weekly invoices), or the payment confirmation of a charge
+-- linked to its invoice. They count as linked: never another row's invoice_id or also document.
+alter table transactions add column if not exists also_invoice_ids text[] not null default '{}';
+create index if not exists transactions_also_invoice_idx on transactions using gin (also_invoice_ids);
+alter table transactions drop constraint if exists transactions_also_needs_invoice;
+alter table transactions add constraint transactions_also_needs_invoice
+  check (invoice_id is not null or cardinality(also_invoice_ids) = 0);
+-- ... and never both: an invoice linked whole is not also linked by charge, nor one row's also document
+-- another row's invoice or also document. The locks (taken in one order: no two writers can deadlock)
+-- serialize two writers of the same document, so neither passes the check while the other's row is uncommitted.
 create or replace function transactions_invoice_link_guard() returns trigger language plpgsql as $$
+declare
+  doc text;
 begin
+  for doc in select distinct d from unnest(array[new.invoice_id] || coalesce(new.also_invoice_ids, '{}')) as d
+             where d is not null order by d loop
+    perform pg_advisory_xact_lock(hashtext('transactions.invoice_id:' || doc));
+  end loop;
   if new.invoice_id is not null then
-    perform pg_advisory_xact_lock(hashtext('transactions.invoice_id:' || new.invoice_id));
     if exists (select 1 from transactions o
                where o.invoice_id = new.invoice_id and o.id <> new.id
                  and (o.invoice_part is null) <> (new.invoice_part is null)) then
       raise exception 'invoice % is already linked to another transaction (whole and by charge)', new.invoice_id
         using errcode = 'unique_violation';
     end if;
+    if exists (select 1 from transactions o
+               where o.id <> new.id and o.also_invoice_ids @> array[new.invoice_id]) then
+      raise exception 'invoice % is already linked to another transaction (paid with its invoice)', new.invoice_id
+        using errcode = 'unique_violation';
+    end if;
   end if;
+  foreach doc in array coalesce(new.also_invoice_ids, '{}') loop
+    if doc = new.invoice_id or exists (select 1 from transactions o
+                                       where o.id <> new.id and (o.invoice_id = doc or o.also_invoice_ids @> array[doc])) then
+      raise exception 'invoice % is already linked to another transaction', doc
+        using errcode = 'unique_violation';
+    end if;
+  end loop;
   return new;
 end $$;
 drop trigger if exists transactions_invoice_link_guard on transactions;
-create trigger transactions_invoice_link_guard before insert or update of invoice_id, invoice_part on transactions
+create trigger transactions_invoice_link_guard
+  before insert or update of invoice_id, invoice_part, also_invoice_ids on transactions
   for each row execute function transactions_invoice_link_guard();
+-- paid_invoice_numbers: for a payment confirmation (document_type payment_confirmation: UPS's "Payment
+-- Confirmation", a billing centre's receipt), the invoice numbers it says the payment settles.
+alter table invoices add column if not exists paid_invoice_numbers text[];
 
 create table if not exists notifications (
   id              bigserial primary key,

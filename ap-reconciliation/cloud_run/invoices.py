@@ -28,7 +28,7 @@ EXT_MIME = {"pdf": "application/pdf", "png": "image/png", "jpg": "image/jpeg", "
             "webp": "image/webp", "heic": "image/heic", "heif": "image/heif"}
 MAX_BYTES = 15 * 1024 * 1024          # PDFs
 MAX_IMAGE_BYTES = 7 * 1024 * 1024     # Vertex's inline image limit
-DOCUMENT_TYPES = ("invoice", "receipt", "credit_note", "statement", "other")
+DOCUMENT_TYPES = ("invoice", "receipt", "payment_confirmation", "credit_note", "statement", "other")
 
 INVOICE_PROMPT = """This file comes from an accounts-payable folder of invoices and receipts that were paid with company credit cards.
 Folder hints: month folder "{month}", vendor folder "{vendor}", file name "{name}".
@@ -72,7 +72,8 @@ Rules:
 """
 
 
-MAX_CARD_CHARGES = 30
+MAX_CARD_CHARGES = 40            # a Google Ads statement lists up to ~20 payments a month
+MAX_PAID_INVOICES = 20
 CHARGE_DATE_REACH = (-7, 62)     # days from the invoice date a stated charge date may plausibly fall
 
 
@@ -104,6 +105,19 @@ def card_charges(value):
             continue
         out.append({"date": parse_date(c.get("date")) or None, "amount": round(float(amount), 2),
                     "card_last4": last4(c.get("card_last4")) or None})
+    return out
+
+
+def paid_invoice_numbers(value):
+    """The invoice numbers a payment confirmation says it settles, as stored: cleaned, without repeats,
+    in the order printed; [] when it names none (or the reading gave none)."""
+    if not isinstance(value, list):
+        return []
+    out = []
+    for n in value[:MAX_PAID_INVOICES]:
+        n = clean(n).lstrip("#").strip()[:60]
+        if n and n not in out:
+            out.append(n)
     return out
 
 
@@ -225,6 +239,9 @@ def extract_invoice(gemini, drive, record, content=None):
             "card_last4": last4(facts.get("card_last4")) or None,
             "payment_method": clean(facts.get("payment_method"))[:100] or None,
             "card_charges": card_charges(facts.get("card_charges")) or [],
+            # Always a list once read with this prompt (main.reread_documents reads again the rows still null).
+            "paid_invoice_numbers": (paid_invoice_numbers(facts.get("paid_invoice_numbers"))
+                                     if doc_type == "payment_confirmation" else []),
             "summary": clean(facts.get("summary"))[:500],
         })
     except Exception as exc:  # noqa: BLE001 - stored per file, the run goes on
@@ -270,11 +287,14 @@ def index_invoices(store, drive, gemini, root_id, month_folders=None, limit=40, 
     gone = [fid for fid, prior in known.items()
             if fid not in seen and not prior.get("removed_at")
             and (walked is None or prior.get("month_folder") in walked)]
+    import matching                       # here: matching does not import this module, but keep it lazy
     if gone:
         # A PATCH, not an upsert: Postgres checks NOT NULL (file_name) on the row an upsert proposes
         # to insert before it looks for the conflict, so {"id", "removed_at"} rows would be refused.
         store.update_invoices(gone, {"removed_at": now_iso()})
         log(f"{len(gone)} indexed file(s) no longer in Drive; marked removed")
+        # A charge that also paid (or was confirmed by) one of them: kept sound, or matched again.
+        matching.release_stale_also(store, gone, log)
     batch = todo[:limit] + retry[:max(limit - len(todo), 0)]
     rows, errors = [], []
     if on_read:
@@ -293,7 +313,6 @@ def index_invoices(store, drive, gemini, root_id, month_folders=None, limit=40, 
         # A file stamped removed while it was being read (Remove… on a dashboard upload, or another
         # run that found it gone) stays removed: the read's row would clear removed_at.
         now = {i["id"]: i for i in store.list_invoices(ids=[r["id"] for r in rows])}
-        import matching                   # here: matching does not import this module, but keep it lazy
         for r in rows:
             # Charges the matcher worked out (Square's: no reading lists them) outlive a re-read that
             # agrees on the total, currency and date.
@@ -311,6 +330,8 @@ def index_invoices(store, drive, gemini, root_id, month_folders=None, limit=40, 
                 # Linked whole before its charges were read (a new version of an Amazon order): each link
                 # moves to the charge it is.
                 matching.split_whole_links(store, r, log)
+        # Read again with another total, or no longer a candidate: a charge it was paid with looks again.
+        matching.release_stale_also(store, [i for i in stored if now.get(i)], log)
     # Files already read that now sit elsewhere (a vendor or month folder moved or renamed around them,
     # a file restored from the trash): their content is the same, but a month they may serve is new.
     relabelled = [r["id"] for r in moved

@@ -186,7 +186,7 @@ class FarChargeTests(unittest.TestCase):
                                            date="2026-01-04", month_folder="2026 01", card="9456"),
                                     amazon("o4", 110.0, [("2026-01-05", 40.0, "9456"), ("2026-03-20", 70.0, "9456")],
                                            date="2026-01-04", month_folder="2026 01", card="9456")])
-        ids = {i["id"] for i in matching.candidate_invoices(self.store, 2026, 4)}
+        ids = {i["id"] for i in matching.candidate_invoices(self.store, 2026, 4, late=False)}
         self.assertEqual(ids, {"o1", "o2", "o3"})            # within reach of April; Mar 20 is not
         self.store.insert_transactions([txn("t", "2026-04-01", "AMAZON.CA*CD34", 50.0, card="9456"),
                                         txn("u", "2026-04-01", "AMAZON.CA*EF56", 60.0, card="9456")])
@@ -226,7 +226,9 @@ class FarChargeTests(unittest.TestCase):
         single = amazon("o4", 75.0, [("2026-04-12", 75.0, "9456")], date="2026-01-20", month_folder="2026 01",
                         card="9456")
         self.store.upsert_invoices([single])
-        self.assertEqual({i["id"] for i in matching.candidate_invoices(self.store, 2026, 4)}, {"o1"})
+        self.assertEqual({i["id"] for i in matching.candidate_invoices(self.store, 2026, 4, late=False)}, {"o1"})
+        # Loaded for late payments (filed 2026 01), but dated 82 days before the purchase: past their reach.
+        self.assertFalse(matching.late_reach(txn("s", "2026-04-12", "AMAZON.CA*GH78", 75.0, card="9456"), single))
         self.store.insert_transactions([txn("w", "2026-04-12", "AMAZON.CA*EF56", 326.98, card="9456"),
                                         txn("s", "2026-04-12", "AMAZON.CA*GH78", 75.0, card="9456")])
         matching.match_month(self.store, None, 2026, 4, **self.quiet)
@@ -259,7 +261,8 @@ class FarChargeTests(unittest.TestCase):
         self.assertEqual(matching.months_to_match(self.order),
                          [(2025, 12), (2026, 1), (2026, 2), (2026, 4)])
         plain = inv("p", "Staples", 20.0, "2026-01-20", month_folder="2026 01")
-        self.assertEqual(matching.months_to_match(plain), [(2025, 12), (2026, 1), (2026, 2)])
+        # Its folder's neighbours, and the months up to LATE_PAYMENT_DAYS after its date (a late payment).
+        self.assertEqual(matching.months_to_match(plain), [(2025, 12), (2026, 1), (2026, 2), (2026, 3)])
 
 
 class SharedInvoiceApiTests(ApiTestCase):
