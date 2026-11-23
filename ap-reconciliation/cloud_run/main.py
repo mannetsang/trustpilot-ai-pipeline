@@ -2806,7 +2806,8 @@ def reread_documents(vendor, limit=None, log=print):
     or a billing centre's receipt becomes document_type payment_confirmation with the invoice numbers it
     pays, and a statement that lists the card payments it records (Google Ads, an insurer's premium
     history) gets them as card_charges. Only those columns are written (the rest of the old reading
-    stays), and card charges only where none are stored or the matcher worked them out. The months the
+    stays; a document newly typed as a confirmation also gets its own number and is_invoice), and card
+    charges only where fewer than two are stored and none were worked out by the matcher. The months the
     documents serve are queued for a full match. A reading that fails keeps the old one; run again to
     carry on. Returns counts."""
     word = (vendor or "").strip().lower()

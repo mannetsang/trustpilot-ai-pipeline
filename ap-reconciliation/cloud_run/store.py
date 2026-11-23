@@ -336,11 +336,33 @@ class SupabaseStore:
         return str(r[0]["txn_date"])[:10] if r else None
 
     def purchases_of_amount(self, amount, start, end):
-        """The purchases of exactly this amount (as billed) dated from start to end (ISO dates, both included),
-        whatever their card or month: whether a payment is the only one of its amount."""
-        return self.select("transactions", {"amount": f"eq.{float(amount):.2f}", "type": "eq.purchase",
-                                            "txn_date": f"gte.{start}", "and": f"(txn_date.lte.{end})",
-                                            "order": "txn_date.asc,id.asc"})
+        """The purchases of this amount within a cent, as billed or as their foreign amount, dated from start
+        to end (ISO dates, both included), whatever their card or month: whether a payment is the only
+        one of its amount."""
+        lo, hi = f"{float(amount) - 0.01:.2f}", f"{float(amount) + 0.01:.2f}"
+        return self.select("transactions", {
+            "type": "eq.purchase", "txn_date": f"gte.{start}", "and": f"(txn_date.lte.{end})",
+            "or": f"(and(amount.gte.{lo},amount.lte.{hi}),and(source_amount.gte.{lo},source_amount.lte.{hi}))",
+            "order": "txn_date.asc,id.asc"})
+
+    def linked_folders(self, prefix):
+        """{vendor folder (lower case): how many purchases whose description starts with `prefix` were linked
+        to a document in it, by the rules or by hand}: which supplier a card descriptor has been before."""
+        rows = self.select("transactions", {"select": "invoice_id", "description": f"ilike.{prefix}*",
+                                            "invoice_status": "eq.matched", "match_method": "in.(rule,manual)",
+                                            "invoice_id": "not.is.null", "order": "id"})
+        out = {}
+        for inv in self.list_invoices(ids=sorted({r["invoice_id"] for r in rows})) if rows else []:
+            folder = (inv.get("vendor_folder") or "").strip().lower()
+            if folder:
+                out[folder] = out.get(folder, 0) + sum(1 for r in rows if r["invoice_id"] == inv["id"])
+        return out
+
+    def first_txn_date(self, card):
+        """The date of the card's first statement line, or None."""
+        r = self._req("GET", "transactions", {"select": "txn_date", "card_last4": f"eq.{card}",
+                                               "order": "txn_date.asc", "limit": 1})
+        return str(r[0]["txn_date"])[:10] if r else None
 
     def invoice_card_numbers(self):
         """The card numbers (last four) invoices not removed show."""
@@ -622,9 +644,25 @@ class MemoryStore:
         return _parts([t for t in self.transactions.values() if t.get("invoice_id")])
 
     def purchases_of_amount(self, amount, start, end):
+        def near(v):
+            return v is not None and abs(float(v) - float(amount)) <= 0.0101
         return [dict(t) for t in sorted(self.transactions.values(), key=lambda t: (str(t.get("txn_date")), t["id"]))
-                if t.get("type") == "purchase" and abs(float(t["amount"]) - float(amount)) < 0.005
+                if t.get("type") == "purchase" and (near(t["amount"]) or near(t.get("source_amount")))
                 and start <= str(t.get("txn_date"))[:10] <= end]
+
+    def linked_folders(self, prefix):
+        out = {}
+        for t in self.transactions.values():
+            if (t.get("invoice_status") == "matched" and t.get("match_method") in ("rule", "manual") and t.get("invoice_id")
+                    and str(t.get("description") or "").lower().startswith(prefix.lower())):
+                folder = ((self.invoices.get(t["invoice_id"]) or {}).get("vendor_folder") or "").strip().lower()
+                if folder:
+                    out[folder] = out.get(folder, 0) + 1
+        return out
+
+    def first_txn_date(self, card):
+        dates = [str(t["txn_date"])[:10] for t in self.transactions.values() if t.get("card_last4") == card]
+        return min(dates) if dates else None
 
     def invoice_card_numbers(self):
         return {r["card_last4"] for r in self.invoices.values() if r.get("card_last4") and not r.get("removed_at")}

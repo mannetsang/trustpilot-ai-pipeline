@@ -29,12 +29,14 @@ def charge(tid, date, amount, description=UPS, card="4431", **kw):
     return txn(tid, date, description, amount, card=card, **kw)
 
 
-def store_of(invoices, charges, reach="2026-10-21"):
-    """A store whose card 4431 statements reach `reach` (a line on that day), as the live one did."""
+def store_of(invoices, charges, reach="2026-10-21", since="2026-01-02"):
+    """A store whose card 4431 statements run from `since` to `reach` (a line on each day), as the live one's
+    did; None leaves that end at the charges themselves."""
     store = MemoryStore()
     store.upsert_cards([{"last4": "4431"}, {"last4": "4516"}])
     store.upsert_invoices(invoices)
-    store.insert_transactions(list(charges) + ([charge("reach", reach, 3.33, "COFFEE")] if reach else []))
+    ends = [charge(tid, day, 3.33, "COFFEE") for tid, day in (("since", since), ("reach", reach)) if day]
+    store.insert_transactions(list(charges) + ends)
     return store
 
 
@@ -63,12 +65,15 @@ class LatePaymentTests(unittest.TestCase):
         run_months(store, (2026, 7))
         self.assertEqual({store.get_transaction(x)["invoice_status"] for x in ("t", "u")}, {"missing"})
 
-    def test_not_before_the_cards_statements_cover_the_whole_window(self):
-        # The last statement line is the charge itself (Jul 8), short of May 9 + 70 days: a second charge of
-        # the amount could still be in a statement not imported.
-        store = store_of([ups("may9", 4953.56, "2026-05-09")], [charge("t", "2026-07-08", 4953.56)], reach=None)
-        run_months(store, (2026, 7))
-        self.assertEqual(store.get_transaction("t")["invoice_status"], "missing")
+    def test_only_possible_until_the_cards_statements_cover_the_whole_window(self):
+        # The last statement line is the charge itself (Jul 8), short of May 9 + 70 days, or the first one is
+        # after Apr 18: a second charge of the amount could be in a statement not imported. A person confirms.
+        for ends in (dict(reach=None), dict(since="2026-05-01")):
+            store = store_of([ups("may9", 4953.56, "2026-05-09")], [charge("t", "2026-07-08", 4953.56)], **ends)
+            run_months(store, (2026, 7))
+            t = store.get_transaction("t")
+            self.assertEqual((t["invoice_status"], t["invoice_id"]), ("possible", "may9"), ends)
+            self.assertIn("do not cover the whole window", t["match_note"])
 
     def test_a_payment_confirmation_of_the_amount_is_no_second_bill(self):
         store = store_of([ups("may9", 4953.56, "2026-05-09"),
@@ -138,6 +143,33 @@ class CombinedTests(unittest.TestCase):
         self.assertEqual((out["invoice_id"], out["also_invoice_ids"]), ("b117", ["f0805"]))
 
 
+class VendorEvidenceTests(unittest.TestCase):
+    def test_the_folder_named_in_the_descriptor_or_a_history_of_links(self):
+        ups_charge = charge("t", "2026-08-24", 137.54)
+        self.assertTrue(matching.folder_named(ups_charge, ups("a", 1.0, "2026-08-05")))
+        self.assertFalse(matching.folder_named(ups_charge, ups("b", 1.0, "2026-08-05", vendor="Canada Post")))
+        self.assertTrue(matching.folder_named(charge("f", "2026-08-07", 1.0, "FEDEX95845920"),
+                                              ups("c", 1.0, "2026-08-05", vendor="FedEx")))
+        water = charge("w", "2026-08-07", 42.92, "PRIMO WATER NORTH AM")
+        springs = ups("s", 42.92, "2026-07-16", vendor="Canadian Springs")
+        store = store_of([springs, ups("s1", 10.0, "2026-05-02", vendor="Canadian Springs"),
+                          ups("s2", 11.0, "2026-06-02", vendor="Canadian Springs")],
+                         [water, charge("p1", "2026-05-20", 10.0, "PRIMO WATER NORTH AM", status="matched",
+                                        invoice_id="s1", method="rule")])
+        self.assertFalse(matching.VendorHistory(store)(water, springs))          # one link before: not enough
+        store.update_transaction("p1", {"invoice_status": "matched"})
+        store.insert_transactions([charge("p2", "2026-06-20", 11.0, "PRIMO WATER NORTH AM", status="matched",
+                                          invoice_id="s2", method="manual")])
+        self.assertTrue(matching.VendorHistory(store)(water, springs))
+
+    def test_a_canada_post_pair_never_pays_a_ups_charge(self):
+        store = store_of([ups("a", 100.00, "2026-08-05", vendor="Canada Post"),
+                          ups("b", 37.54, "2026-08-05", vendor="Canada Post")],
+                         [charge("t", "2026-08-24", 137.54)])
+        run_months(store, (2026, 8))
+        self.assertEqual(store.get_transaction("t")["invoice_status"], "missing")
+
+
 class StatementTests(unittest.TestCase):
     def ads(self, charges, iid="ads_may"):
         row = inv(iid, "Google Ads", 1500.0, "2026-05-31", month_folder="2026 05", vendor_folder="Google Ads",
@@ -155,6 +187,18 @@ class StatementTests(unittest.TestCase):
         parts = {t: (store.get_transaction(t)["invoice_id"], store.get_transaction(t)["invoice_part"])
                  for t in ("p1", "p2", "p3")}
         self.assertEqual(parts, {"p1": ("ads_may", 0), "p2": ("ads_may", 1), "p3": ("ads_may", 2)})
+
+    def test_a_statement_never_takes_a_charge_from_another_vendor_or_from_a_receipt(self):
+        card_statement = dict(self.ads([("2026-05-03", 42.0), ("2026-05-04", 17.5)], iid="visa"),
+                              vendor="RBC Visa", vendor_folder="RBC", file_name="visa.pdf")
+        receipt = inv("r", "Google Ads", 500.0, "2026-05-12", month_folder="2026 05", vendor_folder="Google Ads",
+                      currency="USD")
+        store = store_of([card_statement, receipt, self.ads([("2026-05-12", 500.0), ("2026-05-20", 500.0)])],
+                         [charge("c1", "2026-05-03", 42.0, "STAPLES", card="4516", currency="USD"),
+                          charge("c2", "2026-05-12", 500.0, "GOOGLE *ADS4167500770", card="4516", currency="USD")])
+        run_months(store, (2026, 5))
+        self.assertEqual(store.get_transaction("c1")["invoice_status"], "missing")       # Staples is no RBC
+        self.assertEqual(store.get_transaction("c2")["invoice_id"], "r")                 # the receipt first
 
     def test_a_statement_listing_no_payments_is_still_no_candidate(self):
         self.assertFalse(matching.is_candidate(self.ads([])))
