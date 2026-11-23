@@ -193,7 +193,10 @@ updates its folder hints without another model call.
    - no single invoice of that vendor has the amount;
    - this is the only such set, or the only set whose invoices are all dated
      the same day (UPS bills a 20.23 fee most weeks);
-   - none of the invoices is wanted by another purchase.
+   - a set dated over several days has no amount the vendor bills again
+     around then (another week's copy of a fee proves nothing);
+   - no other purchase of the amount could be its payment: in the run, or
+     in any month on the same card from the vendor.
 
    The largest invoice is `invoice_id`. The others go in
    `transactions.also_invoice_ids`, the documents paid or confirmed with it,
@@ -214,11 +217,24 @@ updates its folder hints without another model call.
    - otherwise the one unlinked invoice of its vendor folder with the exact
      amount, dated 0 to 21 days before it, or paid late as above.
 
-   The confirmation goes in `also_invoice_ids`. A purchase linked to an
-   invoice also gets the unlinked confirmations that name that invoice, or
-   that have the exact amount and are dated within three days of it. The month
-   run, the Invoice watch and *Rematch* do this, also for purchases the rules
-   or the judge matched earlier, but never for links made by hand.
+   When the confirmation names no invoice and no single one fits, the
+   invoices it pays together are looked for as above. The confirmation goes
+   in `also_invoice_ids`. A purchase linked to an invoice also gets the
+   unlinked confirmations from the same vendor folder that name that invoice.
+   A confirmation naming none is attached when it meets all of these:
+   - it has the exact amount (compared in cents: UPS's e-mails print only
+     "$" and read as USD) and is dated within five days of the purchase;
+   - it is the only such confirmation;
+   - the purchase is the only one of that amount on its card in those days.
+
+   The month run, the Invoice watch and *Rematch* do this, also for purchases
+   the rules or the judge matched earlier, but never for links made by hand.
+   Adding a confirmation to a link never moves the invoice: if it cannot be
+   added (someone linked it elsewhere meanwhile), the link stays as it was.
+   *Rematch* never trades a sound link to an invoice for a confirmation
+   alone. The month run also lets an exact invoice found since replace a
+   judge's match whose amount was not exact: a late payment, or invoices paid
+   together. Judge matches with no exact replacement stay as they are.
    Documents read before these types existed are read again with
    `python main.py reread-documents --vendor ups` (as the sync job:
    `--args=main.py,reread-documents,--vendor,ups`). It writes only the type,
@@ -229,7 +245,8 @@ updates its folder hints without another model call.
    When one leaves Drive or is read again (`matching.release_stale_also`):
    - a confirmation that is gone is dropped;
    - if an invoice paid with the charge is gone, or the invoices no longer add
-     up, the purchase is matched again.
+     up, the purchase is matched again;
+   - a reading that failed changes nothing.
 
    Links made by hand stay; their checks show the difference.
    **Reissued cards.** A merchant may show a card's new number while the

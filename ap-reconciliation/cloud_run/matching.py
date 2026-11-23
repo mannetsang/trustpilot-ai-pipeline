@@ -896,7 +896,9 @@ class LatePayments:
         self.cache = {}
         self.reach = {}              # card -> (first, last) statement line dates
 
-    def _invoices_around(self, txn):
+    def invoices_around(self, txn):
+        """The documents (not removed or removed) of the folders from LATE_PAYMENT_DAYS before the purchase to
+        MATCH_WINDOW_DAYS after it, linked or not, plus those the caller loaded."""
         day = _day(txn.get("txn_date"))
         names = [month_folder_name(y, m) for y, m in
                  _months_between(day - dt.timedelta(days=LATE_PAYMENT_DAYS + 1), day + dt.timedelta(days=MATCH_WINDOW_DAYS))]
@@ -927,7 +929,7 @@ class LatePayments:
                 or amount_score(txn, inv)[0] < 1.0 or vendor_similarity(txn, inv) < VENDOR_EVIDENCE
                 or cards_differ(inv.get("card_last4"), txn.get("card_last4")) or not self.vendor(txn, inv)):
             return None
-        for other in self._invoices_around(txn):
+        for other in self.invoices_around(txn):
             if (other["id"] == inv["id"] or other.get("removed_at") or other.get("document_type") == "credit_note"
                     or is_confirmation(other) or other.get("is_invoice") is False or same_bill(other, inv)):
                 continue                    # no second bill of the amount: a confirmation, a statement, a copy
@@ -956,7 +958,7 @@ class LatePayments:
         return note, ("matched" if covered else "possible")
 
 
-def combined_match(transactions, invoices, taken=None, allowed=None, vendor=None):
+def combined_match(transactions, invoices, taken=None, allowed=None, vendor=None, store=None, around=None):
     """Purchases that each pay several invoices of one vendor at once (UPS charges a week's customs-
     brokerage invoices together; a billing centre catches up on missed weekly invoices in one charge).
     For a purchase: two to COMBINE_MAX invoices nothing is linked to, all from one vendor folder whose
@@ -968,8 +970,12 @@ def combined_match(transactions, invoices, taken=None, allowed=None, vendor=None
     dated the same day (UPS bills a fee of 20.23 most weeks, but charges each Wednesday's brokerage
     invoices together), and no invoice is in two purchases' sets.
     vendor(txn, inv), when given (a VendorHistory), must vouch for every invoice of a set: word overlap
-    alone gives 'UPS CANADA BILLING' a Canada Post invoice. Returns {txn_id: (invoice id, [also ids],
-    "matched", confidence, note)}: the largest invoice is the link, the others are paid with it."""
+    alone gives 'UPS CANADA BILLING' a Canada Post invoice. store, when given, rules a set out when another
+    purchase of the amount (any month, linked or not) could be its payment as well. around(txn), when given,
+    gives the vendor's documents around the purchase, linked or not: a set dated over several days is ruled
+    out when one of its amounts is billed again around then (UPS's weekly 20.23 fee: another week's copy is
+    no proof). Returns {txn_id: (invoice id, [also ids], "matched", confidence, note)}: the largest invoice
+    is the link, the others are paid with it."""
     taken = taken or {}
     free = [i for i in invoices if i["id"] not in taken and not shared(i) and is_candidate(i)
             and not is_confirmation(i) and i.get("is_invoice") is not False and i.get("total") is not None
@@ -1013,6 +1019,11 @@ def combined_match(transactions, invoices, taken=None, allowed=None, vendor=None
             if len(one_day) != 1:
                 continue
             sets = one_day
+        if around is not None and len({str(i["invoice_date"])[:10] for i in sets[0]}) > 1 \
+                and _recurring(t, sets[0], around(t)):
+            continue
+        if store is not None and _rival_purchase(t, sets[0], store, vendor):
+            continue
         found[t["id"]] = (t, sets[0])
         for inv in sets[0]:
             claims.setdefault(inv["id"], set()).add(t["id"])
@@ -1028,6 +1039,41 @@ def combined_match(transactions, invoices, taken=None, allowed=None, vendor=None
                 f"{cur} {sum(_cents(i['total']) for i in members) / 100:.2f}")
         out[tid] = (members[0]["id"], [i["id"] for i in members[1:]], "matched", COMBINE_CONFIDENCE, note)
     return out
+
+
+def _recurring(txn, members, around):
+    """Is one of the set's amounts billed again by its vendor around the purchase (another document of the
+    folder, not a copy of the member, a confirmation or a non-bill, dated MATCH_WINDOW_DAYS after to
+    LATE_PAYMENT_DAYS before it, linked or not)?"""
+    for m in members:
+        for other in around:
+            if (other["id"] == m["id"] or other.get("removed_at") or is_confirmation(other)
+                    or other.get("is_invoice") is False or other.get("document_type") == "credit_note"
+                    or other.get("total") is None or not _same_supplier(other, m) or same_bill(other, m)):
+                continue
+            days = days_after_invoice(txn, other)
+            if days is not None and -MATCH_WINDOW_DAYS <= days <= LATE_PAYMENT_DAYS \
+                    and _cents(other["total"]) == _cents(m["total"]):
+                return True
+    return False
+
+
+def _rival_purchase(txn, members, store, vendor=None):
+    """Is there another purchase of the charge's amount, from the set's first date to LATE_PAYMENT_DAYS after
+    its last, on the same card (any card when the invoices show none), from the same vendor, that the set
+    could as well be the payment of?"""
+    days = sorted(_day(i["invoice_date"]) for i in members)
+    try:
+        end = days[-1] + dt.timedelta(days=LATE_PAYMENT_DAYS)
+    except OverflowError:
+        return True
+    card = next((i.get("card_last4") for i in members if i.get("card_last4")), None)
+    for other in store.purchases_of_amount(abs(float(txn["amount"])), days[0].isoformat(), end.isoformat()):
+        if other["id"] == txn["id"] or (card and cards_differ(card, other.get("card_last4"))):
+            continue
+        if (vendor(other, members[0]) if vendor is not None else vendor_similarity(other, members[0]) >= VENDOR_EVIDENCE):
+            return True
+    return False
 
 
 def _combinations(pool, target, want):
@@ -1061,8 +1107,8 @@ def _number_key(value):
 
 
 def paid_by_confirmation(txn, confirmation, invoices, taken=None, late=None):
-    """The invoices a purchase linked to a payment confirmation pays, as (invoice id, [also ids], note) or
-    None: the invoices the confirmation names (paid_invoice_numbers) that nothing is linked to, when they
+    """The invoices a purchase linked to a payment confirmation pays, as (invoice id, [also ids], note, status)
+    or None (status "possible" when the invoice is a late payment late() only rates possible): the invoices the confirmation names (paid_invoice_numbers) that nothing is linked to, when they
     add up to the purchase; else the one invoice of the confirmation's vendor folder with the purchase's
     exact amount dated 0..MATCH_WINDOW_DAYS before it (or a late payment late() vouches for), nothing
     linked to it, and no other such invoice. The confirmation itself goes with the also ids."""
@@ -1076,19 +1122,24 @@ def paid_by_confirmation(txn, confirmation, invoices, taken=None, late=None):
         if named and sum(_cents(i["total"]) for i in named) in amounts:
             named.sort(key=lambda i: (-_cents(i["total"]), str(i.get("invoice_date")), i["id"]))
             return (named[0]["id"], [i["id"] for i in named[1:]] + [confirmation["id"]],
-                    f"the invoice{'s' if len(named) > 1 else ''} payment confirmation "
-                    f"{confirmation.get('file_name')} names")
+                    f"the invoice{'s' if len(named) > 1 else ''} named by payment confirmation "
+                    f"{confirmation.get('file_name')}", "matched")
     same = []
     for i in free:
         days = days_after_invoice(txn, i)
         if (days is None or days < 0 or not _same_supplier(i, confirmation) or amount_score(txn, i)[0] < 1.0
                 or cards_differ(i.get("card_last4"), txn.get("card_last4"))):
             continue
-        if days <= MATCH_WINDOW_DAYS or (late is not None and late(txn, i)):
-            same.append(i)
+        if days <= MATCH_WINDOW_DAYS:
+            same.append((i, "matched", ""))
+        elif late is not None:
+            why = late(txn, i)
+            if why:
+                same.append((i, why[1], f"; {why[0]}"))
     if len(same) == 1:
-        return (same[0]["id"], [confirmation["id"]],
-                f"the invoice of the payment confirmed by {confirmation.get('file_name')}")
+        i, status, why = same[0]
+        return (i["id"], [confirmation["id"]],
+                f"the invoice of the payment confirmed by {confirmation.get('file_name')}{why}", status)
     return None
 
 
@@ -1111,8 +1162,8 @@ def confirmations_of(txn, inv, invoices, taken=None, store=None):
     number = _number_key(inv.get("invoice_number"))
     for c in invoices:
         if c["id"] in taken or c["id"] == inv["id"] or not is_confirmation(c) or c.get("removed_at") \
-                or not _same_supplier(c, inv) or rejected(txn, c):
-            continue
+                or shared(c) or not _same_supplier(c, inv) or rejected(txn, c):
+            continue                        # (one listing several charges is shared a charge at a time)
         names = {_number_key(n) for n in c.get("paid_invoice_numbers") or () if _number_key(n)}
         if names:
             if number and number in names:
@@ -1145,25 +1196,34 @@ def also_review(txn, docs):
     if not also:
         return [], True
     main = docs.get(txn.get("invoice_id"))
-    keep, paid, sound = [], [], True
+    charge = {_cents(a) for a in [txn.get("amount"), txn.get("source_amount")] if a is not None}
+    keep, paid, sound, unknown = [], [], True, _unread(main)
     for d in also:
         doc = docs.get(d)
         if not doc or doc.get("removed_at"):
             if not (doc and is_confirmation(doc)):
                 sound = False
             continue
-        if is_confirmation(doc):
-            keep.append(d)
+        if _unread(doc):
+            keep.append(d)              # a reading that failed (or none yet) proves nothing: kept as it is
+            unknown = True
+        elif is_confirmation(doc) or (doc.get("total") is not None and _cents(doc["total"]) in charge):
+            keep.append(d)              # evidence of the payment (a confirmation read as another type too)
         elif is_candidate(doc) and not shared(doc) and doc.get("total") is not None:
             keep.append(d)
             paid.append(doc)
         else:
             sound = False
-    if paid and sound:
+    if paid and sound and not unknown:
         cents = [_cents(a) for a in charge_amounts(txn, main or {})] if main and main.get("total") is not None else []
         total = (_cents(main["total"]) if main and main.get("total") is not None else None)
         sound = total is not None and total + sum(_cents(p["total"]) for p in paid) in cents
     return keep, sound
+
+
+def _unread(doc):
+    """A document whose reading failed, or that has not been read yet: its facts prove nothing."""
+    return bool(doc) and (bool(doc.get("extraction_error")) or not doc.get("extracted_at"))
 
 
 def release_stale_also(store, ids, log=print):
@@ -1345,7 +1405,8 @@ def invoice_checks(txn, inv, reading=False, also=()):
         return [{"kind": "unreadable", "level": "info",
                  "text": "Couldn't read the receipt yet; it is read again with the next invoice run."}]
     checks = []
-    paid_with = [d for d in also or () if d and not is_confirmation(d) and d.get("total") is not None]
+    paid_with = [d for d in also or () if d and not d.get("removed_at") and not is_confirmation(d)
+                 and d.get("total") is not None]
     if inv.get("is_invoice") is False and txn.get("invoice_part") is None and not is_confirmation(inv):
         summary = str(inv.get("summary") or "").strip().rstrip(".")
         checks.append({"kind": "not_invoice", "level": "warn",
@@ -1390,6 +1451,10 @@ def invoice_checks(txn, inv, reading=False, also=()):
         else:
             checks.append({"kind": "date", "level": "warn",
                            "text": f"The receipt is dated {str(inv['invoice_date'])[:10]}, {days} days from the charge."})
+    for d in also or ():
+        if d and d.get("removed_at"):
+            checks.append({"kind": "removed", "level": "warn",
+                           "text": f"{d.get('file_name') or 'A document'} linked with this charge is no longer in Drive."})
     return checks
 
 
@@ -1601,7 +1666,7 @@ def match_transaction(store, gemini, txn_id, use_ai=True, log=print, updated_by=
     else:
         found, method = rule_match([txn], pool, status_first=True, late=late, late_only=only_late).get(txn["id"]), "rule"
         if not found or found[1] != "matched":
-            combined = combined_match([txn], pool, vendor=vendor).get(txn["id"])
+            combined = combined_match([txn], pool, vendor=vendor, store=store, around=late.invoices_around).get(txn["id"])
             if combined:
                 found, also = (combined[0], combined[2], combined[3], combined[4]), combined[1]
         if not found or found[1] != "matched":
@@ -1625,8 +1690,15 @@ def match_transaction(store, gemini, txn_id, use_ai=True, log=print, updated_by=
         held = {k: None for k in taken if k not in (found[0], *also)}
         if is_confirmation(doc):
             paid = paid_by_confirmation(txn, doc, pool, taken=held, late=late)
+            if not paid:
+                combined = combined_match([txn], [i for i in pool if i["id"] not in held], vendor=vendor, store=store,
+                                          around=late.invoices_around).get(txn["id"])
+                if combined:
+                    paid = (combined[0], combined[1] + [doc["id"]],
+                            f"the invoices paid together, confirmed by {doc.get('file_name')}", "matched")
             if paid:
-                found, also = (paid[0], found[1], found[2], f"{found[3]}; linked to {paid[2]}"), paid[1]
+                status, conf = (found[1], found[2]) if paid[3] == "matched" else ("possible", AI_POSSIBLE)
+                found, also = (paid[0], status, conf, f"{found[3]}; linked to {paid[2]}"), paid[1]
         elif doc:
             also = list(also) + confirmations_of(txn, doc, candidates, taken=dict(held, **{d: None for d in also}),
                                                  store=store)
@@ -1639,6 +1711,12 @@ def match_transaction(store, gemini, txn_id, use_ai=True, log=print, updated_by=
         held_docs = {i["id"]: i for i in store.list_invoices(ids=[own] + list(txn["also_invoice_ids"]))}
         current_valid = also_review(txn, held_docs)[1]
     current = (own_status, txn.get("match_confidence"))
+    own_doc = (inv_by_id.get(own) or next((i for i in candidates if i["id"] == own), None)) if own else None
+    if (found and current_valid and own_doc and not is_confirmation(own_doc)
+            and is_confirmation(inv_by_id.get(found[0])) and found[0] != own):
+        # A sound link to an invoice (or invoices paid together) is never traded for the payment's
+        # confirmation alone.
+        found = None
     if found and found[0] == own and part == own_part and current_valid:
         # The same invoice again: only a better status (possible -> matched), or more documents paid with
         # it, is worth writing; a reworded note or a slightly different confidence is not news.
@@ -1834,18 +1912,31 @@ def match_new_invoices(store, gemini, invoice_ids, use_ai=True, log=print, judge
     unsure = [t for t in pending if t["id"] not in accepted or accepted[t["id"]][0][1] != "matched"]
     busy = set(taken) | {found[0] for found, _ in accepted.values()}
     if unsure and whole:
-        folders = sorted({month_folder_name(*ym) for i in whole for ym in _months_between(
-            _day(i["invoice_date"]) - dt.timedelta(days=COMBINE_SPAN_DAYS), _day(i["invoice_date"]) + dt.timedelta(days=COMBINE_SPAN_DAYS))
-            if _day(i.get("invoice_date"))})
+        folders = set()
+        for i in whole:
+            day = _day(i.get("invoice_date"))
+            if not day:
+                continue
+            try:
+                span = (day - dt.timedelta(days=COMBINE_SPAN_DAYS), day + dt.timedelta(days=COMBINE_SPAN_DAYS))
+            except OverflowError:
+                continue                    # a date at the end of the calendar: a misreading
+            folders |= {month_folder_name(*ym) for ym in _months_between(*span)}
+        folders = sorted(folders)
         suppliers = {(i.get("vendor_folder") or "").strip().lower() for i in whole}
         pool = {i["id"]: i for i in (store.list_invoices(month_folders=folders) if folders else [])
                 if is_candidate(i) and (i.get("vendor_folder") or "").strip().lower() in suppliers}
         pool.update({i["id"]: i for i in whole})
         pool = [i for i in pool.values() if i["id"] not in busy and not shared(i)]
-        for tid, (iid, also, status, conf, note) in combined_match(unsure, pool, allowed=serves_or_late, vendor=vendor).items():
+        for tid, (iid, also, status, conf, note) in combined_match(unsure, pool, allowed=serves_or_late, vendor=vendor,
+                                                                   store=store, around=late.invoices_around).items():
             t = next(x for x in pending if x["id"] == tid)
             if not ({iid, *also} & set(inv_by_id)) or not improves(t, status, conf):
                 continue                    # no new invoice in it: the month run's to find
+            if parts.get(tid) is not None:
+                # It replaces a charge of an order it was proposed for: that charge is free again.
+                old = accepted[tid][0][0]
+                (taken.get(old) or set()).discard(parts.pop(tid))
             accepted[tid] = ((iid, status, conf, note), "rule")
             also_of[tid] = also
             inv_by_id.update({i["id"]: i for i in pool if i["id"] in also or i["id"] == iid})
@@ -1899,10 +1990,18 @@ def match_new_invoices(store, gemini, invoice_ids, use_ai=True, log=print, judge
             if parts.get(tid) is not None or not inv:
                 continue
             if is_confirmation(inv):
-                found = paid_by_confirmation(t, inv, list(around.values()),
-                                             taken={k: None for k in busy - {iid, *also_of.get(tid, ())}}, late=late)
+                held_now = {k: None for k in busy - {iid, *also_of.get(tid, ())}}
+                found = paid_by_confirmation(t, inv, list(around.values()), taken=held_now, late=late)
+                if not found:
+                    combined = combined_match([t], [i for i in around.values() if i["id"] not in held_now
+                                                    and is_candidate(i)], vendor=vendor, store=store,
+                                              around=late.invoices_around).get(tid)
+                    if combined:
+                        found = (combined[0], combined[1] + [inv["id"]],
+                                 f"the invoices paid together, confirmed by {inv.get('file_name')}", "matched")
                 if found:
-                    accepted[tid] = ((found[0], status, conf, f"{note}; linked to {found[2]}"), method)
+                    st, cf = (status, conf) if found[3] == "matched" else ("possible", AI_POSSIBLE)
+                    accepted[tid] = ((found[0], st, cf, f"{note}; linked to {found[2]}"), method)
                     also_of[tid] = found[1]
                     busy |= {found[0], *found[1]}
             elif status == "matched":
@@ -1925,10 +2024,13 @@ def match_new_invoices(store, gemini, invoice_ids, use_ai=True, log=print, judge
                 found = paid_by_confirmation(t, inv, [i for i in around.values() if i["id"] in new_ids],
                                              taken=free, late=late)
                 if found:
-                    upkeep.append((t, {"invoice_id": found[0], "invoice_part": None,
-                                       "also_invoice_ids": found[1] + [d for d in t.get("also_invoice_ids") or ()
-                                                                       if d not in found[1]],
-                                       "match_note": f"{t.get('match_note') or ''}; linked to {found[2]}"[:500]}))
+                    patch = {"invoice_id": found[0], "invoice_part": None,
+                             "also_invoice_ids": found[1] + [d for d in t.get("also_invoice_ids") or ()
+                                                             if d not in found[1]],
+                             "match_note": f"{t.get('match_note') or ''}; linked to {found[2]}"[:500]}
+                    if found[3] != "matched":
+                        patch.update({"invoice_status": found[3], "match_confidence": AI_POSSIBLE})
+                    upkeep.append((t, patch))
                     busy |= {found[0], *found[1]}
             else:
                 extra = [d for d in confirmations_of(t, inv, [i for i in around.values() if i["id"] in new_ids],
@@ -1941,7 +2043,8 @@ def match_new_invoices(store, gemini, invoice_ids, use_ai=True, log=print, judge
     stamp = now_iso()
     for t, patch in upkeep:
         try:
-            written = store.update_transaction(t["id"], dict(patch, updated_at=stamp), expect=_snapshot(t))
+            written = store.update_transaction(t["id"], dict(patch, updated_at=stamp),
+                                               expect=dict(_snapshot(t), also_invoice_ids=_also(t)))
         except Exception as exc:  # noqa: BLE001
             log(f"payment confirmation not recorded on {t['id']}: {exc}")
             written = None
@@ -2031,17 +2134,27 @@ def match_month(store, gemini, year, month, card=None, use_ai=True, log=print):
     if unsure:
         busy = used()
         for tid, (iid, also, status, conf, note) in combined_match(
-                unsure, [i for i in available if i["id"] not in busy], vendor=vendor).items():
+                unsure, [i for i in available if i["id"] not in busy], vendor=vendor, store=store,
+                around=late.invoices_around).items():
             results[tid] = (iid, status, conf, note, None)
             also_of[tid] = also
-    # A purchase the rules linked to a payment confirmation: the invoice it pays, when that is in Drive.
+    # A purchase the rules linked to a payment confirmation: the invoice it pays (or the invoices, paid
+    # together), when that is in Drive.
     for tid, r in list(results.items()):
         inv = inv_by_id.get(r[0])
         if r[4] is None and is_confirmation(inv):
             t = next(x for x in pending if x["id"] == tid)
-            found = paid_by_confirmation(t, inv, available, taken={k: None for k in used(but=tid)}, late=late)
+            held_now = {k: None for k in used(but=tid)}
+            found = paid_by_confirmation(t, inv, available, taken=held_now, late=late)
+            if not found:
+                combined = combined_match([t], [i for i in available if i["id"] not in held_now], vendor=vendor,
+                                          store=store, around=late.invoices_around).get(tid)
+                if combined:
+                    found = (combined[0], combined[1] + [inv["id"]],
+                             f"the invoices paid together, confirmed by {inv.get('file_name')}", "matched")
             if found:
-                results[tid] = (found[0], r[1], r[2], f"{r[3]}; linked to {found[2]}", None)
+                status, conf = (r[1], r[2]) if found[3] == "matched" else ("possible", AI_POSSIBLE)
+                results[tid] = (found[0], status, conf, f"{r[3]}; linked to {found[2]}", None)
                 also_of[tid] = found[1]
     # Then the statements that list the payments they record (Google Ads, an insurer's premium history): only
     # for what the invoices and receipts left, and only where the vendor agrees.
@@ -2094,16 +2207,63 @@ def match_month(store, gemini, year, month, card=None, use_ai=True, log=print):
             counts["missing"] += 1
         if _differs(t, patch):
             patches.append((t, patch))
-    # The month's purchases already matched by the rules or the judge: the invoice a confirmation they
-    # hold pays, and the confirmations of the invoice they hold.
+    # The month's purchases already matched by the rules or the judge. One patch per row at most.
     busy = used()
     pending_ids = {t["id"] for t in pending}
+    patched = {t["id"] for t, _ in patches}
     kept = [t for t in txns if t["id"] not in pending_ids and t.get("type") == "purchase"
             and t.get("invoice_status") == "matched" and t.get("match_method") in ("rule", "ai")
             and t.get("invoice_part") is None and t.get("invoice_id")]
-    far = sorted({t["invoice_id"] for t in kept} - set(inv_by_id))
+    far = sorted({d for t in kept for d in [t["invoice_id"], *(t.get("also_invoice_ids") or ())]} - set(inv_by_id))
     held = dict(inv_by_id, **({i["id"]: i for i in store.list_invoices(ids=far)} if far else {}))
+    # First the judge's matches whose amount is not exact: an exact invoice found since (paid late, or with
+    # others in one charge) takes their place, with the confirmations of its payment. Nothing found: they stay.
+    contest = [t for t in kept if t.get("match_method") == "ai" and held.get(t["invoice_id"])
+               and amount_score(t, held[t["invoice_id"]])[0] < 1.0]
+    if contest:
+        open_ = [i for i in available if i["id"] not in busy]
+        better = {}
+        for tid, (iid, status, conf, note) in rule_match(contest, open_, late=late, late_only=only_late).items():
+            if status != "matched":
+                continue
+            doc = inv_by_id.get(iid) or {}
+            if is_confirmation(doc):
+                # Only the invoice a confirmation pays replaces the judge's invoice, never the confirmation alone.
+                t = next(x for x in contest if x["id"] == tid)
+                paid = paid_by_confirmation(t, doc, open_, taken={k: None for k in busy}, late=late)
+                if not paid or paid[3] != "matched":
+                    continue
+                better[tid] = (paid[0], paid[1], f"{note}; linked to {paid[2]}")
+            else:
+                better[tid] = (iid, [], note)
+        rest = [t for t in contest if t["id"] not in better]
+        if rest:
+            used_now = {r[0] for r in better.values()}
+            for tid, (iid, also, status, conf, note) in combined_match(
+                    rest, [i for i in open_ if i["id"] not in used_now], vendor=vendor, store=store,
+                    around=late.invoices_around).items():
+                better[tid] = (iid, also, note)
+        for t in contest:
+            if t["id"] not in better:
+                continue
+            iid, also, note = better[t["id"]]
+            if iid in busy or set(also) & busy:
+                continue                    # taken by another row of this run
+            busy |= {iid, *also}
+            extra = confirmations_of(t, held.get(iid) or inv_by_id.get(iid) or {"id": iid}, invoices,
+                                     taken={k: None for k in busy}, store=store) if iid in inv_by_id else []
+            busy |= set(extra)
+            patches.append((t, {"invoice_status": "matched", "invoice_id": iid, "invoice_part": None,
+                                "match_confidence": COMBINE_CONFIDENCE if also else LATE_CONFIDENCE,
+                                "match_method": "rule", "also_invoice_ids": also + extra, "updated_at": stamp,
+                                "match_note": f"{note}; replaces the judge's match, whose amount was not exact"[:500]}))
+            patched.add(t["id"])
+            counts["replaced"] = counts.get("replaced", 0) + 1
+    # Then the others: the invoice a confirmation they hold pays (or the invoices, paid together), and the
+    # confirmations of the invoice they hold.
     for t in kept:
+        if t["id"] in patched:
+            continue
         inv = held.get(t["invoice_id"])
         if not inv:
             continue
@@ -2112,10 +2272,18 @@ def match_month(store, gemini, year, month, card=None, use_ai=True, log=print):
         patch = None
         if is_confirmation(inv):
             found = paid_by_confirmation(t, inv, available, taken=free, late=late)
+            if not found:
+                combined = combined_match([t], [i for i in available if i["id"] not in free], vendor=vendor,
+                                          store=store, around=late.invoices_around).get(t["id"])
+                if combined:
+                    found = (combined[0], combined[1] + [inv["id"]], "the invoices paid together, confirmed by "
+                             f"{inv.get('file_name')}", "matched")
             if found:
                 patch = {"invoice_id": found[0], "invoice_part": None,
                          "also_invoice_ids": found[1] + [d for d in t.get("also_invoice_ids") or () if d not in found[1]],
                          "match_note": f"{t.get('match_note') or ''}; linked to {found[2]}"[:500]}
+                if found[3] != "matched":
+                    patch.update({"invoice_status": found[3], "match_confidence": AI_POSSIBLE})
                 counts["promoted"] = counts.get("promoted", 0) + 1
         else:
             extra = [d for d in confirmations_of(t, inv, invoices, taken=free, store=store) if d not in mine]
@@ -2126,42 +2294,31 @@ def match_month(store, gemini, year, month, card=None, use_ai=True, log=print):
         if patch:
             patch["updated_at"] = stamp
             patches.append((t, patch))
+            patched.add(t["id"])
             busy |= {patch["invoice_id"], *patch["also_invoice_ids"]}
-    # The judge's matches whose amount is not exact: an exact invoice found since (paid late, or with others
-    # in one charge) takes their place. Nothing found: they stay as they are.
-    contest = [t for t in kept if t.get("match_method") == "ai" and held.get(t["invoice_id"])
-               and amount_score(t, held[t["invoice_id"]])[0] < 1.0]
-    if contest:
-        open_ = [i for i in available if i["id"] not in busy]
-        better = {tid: (iid, [], note) for tid, (iid, status, conf, note)
-                  in rule_match(contest, open_, late=late, late_only=only_late).items() if status == "matched"}
-        rest = [t for t in contest if t["id"] not in better]
-        if rest:
-            used_now = {r[0] for r in better.values()}
-            for tid, (iid, also, status, conf, note) in combined_match(
-                    rest, [i for i in open_ if i["id"] not in used_now], vendor=vendor).items():
-                better[tid] = (iid, also, note)
-        for t in contest:
-            if t["id"] not in better:
-                continue
-            iid, also, note = better[t["id"]]
-            patches.append((t, {"invoice_status": "matched", "invoice_id": iid, "invoice_part": None,
-                                "match_confidence": COMBINE_CONFIDENCE if also else LATE_CONFIDENCE,
-                                "match_method": "rule", "also_invoice_ids": also, "updated_at": stamp,
-                                "match_note": f"{note}; replaces the judge's match, whose amount was not exact"[:500]}))
-            busy |= {iid, *also}
-            counts["replaced"] = counts.get("replaced", 0) + 1
-    # Two passes: first let go of every invoice that moves, then write the new links, so the
-    # one-transaction-per-invoice index is never violated half way through. Both write only if the
-    # row still holds what this run read (compare and set): a Link, Confirm or receipt upload made
-    # while the matcher ran, here or in the weekly remind job, is never overwritten.
-    released, skipped = set(), {}
+    # Two passes: first let go of every invoice that moves (and of the documents a row gives up), then write
+    # the new links, so the one-transaction-per-invoice index is never violated half way through. Both write
+    # only if the row still holds what this run read (compare and set): a Link, Confirm or receipt upload made
+    # while the matcher ran, here or in the weekly remind job, is never overwritten. A row whose invoice stays
+    # is never released: if adding a document to it fails, it simply keeps what it had.
+    released, skipped, shrunk = set(), {}, {}
     for t, patch in patches:
-        if t.get("invoice_id") and _link_moves(t, patch):
+        if not t.get("invoice_id") or not _link_moves(t, patch):
+            continue
+        if _invoice_moves(t, patch):
             if store.update_transaction(t["id"], {"invoice_id": None, "invoice_part": None}, expect=_snapshot(t)) is None:
                 skipped[t["id"]] = "changed while the matcher ran"
             else:
                 released.add(t["id"])
+            continue
+        keep = [d for d in _also(t) if d in set(patch.get("also_invoice_ids") or ())]
+        if keep != _also(t):            # the same invoice, fewer documents with it: free the others first
+            if store.update_transaction(t["id"], {"invoice_id": t["invoice_id"], "invoice_part": t.get("invoice_part"),
+                                                  "also_invoice_ids": keep},
+                                        expect=dict(_snapshot(t), also_invoice_ids=_also(t))) is None:
+                skipped[t["id"]] = "changed while the matcher ran"
+            else:
+                shrunk[t["id"]] = keep
     for t, patch in patches:
         if t["id"] in skipped:
             continue
@@ -2169,6 +2326,8 @@ def match_month(store, gemini, year, month, card=None, use_ai=True, log=print):
         if t["id"] in released:
             expect["invoice_id"] = None
             expect["invoice_part"] = None
+        else:
+            expect["also_invoice_ids"] = shrunk.get(t["id"], _also(t))
         try:
             written = store.update_transaction(t["id"], patch, expect=expect)
             why = "changed while the matcher ran"
@@ -2189,7 +2348,7 @@ def match_month(store, gemini, year, month, card=None, use_ai=True, log=print):
                 log(f"skipped  {t['txn_date']} {t['description'][:30]}: could not set it back to missing: {exc}")
     for t, patch in patches:
         if t["id"] in skipped:
-            if "invoice_status" in patch:
+            if "invoice_status" in patch and t["id"] in pending_ids:
                 counts[patch["invoice_status"]] -= 1
             log(f"skipped  {t['txn_date']} {t['description'][:30]:30} {float(t['amount']):>10.2f}: {skipped[t['id']]}")
     if skipped:
@@ -2219,6 +2378,11 @@ def _differs(t, patch):
         elif t.get(k) != v:
             return True
     return False
+
+
+def _invoice_moves(t, patch):
+    """Does the patch give the row another invoice, or another of its listed charges?"""
+    return (patch.get("invoice_id"), patch.get("invoice_part")) != (t.get("invoice_id"), t.get("invoice_part"))
 
 
 def _link_moves(t, patch):

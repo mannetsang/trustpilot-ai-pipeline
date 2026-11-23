@@ -258,6 +258,96 @@ class ConfirmationTests(unittest.TestCase):
         self.assertEqual((t["invoice_status"], t["invoice_id"], t["also_invoice_ids"]), ("matched", "conf", []))
 
 
+class ReviewFixTests(unittest.TestCase):
+    """What the review of this change found (Nov 2026)."""
+
+    def test_a_judges_inexact_match_gets_one_patch_replacement_and_confirmation_together(self):
+        store = store_of([ups("x", 2211.07, "2026-09-25", vendor="Purolator"),
+                          ups("conf", 2224.84, "2026-09-19", doc="payment_confirmation", paid=[], vendor="Purolator"),
+                          ups("late", 2224.84, "2026-07-25", vendor="Purolator")],
+                         [charge("t", "2026-09-20", 2224.84, "PUROLATOR", status="matched", invoice_id="x", method="ai")])
+        counts = matching.match_month(store, None, 2026, 9, **QUIET)
+        t = store.get_transaction("t")
+        self.assertEqual((t["invoice_status"], t["invoice_id"], t["also_invoice_ids"], t["match_method"]),
+                         ("matched", "late", ["conf"], "rule"))
+        self.assertNotIn("skipped", counts)
+
+    def test_an_undated_new_invoice_does_not_stop_the_watch(self):
+        store = store_of([ups("b117", 117.31, "2026-08-05"), dict(ups("nodate", 50.0, "2026-08-05"), invoice_date=None)],
+                         [charge("t", "2026-08-24", 117.31), charge("u", "2026-08-25", 999.0)])
+        store.upsert_invoices([dict(ups("odd", 51.0, "2026-08-05"), invoice_date="9999-12-30")])
+        counts = matching.match_new_invoices(store, None, ["b117", "nodate", "odd"], **QUIET)
+        self.assertEqual(counts["matched"], 1)
+
+    def test_a_shared_confirmation_is_never_attached_whole(self):
+        rcpt = ups("rcpt", 390.91, "2026-10-31", "R1", doc="payment_confirmation", paid=["W-1001"], vendor="WSIB")
+        rcpt["card_charges"] = [{"date": "2026-10-31", "amount": 390.0, "card_last4": "4431"},
+                                {"date": "2026-11-01", "amount": 0.91, "card_last4": "4431"}]
+        store = store_of([ups("bill", 390.0, "2026-10-20", "W-1001", vendor="WSIB"), rcpt],
+                         [charge("pay", "2026-10-31", 390.0, "WSIB PAYMENT", status="matched", invoice_id="bill",
+                                 method="rule")])
+        run_months(store, (2026, 10))
+        self.assertEqual(store.get_transaction("pay")["also_invoice_ids"], [])
+
+    def test_adding_a_confirmation_that_was_linked_elsewhere_meanwhile_keeps_the_link(self):
+        store = store_of([ups("inv", 2448.33, "2026-09-19"),
+                          ups("conf", 2448.33, "2026-10-05", doc="payment_confirmation", paid=[])],
+                         [charge("t", "2026-10-06", 2448.33, status="matched", invoice_id="inv", method="rule"),
+                          charge("u", "2026-10-07", 5.0, "OTHER")])
+        real = store.update_transaction
+
+        def racing(tid, patch, expect=None):
+            if tid == "t" and (patch.get("also_invoice_ids") or []) == ["conf"]:
+                real("u", {"invoice_status": "matched", "invoice_id": "conf", "match_method": "manual"})
+            return real(tid, patch, expect=expect)
+        store.update_transaction = racing
+        run_months(store, (2026, 10))
+        t = store.get_transaction("t")
+        self.assertEqual((t["invoice_status"], t["invoice_id"], t["also_invoice_ids"]), ("matched", "inv", []))
+
+    def test_a_set_with_another_weeks_copy_of_a_fee_is_no_set(self):
+        # The same-day 20.23 is taken by another row; another week's 20.23 would complete the sum.
+        store = store_of([ups("b47", 47.94, "2026-03-25"), ups("f0325", 20.23, "2026-03-25"),
+                          ups("f0401", 20.23, "2026-04-01")],
+                         [charge("t", "2026-04-13", 68.17),
+                          charge("o", "2026-04-10", 20.23, status="matched", invoice_id="f0325", method="rule")])
+        run_months(store, (2026, 4))
+        self.assertEqual(store.get_transaction("t")["invoice_status"], "missing")
+
+    def test_a_set_another_purchase_could_be_the_payment_of_is_left_for_a_person(self):
+        invoices = [ups("b117", 117.31, "2026-08-05"), ups("f0805", 20.23, "2026-08-05")]
+        store = store_of(invoices, [charge("t1", "2026-08-30", 137.54), charge("t2", "2026-09-02", 137.54)])
+        run_months(store, (2026, 8), (2026, 9))
+        self.assertEqual({store.get_transaction(x)["invoice_status"] for x in ("t1", "t2")}, {"missing"})
+        out = matching.match_transaction(store, None, "t1", **QUIET)
+        self.assertEqual(out["outcome"], "none")
+
+    def test_a_confirmation_never_takes_the_place_of_the_invoices_it_confirms(self):
+        store = store_of([ups("b117", 117.31, "2026-08-05"), ups("f0805", 20.23, "2026-08-05"),
+                          ups("conf", 137.54, "2026-08-23", doc="payment_confirmation", paid=[])],
+                         [charge("t", "2026-08-24", 137.54)])
+        run_months(store, (2026, 8))
+        t = store.get_transaction("t")
+        self.assertEqual((t["invoice_id"], t["also_invoice_ids"]), ("b117", ["conf", "f0805"]))
+        out = matching.match_transaction(store, None, "t", **QUIET)
+        self.assertEqual((out["invoice_id"], sorted(out["also_invoice_ids"])), ("b117", ["conf", "f0805"]))
+
+    def test_a_failed_reading_of_a_document_paid_with_it_changes_nothing(self):
+        store = store_of([ups("b117", 117.31, "2026-08-05"), ups("f0805", 20.23, "2026-08-05")],
+                         [charge("t", "2026-08-24", 137.54)])
+        store.update_transaction("t", {"invoice_status": "matched", "invoice_id": "b117", "match_method": "rule",
+                                       "also_invoice_ids": ["f0805"]})
+        store.invoices["f0805"].update(total=None, document_type=None, is_invoice=None, extraction_error="429")
+        self.assertEqual(matching.release_stale_also(store, ["f0805"], quiet), 0)
+        self.assertEqual(store.get_transaction("t")["invoice_id"], "b117")
+
+    def test_a_document_paid_with_it_no_longer_in_drive_shows_in_the_checks(self):
+        t = dict(charge("t", "2026-08-24", 137.54), match_method="manual")
+        gone = dict(ups("f0805", 20.23, "2026-08-05"), removed_at="2026-11-23T00:00:00Z")
+        kinds = [c["kind"] for c in matching.invoice_checks(t, ups("b117", 117.31, "2026-08-05"), also=[gone])]
+        self.assertEqual(kinds, ["amount", "removed"])
+
+
 class StoreRuleTests(unittest.TestCase):
     def setUp(self):
         self.store = store_of([ups("a", 10.0, "2026-08-01"), ups("b", 20.0, "2026-08-01"), ups("c", 5.0, "2026-08-01")],

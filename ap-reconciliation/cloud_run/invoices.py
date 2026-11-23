@@ -376,8 +376,9 @@ def index_invoices(store, drive, gemini, root_id, month_folders=None, limit=40, 
                 # Linked whole before its charges were read (a new version of an Amazon order): each link
                 # moves to the charge it is.
                 matching.split_whole_links(store, r, log)
-        # Read again with another total, or no longer a candidate: a charge it was paid with looks again.
-        matching.release_stale_also(store, [i for i in stored if now.get(i)], log)
+        # Read again with another total, or no longer a candidate: a charge it was paid with looks again. A
+        # reading that failed proves nothing and is left out.
+        matching.release_stale_also(store, [i for i, r in stored.items() if now.get(i) and not r.get("extraction_error")], log)
     # Files already read that now sit elsewhere (a vendor or month folder moved or renamed around them,
     # a file restored from the trash): their content is the same, but a month they may serve is new.
     relabelled = [r["id"] for r in moved

@@ -1106,7 +1106,7 @@ def link_part(store, txn, inv):
 
 
 ALSO_FIELDS = ("id", "file_name", "web_view_link", "vendor", "invoice_number", "invoice_date", "total", "currency",
-               "document_type", "month_folder", "vendor_folder")
+               "document_type", "month_folder", "vendor_folder", "removed_at")
 
 
 def with_invoices(store, txns):

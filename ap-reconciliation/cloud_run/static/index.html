@@ -1603,7 +1603,7 @@
       // payment confirmations kept with the invoice.
       (t.also_invoices || []).forEach(function (a) {
         var label = (a.document_type === 'payment_confirmation' ? 'Payment confirmation' : 'Paid with it: ' + (a.vendor || a.vendor_folder || 'invoice')) +
-          (a.invoice_date ? ' · ' + fmtDate(a.invoice_date) : '');
+          (a.invoice_date ? ' · ' + fmtDate(a.invoice_date) : '') + (a.removed_at ? ' (no longer in Drive)' : '');
         var amount = a.total !== null && a.total !== undefined ? ' <span class="sub">' + esc(money(a.total, a.currency || '')) + '</span>' : '';
         html += '<div class="sub truncate" style="max-width: 260px;">+ ' + (safeUrl(a.web_view_link)
           ? '<a class="link" href="' + esc(safeUrl(a.web_view_link)) + '" target="_blank" rel="noopener noreferrer" title="' + esc(a.file_name || '') + '">' + esc(label) + ' ↗</a>'
