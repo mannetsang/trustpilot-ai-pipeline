@@ -1710,8 +1710,10 @@ def admin_registry(store, fresh=False):
 
 
 def need_registry(store):
-    """The registry, read fresh, for a write that needs it; 502 while schema.sql is not applied."""
-    reg = admin_registry(store, fresh=True)
+    """The registry, read fresh, for a write that needs it; 502 while schema.sql is not applied. Read
+    without admin_registry's catch-all: a timeout or a 5xx is not a missing table, so it reaches
+    _store_error as a plain "database error" that a retry may clear, not "apply schema.sql"."""
+    reg = admin.registry(store, fresh=True)     # None only when the tables are missing
     if reg is None:
         raise AdminError(502, SCHEMA_MISSING, schema_missing=True)
     return reg
@@ -2025,6 +2027,10 @@ def api_people_create():
     if len(name) > PERSON_NAME_MAX:
         return jsonify({"error": f"the name is longer than {PERSON_NAME_MAX} characters"}), 400
     email = str(body.get("email") or "").strip().lower() or None
+    if email and user["role"] != "ap":
+        # The admin portal trusts a person's e-mail (People offers "Make owner" of the cards they hold),
+        # so only accounts payable sets it. The dashboard's "New person…" sends a name alone.
+        return jsonify({"error": "email: only accounts payable can set a person's e-mail"}), 403
     if email and not EMAIL_RE.match(email):
         return jsonify({"error": f"'{email[:80]}' is not an e-mail address"}), 400
     try:
@@ -2158,11 +2164,19 @@ def api_transaction_update(txn_id):
     if not patch:
         return jsonify({"error": "nothing to update"}), 400
     patch.update({"updated_by": user["email"], "updated_at": now_iso()})
-    if filled:
-        # Fill only the empty cost centre this request read: one someone set meanwhile is kept.
-        expect = dict(expect or {}, cost_center=txn.get("cost_center"))
     try:
-        updated = store.update_transaction(txn_id, patch, expect=expect)
+        if filled:
+            # Fill only the empty cost centre this request read: one someone set meanwhile is kept.
+            updated = store.update_transaction(txn_id, patch, expect=dict(expect or {}, cost_center=txn.get("cost_center")))
+            if updated is None:
+                # Usually the person's own Cost centre save landed first (two boxes, two requests).
+                # The fill was never asked for, so it must not cost them the use case: save the rest
+                # without it, under the request's own conditions, and keep the cost centre now there.
+                filled = None
+                patch.pop("cost_center", None)
+                updated = store.update_transaction(txn_id, patch, expect=expect)
+        else:
+            updated = store.update_transaction(txn_id, patch, expect=expect)
     except StoreError as exc:
         if "already linked" in str(exc) or "23505" in str(exc) or "unique" in str(exc).lower():
             return jsonify({"error": "that invoice was linked to another transaction meanwhile; reload."}), 409
@@ -3686,17 +3700,23 @@ def api_admin_vendor_coding(vendor_id):
     store = get_store()
     reg = need_registry(store)
     vendor = vendor_or_404(reg, vendor_id)
-    group = use_case_group(body, store) or ""
-    if vendor.get("code_each"):
-        raise AdminError(400, f"{vendor['name']} is coded purchase by purchase (code each), so it has no default")
-    if vendor.get("kind") != "supplier":
-        raise AdminError(400, f"{vendor['name']} is {KIND_WORDS.get(vendor.get('kind'), vendor.get('kind'))}, "
-                              "so it has no default")
     if "use_case_id" not in body:
         raise AdminError(400, "use_case_id: a use case, or null to remove the default")
+    use_case_id = body.get("use_case_id")
+    if use_case_id is None:
+        # Removing is always allowed. The checks below are about setting one: a default left behind
+        # when the vendor became code-each or not a supplier, or when its group lost its last card,
+        # must still be removable, or it lingers in the registry and comes back on its own later.
+        group = admin.norm_space(body.get("group_name"))
+    else:
+        group = use_case_group(body, store) or ""
+        if vendor.get("code_each"):
+            raise AdminError(400, f"{vendor['name']} is coded purchase by purchase (code each), so it has no default")
+        if vendor.get("kind") != "supplier":
+            raise AdminError(400, f"{vendor['name']} is {KIND_WORDS.get(vendor.get('kind'), vendor.get('kind'))}, "
+                                  "so it has no default")
     key = admin.name_key(group)
     before = next((c for c in reg.coding if c["vendor_id"] == vendor_id and admin.name_key(c.get("group_name")) == key), None)
-    use_case_id = body.get("use_case_id")
     if use_case_id is None:
         if store.delete_vendor_coding(vendor_id, group):
             audit("vendor_coding", f"{vendor_id}:{key}", "delete", before, None)

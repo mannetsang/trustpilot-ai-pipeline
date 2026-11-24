@@ -582,11 +582,25 @@ class FillRuleTests(AdminApiTestCase):
         self.assertNotIn("hint", self.patch(self.ids_["costco"], {"cost_center": "Marketing"}))
 
     def test_a_cost_centre_set_meanwhile_is_kept(self):
+        # The Cost centre box's save lands between this request's read and its write: the use case is
+        # still saved, the cost centre set meanwhile stays, and nothing claims a fill.
         stale = self.store.get_transaction(self.ids_["anth"])
         self.store.update_transaction(self.ids_["anth"], {"cost_center": "EU"})
         with mock.patch.object(self.store, "get_transaction", return_value=stale):
-            self.patch(self.ids_["anth"], {"usage": "Travel"}, expect=409)
+            r = self.patch(self.ids_["anth"], {"usage": "Travel"})
+        self.assertEqual((r["transaction"]["usage"], r["transaction"]["cost_center"]), ("Travel", "EU"))
+        self.assertNotIn("filled_cost_center", r)
         self.assertEqual(self.store.get_transaction(self.ids_["anth"])["cost_center"], "EU")
+
+    def test_the_retry_without_the_fill_keeps_the_requests_own_conditions(self):
+        # Confirm reads a proposal; if a match run moved it meanwhile the whole request still answers 409.
+        self.store.update_transaction(self.ids_["anth"], {"invoice_status": "possible", "invoice_id": "inv-x"})
+        stale = self.store.get_transaction(self.ids_["anth"])
+        self.store.update_transaction(self.ids_["anth"], {"cost_center": "EU", "invoice_status": "missing", "invoice_id": None})
+        with mock.patch.object(self.store, "get_transaction", return_value=stale), \
+                mock.patch.object(self.store, "get_invoice", return_value={"id": "inv-x"}):
+            self.patch(self.ids_["anth"], {"usage": "Travel", "action": "confirm"}, expect=409)
+        self.assertIsNone(self.store.get_transaction(self.ids_["anth"])["usage"])
 
 
 class UncodedSemanticsTests(AdminApiTestCase):
@@ -816,6 +830,27 @@ class VendorAdminTests(AdminApiTestCase):
         r = self.call("PATCH", f"/api/admin/use-cases/{shipping['id']}", {"active": False})
         self.assertEqual(r["warnings"], ["Vendor Canada Post suggests it for all cards"])
 
+    def test_a_default_that_no_longer_applies_can_still_be_removed(self):
+        # Code each, another kind, or a group without cards stop a default being set, not removed:
+        # the row would otherwise linger and come back when the vendor or the group changes again.
+        vendor = self.register_canada_post()
+        shipping = self.use_case("Shipping & Logistics")
+        url = f"/api/admin/vendors/{vendor['id']}/coding"
+        for change, group in (({"code_each": True}, ""), ({"kind": "processor"}, "Hair")):
+            self.call("PUT", url, {"group_name": group, "use_case_id": shipping["id"]})
+            r = self.call("PATCH", f"/api/admin/vendors/{vendor['id']}", change)
+            self.assertIn("will be ignored", r["warnings"][0])
+            self.call("PUT", url, {"group_name": group, "use_case_id": shipping["id"]}, expect=400)
+            r = self.call("PUT", url, {"group_name": group.lower(), "use_case_id": None})
+            self.assertEqual(r["vendor"]["coding"], [])
+            self.call("PATCH", f"/api/admin/vendors/{vendor['id']}", {"code_each": False, "kind": "supplier"})
+        self.call("PUT", url, {"group_name": "Hair", "use_case_id": shipping["id"]})
+        self.card_save({"last4": "4894", "group_name": ""})                       # Hair has no card now
+        self.call("PUT", url, {"group_name": "Hair", "use_case_id": shipping["id"]}, expect=400)
+        r = self.call("PUT", url, {"group_name": "Hair", "use_case_id": None})
+        self.assertEqual(r["vendor"]["coding"], [])
+        self.assertEqual([a["action"] for a in self.audits(entity="vendor_coding")].count("delete"), 3)
+
     def test_proposals_and_dismissing_them(self):
         r = self.get("/api/admin/proposals")
         self.assertTrue(r["available"])
@@ -866,6 +901,16 @@ class VendorAdminTests(AdminApiTestCase):
             self.assertFalse(self.get("/api/admin/vendors")["registry_available"])
             r = self.call("POST", "/api/admin/vendors", {"name": "Esso"}, expect=502)
             self.assertTrue(r["schema_missing"])
+
+    def test_a_registry_read_that_fails_is_not_a_missing_schema(self):
+        # A timeout or a 5xx on a write route is a database error a retry may clear, not "apply schema.sql".
+        for exc in (StoreError("GET vendors -> ReadTimeout: timed out"), StoreError("GET vendors -> 503 unavailable", status=503)):
+            admin.invalidate()
+            with mock.patch.object(self.store, "list_vendor_registry", side_effect=exc), mock.patch("builtins.print"):
+                r = self.call("POST", "/api/admin/vendors", {"name": "Esso"}, expect=502)
+            self.assertEqual(r, {"error": f"database error: {exc}"})
+        admin.invalidate()
+        self.call("POST", "/api/admin/vendors", {"name": "Esso"}, expect=201)
 
 
 # ---------------------------------------------------------------------------
@@ -1130,6 +1175,9 @@ class StaticContractTests(unittest.TestCase):
             self.assertIn(text, page)
         for text in ("'No cost centre'", "'Usage saved'", 'aria-label="Usage"'):
             self.assertNotIn(text, page)
+        # On a phone the two drop-downs sit side by side and both read "— none —": each is named.
+        for text in ('td[data-col="cost"]::before { content: "Cost centre"; }', 'td[data-col="usage"]::before { content: "Use case"; }'):
+            self.assertIn(text, page)
 
 
 if __name__ == "__main__":

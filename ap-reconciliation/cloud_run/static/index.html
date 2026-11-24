@@ -272,6 +272,10 @@
       .lbl-long { display: inline; }
       table.txns td[data-col="cost"] { grid-area: cost; }
       table.txns td[data-col="usage"] { grid-area: usage; }
+      /* Side by side, both drop-downs read "— none —" on an uncoded purchase: name each, as Person is. */
+      table.txns td[data-col="cost"]::before, table.txns td[data-col="usage"]::before { display: block; margin-bottom: 2px; font-size: 12px; color: var(--text-mute); }
+      table.txns td[data-col="cost"]::before { content: "Cost centre"; }
+      table.txns td[data-col="usage"]::before { content: "Use case"; }
       table.txns td[data-col="person"] { grid-area: person; }
       table.txns tr[data-id] > td[data-col="person"] { display: flex; align-items: center; gap: 8px; }
       table.txns td[data-col="person"]::before { content: "Person"; flex: none; font-size: 12px; color: var(--text-mute); }
@@ -1899,6 +1903,20 @@
   // ---------------------------------------------------------------------------
   function rowEl(id) { return $('#txnBody').querySelector('tr[data-id="' + CSS.escape(id) + '"]'); }
   function txnById(id) { for (var i = 0; i < state.txns.length; i++) if (state.txns[i].id === id) return state.txns[i]; return null; }
+  // The Cost centre drop-down kept for its focus still shows what it was drawn with. A use-case save can
+  // fill the card's default into it (it was clicked, or tabbed back to, while that save was out): renew
+  // its options and choice so it does not keep promising a fill that has happened. A drop-down saving a
+  // pick of its own is left to that save. Its value is always a saved one (a pick saves at once).
+  function syncKeptCostCenter(sel, freshTd, updated) {
+    if (!sel.matches('select[data-field="cost_center"]') || sel.dataset.saving === '1') return;
+    var src = freshTd.querySelector('select[data-field="cost_center"]'), want = updated.cost_center || '';
+    if (!src) return;
+    var first = function (el) { return el.options[0] ? el.options[0].textContent : ''; };
+    if (sel.value === want && first(sel) === first(src)) return;
+    sel.innerHTML = src.innerHTML;
+    sel.value = want;
+    markCostDefault(sel);
+  }
   function replaceTxn(updated, at) {
     at = at || { year: state.year, month: state.month };
     if (at.year !== state.year || at.month !== state.month) return;   // the user has moved on
@@ -1924,6 +1942,7 @@
         var oldCells = $all('td', tr), newCells = $all('td', fresh);
         for (var c = 0; c < oldCells.length && c < newCells.length; c++) {
           if (!oldCells[c].contains(active)) oldCells[c].replaceWith(newCells[c]);
+          else syncKeptCostCenter(active, newCells[c], updated);
         }
         tr.className = fresh.className;
       } else {

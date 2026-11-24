@@ -591,8 +591,10 @@ Two other modes exist, one edit of the deploy workflow away (step 5):
   use case fills the cost centre too, and the toast says so (*Use case saved
   · cost centre set to Salon - Dufferin*); until then the Cost centre box
   shows that default greyed (*— Salon - Dufferin when the use case is set
-  —*). A cost centre already there is never replaced, and a supplementary
-  card does not borrow its primary's default. A use case typed into the
+  —*). A cost centre already there is never replaced, not even one saved
+  from the Cost centre box while the use case was being saved (the use case
+  is still saved), and a supplementary card does not borrow its primary's
+  default. A use case typed into the
   Cost centre box (say *Marketing*) is stored as typed, and a toast points
   to the Use case box, because the purchase still has no use case. When AP
   has switched **coding suggestions** on (`/admin`, Settings) and the
@@ -858,7 +860,8 @@ until someone presses it or picks a value.
 
 **People tab.** Everyone purchases can be assigned to, with the cards they
 hold, the cards they own by e-mail, and their purchases. A holder whose
-e-mail is not among the card's owners gets *Make owner of 4431*. Edit
+e-mail is not among the card's owners gets *Make owner of 4431*, which asks
+first, naming the address (only AP sets a person's e-mail). Edit
 renames (refused when the name exists, offering a merge; the cards they
 hold follow, and a default label with them) and sets the e-mail, which
 gives no rights by itself: owning a card is what lets someone code it.
@@ -949,7 +952,7 @@ phone. Chat cards posted before keep their old button until the next send.
 | `GET /api/transactions?year&month[&card]` | signed in | the month's transactions with their invoice, `editable` flag, `person_id`, the people list, uploads and recent notifications, plus `use_cases` (as above) and `suggestions` (the switch); while it is on, an editable purchase without a use case whose vendor has a default carries `suggestion` (`usage`; `cost_center`, the card's active default when the purchase has none; `vendor`; `source`, what suggested it) |
 | `PATCH /api/transactions/<id>` | signed in, AP or the card's owner | body: `cost_center`, `usage` (the use case), `note`, `person_id` (a person's id, or `""` to clear; 400 for one that does not exist), and/or `action` (`waive` with `reason`, `unwaive`, `confirm`, `link` with `invoice_id`, `unlink`). A cost centre or use case typed with other capitals or spaces is stored with the list's spelling; anything else is stored as typed. Setting a use case on a purchase with no cost centre, without sending `cost_center`, fills the card's active default cost centre and answers `filled_cost_center`; if someone set a cost centre meanwhile it answers 409 *This purchase changed meanwhile; reload.* A use case name sent as `cost_center` on a row without a use case answers a `hint` |
 | `GET /api/people` | signed in | `{"people": [{"id", "name", "email"}]}`, by name |
-| `POST /api/people` | signed in | `{"name"[, "email"]}`: adds a person (`201 {"person", "created": true}`, recorded in the History), or answers `200` with the one already named so (case and extra spaces aside); 400 for an empty name, one over 100 characters or a bad e-mail; 409 for an e-mail another person has |
+| `POST /api/people` | signed in | `{"name"[, "email"]}`: adds a person (`201 {"person", "created": true}`, recorded in the History), or answers `200` with the one already named so (case and extra spaces aside); 400 for an empty name, one over 100 characters or a bad e-mail; 403 for an e-mail sent by a member (only AP sets one: People offers *Make owner* from it); 409 for an e-mail another person has |
 | `POST /api/ask?year&month[&card]` | signed in | voice mode: `{"question": "..."}` (up to 500 characters; `card` is four digits) answered as `{"answer", "source": "gemini" \| "summary"}` for the browser to read aloud; read only |
 | `POST /api/transactions/<id>/rematch` | signed in, AP or the card's owner | *Rematch*: reads new invoices for the purchase's months, then looks for its invoice again, as a background job (202 with the job, polled through `/api/jobs/current?id=`; 409 while another job runs; 400 for a waived, non-purchase or hand-linked row). The job's result has `outcome` (`found`, `same`, `kept`, `none` or `conflict`), the status and invoice the row now has, `changed`, `invoices_read`, `read_errors` with `read_error_files`, and the updated row; its progress has `stage` and `percent` |
 | `GET /api/transactions/<id>` | signed in | one row as the table shows it (with `checks` and `invoice.reading`); the receipt dialog polls it while the file is read |
@@ -989,7 +992,7 @@ phone. Chat cards posted before keep their old button until the next send.
 | `PATCH /api/admin/vendors/<id>` | AP | `{"name"?, "kind"?, "code_each"?, "active"?, "note"?}`: `{"vendor", "warnings"}` (coding defaults that a marketplace or non-supplier no longer uses) |
 | `POST /api/admin/vendors/<id>/folders`, `DELETE /api/admin/vendor-folders/<id>` | AP | add `{"folder"}` or `{"folders": [...]}` (201; 200 when the vendor already holds them all; 409 when another vendor holds one), or remove one |
 | `POST /api/admin/vendors/<id>/patterns`, `PATCH\|DELETE /api/admin/vendor-patterns/<id>` | AP | add `{"pattern", "kind"?: "descriptor"\|"invoice_vendor", "match_type"?: "prefix"\|"exact"}` (a supplier name is always exact; new patterns start on), set `{"status": "probation"\|"off"}` (shown as On and Off; matching does not use patterns, so `trusted` is 400), or remove one |
-| `PUT /api/admin/vendors/<id>/coding` | AP | `{"group_name": ""\|group, "use_case_id": id\|null}`: the vendor's default use case for that group (or any group); 400 for a marketplace, a non-supplier, or a use case not active for that group |
+| `PUT /api/admin/vendors/<id>/coding` | AP | `{"group_name": ""\|group, "use_case_id": id\|null}`: the vendor's default use case for that group (or any group); 400 for a marketplace, a non-supplier, a group no card is in, or a use case not active for that group. `null` removes it, and always may: a default kept from before the vendor became a marketplace or a non-supplier, or from a group that lost its cards, is not used, and the vendor editor offers *Remove* for it |
 | `GET /api/admin/proposals`, `POST /api/admin/proposals/dismiss` | AP | the proposals from link history, each with `text`, `evidence`, `effect` and the `accept` request (`method`, `path`, `body`); dismiss takes `{"id", "undo"?}` |
 | `GET /api/admin/people` | AP | everyone with `cards_held`, `cards_owned` (by e-mail), `cannot_code`, `purchases`; `holders_unlinked`; `duplicates` (pairs that look like the same person) |
 | `PATCH /api/admin/people/<id>` | AP | `{"name"?, "email"?}`: a rename the cards held follow (409 with `merge_into` when the name exists); the e-mail is stored lower-case, `""` clears it, 409 when another person has it |
@@ -1006,7 +1009,8 @@ DELETE) also need `X-Requested-With`, are refused with 403 in open mode against 
 are recorded in the History. A uuid id that is not one answers 404. Errors are `{"error": "..."}`; one
 about a field starts with its name and a colon (`default_cost_center: not an active cost centre`). A
 table or column the database does not have yet answers 502 with `"schema_missing": true` (see
-Troubleshooting), and a duplicate the database refused answers 409.
+Troubleshooting); any other database failure (a timeout, a 5xx) answers 502 `database error: …`, which a
+retry may clear. A duplicate the database refused answers 409.
 
 ## Configuration
 

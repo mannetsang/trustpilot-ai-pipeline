@@ -71,6 +71,15 @@ class PeopleApiTests(ApiTestCase):
             self.assertEqual(r.status_code, 403)
         self.assertIsNone(self.store.get_transaction(self.ids_["anth"]).get("person_id"))
 
+    def test_only_accounts_payable_sets_an_email(self):
+        # /admin's People tab offers "Make owner" from a person's e-mail: a member must not plant one.
+        with mock.patch.object(main, "current_user", return_value=dict(MEMBER)):
+            r = self.add("George Newhire", expect=403, email=MEMBER["email"])
+            self.assertEqual(r["error"], "email: only accounts payable can set a person's e-mail")
+            self.add("George Newhire")                                   # a name alone is fine
+        self.assertEqual([p["email"] for p in self.store.list_people()], [None])
+        self.assertEqual(self.add("Amy", email="amy@superhairpieces.com")["person"]["email"], "amy@superhairpieces.com")
+
     def test_signing_in_is_required(self):
         with mock.patch.object(main, "current_user", return_value=None):
             self.assertEqual(self.client.get("/api/people").status_code, 401)

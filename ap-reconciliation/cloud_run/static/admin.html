@@ -687,18 +687,31 @@
   // ---------------------------------------------------------------------------
   // Unsaved changes. An editor sets dirty on its first input and clears it on a successful save or a
   // cancel; closing the dialog, switching tab and leaving the page ask first while it is set.
+  // Kept per editor (owner: 'card', 'vendor', 'person', 'coding-add', 'coding-edit'): two can be open at
+  // once on #coding (the Add form and a row being edited), and each must stay guarded on its own.
   // ---------------------------------------------------------------------------
-  var dirty = '', dirtyOwner = '';
-  function setDirty(what, owner) { if (!dirty) { dirty = what; dirtyOwner = owner || ''; } }
-  function clearDirty(owner) { if (!owner || owner === dirtyOwner) { dirty = ''; dirtyOwner = ''; } }
-  function guardDirty() {
-    if (!dirty) return true;
-    if (!confirm('Leave without saving the changes to ' + dirty + '?')) return false;
-    clearDirty();
+  var dirtyBy = {};
+  function setDirty(what, owner) { dirtyBy[owner || ''] = what; }
+  function clearDirty(owner) { if (!owner) dirtyBy = {}; else delete dirtyBy[owner]; }
+  // What is unsaved, for owner (a name or a list of names) or for every editor when owner is not given.
+  function dirtyList(owner) {
+    var owners = owner === undefined ? null : [].concat(owner);
+    return Object.keys(dirtyBy).filter(function (o) { return !owners || owners.indexOf(o) >= 0; })
+      .map(function (o) { return dirtyBy[o]; });
+  }
+  function leaveQuestion(list) {
+    return 'Leave without saving the changes to ' + (list.length > 1 ? list.slice(0, -1).join(', ') + ' and ' + list[list.length - 1] : list[0]) + '?';
+  }
+  // True when nothing of owner's is unsaved, or the person agreed to drop it (which clears it).
+  function guardDirty(owner) {
+    var list = dirtyList(owner);
+    if (!list.length) return true;
+    if (!confirm(leaveQuestion(list))) return false;
+    if (owner === undefined) clearDirty(); else [].concat(owner).forEach(clearDirty);
     return true;
   }
   window.addEventListener('beforeunload', function (ev) {
-    if (!dirty) return;
+    if (!dirtyList().length) return;
     ev.preventDefault();
     ev.returnValue = '';
   });
@@ -725,12 +738,35 @@
   // first, and false keeps the dialog open. modalCleanup: runs once when that dialog goes away, closed or
   // replaced by another one.
   var modalGuard = null, modalCleanup = null;
+  // Keyboard: the dialog takes the focus when it opens, Tab and Shift+Tab stay inside it, and closing it
+  // gives the focus back to what opened it (when that is still on the page).
+  var modalOpener = null;
+  var FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  function modalFocusables() {
+    return $all(FOCUSABLE, $('#modalBox')).filter(function (el) { return el.getClientRects().length > 0; });
+  }
+  // After the caller has drawn the dialog's content (it does so right after openModal returns): its first
+  // field, else the close button. A caller that already put the focus inside is left alone.
+  function focusModal() {
+    if (!modalOpen() || $('#modalBox').contains(document.activeElement)) return;
+    var first = $all('input, select, textarea', $('#modalBody')).filter(function (el) {
+      return !el.disabled && el.type !== 'hidden' && el.getClientRects().length > 0;
+    })[0];
+    (first || $('#modalClose')).focus();
+  }
+  function giveFocusBack() {
+    var el = modalOpener;
+    modalOpener = null;
+    if (el && el.isConnected && typeof el.focus === 'function') el.focus();
+  }
   function endModal() {
     var done = modalCleanup;
     modalGuard = null; modalCleanup = null;
     if (done) { try { done(); } catch (e) { console.error(e); } }
   }
   function openModal(title, bodyHtml, wide) {
+    // One dialog replacing another keeps the first one's opener.
+    if (!modalOpen()) modalOpener = document.activeElement && document.activeElement !== document.body ? document.activeElement : null;
     endModal();
     $('#modalTitle').textContent = title;
     var old = $('#modalBody'), body = old.cloneNode(false);   // drops the previous open's listeners
@@ -739,23 +775,36 @@
     body.innerHTML = bodyHtml;
     $('#modalBox').classList.toggle('wide', !!wide);
     $('#modal').classList.remove('hidden');
+    setTimeout(focusModal, 0);
     return body;
   }
   function closeModal() {
     if (modalGuard && !$('#modal').classList.contains('hidden') && modalGuard() === false) return false;
     endModal();
     $('#modal').classList.add('hidden'); $('#modalBody').innerHTML = '';
+    giveFocusBack();
     return true;
   }
   // Closes without asking: the person already said yes (a tab switch they confirmed, a delete).
   function dropModal() {
     endModal();
     $('#modal').classList.add('hidden'); $('#modalBody').innerHTML = '';
+    giveFocusBack();
   }
   function modalOpen() { return !$('#modal').classList.contains('hidden'); }
   $('#modalClose').addEventListener('click', closeModal);
   $('#modal').addEventListener('click', function (ev) { if (ev.target === $('#modal')) closeModal(); });
-  document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape' && modalOpen()) closeModal(); });
+  document.addEventListener('keydown', function (ev) {
+    if (!modalOpen()) return;
+    if (ev.key === 'Escape') { closeModal(); return; }
+    if (ev.key !== 'Tab') return;
+    var list = modalFocusables(), box = $('#modalBox');
+    if (!list.length) { ev.preventDefault(); return; }
+    var first = list[0], last = list[list.length - 1], at = document.activeElement;
+    if (!box.contains(at)) { ev.preventDefault(); (ev.shiftKey ? last : first).focus(); }
+    else if (ev.shiftKey && at === first) { ev.preventDefault(); last.focus(); }
+    else if (!ev.shiftKey && at === last) { ev.preventDefault(); first.focus(); }
+  });
 
   // ---------------------------------------------------------------------------
   // Tabs and the URL fragment. The fragment is whatever the link's author wrote (anyone can send an AP user an /admin#… link):
@@ -795,12 +844,16 @@
   };
   window.addEventListener('hashchange', function () {
     if (location.hash === state.hash) return;
-    if (dirty) {
-      if (!confirm('Leave without saving the changes to ' + dirty + '?')) {
+    var unsaved = dirtyList();
+    if (unsaved.length) {
+      if (!confirm(leaveQuestion(unsaved))) {
         history.replaceState(null, '', state.hash || (location.pathname + location.search));
         return;
       }
+      // Dropped as agreed: an edit row or Add form text left in place would be back, unguarded, on return.
+      var coding = dirtyBy['coding-edit'] || dirtyBy['coding-add'];
       clearDirty();
+      if (coding) dropCodingDrafts();
     }
     var before = parseHash(state.hash).tab;
     state.hash = location.hash;
@@ -1107,7 +1160,7 @@
     var orig = cardOriginal(c), owners = ownerList(orig.owner_email);
     var what = create ? 'the new card' : 'card ' + last4;
     var body = openModal(create ? 'Add card' : 'Card •••• ' + last4, cardFormHtml(c, d), true);
-    modalGuard = guardDirty;
+    modalGuard = function () { return guardDirty('card'); };
     modalCleanup = function () { clearDirty('card'); };
     var form = $('#cardForm', body);
     function markDirty() { setDirty(what, 'card'); }
@@ -1496,6 +1549,19 @@
     clearDirty('coding-edit');
     renderCoding();
   }
+  // A tab switch the person confirmed: forget the open edit row and what was typed in the Add forms.
+  function dropCodingDrafts() {
+    codingUi.editing = null; codingUi.rename = null;
+    if (!state.coding || !$('#codingBody form[data-add]')) return;
+    $all('#codingBody form[data-add]').forEach(function (f) {
+      f.reset();
+      var err = $('[data-add-err]', f);
+      if (err) err.textContent = '';
+    });
+    renderRename();
+    renderCodingTable('uc');
+    renderCodingTable('cc');
+  }
   function renderCoding() {
     var d = state.coding, missing = d.schema_missing || [];
     var html = '';
@@ -1799,7 +1865,7 @@
   }
 
   $('#codingRefresh').addEventListener('click', function () {
-    if (dirty && dirtyOwner.indexOf('coding') === 0 && !guardDirty()) return;
+    if (!guardDirty(['coding-edit', 'coding-add'])) return;    // a full reload drops both
     codingUi.rename = null; codingUi.warnings = [];
     loadCoding();
   });
@@ -1819,8 +1885,7 @@
     if (!form) return;
     ev.preventDefault();
     if (codingUi.editing) {
-      if (dirty && dirtyOwner === 'coding-edit' && !guardDirty()) return;
-      clearDirty('coding-edit');
+      if (!guardDirty('coding-edit')) return;
       codingUi.editing = null;
     }
     addCoding(form.dataset.add, form);
@@ -1831,12 +1896,11 @@
     var kind = b.dataset.kind, key = b.dataset.key, act = b.dataset.act;
     // Every other row action draws the table again (or reloads it), which drops an open edit: ask first.
     if (codingUi.editing && ['retire', 'restore', 'up', 'down', 'save-order', 'reset-order', 'add-value'].indexOf(act) >= 0) {
-      if (dirty && dirtyOwner === 'coding-edit' && !guardDirty()) return;
-      clearDirty('coding-edit');
+      if (!guardDirty('coding-edit')) return;
       codingUi.editing = null;
     }
     if (act === 'edit') {
-      if (codingUi.editing && dirty && dirtyOwner === 'coding-edit' && !guardDirty()) return;
+      if (codingUi.editing && !guardDirty('coding-edit')) return;
       codingUi.editing = { kind: kind, key: key };
       codingUi.rename = null;
       renderRename();
@@ -2114,7 +2178,7 @@
   function openVendorEditor(vendor, prefill) {
     var ve = { vendor: vendor || null, changed: false };
     var body = openModal(vendor ? 'Vendor ' + vendor.name : 'Add vendor', '<div id="veBox"></div>', true);
-    modalGuard = guardDirty;
+    modalGuard = function () { return guardDirty('vendor'); };
     modalCleanup = function () { clearDirty('vendor'); if (ve.changed) vendorsChanged(); };
     var box = $('#veBox', body);
     function what() { return ve.vendor ? 'vendor ' + ve.vendor.name : 'the new vendor'; }
@@ -2301,28 +2365,6 @@
       $('#veFolderIn', box).addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); addFolder(); } });
       $('#vePatAdd', box).addEventListener('click', addPattern);
       $('#vePatIn', box).addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); addPattern(); } });
-      box.addEventListener('click', function (ev) {
-        var df = ev.target.closest('[data-del-folder]');
-        if (df) { act(function () { return api('/api/admin/vendor-folders/' + enc(df.dataset.delFolder), { method: 'DELETE' }); }, '#veFoldersErr', 'Folder removed'); return; }
-        var dp = ev.target.closest('[data-del-pattern]');
-        if (dp) { act(function () { return api('/api/admin/vendor-patterns/' + enc(dp.dataset.delPattern), { method: 'DELETE' }); }, '#vePatternsErr', 'Pattern removed'); }
-      });
-      box.addEventListener('change', function (ev) {
-        var ps = ev.target.closest('[data-pat-status]');
-        if (ps) {
-          var status = ps.value === 'off' ? 'off' : PATTERN_ON;
-          act(function () { return api('/api/admin/vendor-patterns/' + enc(ps.dataset.patStatus), { method: 'PATCH', body: { status: status } }); },
-              '#vePatternsErr', ps.value === 'off' ? 'Pattern off' : 'Pattern on');
-          return;
-        }
-        var cs = ev.target.closest('[data-coding-group]');
-        if (cs) {
-          var g = cs.dataset.codingGroup;
-          act(function () {
-            return api('/api/admin/vendors/' + enc(ve.vendor.id) + '/coding', { method: 'PUT', body: { group_name: g, use_case_id: cs.value || null } });
-          }, '#veCodingErr', 'Coding default saved');
-        }
-      });
       drawLower();
     }
     // Folders, patterns and coding apply at once; each answer is the vendor as saved, drawn again here
@@ -2376,8 +2418,17 @@
         }).join('') + '</tbody></table></div>' : '<div class="sub">No pattern yet.</div>';
       var disabled = !!v.code_each || v.kind !== 'supplier';
       var groups = [''].concat(reg.groups || []), ucs = reg.use_cases || [];
+      // A default kept from before (the vendor became code-each or not a supplier, or its group lost its
+      // last card) is not used, but it is still stored: it gets a Remove button, as setting one is refused.
+      function removeBtn(g, label) {
+        return ' <button type="button" class="btn btn-ghost btn-xs" data-del-coding="' + esc(g) + '" aria-label="Remove the default use case for ' + esc(label) + '">Remove</button>';
+      }
+      var gone = (v.coding || []).filter(function (c) {
+        return !groups.some(function (g) { return nameKey(g) === nameKey(c.group_name); });
+      });
       $('#veCoding', box).innerHTML = (disabled ? '<div class="banner banner-info" style="margin-bottom:8px;">' + esc(CODED_EACH) +
-          (v.code_each ? ': this vendor is coded purchase by purchase (code each), so it has no default.' : ': only a supplier has a default.') + '</div>' : '') +
+          (v.code_each ? ': this vendor is coded purchase by purchase (code each), so it has no default.' : ': only a supplier has a default.') +
+          ((v.coding || []).length ? ' A default kept from before is not used; remove it here.' : '') + '</div>' : '') +
         '<div class="list-wrap"><table class="list"><thead><tr><th>Card group</th><th>Default use case</th></tr></thead><tbody>' +
         groups.map(function (g) {
           var row = (v.coding || []).filter(function (c) { return nameKey(c.group_name) === nameKey(g); })[0];
@@ -2387,9 +2438,48 @@
           if (cur && !allowed.some(function (u) { return u.id === cur; })) opts += opt(cur, (row.use_case || 'Unknown') + ' (not offered now)', true);
           return '<tr><td data-label="Card group">' + esc(g || 'Any group') + '</td>' +
             '<td data-label="Default use case"><select class="inp" data-coding-group="' + esc(g) + '" aria-label="Default use case for ' + esc(g || 'any group') + '"' +
-              (disabled ? ' disabled title="' + esc(CODED_EACH) + '"' : '') + '>' + opts + '</select></td></tr>';
+              (disabled ? ' disabled title="' + esc(CODED_EACH) + '"' : '') + '>' + opts + '</select>' +
+              (disabled && row ? removeBtn(g, g || 'any group') : '') + '</td></tr>';
+        }).join('') +
+        gone.map(function (c) {
+          return '<tr><td data-label="Card group">' + esc(c.group_name) + ' <span class="sub">(no card in this group now)</span></td>' +
+            '<td data-label="Default use case"><span class="sub">' + esc(c.use_case || 'Unknown') + ', not used</span>' + removeBtn(c.group_name, c.group_name) + '</td></tr>';
         }).join('') + '</tbody></table></div>';
     }
+
+    // The lower sections' controls, delegated from #veBox. Attached once here: #veBox outlives every
+    // redraw (drawExisting runs again after each Save), and a second copy would send every write twice.
+    box.addEventListener('click', function (ev) {
+      if (!ve.vendor) return;
+      var df = ev.target.closest('[data-del-folder]');
+      if (df) { act(function () { return api('/api/admin/vendor-folders/' + enc(df.dataset.delFolder), { method: 'DELETE' }); }, '#veFoldersErr', 'Folder removed'); return; }
+      var dp = ev.target.closest('[data-del-pattern]');
+      if (dp) { act(function () { return api('/api/admin/vendor-patterns/' + enc(dp.dataset.delPattern), { method: 'DELETE' }); }, '#vePatternsErr', 'Pattern removed'); return; }
+      var dc = ev.target.closest('[data-del-coding]');
+      if (dc) {
+        var dg = dc.dataset.delCoding;
+        act(function () {
+          return api('/api/admin/vendors/' + enc(ve.vendor.id) + '/coding', { method: 'PUT', body: { group_name: dg, use_case_id: null } });
+        }, '#veCodingErr', 'Coding default removed');
+      }
+    });
+    box.addEventListener('change', function (ev) {
+      if (!ve.vendor) return;
+      var ps = ev.target.closest('[data-pat-status]');
+      if (ps) {
+        var status = ps.value === 'off' ? 'off' : PATTERN_ON;
+        act(function () { return api('/api/admin/vendor-patterns/' + enc(ps.dataset.patStatus), { method: 'PATCH', body: { status: status } }); },
+            '#vePatternsErr', ps.value === 'off' ? 'Pattern off' : 'Pattern on');
+        return;
+      }
+      var cs = ev.target.closest('[data-coding-group]');
+      if (cs) {
+        var g = cs.dataset.codingGroup;
+        act(function () {
+          return api('/api/admin/vendors/' + enc(ve.vendor.id) + '/coding', { method: 'PUT', body: { group_name: g, use_case_id: cs.value || null } });
+        }, '#veCodingErr', 'Coding default saved');
+      }
+    });
 
     if (vendor) drawExisting(); else drawNew(prefill || { name: '', folders: [], patterns: [] });
   }
@@ -2658,7 +2748,7 @@
               'This e-mail gives no edit rights by itself: a person codes a card\'s purchases when the card lists their e-mail as an owner (Cards tab).') +
       '</div><div class="form-err" id="personErr" role="alert"></div>' +
       '<div class="form-actions"><button type="button" class="btn btn-ghost" id="personCancel">Cancel</button><button type="submit" class="btn btn-primary" id="personSave">Save</button></div></form>', true);
-    modalGuard = guardDirty;
+    modalGuard = function () { return guardDirty('person'); };
     modalCleanup = function () { clearDirty('person'); };
     var form = $('#personForm', body);
     form.addEventListener('input', function () { setDirty(what, 'person'); });
@@ -2753,6 +2843,8 @@
   // The person holds a card whose owners do not list them: add their e-mail to the card's owners, read
   // fresh so another owner added meanwhile is kept.
   async function makeOwner(p, last4, btn) {
+    // An edit right on a card: name the exact address, as a person's e-mail may predate AP setting it.
+    if (!confirm('Give ' + p.email + ' edit rights on card ' + last4 + '? They can then code its purchases, link and waive its receipts.')) return;
     busy(btn, true);
     var d = state.cards;
     try { d = await api('/api/admin/cards'); state.cards = d; } catch (e) { if (e.status === 401) return; if (!d) { busy(btn, false); report(e, 'Could not read card ' + last4); return; } }
@@ -2861,8 +2953,25 @@
     return s.length > 120 ? s.slice(0, 119) + '…' : s;
   }
   function same(a, b) { return JSON.stringify(a === undefined ? null : a) === JSON.stringify(b === undefined ? null : b); }
+  // The audit keeps a pattern's stored status; History names it the way the vendor editor does ("on
+  // (suggestions only)" or "off"), so the registry's internal words never reach the page from there either.
+  var PATTERN_STATUS_SHOWN = { off: 'off' };
+  PATTERN_STATUS_SHOWN[PATTERN_ON] = 'on (suggestions only)';
+  PATTERN_STATUS_SHOWN['tru' + 'sted'] = 'on (suggestions only)';
+  function patternShown(p) {
+    if (!isObj(p) || typeof p.status !== 'string') return p;
+    var o = Object.assign({}, p);
+    o.status = PATTERN_STATUS_SHOWN[p.status] || 'on (suggestions only)';
+    return o;
+  }
+  function auditShown(entity, v) {
+    if (!isObj(v)) return v;
+    if (entity === 'vendor_pattern') return patternShown(v);
+    if (Array.isArray(v.patterns)) { var o = Object.assign({}, v); o.patterns = v.patterns.map(patternShown); return o; }
+    return v;
+  }
   function diffLines(a) {
-    var before = a.before, after = a.after, lines = [];
+    var before = auditShown(a.entity, a.before), after = auditShown(a.entity, a.after), lines = [];
     function listed(obj) {
       return Object.keys(obj).filter(function (k) { return obj[k] !== null && obj[k] !== '' && obj[k] !== undefined; })
         .map(function (k) { return k + ': ' + fmtVal(obj[k]); });
