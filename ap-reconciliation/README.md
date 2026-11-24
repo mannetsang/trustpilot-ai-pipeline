@@ -572,7 +572,10 @@ Two other modes exist, one edit of the deploy workflow away (step 5):
     belongs to.
   - **Card no.** (`card_number`): the last four digits printed on the card
     when they differ from the account's (account 4431, card 4449). Receipts
-    showing it are this card's.
+    showing it are this card's. One number belongs to one card: a number
+    another card has, or a reissued number receipts already show for another
+    card, is refused.
+  - A group keeps the spelling its cards have (`hair` joins *Hair*).
   - **Linked under** (`primary_last4`): a supplementary card's primary card,
     one level (7436 under 4431). The card strip, the table and the export say
     "under 4431 (George)"; the primary lists its supplementary cards.
@@ -737,8 +740,8 @@ phone. Chat cards posted before keep their old button until the next send.
 | `GET /receipts/<last4>/<YYYY>/<MM>` | signed in | the Chat card's *Add receipts*: redirects to the receipts list |
 | `GET /api/invoices?year&month` | signed in | invoices of month-1..month+1 with a `linked` flag (the picker) |
 | `GET /api/cards` | signed in | cards |
-| `POST /api/cards` | AP | `{"last4", "label", "holder_name", "group_name", "card_number", "primary_last4", "name_on_card", "owner_email", "chat_space", "active"}`; `owner_email` may list several addresses (commas, semicolons or spaces), stored lower-case as `a@x, b@x`; 400 if one is not an address, a card number is not four digits or is another statement card, or a primary card is the card itself, not on the dashboard, or itself supplementary or a primary already. A new holder is added as a person (`cards.person_id`). Answers the cards and the people |
-| `GET /api/export/missing` | signed in | Excel file of the purchases still missing their invoice; `?group=Hair` (`-` for the cards in no group), `?card=4431`, `?year=&month=` for one month (else every month). Header `X-Rows`: how many |
+| `POST /api/cards` | AP | `{"last4", "label", "holder_name", "group_name", "card_number", "primary_last4", "name_on_card", "owner_email", "chat_space", "active"}`; `owner_email` may list several addresses (commas, semicolons or spaces), stored lower-case as `a@x, b@x`; 400 if one is not an address, a card number is not four digits, is another statement card or is already another card's, or a primary card is the card itself, not on the dashboard, or itself supplementary or a primary already. A new holder is added as a person (`cards.person_id`), only once nothing in the save was refused. Answers the cards and the people |
+| `GET /api/export/missing` | signed in | Excel file of the purchases still missing their invoice; `?group=Hair` (`-` for the cards in no group), `?card=4431`, `?year=&month=` for one month (else every month); 400 for a bad card or month. Totals per group and currency, never added across currencies. Header `X-Rows`: how many |
 | `GET /api/statements?year&month` | signed in | uploads that touched the month |
 | `POST /api/statements[?background=1]` | AP | multipart `file`; `?sync=1` also indexes, matches and notifies (`&notify=0` to skip the cards) |
 | `POST /api/index?year&month[&limit]` | AP | read up to `limit` (max 100) new invoices for month-1..month+1 |
