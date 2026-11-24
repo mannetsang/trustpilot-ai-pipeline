@@ -106,6 +106,11 @@
     #rematchMenu { top: calc(100% + 6px); left: 0; right: auto; min-width: 250px; max-width: calc(100vw - 32px); padding: 6px; gap: 2px; }   /* id: wins over .col-menu */
     /* The Person drop-down showing the card holder because nobody else was assigned. */
     select.person-default { color: var(--text-mute); font-style: italic; }
+    /* The Cost centre drop-down saying the card's default fills in once the use case is set. */
+    select.cc-default { color: var(--text-mute); font-style: italic; }
+    /* The vendor's suggested use case, a button under the Use case drop-down. A long name wraps inside
+       the button: the cell clips what overflows, and the name is what the person has to read. */
+    .use-sugg { margin-top: 4px; font-size: 12px; max-width: 100%; white-space: normal; text-align: left; justify-content: flex-start; padding: 3px 9px; border-radius: 8px; }
     #exportMenu { top: calc(100% + 6px); left: auto; right: 0; min-width: 220px; max-width: calc(100vw - 32px); padding: 6px; gap: 2px; }
     .rematch-menu button { text-align: left; padding: 8px 10px; border-radius: 8px; font-size: 13px; color: var(--text); background: none; border: 0; cursor: pointer; }
     .rematch-menu button:hover:not(:disabled), .rematch-menu button:focus-visible { background: var(--hover-wash); }
@@ -537,7 +542,7 @@
           <div class="kpi kpi-missing"><div class="label">Missing</div><div class="value" data-kpi="missing">—</div></div>
           <div class="kpi kpi-possible"><div class="label">Possible</div><div class="value" data-kpi="possible">—</div></div>
           <div class="kpi"><div class="label">Waived</div><div class="value" data-kpi="waived">—</div></div>
-          <div class="kpi kpi-uncoded"><div class="label">No cost centre</div><div class="value" data-kpi="uncoded">—</div></div>
+          <div class="kpi kpi-uncoded"><div class="label">No use case</div><div class="value" data-kpi="uncoded">—</div></div>
         </div>
 
         <section id="apPanel" class="card px-3 py-2.5 mb-3 hidden">
@@ -559,6 +564,7 @@
               </span>
               <button id="notifyBtn" class="btn btn-secondary">Send reminders</button>
               <button id="cardsBtn" class="btn btn-secondary">Cards…</button>
+              <a id="adminLink" class="btn btn-secondary" href="/admin" title="Cards, use cases and cost centres, vendors and people (accounts payable)">Admin</a>
             </div>
           </div>
           <div id="aiNote" class="sub hidden mt-1.5">Invoice reading is switched off on this server (AI_DISABLED): matching uses invoices already indexed.</div>
@@ -580,7 +586,7 @@
         <div class="card">
           <div class="toolbar">
             <div class="seg" id="statusSeg"></div>
-            <input id="search" class="inp" type="search" placeholder="Search description, amount, cost centre, usage, person" style="max-width: 320px; flex: 1; min-width: 180px;" />
+            <input id="search" class="inp" type="search" placeholder="Search description, amount, cost centre, use case, person" style="max-width: 320px; flex: 1; min-width: 180px;" />
             <select id="groupSelect" class="inp hidden" style="width: auto; min-width: 120px;" aria-label="Group" title="Show one group's cards: their purchases, spend and missing receipts"></select>
             <select id="cardSelect" class="inp" style="width: auto; min-width: 150px;" aria-label="Card"></select>
             <span class="relative">
@@ -637,7 +643,7 @@
   var MONTHS =['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
   var MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   var STATUS_PILL = { matched: 'pill-up', possible: 'pill-warn', missing: 'pill-down', waived: 'pill-grey', not_required: 'pill-grey' };
-  var STATUS_FILTERS = [['all', 'All'], ['missing', 'Missing'], ['possible', 'Possible'], ['matched', 'Matched'], ['waived', 'Waived'], ['uncoded', 'No cost centre']];
+  var STATUS_FILTERS = [['all', 'All'], ['missing', 'Missing'], ['possible', 'Possible'], ['matched', 'Matched'], ['waived', 'Waived'], ['uncoded', 'No use case']];
 
   // Open access: the name typed into the header is sent with every call and recorded as "Updated by".
   var NAME_KEY = 'ap_recon_user';
@@ -646,6 +652,7 @@
   var state = {
     config: null, me: null,
     months: [], cards: [], costCenters: [], people: [],
+    useCases: [],                                                          // [{id, name, group_name, description}], active, server order
     year: null, month: null, card: '', view: '', status: 'all', q: '',     // view: '' (the table) or 'receipts'
     group: readGroup(),                                                    // '' all groups, '-' cards in none
     txns: [], statements: [], notifications: [],
@@ -1142,6 +1149,7 @@
     state.months = data.months || [];
     state.cards = data.cards || [];
     state.costCenters = data.cost_centers || [];
+    state.useCases = data.use_cases || [];
     state.people = data.people || [];
     renderSidebar();
   }
@@ -1153,6 +1161,7 @@
     state.notifications = (data.notifications || []).slice().sort(function (a, b) { return String(b.sent_at || '').localeCompare(String(a.sent_at || '')); });
     if (data.cards) state.cards = data.cards;
     if (data.cost_centers) state.costCenters = data.cost_centers;
+    if (data.use_cases) state.useCases = data.use_cases;
     if (data.people) state.people = data.people;
     var cardsHere = {};
     state.txns.forEach(function (t) { cardsHere[t.card_last4] = true; });
@@ -1306,6 +1315,12 @@
     state.cards.forEach(function (c) { if (c.group_name) seen[c.group_name.toLowerCase()] = seen[c.group_name.toLowerCase()] || c.group_name; });
     return Object.keys(seen).sort().map(function (k) { return seen[k]; });
   }
+  // The use cases offered for a card: the "any group" ones and its group's, in the server's order
+  // (sort, then name), so "Other" stays last.
+  function useCasesFor(last4) {
+    var g = groupOf(last4).toLowerCase();
+    return state.useCases.filter(function (u) { return !u.group_name || u.group_name.toLowerCase() === g; });
+  }
   // Who a purchase is for, by name: the person assigned, else the card's holder (a person, or the name
   // the statement or Cards… gives).
   function personFor(t) {
@@ -1329,7 +1344,7 @@
   }
   function matchesStatus(t, status) {
     if (status === 'all') return true;
-    if (status === 'uncoded') return t.type === 'purchase' && !(t.cost_center || '');
+    if (status === 'uncoded') return t.type === 'purchase' && !String(t.usage || '').trim();
     return t.invoice_status === status;
   }
   function matchesSearch(t, q) {
@@ -1357,7 +1372,7 @@
     { key: 'amount', label: 'Amount', width: 110, right: true },
     { key: 'invoice', label: 'Invoice', width: 240 },
     { key: 'cost', label: 'Cost centre', width: 150 },
-    { key: 'usage', label: 'Usage', width: 180 },
+    { key: 'usage', label: 'Use case', width: 180 },
     { key: 'person', label: 'Person', width: 150 },
     { key: 'by', label: 'Updated by', width: 130 },
   ];
@@ -1517,7 +1532,7 @@
         k.purchases++;
         var cur = t.currency || 'CAD';
         k.spend[cur] = (k.spend[cur] || 0) + Number(t.amount || 0);
-        if (!(t.cost_center || '')) k.uncoded++;
+        if (!String(t.usage || '').trim()) k.uncoded++;
       }
       if (k.hasOwnProperty(t.invoice_status)) k[t.invoice_status]++;
     });
@@ -1769,14 +1784,46 @@
       : holder ? holder + ', the card holder (nobody else assigned)' : 'Not assigned';
   }
 
+  var CC_DEFAULT_TITLE = "Filled in with the card's default cost centre when the use case is set";
   function costCenterCell(t) {
     var current = t.cost_center || '';
     var list = state.costCenters.slice();
     if (current && list.indexOf(current) < 0) list.push(current);
-    var opts = '<option value="">— none —</option>' + list.map(function (c) {
+    // The card's default cost centre is filled in by the server when the use case is set, but only on a
+    // purchase with neither, and only while that default is still an active cost centre: say so on
+    // exactly those rows, so the hint never promises a fill that will not happen.
+    var def = (cardInfo(t.card_last4) || {}).default_cost_center || '';
+    var willFill = !current && def && t.type === 'purchase' && !String(t.usage || '').trim() && state.costCenters.indexOf(def) >= 0;
+    var opts = '<option value="">' + (willFill ? '— ' + esc(def) + ' when the use case is set —' : '— none —') + '</option>' + list.map(function (c) {
       return '<option value="' + esc(c) + '"' + (c === current ? ' selected' : '') + '>' + esc(c) + '</option>';
     }).join('') + '<option value="__custom__">Custom…</option>';
-    return '<select class="inp" data-field="cost_center" aria-label="Cost centre"' + (t.editable ? '' : ' disabled') + '>' + opts + '</select>';
+    return '<select class="inp' + (willFill ? ' cc-default' : '') + '" data-field="cost_center" aria-label="Cost centre"' +
+      (willFill ? ' title="' + esc(CC_DEFAULT_TITLE) + '"' : '') + (t.editable ? '' : ' disabled') + '>' + opts + '</select>';
+  }
+  // A Cost centre drop-down left on its empty choice keeps the card-default hint, muted; a cost centre
+  // picked shows plain (the redraw after the save keeps the drop-down that has the focus, class and all).
+  function markCostDefault(el) {
+    var hint = !el.value && !!el.options[0] && el.options[0].textContent !== '— none —';
+    el.classList.toggle('cc-default', hint);
+    if (hint) el.title = CC_DEFAULT_TITLE; else el.removeAttribute('title');
+  }
+
+  // The Use case drop-down: the use cases for the card's group, the row's own value when it is not one
+  // of them (typed, retired, or another group's), and a way out to free typing. A vendor's suggestion is
+  // a button under it, never a pre-picked option, so an uncoded row never looks coded.
+  function usageCell(t) {
+    var current = t.usage || '';
+    var list = useCasesFor(t.card_last4), listed = false;
+    var opts = '<option value="">— none —</option>' + list.map(function (u) {
+      if (u.name === current) listed = true;
+      return '<option value="' + esc(u.name) + '"' + (u.name === current ? ' selected' : '') + (u.description ? ' title="' + esc(u.description) + '"' : '') + '>' + esc(u.name) + '</option>';
+    }).join('');
+    if (current && !listed) opts += '<option value="' + esc(current) + '" selected>' + esc(current) + '</option>';
+    opts += '<option value="__custom__">Type something else…</option>';
+    var sugg = t.editable && t.type === 'purchase' && t.suggestion && t.suggestion.usage
+      ? '<button type="button" class="btn btn-secondary use-sugg" data-action="use-suggestion" title="' + esc(t.suggestion.source) + '">Use ' + esc(t.suggestion.usage) + '</button>'
+      : '';
+    return '<select class="inp" data-field="usage" aria-label="Use case"' + (t.editable ? '' : ' disabled') + '>' + opts + '</select>' + sugg;
   }
 
   var CELLS = {
@@ -1802,9 +1849,7 @@
     invoice: function (t) { return '<td class="td-inv">' + invoiceCell(t) + '</td>'; },
     cost: function (t) { return '<td>' + costCenterCell(t) + '</td>'; },
     person: function (t) { return '<td>' + personCell(t) + '</td>'; },
-    usage: function (t) {
-      return '<td><input class="inp" data-field="usage" aria-label="Usage" placeholder="' + (t.type !== 'purchase' ? '' : 'What was this for?') + '" value="' + esc(t.usage || '') + '" data-original="' + esc(t.usage || '') + '"' + (t.editable ? '' : ' disabled') + ' /></td>';
-    },
+    usage: function (t) { return '<td>' + usageCell(t) + '</td>'; },
     by: function (t) {
       return '<td>' + (t.updated_by ? '<div class="truncate" title="' + esc(t.updated_by) + '">' + esc(t.updated_by) + '</div><div class="sub" title="' + esc(fmtStamp(t.updated_at)) + '">' + esc(fmtStamp(t.updated_at)) + '</div>' : '<span class="sub">—</span>') + '</td>';
     },
@@ -1860,6 +1905,10 @@
     var found = false;
     for (var i = 0; i < state.txns.length; i++) if (state.txns[i].id === updated.id) {
       if (updated.editable === undefined) updated.editable = state.txns[i].editable;
+      // Only the month's list carries the vendor's use-case suggestion, not a save's answer: keep it while
+      // the row still has no use case and the same invoice (the suggestion comes from that invoice's vendor).
+      var had = state.txns[i].suggestion;
+      if (updated.suggestion === undefined && had && !String(updated.usage || '').trim() && (updated.invoice_id || '') === (state.txns[i].invoice_id || '')) updated.suggestion = had;
       state.txns[i] = updated; found = true; break;
     }
     if (!found) return;
@@ -1905,7 +1954,10 @@
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
     replaceTxn(data.transaction, at);
-    if (okMessage) toast(okMessage, 'ok');
+    // Setting a use case can fill the card's default cost centre (the row shows it); say so in the toast.
+    if (okMessage) toast(okMessage + (data.filled_cost_center ? ' · cost centre set to ' + data.filled_cost_center : ''), 'ok');
+    // A use case typed into the Cost centre box: the server keeps it there and says where it belongs.
+    if (data.hint) toast(data.hint, '', 6000);
     return data.transaction;
   }
   function setRowBusy(tr) {
@@ -2038,7 +2090,7 @@
     var body = {}; body[field] = value;
     var ok = false;
     try {
-      await patchTxn(id, body, field === 'usage' ? 'Usage saved' : field === 'person_id'
+      await patchTxn(id, body, field === 'usage' ? 'Use case saved' : field === 'person_id'
         ? (value ? 'Assigned to ' + personName(value) : 'Person cleared') : 'Cost centre saved');
       ok = true;
     } catch (e) {
@@ -2054,6 +2106,9 @@
       input.dataset.saving = '';
       input.classList.remove('saving');
       if (field === 'person_id') markPersonDefault(input);
+      // That kept cell still shows the vendor's suggestion under the drop-down: with a use case now
+      // saved it no longer applies, and pressing it would overwrite the pick.
+      if (ok && field === 'usage') { var sugg = input.parentNode && input.parentNode.querySelector('.use-sugg'); if (sugg) sugg.remove(); }
     }
     if (ok && pending !== undefined && pending !== value) {
       var row = rowEl(id), again = row && row.querySelector('[data-field="' + field + '"]');
@@ -2061,13 +2116,15 @@
     }
   }
 
-  function swapToCustomInput(select) {
+  // "Custom…" in the Cost centre box and "Type something else…" in the Use case box: a text box in its
+  // place, saved when it is left.
+  function swapToCustomInput(select, field, placeholder, label) {
     var td = select.parentNode;
     var input = document.createElement('input');
     input.className = 'inp';
-    input.setAttribute('data-field', 'cost_center_custom');
-    input.placeholder = 'Type a cost centre';
-    input.setAttribute('aria-label', 'Custom cost centre');
+    input.setAttribute('data-field', field);
+    input.placeholder = placeholder;
+    input.setAttribute('aria-label', label);
     td.innerHTML = '';
     td.appendChild(input);
     input.focus();
@@ -2150,13 +2207,36 @@
     if (action === 'receipt') { openReceiptSheet(txnById(tr.dataset.id)); return; }
     if (action === 'remove-receipt') { removeReceipt(txnById(tr.dataset.id)); return; }
     if (action === 'rematch') { rematchRow(tr.dataset.id); return; }
+    if (action === 'use-suggestion') { useSuggestion(tr.dataset.id); return; }
     rowAction(tr, action);
   });
+  // The vendor's suggested use case, saved as if it had been picked (so the card's default cost centre
+  // can be filled too). The row is busy meanwhile, so a double click sends one save.
+  async function useSuggestion(id) {
+    var t = txnById(id), tr = rowEl(id);
+    if (!t || !t.suggestion) return;
+    setRowBusy(tr);
+    try {
+      await patchTxn(id, { usage: t.suggestion.usage }, 'Use case saved');
+    } catch (e) {
+      report(e, 'Could not save');
+      restoreRow(id);
+    }
+  }
   $('#txnBody').addEventListener('change', function (ev) {
     var el = ev.target;
     if (el.matches('select[data-field="cost_center"]')) {
-      if (el.value === '__custom__') { swapToCustomInput(el); return; }
+      if (el.value === '__custom__') { swapToCustomInput(el, 'cost_center_custom', 'Type a cost centre', 'Custom cost centre'); return; }
+      markCostDefault(el);
       saveField(el, 'cost_center');
+    }
+    if (el.matches('select[data-field="usage"]')) {
+      // As with Person: arrowing through a closed list fires change on every step, and each step would
+      // save (the first would already fill the card's default cost centre), so with the keyboard the
+      // pick is saved when the list is left; "Type something else…" opens the box only then.
+      if (el.dataset.keyed === '1') return;
+      if (el.value === '__custom__') { swapToCustomInput(el, 'usage_custom', 'What was this for?', 'Use case'); return; }
+      saveField(el, 'usage');
     }
     if (el.matches('select[data-field="person_id"]')) {
       // Arrowing through a closed list fires change on every step: with the keyboard the choice is
@@ -2169,8 +2249,10 @@
   });
   $('#txnBody').addEventListener('focusout', function (ev) {
     var el = ev.target;
-    if (el.matches('input[data-field="usage"]')) {
-      if (el.value.trim() !== (el.dataset.original || '')) saveField(el, 'usage');
+    if (el.matches('input[data-field="usage_custom"]')) {
+      if (el.dataset.cancelled === '1') return;
+      if (el.value.trim()) saveField(el, 'usage');
+      else { var tu = txnById(el.closest('tr').dataset.id); if (tu) replaceTxn(tu); }
     } else if (el.matches('input[data-field="cost_center_custom"]')) {
       if (el.dataset.cancelled === '1') return;
       if (el.value.trim()) saveField(el, 'cost_center');
@@ -2183,6 +2265,10 @@
       if (el === document.activeElement) return;      // window or tab switch
       el.dataset.keyed = '';
       keyedPersonDone(el);
+    } else if (el.matches('select[data-field="usage"]') && el.dataset.keyed === '1') {
+      if (el === document.activeElement) return;      // window or tab switch
+      el.dataset.keyed = '';
+      keyedUsageDone(el);
     }
   });
   function keyedPersonDone(el) {
@@ -2191,10 +2277,20 @@
     if (el.value === '__new__') { swapToNewPersonInput(el); return; }
     if (el.value !== (tp.person_id || '')) saveField(el, 'person_id');
   }
+  function keyedUsageDone(el) {
+    var tu = txnById(el.closest('tr').dataset.id);
+    if (!tu) return;
+    if (el.value === '__custom__') { swapToCustomInput(el, 'usage_custom', 'What was this for?', 'Use case'); return; }
+    if (el.value !== (tu.usage || '')) saveField(el, 'usage');
+  }
   $('#txnBody').addEventListener('keydown', function (ev) {
     var el = ev.target;
-    if (el.matches('select[data-field="person_id"]')) {
-      if (ev.key === 'Enter' && el.dataset.keyed === '1') { ev.preventDefault(); el.dataset.keyed = ''; keyedPersonDone(el); }
+    if (el.matches('select[data-field="person_id"], select[data-field="usage"]')) {
+      if (ev.key === 'Enter' && el.dataset.keyed === '1') {
+        ev.preventDefault();
+        el.dataset.keyed = '';
+        if (el.dataset.field === 'usage') keyedUsageDone(el); else keyedPersonDone(el);
+      }
       else if (ev.key.length === 1 || /^(Arrow|Page|Home|End)/.test(ev.key)) el.dataset.keyed = '1';
       return;
     }
@@ -2202,7 +2298,7 @@
     if (ev.key === 'Enter') { ev.preventDefault(); el.blur(); }
     if (ev.key === 'Escape') {
       ev.preventDefault();
-      if (el.dataset.field === 'cost_center_custom' || el.dataset.field === 'person_new') {
+      if (el.dataset.field === 'cost_center_custom' || el.dataset.field === 'usage_custom' || el.dataset.field === 'person_new') {
         // Let go of the box first: a row redrawn while one of its cells has the focus keeps that cell.
         var t = txnById(el.closest('tr').dataset.id);
         el.dataset.cancelled = '1';
@@ -3166,7 +3262,7 @@
   $('#cardsBtn').addEventListener('click', openCardsModal);
   $('#uploadsList').addEventListener('click', async function (ev) {
     var b = ev.target.closest('button[data-delete-statement]'); if (!b || b.disabled) return;
-    if (!window.confirm('Remove this upload? Lines that already have a cost centre, usage, note, person or a manual invoice decision are kept.')) return;
+    if (!window.confirm('Remove this upload? Lines that already have a cost centre, use case, note, person or a manual invoice decision are kept.')) return;
     b.disabled = true;
     try {
       var r = await api('/api/statements/' + encodeURIComponent(b.dataset.deleteStatement), { method: 'DELETE' });

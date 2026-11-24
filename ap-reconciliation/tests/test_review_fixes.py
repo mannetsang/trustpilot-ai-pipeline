@@ -251,7 +251,7 @@ class ApiReviewTests(ApiTestCase):
         self.assertNotIn("checks", body)
         deep = self.client.get("/health?deep=1").get_json()
         self.assertFalse(deep["checks"]["drive"]["ok"])        # the fake Drive has no folder lookup
-        self.assertEqual((deep["checks"]["store"]["ok"], deep["checks"]["store"]["cost_centers"]), (True, 20))
+        self.assertEqual((deep["checks"]["store"]["ok"], deep["checks"]["store"]["cost_centers"]), (True, 10))   # active places
         self.assertIn("chat_webhooks", deep["checks"])
         self.assertEqual(deep["checks"]["auth"], {"mode": "open", "audience": ""})
         r = self.client.get("/api/does-not-exist")

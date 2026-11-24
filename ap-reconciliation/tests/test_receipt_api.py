@@ -368,7 +368,7 @@ class GatingAndPermissionTests(ReceiptApiTestCase):
     def test_the_default_is_card_4421_only(self):
         if "RECEIPT_UPLOAD_CARDS" not in os.environ:
             self.assertEqual(DEFAULT_RECEIPT_CARDS, {"4421"})
-        self.client.post("/api/cards", json={"last4": "4421", "label": "Card ending 4421 - Bo Li"})
+        self.client.post("/api/cards", json={"last4": "4421", "label": "Card ending 4421 - Bo Li", "create": True})
         with mock.patch.object(main, "RECEIPT_UPLOAD_CARDS", {"4421"}):
             cards = {c["last4"]: c["receipt_upload"] for c in self.client.get("/api/cards").get_json()["cards"]}
             self.assertEqual(cards, {"1610": False, "2301": False, "4421": True, "4894": False})
@@ -982,8 +982,8 @@ class ChatReceiptsTests(ReceiptApiTestCase):
         self.assertEqual(widgets[0]["textParagraph"]["text"],
                          "Tap Add receipts to photograph or upload each receipt from your phone or computer: it is "
                          "saved in this month's Invoice folder under the vendor's name and linked to the purchase. "
-                         "Open the dashboard to confirm possible matches, add the cost centre and usage, or mark a "
-                         "charge as having no invoice.")
+                         "Open the dashboard to confirm possible matches, say what each purchase was for (its use "
+                         "case), or mark a charge as having no invoice.")
         # Head, sections and card id are the same as without it.
         self.assertEqual(sections[:-1], plain["cardsV2"][0]["card"]["sections"][:-1])
         self.assertEqual(with_receipts["cardsV2"][0]["cardId"], plain["cardsV2"][0]["cardId"])

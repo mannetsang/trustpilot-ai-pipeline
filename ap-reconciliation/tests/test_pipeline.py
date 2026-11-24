@@ -1129,7 +1129,7 @@ class ChatCardTests(unittest.TestCase):
         self.assertIn("<b>Month:</b> September 2026", head)
         self.assertIn("<b>Missing:</b> 2 purchases · CAD 246.12", head)
         self.assertIn("<b>To confirm:</b> 1 possible match<", head)
-        self.assertIn("<b>Without cost centre:</b> 2", head)
+        self.assertIn("<b>Without use case:</b> 2", head)
         lines = sections[1]["widgets"][0]["textParagraph"]["text"]
         self.assertIn("09-04 · Anthropic* Claude Team · <b>CAD 150.00</b>", lines)
         self.assertIn("09-12 · Www.Retellai.Com · <b>CAD 96.12</b> (USD 70.40)", lines)
@@ -1148,7 +1148,7 @@ class ChatCardTests(unittest.TestCase):
         head = sections[0]["widgets"][0]["textParagraph"]["text"]
         self.assertIn("Invoices needed – Card ending 4894</b><br>", head)
         self.assertIn("<b>Missing:</b> 0 purchases · CAD 0.00", head)
-        self.assertNotIn("cost centre", head)
+        self.assertNotIn("use case", head)
         self.assertEqual(len(sections[-1]["widgets"]), 1)     # no buttons without URLs
         self.assertEqual(payload["cardsV2"][0]["cardId"], "ap-4894-2026-10")
 
@@ -1265,7 +1265,10 @@ class ApiFlowTests(ApiTestCase):
         self.assertEqual((sept["cards"]["1610"]["transactions"], sept["cards"]["1610"]["missing"]), (5, 2))
         self.assertAlmostEqual(sept["cards"]["1610"]["spend"], 195.10)
         self.assertEqual(sorted(c["last4"] for c in months["cards"]), ["1610", "2301", "4894"])
-        self.assertIn("Marketing", months["cost_centers"])
+        # Cost centres are places since the coding split (Nov 2026); the expense types are use cases.
+        self.assertIn("Head office", months["cost_centers"])
+        self.assertNotIn("Marketing", months["cost_centers"])
+        self.assertIn("Marketing", [u["name"] for u in months["use_cases"]])
 
         page = self.transactions()
         rows = page["transactions"]
@@ -1350,7 +1353,7 @@ class ApiFlowTests(ApiTestCase):
         row = self.patch(ids["anth"], {"cost_center": "x" * 150})["transaction"]
         self.assertEqual(len(row["cost_center"]), 100)
         months = self.client.get("/api/months").get_json()["months"][1]
-        self.assertEqual(months["uncoded"], 5)
+        self.assertEqual(months["uncoded"], 6)          # uncoded: no use case, and anth's was just cleared
 
         row = self.patch(ids["retell"], {"action": "waive"})["transaction"]
         self.assertEqual((row["invoice_status"], row["match_method"], row["match_note"], row["invoice_id"]),

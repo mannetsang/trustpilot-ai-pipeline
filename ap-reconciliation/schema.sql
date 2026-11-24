@@ -211,14 +211,16 @@ create table if not exists cost_centers (
   name text primary key,
   sort integer not null default 100
 );
-insert into cost_centers (name, sort) values
-  ('Marketing', 10), ('IT & Software', 20), ('Shipping & Logistics', 30), ('Travel', 40),
-  ('Meals & Entertainment', 50), ('Office & Supplies', 60), ('Inventory / COGS', 70),
-  ('Professional Services', 80), ('Utilities & Telecom', 90), ('Insurance & Government', 100),
+-- Places and entities a purchase belongs to; what it was for is its use case (use_cases, below).
+-- Seeds an empty table only: on the live database the one-time split below retires the expense
+-- types and adds Head office, and a re-run never brings back a name AP renamed or retired.
+insert into cost_centers (name, sort)
+select v.name, v.sort from (values
+  ('Head office', 100),
   ('Salon - Dufferin', 110), ('Salon - Ridgeway', 111), ('Salon - Consumer', 112), ('Salon - Eglinton', 113),
-  ('Salon - STC', 114), ('Salon - Rapistan', 115), ('Salon - Brampton', 116), ('US', 120), ('EU', 121),
-  ('Other', 999)
-on conflict (name) do nothing;
+  ('Salon - STC', 114), ('Salon - Rapistan', 115), ('Salon - Brampton', 116),
+  ('US', 120), ('EU', 121)) as v(name, sort)
+where not exists (select 1 from cost_centers);
 
 -- The Drive import (`python main.py sync`, every 15 minutes): one row per file found in the Bank
 -- Transactions folder, so each version of a file is read once and a file that could not be read
@@ -262,7 +264,198 @@ create table if not exists app_state (
   updated_at timestamptz not null default now()
 );
 
+-- ---------------------------------------------------------------------------
+-- Admin portal (/admin, Nov 2026): audit, use cases, cost centres as places, card defaults,
+-- the vendor registry. Applied with setup_db.py before the deploy that uses it.
+-- ---------------------------------------------------------------------------
+-- Before the unique indexes below: an empty e-mail is no e-mail, and a duplicate those indexes would
+-- refuse stops the whole file here with a message that names it (setup_db.py sends the file as one
+-- request, so one failing statement fails all of it).
+update people set email = null where email is not null and btrim(email) = '';
+do $$
+declare
+  dup text;
+begin
+  select string_agg(e, ', ' order by e) into dup
+    from (select lower(email) as e from people where email is not null group by 1 having count(*) > 1) d;
+  if dup is not null then
+    raise exception 'schema.sql not applied: two people share the e-mail %; give one of them another address or none, then run setup_db.py again', dup;
+  end if;
+  select string_agg(n, ', ' order by n) into dup
+    from (select lower(name) as n from cost_centers group by 1 having count(*) > 1) d;
+  if dup is not null then
+    raise exception 'schema.sql not applied: cost centres differ only in capitals (%); rename one, then run setup_db.py again', dup;
+  end if;
+end $$;
+
+-- Every change made through /admin, POST /api/cards and POST /api/people (best effort: a change
+-- whose audit row fails is still made). Append only: no code path updates or deletes rows.
+create table if not exists admin_audit (
+  id         bigserial primary key,
+  at         timestamptz not null default now(),
+  actor      text not null,           -- IAP e-mail; the typed name in password/open mode
+  auth_mode  text not null,           -- iap | password | open
+  entity     text not null,           -- card | card_number | cost_center | use_case | vendor | vendor_folder
+                                      -- | vendor_pattern | vendor_coding | person | setting | proposal
+  entity_id  text not null,
+  action     text not null,           -- create | update | rename | retire | restore | reorder | delete | merge
+                                      -- | link | ignore | unignore | dismiss | undismiss | fill_default
+  before     jsonb,
+  after      jsonb,
+  note       text
+);
+create index if not exists admin_audit_entity_idx on admin_audit (entity, entity_id, id desc);
+
+-- Cost centres: retired instead of deleted, with a description and who changed them last.
+alter table cost_centers add column if not exists active      boolean not null default true;
+alter table cost_centers add column if not exists description text;
+alter table cost_centers add column if not exists updated_by  text;
+alter table cost_centers add column if not exists updated_at  timestamptz;
+create unique index if not exists cost_centers_name_lower_unique on cost_centers (lower(name));
+
+-- A card's default cost centre (a salon's card is that salon): filled into a purchase whose cost
+-- centre is empty when its use case is set. Renaming the cost centre carries over.
+alter table cards add column if not exists default_cost_center text
+  references cost_centers(name) on update cascade on delete set null;
+-- Receipt upload from the dashboard for this card: true/false; null follows RECEIPT_UPLOAD_CARDS.
+alter table cards add column if not exists receipt_upload boolean;
+
+-- People: who changed them last; an e-mail belongs to one person.
+alter table people add column if not exists updated_by text;
+alter table people add column if not exists updated_at timestamptz;
+create unique index if not exists people_email_unique on people (lower(email)) where email is not null;
+
+-- Use cases: the list offered in the Use case box ("what was this for"). transactions.usage stays
+-- free text (no foreign key); a value not on the list is still accepted.
+create table if not exists use_cases (
+  id          uuid primary key default gen_random_uuid(),
+  name        text not null,
+  description text,
+  group_name  text,                   -- null: any card; else a cards.group_name spelling (Hair, Beauty)
+  sort        integer not null default 100,
+  active      boolean not null default true,
+  created_by  text,
+  created_at  timestamptz not null default now(),
+  updated_by  text,
+  updated_at  timestamptz
+);
+create unique index if not exists use_cases_name_unique on use_cases (lower(name));
+alter table use_cases drop constraint if exists use_cases_name_check;
+alter table use_cases add constraint use_cases_name_check check (length(btrim(name)) between 1 and 80);
+
+-- Vendor registry. Round A: reference data for the catalogue and coding suggestions; matching does
+-- not read it. Round B adds pattern evidence to matching without changing these rows.
+create table if not exists vendors (
+  id          uuid primary key default gen_random_uuid(),
+  name        text not null,
+  kind        text not null default 'supplier',   -- supplier | processor | agent | not_vendor
+  code_each   boolean not null default false,     -- marketplaces (Amazon): never a coding default
+  active      boolean not null default true,
+  note        text,
+  created_by  text,
+  created_at  timestamptz not null default now(),
+  updated_by  text,
+  updated_at  timestamptz
+);
+create unique index if not exists vendors_name_unique on vendors (lower(name));
+alter table vendors drop constraint if exists vendors_kind_check;
+alter table vendors add constraint vendors_kind_check
+  check (kind in ('supplier', 'processor', 'agent', 'not_vendor') and length(btrim(name)) between 1 and 100);
+
+-- Drive folders (Invoice/YYYY MM/<folder>/) that hold this vendor's documents; several can form one.
+create table if not exists vendor_folders (
+  id          uuid primary key default gen_random_uuid(),
+  vendor_id   uuid not null references vendors(id) on delete cascade,
+  folder      text not null,          -- the spelling shown
+  folder_key  text not null,          -- lower case, single spaces: how folders are compared
+  created_by  text,
+  created_at  timestamptz not null default now()
+);
+create unique index if not exists vendor_folders_key_unique on vendor_folders (folder_key);
+create index if not exists vendor_folders_vendor_idx on vendor_folders (vendor_id);
+
+-- What names the vendor: the card descriptor (prefix or exact, whole words) or the supplier name
+-- read on its documents (exact). status: probation | trusted | off. Round A uses probation and
+-- trusted patterns for suggestions only and accepts no 'trusted' from the API; Round B promotes.
+create table if not exists vendor_patterns (
+  id          uuid primary key default gen_random_uuid(),
+  vendor_id   uuid not null references vendors(id) on delete cascade,
+  kind        text not null default 'descriptor',   -- descriptor | invoice_vendor
+  match_type  text not null default 'prefix',       -- prefix | exact (invoice_vendor: exact only)
+  pattern     text not null,                        -- admin.normalise_pattern(): lower-case words, one space
+  status      text not null default 'probation',
+  source      text not null default 'admin',        -- admin | proposal
+  note        text,
+  created_by  text,
+  created_at  timestamptz not null default now(),
+  updated_by  text,
+  updated_at  timestamptz
+);
+create unique index if not exists vendor_patterns_unique on vendor_patterns (kind, pattern);
+create index if not exists vendor_patterns_vendor_idx on vendor_patterns (vendor_id);
+alter table vendor_patterns drop constraint if exists vendor_patterns_check;
+alter table vendor_patterns add constraint vendor_patterns_check check (
+  kind in ('descriptor', 'invoice_vendor') and match_type in ('prefix', 'exact')
+  and (kind = 'descriptor' or match_type = 'exact')
+  and status in ('probation', 'trusted', 'off') and source in ('admin', 'proposal')
+  and length(pattern) between 3 and 120 and pattern = lower(pattern));
+
+-- Default use case per card group: group_name '' for any card, else a group spelling (Hair, Beauty)
+-- that wins for that group's cards. mode 'suggest' only in Round A.
+create table if not exists vendor_coding (
+  id           uuid primary key default gen_random_uuid(),
+  vendor_id    uuid not null references vendors(id) on delete cascade,
+  group_name   text not null default '',
+  use_case_id  uuid not null references use_cases(id),
+  mode         text not null default 'suggest',
+  created_by   text,
+  created_at   timestamptz not null default now(),
+  updated_by   text,
+  updated_at   timestamptz
+);
+create unique index if not exists vendor_coding_unique on vendor_coding (vendor_id, lower(group_name));
+alter table vendor_coding drop constraint if exists vendor_coding_mode_check;
+alter table vendor_coding add constraint vendor_coding_mode_check check (mode in ('suggest'));
+
+-- One-time split of the coding lists (decided 2026-11-24): the expense types leave cost_centers
+-- (retired, never deleted, and only when no purchase carries them) and become use cases; Head office
+-- joins the places. Guarded by app_state 'coding_split': a re-run never retires again a cost centre
+-- AP restored, nor seeds again a use case AP renamed. A fresh database seeds the use cases here too.
+do $$
+declare
+  expense text[] := array['Marketing', 'IT & Software', 'Shipping & Logistics', 'Travel',
+                          'Meals & Entertainment', 'Office & Supplies', 'Inventory / COGS',
+                          'Professional Services', 'Utilities & Telecom', 'Insurance & Government', 'Other'];
+  sorts   int[]  := array[10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 999];
+  retired jsonb;
+  kept    jsonb;
+begin
+  if exists (select 1 from app_state where key = 'coding_split') then
+    return;
+  end if;
+  insert into use_cases (name, sort, created_by)
+  select e.name, e.sort, 'schema:coding_split'
+    from unnest(expense, sorts) as e(name, sort)
+   where not exists (select 1 from use_cases u where lower(u.name) = lower(e.name));
+  update cost_centers c
+     set active = false, updated_by = 'schema:coding_split', updated_at = now()
+   where c.name = any(expense) and c.active
+     and not exists (select 1 from transactions t where t.cost_center = c.name);
+  select coalesce(jsonb_agg(c.name order by c.sort), '[]'::jsonb) into retired
+    from cost_centers c where c.updated_by = 'schema:coding_split' and not c.active;
+  select coalesce(jsonb_agg(c.name order by c.sort), '[]'::jsonb) into kept
+    from cost_centers c where c.name = any(expense) and c.active;
+  insert into cost_centers (name, sort)
+  select 'Head office', 100
+   where not exists (select 1 from cost_centers where lower(name) = 'head office');
+  insert into app_state (key, value, updated_at)
+  values ('coding_split', jsonb_build_object('at', now(), 'retired', retired, 'kept_in_use', kept), now())
+  on conflict (key) do nothing;
+end $$;
+
 -- Per-month, per-card roll-up for the dashboard's year/month navigation.
+-- uncoded: purchases without a use case (empty usage); before Nov 2026 it counted purchases without a
+-- cost centre.
 create or replace view month_summary as
 select year, month, card_last4,
        count(*)                                                              as transactions,
@@ -271,15 +464,17 @@ select year, month, card_last4,
        count(*) filter (where invoice_status = 'possible')                   as possible,
        count(*) filter (where invoice_status = 'missing')                    as missing,
        count(*) filter (where invoice_status = 'waived')                     as waived,
-       count(*) filter (where type = 'purchase' and coalesce(cost_center, '') = '') as uncoded
+       count(*) filter (where type = 'purchase' and coalesce(btrim(usage), '') = '') as uncoded
 from transactions
 group by year, month, card_last4;
 -- Run the view with the caller's rights (so RLS applies to it too) and keep the
 -- public API roles away from everything: only the service-role key is used.
 alter view month_summary set (security_invoker = true);
 revoke all on cards, statements, invoices, transactions, notifications, cost_centers, month_summary,
-  statement_sources, job_lease, app_state, people
+  statement_sources, job_lease, app_state, people, admin_audit, use_cases, vendors, vendor_folders,
+  vendor_patterns, vendor_coding
   from anon, authenticated;
+revoke all on sequence admin_audit_id_seq from anon, authenticated;
 
 -- The service uses the service-role key, which bypasses RLS. Enabling RLS with
 -- no policies keeps the anon/public key from reading anything.
@@ -293,3 +488,13 @@ alter table statement_sources enable row level security;
 alter table job_lease     enable row level security;
 alter table app_state     enable row level security;
 alter table people        enable row level security;
+alter table admin_audit    enable row level security;
+alter table use_cases      enable row level security;
+alter table vendors        enable row level security;
+alter table vendor_folders enable row level security;
+alter table vendor_patterns enable row level security;
+alter table vendor_coding  enable row level security;
+
+-- New tables and columns are visible to the service at once, even where PostgREST's automatic
+-- reload after DDL is missing (harmless when it is not).
+notify pgrst, 'reload schema';

@@ -15,6 +15,7 @@ import datetime as dt
 import json
 import re
 import threading
+import uuid
 
 import requests
 
@@ -26,12 +27,50 @@ TRANSACTION_FIELDS = (
     "created_at", "raw", "rejected_invoice_ids", "invoice_part", "person_id", "also_invoice_ids",
 )
 CARD_FIELDS = ("last4", "label", "holder_name", "owner_email", "chat_space", "active", "updated_at",
-               "group_name", "card_number", "primary_last4", "name_on_card", "person_id")
+               "group_name", "card_number", "primary_last4", "name_on_card", "person_id",
+               "default_cost_center", "receipt_upload")
 INVOICE_FIELDS = (
     "id", "file_name", "mime_type", "web_view_link", "folder_path", "month_folder", "vendor_folder",
     "modified_time", "size", "vendor", "invoice_number", "invoice_date", "total", "currency",
     "card_last4", "payment_method", "summary", "is_invoice", "extracted_at", "extraction_error",
     "document_type", "removed_at", "card_charges", "charge_date", "paid_invoice_numbers",
+)
+# The admin pages' tables (schema.sql, "Admin portal"). Inserts carry every key of their tuple, so
+# PostgREST gets uniform rows and MemoryStore keeps the same keys Postgres would.
+COST_CENTER_FIELDS = ("name", "sort", "active", "description", "updated_by", "updated_at")
+USE_CASE_FIELDS = ("id", "name", "description", "group_name", "sort", "active",
+                   "created_by", "created_at", "updated_by", "updated_at")
+AUDIT_FIELDS = ("actor", "auth_mode", "entity", "entity_id", "action", "before", "after", "note")
+PERSON_VIEW = ("id", "name", "email")                    # what list_people/get_person/create_person return
+PERSON_FIELDS = ("id", "name", "email", "created_by", "created_at", "updated_by", "updated_at")
+VENDOR_FIELDS = ("id", "name", "kind", "code_each", "active", "note",
+                 "created_by", "created_at", "updated_by", "updated_at")
+VENDOR_FOLDER_FIELDS = ("id", "vendor_id", "folder", "folder_key", "created_by", "created_at")
+VENDOR_PATTERN_FIELDS = ("id", "vendor_id", "kind", "match_type", "pattern", "status", "source", "note",
+                         "created_by", "created_at", "updated_by", "updated_at")
+VENDOR_CODING_FIELDS = ("id", "vendor_id", "group_name", "use_case_id", "mode",
+                        "created_by", "created_at", "updated_by", "updated_at")
+# The catalogue (admin.py) reads every transaction and invoice once per 5 minutes: only these columns.
+ADMIN_TXN_COLUMNS = ("id", "card_last4", "type", "txn_date", "year", "month", "description", "supplier",
+                     "amount", "currency", "source_amount", "source_currency", "invoice_status", "invoice_id",
+                     "also_invoice_ids", "match_method", "match_note", "cost_center", "usage", "person_id",
+                     "updated_by")
+ADMIN_INVOICE_COLUMNS = ("id", "file_name", "web_view_link", "vendor_folder", "vendor", "month_folder",
+                         "invoice_date", "total", "currency", "card_last4", "document_type", "removed_at")
+AUDIT_LIST_COLUMNS = ("id", "at", "actor", "auth_mode", "entity", "entity_id", "action", "before", "after", "note")
+NOTIFICATION_VIEW = ("card_last4", "year", "month", "sent_at", "sent_by", "ok", "detail")
+# schema_status(): probe name -> (table, column) read with limit 1. False means schema.sql is not applied yet.
+SCHEMA_PROBES = (
+    ("admin_audit", ("admin_audit", "id")),
+    ("use_cases", ("use_cases", "id")),
+    ("cost_centers.active", ("cost_centers", "active")),
+    ("cards.default_cost_center", ("cards", "default_cost_center")),
+    ("cards.receipt_upload", ("cards", "receipt_upload")),
+    ("people.updated_at", ("people", "updated_at")),
+    ("vendors", ("vendors", "id")),
+    ("vendor_folders", ("vendor_folders", "id")),
+    ("vendor_patterns", ("vendor_patterns", "id")),
+    ("vendor_coding", ("vendor_coding", "id")),
 )
 
 def _whole_unless_part(patch):
@@ -97,6 +136,48 @@ def stamp(when):
 UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
 
+def _key(text):
+    """How names are compared (admin.name_key): single spaces, case ignored."""
+    return " ".join(str(text or "").split()).casefold()
+
+
+def _blank_to_none(value):
+    """An e-mail of "" or blanks is no e-mail (NULL): two people without one never clash on
+    people_email_unique."""
+    if value is None:
+        return None
+    return str(value).strip() or None
+
+
+def _row(fields, data, **defaults):
+    """A row with every key of `fields` (None where nothing was given), then `defaults` for the keys
+    still None: the columns that are NOT NULL with a default in Postgres, where an explicit null fails."""
+    row = {k: data.get(k) for k in fields}
+    for k, v in defaults.items():
+        if row.get(k) is None:
+            row[k] = v
+    return row
+
+
+def _only(patch, fields, never=("id", "created_by", "created_at")):
+    """The patch's keys that are columns of the table, without the ones no update may change."""
+    return {k: v for k, v in (patch or {}).items() if k in fields and k not in never}
+
+
+def _is_uuid(value):
+    return bool(UUID_RE.match(str(value or "")))
+
+
+def _conflict(message):
+    """MemoryStore's unique violation, with the status and code PostgREST gives one."""
+    return StoreError(f"duplicate key (23505): {message}", status=409, code="23505")
+
+
+def _missing_fk(message):
+    """MemoryStore's foreign-key violation, with the status and code PostgREST gives one."""
+    return StoreError(f"foreign key (23503): {message}", status=409, code="23503")
+
+
 def person_named(people, name):
     """The person in `people` with this name, ignoring case and extra spaces, else None."""
     key = " ".join(str(name or "").split()).lower()
@@ -117,8 +198,28 @@ def neighbouring_months(year, month, before=1, after=1):
     return out
 
 
+MISSING_CODES = {"42P01", "42703", "PGRST204", "PGRST205"}   # table / column not there (schema not applied)
+
+
 class StoreError(RuntimeError):
-    pass
+    """A store failure. status and code are PostgREST's HTTP status and Postgres/PostgREST error code
+    when the server answered (None for a network failure); the message keeps the response text, so
+    `"23505" in str(exc)` still finds a unique violation."""
+
+    def __init__(self, message="", status=None, code=None):
+        super().__init__(message)
+        self.status, self.code = status, code
+
+    @property
+    def missing(self):
+        """The table or column does not exist: schema.sql has not been applied yet."""
+        text = str(self)
+        return self.code in MISSING_CODES or (self.status == 404 and ("does not exist" in text or "Could not find" in text))
+
+    @property
+    def conflict(self):
+        """A unique or foreign-key violation (the routes answer 409)."""
+        return self.code in ("23505", "23503") or self.status == 409
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +247,16 @@ class SupabaseStore:
             # upload whose row could not be written) runs; a timed-out write may still have landed.
             raise StoreError(f"{method} {table} -> {type(exc).__name__}: {exc}") from exc
         if r.status_code >= 400:
-            raise StoreError(f"{method} {table} -> {r.status_code} {r.text[:400]}")
+            # PostgREST's error body is {"code", "message", ...}: the code says what failed (a unique
+            # violation, a table or column the schema does not have yet) without parsing the text.
+            code = None
+            try:
+                body = r.json()
+                code = body.get("code") if isinstance(body, dict) else None
+            except ValueError:
+                pass
+            raise StoreError(f"{method} {table} -> {r.status_code} {r.text[:400]}", status=r.status_code,
+                             code=str(code) if code else None)
         if want_response:
             return r
         if r.status_code == 204 or not r.text:
@@ -445,7 +555,10 @@ class SupabaseStore:
                                              "order": "sent_at.desc"})
 
     def list_cost_centers(self):
-        return [r["name"] for r in self.select("cost_centers", {"order": "sort.asc,name.asc"})]
+        """The active cost centres' names, the dashboard's picker. Filtered here, not in the query, so it
+        also works before schema.sql gave the table its active column."""
+        return [r["name"] for r in self.select("cost_centers", {"order": "sort.asc,name.asc"})
+                if r.get("active", True) is not False]
 
     # -- people a transaction can be assigned to -----------------------------
     def list_people(self):
@@ -458,19 +571,20 @@ class SupabaseStore:
         return rows[0] if rows else None
 
     def create_person(self, name, email=None, created_by=None):
-        """(person, created): a new person, or the one already named so (case aside)."""
+        """(person, created): a new person, or the one already named so (case aside). An e-mail another
+        person has (case aside) raises StoreError 23505 from people_email_unique."""
         same = person_named(self.list_people(), name)
         if same:
             return same, False
         try:
-            row = self.insert("people", [{"name": name, "email": email, "created_by": created_by}],
+            row = self.insert("people", [{"name": name, "email": _blank_to_none(email), "created_by": created_by}],
                               returning=True)[0]
         except StoreError:
             same = person_named(self.list_people(), name)   # added by someone else a moment ago
             if same:
                 return same, False
-            raise
-        return {k: row.get(k) for k in ("id", "name", "email")}, True
+            raise                                           # not the name: the e-mail is taken
+        return {k: row.get(k) for k in PERSON_VIEW}, True
 
     # -- the Drive import: one row per file read, and its last check -------
     def list_statement_sources(self):
@@ -519,6 +633,251 @@ class SupabaseStore:
         rows = self.select("job_lease", {"name": f"eq.{name}"})
         return rows[0] if rows else None
 
+    # -- the admin pages (/admin) -------------------------------------------
+    def _count(self, table, params):
+        """How many rows match, from Content-Range (count=exact) without reading them."""
+        query = dict(params or {})
+        query.setdefault("select", "id")
+        query["limit"] = 1
+        r = self._req("GET", table, query, prefer="count=exact", want_response=True)
+        total = _content_range_total(r.headers.get("Content-Range"), None)
+        if total is None:
+            total = len(r.json() if r.text else [])
+        return total
+
+    def _one(self, rows, fields):
+        return {k: rows[0].get(k) for k in fields} if rows else None
+
+    # audit: append only
+    def insert_audit(self, row):
+        self.insert("admin_audit", [{k: row.get(k) for k in AUDIT_FIELDS}])
+
+    def list_audit(self, entity=None, entity_id=None, actor=None, before_id=None, limit=50):
+        """Newest first, one request (no paging: the caller asks for at most 200)."""
+        params = {"select": ",".join(AUDIT_LIST_COLUMNS), "order": "id.desc", "limit": int(limit)}
+        if entity:
+            params["entity"] = f"eq.{entity}"
+        if entity_id:
+            params["entity_id"] = f"eq.{entity_id}"
+        actor = re.sub(r"[*,()]", "", str(actor or "")).strip()    # PostgREST's wildcard and list syntax
+        if actor:
+            params["actor"] = f"ilike.*{actor}*"
+        if before_id is not None:
+            params["id"] = f"lt.{int(before_id)}"
+        return self._req("GET", "admin_audit", params)
+
+    # cost centres: places and entities, retired instead of deleted
+    def list_cost_center_rows(self):
+        rows = self.select("cost_centers", {"order": "sort.asc,name.asc"})
+        # select=* so this works before schema.sql added the columns: a missing one reads as unset, and a
+        # missing active column as active (every row was, then).
+        return [dict({k: r.get(k) for k in COST_CENTER_FIELDS}, active=r.get("active", True) is not False)
+                for r in rows]
+
+    def add_cost_center(self, row):
+        full = _row(COST_CENTER_FIELDS, dict(row, active=True), sort=100)
+        return self._one(self.insert("cost_centers", [full], returning=True), COST_CENTER_FIELDS)
+
+    def update_cost_center(self, name, patch):
+        """PATCH by exact name; a rename cascades to cards.default_cost_center (on update cascade)."""
+        patch = _only(patch, COST_CENTER_FIELDS, never=())
+        if not patch:
+            return next((r for r in self.list_cost_center_rows() if r["name"] == name), None)
+        return self._one(self.patch("cost_centers", {"name": f"eq.{name}"}, patch), COST_CENTER_FIELDS)
+
+    # use cases: the Use case box's list
+    def list_use_cases(self, active_only=False):
+        rows = self.select("use_cases", {"order": "sort.asc,name.asc"})
+        rows = [{k: r.get(k) for k in USE_CASE_FIELDS} for r in rows if not active_only or r.get("active")]
+        return sorted(rows, key=lambda r: (r.get("sort") or 0, str(r.get("name") or "").casefold()))
+
+    def create_use_case(self, row):
+        full = _row(USE_CASE_FIELDS, row, id=str(uuid.uuid4()), created_at=now_iso(), active=True, sort=100)
+        return self._one(self.insert("use_cases", [full], returning=True), USE_CASE_FIELDS)
+
+    def update_use_case(self, use_case_id, patch):
+        if not _is_uuid(use_case_id):
+            return None
+        patch = _only(patch, USE_CASE_FIELDS)
+        if not patch:
+            return self._one(self.select("use_cases", {"id": f"eq.{use_case_id}"}), USE_CASE_FIELDS)
+        return self._one(self.patch("use_cases", {"id": f"eq.{use_case_id}"}, patch), USE_CASE_FIELDS)
+
+    def coding_values_in_use(self):
+        rows = self.select("transactions", {"select": "cost_center,usage", "order": "id",
+                                            "or": "(cost_center.not.is.null,usage.not.is.null)"})
+        return _count_values(rows)
+
+    # cards
+    def card_usage(self, last4):
+        """What keeps a card from being deleted: its transactions, the uploads that list it, and the
+        supplementary cards linked under it."""
+        return {"transactions": self._count("transactions", {"card_last4": f"eq.{last4}"}),
+                "statements": self._count("statements", {"cards": 'cs.{"' + str(last4) + '"}'}),
+                "supplementary": self._count("cards", {"select": "last4", "primary_last4": f"eq.{last4}"})}
+
+    def delete_card(self, last4):
+        """True when deleted. A card with transactions fails on their foreign key (409 23503)."""
+        return bool(self.delete("cards", {"last4": f"eq.{last4}"}))
+
+    def latest_notifications(self):
+        rows = self.select("notifications", {"select": ",".join(NOTIFICATION_VIEW), "order": "sent_at.desc,id.desc"})
+        return _latest_per_card(rows)
+
+    # people
+    def list_people_rows(self):
+        rows = self.select("people", {"order": "name.asc"})
+        return sorted(({k: r.get(k) for k in PERSON_FIELDS} for r in rows), key=lambda p: str(p["name"]).casefold())
+
+    def update_person(self, person_id, patch):
+        if not _is_uuid(person_id):
+            return None
+        patch = _only(patch, ("name", "email", "updated_by", "updated_at"))
+        if "email" in patch:
+            patch["email"] = _blank_to_none(patch["email"])
+        if not patch:
+            return self.get_person(person_id)
+        return self._one(self.patch("people", {"id": f"eq.{person_id}"}, patch), PERSON_VIEW)
+
+    def delete_person(self, person_id):
+        """True when deleted; transactions and cards keep no person (on delete set null)."""
+        if not _is_uuid(person_id):
+            return False
+        return bool(self.delete("people", {"id": f"eq.{person_id}"}))
+
+    def people_usage(self):
+        rows = self.select("transactions", {"select": "person_id", "person_id": "not.is.null", "order": "id"})
+        out = {}
+        for r in rows:
+            out[r["person_id"]] = out.get(r["person_id"], 0) + 1
+        return out
+
+    def reassign_person_transactions(self, from_id, to_id):
+        if not (_is_uuid(from_id) and _is_uuid(to_id)):
+            return 0
+        rows = self._req("PATCH", "transactions", {"person_id": f"eq.{from_id}", "select": "id"},
+                         {"person_id": to_id}, prefer="return=representation")
+        return len(rows)
+
+    # vendor registry: reference data in Round A (matching does not read it)
+    def list_vendor_registry(self):
+        return {name: [{k: r.get(k) for k in fields} for r in self.select(table, {"order": "id.asc"})]
+                for name, table, fields in _REGISTRY_TABLES}
+
+    def create_vendor(self, row):
+        full = _row(VENDOR_FIELDS, row, id=str(uuid.uuid4()), created_at=now_iso(), kind="supplier",
+                    code_each=False, active=True)
+        return self._one(self.insert("vendors", [full], returning=True), VENDOR_FIELDS)
+
+    def update_vendor(self, vendor_id, patch):
+        if not _is_uuid(vendor_id):
+            return None
+        patch = _only(patch, VENDOR_FIELDS)
+        if not patch:
+            return self._one(self.select("vendors", {"id": f"eq.{vendor_id}"}), VENDOR_FIELDS)
+        return self._one(self.patch("vendors", {"id": f"eq.{vendor_id}"}, patch), VENDOR_FIELDS)
+
+    def add_vendor_folder(self, row):
+        full = _row(VENDOR_FOLDER_FIELDS, row, id=str(uuid.uuid4()), created_at=now_iso(),
+                    folder_key=_key(row.get("folder")))
+        return self._one(self.insert("vendor_folders", [full], returning=True), VENDOR_FOLDER_FIELDS)
+
+    def delete_vendor_folder(self, folder_id):
+        if not _is_uuid(folder_id):
+            return False
+        return bool(self.delete("vendor_folders", {"id": f"eq.{folder_id}"}))
+
+    def add_vendor_pattern(self, row):
+        full = _row(VENDOR_PATTERN_FIELDS, row, id=str(uuid.uuid4()), created_at=now_iso(), kind="descriptor",
+                    match_type="prefix", status="probation", source="admin")
+        return self._one(self.insert("vendor_patterns", [full], returning=True), VENDOR_PATTERN_FIELDS)
+
+    def update_vendor_pattern(self, pattern_id, patch):
+        if not _is_uuid(pattern_id):
+            return None
+        patch = _only(patch, VENDOR_PATTERN_FIELDS, never=("id", "vendor_id", "created_by", "created_at"))
+        if not patch:
+            return self._one(self.select("vendor_patterns", {"id": f"eq.{pattern_id}"}), VENDOR_PATTERN_FIELDS)
+        return self._one(self.patch("vendor_patterns", {"id": f"eq.{pattern_id}"}, patch), VENDOR_PATTERN_FIELDS)
+
+    def delete_vendor_pattern(self, pattern_id):
+        if not _is_uuid(pattern_id):
+            return False
+        return bool(self.delete("vendor_patterns", {"id": f"eq.{pattern_id}"}))
+
+    def _vendor_coding_row(self, vendor_id, group_name):
+        # Compared in Python, not with ilike: % and _ in a group name would act as wildcards.
+        rows = self.select("vendor_coding", {"vendor_id": f"eq.{vendor_id}", "order": "id.asc"})
+        return next((r for r in rows if _key(r.get("group_name")) == _key(group_name)), None)
+
+    def set_vendor_coding(self, vendor_id, group_name, use_case_id, actor):
+        """The vendor's default use case for a card group ("" = any card): updated in place, or added."""
+        if not (_is_uuid(vendor_id) and _is_uuid(use_case_id)):
+            return None
+        now = now_iso()
+        row = self._vendor_coding_row(vendor_id, group_name)
+        if row:
+            return self._one(self.patch("vendor_coding", {"id": f"eq.{row['id']}"},
+                                        {"use_case_id": use_case_id, "updated_by": actor, "updated_at": now}),
+                             VENDOR_CODING_FIELDS)
+        full = _row(VENDOR_CODING_FIELDS, {"vendor_id": vendor_id, "group_name": group_name or "",
+                                           "use_case_id": use_case_id, "created_by": actor},
+                    id=str(uuid.uuid4()), created_at=now, mode="suggest")
+        return self._one(self.insert("vendor_coding", [full], returning=True), VENDOR_CODING_FIELDS)
+
+    def delete_vendor_coding(self, vendor_id, group_name):
+        if not _is_uuid(vendor_id):
+            return False
+        row = self._vendor_coding_row(vendor_id, group_name)
+        return bool(row) and bool(self.delete("vendor_coding", {"id": f"eq.{row['id']}"}))
+
+    # the catalogue's rows (admin.py caches them for 5 minutes)
+    def admin_transaction_rows(self):
+        return self.select("transactions", {"select": ",".join(ADMIN_TXN_COLUMNS), "order": "id"})
+
+    def admin_invoice_rows(self):
+        return self.select("invoices", {"select": ",".join(ADMIN_INVOICE_COLUMNS), "order": "id"})
+
+    def schema_status(self):
+        """{probe: bool}: whether schema.sql's admin-portal tables and columns exist. Any failure other
+        than "not there" is raised (a store that is down is not a schema that is missing)."""
+        out = {}
+        for name, (table, column) in SCHEMA_PROBES:
+            try:
+                self._req("GET", table, {"select": column, "limit": 1})
+                out[name] = True
+            except StoreError as exc:
+                if not exc.missing:
+                    raise
+                out[name] = False
+        return out
+
+
+_REGISTRY_TABLES = (("vendors", "vendors", VENDOR_FIELDS), ("folders", "vendor_folders", VENDOR_FOLDER_FIELDS),
+                    ("patterns", "vendor_patterns", VENDOR_PATTERN_FIELDS),
+                    ("coding", "vendor_coding", VENDOR_CODING_FIELDS))
+
+
+def _count_values(rows):
+    """{"cost_center": {value: n}, "usage": {value: n}}: values trimmed, empty ones skipped."""
+    out = {"cost_center": {}, "usage": {}}
+    for r in rows:
+        for column in ("cost_center", "usage"):
+            value = str(r.get(column) or "").strip()
+            if value:
+                out[column][value] = out[column].get(value, 0) + 1
+    return out
+
+
+def _latest_per_card(rows):
+    """{last4: the first row per card} of rows ordered newest first."""
+    out = {}
+    for r in rows:
+        last4 = r.get("card_last4")
+        if last4 and last4 not in out:
+            out[last4] = {k: r.get(k) for k in NOTIFICATION_VIEW}
+    return out
+
 
 def _content_range_total(header, previous):
     """'0-24/25' -> 25, '*/0' -> 0, '0-999/*' or missing -> previous."""
@@ -531,12 +890,20 @@ def _content_range_total(header, previous):
 # ---------------------------------------------------------------------------
 # In-memory (tests, STORE=memory)
 # ---------------------------------------------------------------------------
-DEFAULT_COST_CENTERS = [
-    "Marketing", "IT & Software", "Shipping & Logistics", "Travel", "Meals & Entertainment",
-    "Office & Supplies", "Inventory / COGS", "Professional Services", "Utilities & Telecom",
-    "Insurance & Government", "Salon - Dufferin", "Salon - Ridgeway", "Salon - Consumer",
-    "Salon - Eglinton", "Salon - STC", "Salon - Rapistan", "Salon - Brampton", "US", "EU", "Other",
-]
+# The places and entities a purchase belongs to (schema.sql's seed), and what purchases are for: the
+# expense types that were cost centres until the coding split of Nov 2026.
+DEFAULT_COST_CENTERS = [("Head office", 100), ("Salon - Dufferin", 110), ("Salon - Ridgeway", 111),
+                        ("Salon - Consumer", 112), ("Salon - Eglinton", 113), ("Salon - STC", 114),
+                        ("Salon - Rapistan", 115), ("Salon - Brampton", 116), ("US", 120), ("EU", 121)]
+DEFAULT_USE_CASES = [("Marketing", 10), ("IT & Software", 20), ("Shipping & Logistics", 30), ("Travel", 40),
+                     ("Meals & Entertainment", 50), ("Office & Supplies", 60), ("Inventory / COGS", 70),
+                     ("Professional Services", 80), ("Utilities & Telecom", 90),
+                     ("Insurance & Government", 100), ("Other", 999)]
+SPLIT_ACTOR = "schema:coding_split"
+
+
+def _cost_center_order(r):
+    return (r.get("sort") or 0, str(r["name"]).casefold(), r["name"])
 
 
 class MemoryStore:
@@ -545,7 +912,23 @@ class MemoryStore:
         self.cards, self.transactions, self.invoices = {}, {}, {}
         self.statements, self.notifications = [], []
         self.statement_sources, self.state, self.leases = {}, {}, {}
-        self.cost_centers = list(DEFAULT_COST_CENTERS)
+        now = now_iso()
+        # The state the live database has after the coding split: the places active, the 11 expense
+        # types retired (never deleted), and the same 11 names as use cases.
+        self.cost_centers = ([_row(COST_CENTER_FIELDS, {"name": n, "sort": o, "active": True})
+                              for n, o in DEFAULT_COST_CENTERS]
+                             + [_row(COST_CENTER_FIELDS, {"name": n, "sort": o, "active": False,
+                                                          "updated_by": SPLIT_ACTOR, "updated_at": now})
+                                for n, o in DEFAULT_USE_CASES])
+        self.use_cases = {}
+        for n, o in DEFAULT_USE_CASES:
+            row = _row(USE_CASE_FIELDS, {"id": str(uuid.uuid4()), "name": n, "sort": o, "active": True,
+                                         "created_by": SPLIT_ACTOR, "created_at": now})
+            self.use_cases[row["id"]] = row
+        self.state["coding_split"] = {"at": now, "retired": [n for n, _ in DEFAULT_USE_CASES], "kept_in_use": [],
+                                      "memory": True}
+        self.audit, self._audit_seq = [], 0
+        self.vendors, self.vendor_folders, self.vendor_patterns, self.vendor_coding = {}, {}, {}, {}
         self.people = {}
         self._seq = 0
 
@@ -554,6 +937,11 @@ class MemoryStore:
 
     def upsert_cards(self, rows):
         with self.lock:
+            # cards.default_cost_center references cost_centers(name): checked before anything is written.
+            names = {c["name"] for c in self.cost_centers}
+            for r in rows:
+                if r.get("default_cost_center") is not None and r["default_cost_center"] not in names:
+                    raise _missing_fk(f"cards.default_cost_center {r['default_cost_center']!r} is not a cost centre")
             for r in rows:
                 self.cards.setdefault(r["last4"], {}).update(r)
 
@@ -697,7 +1085,7 @@ class MemoryStore:
             g["transactions"] += 1
             if t["type"] == "purchase":
                 g["spend"] = round(g["spend"] + float(t["amount"]), 2)
-                if not (t.get("cost_center") or ""):
+                if not str(t.get("usage") or "").strip():        # uncoded: no use case (schema.sql's view)
                     g["uncoded"] += 1
             if t["invoice_status"] in ("matched", "possible", "missing", "waived"):
                 g[t["invoice_status"]] += 1
@@ -741,24 +1129,36 @@ class MemoryStore:
         return [dict(n) for n in self.notifications if n["year"] == int(year) and n["month"] == int(month)]
 
     def list_cost_centers(self):
-        return list(self.cost_centers)
+        return [c["name"] for c in sorted(self.cost_centers, key=_cost_center_order) if c.get("active") is not False]
+
+    @staticmethod
+    def _person_view(p):
+        return {k: p.get(k) for k in PERSON_VIEW}
 
     def list_people(self):
-        return sorted((dict(p) for p in self.people.values()), key=lambda p: p["name"].lower())
+        return sorted((self._person_view(p) for p in self.people.values()), key=lambda p: p["name"].lower())
 
     def get_person(self, person_id):
         p = self.people.get(str(person_id or ""))
-        return dict(p) if p else None
+        return self._person_view(p) if p else None
+
+    def _email_taken(self, email, but=None):
+        """people_email_unique: lower(email), when not null."""
+        return email is not None and any(p["id"] != but and p.get("email") is not None
+                                         and p["email"].lower() == email.lower() for p in self.people.values())
 
     def create_person(self, name, email=None, created_by=None):
-        import uuid
         with self.lock:
             same = person_named(self.people.values(), name)
             if same:
-                return dict(same), False
-            person = {"id": str(uuid.uuid4()), "name": name, "email": email}
+                return self._person_view(same), False
+            email = _blank_to_none(email)
+            if self._email_taken(email):
+                raise _conflict(f"people_email_unique: {email}")
+            person = _row(PERSON_FIELDS, {"id": str(uuid.uuid4()), "name": name, "email": email,
+                                          "created_by": created_by, "created_at": now_iso()})
             self.people[person["id"]] = person
-            return dict(person), True
+            return self._person_view(person), True
 
     def list_statement_sources(self):
         return [dict(r) for _, r in sorted(self.statement_sources.items())]
@@ -803,3 +1203,269 @@ class MemoryStore:
     def get_lease(self, name):
         cur = self.leases.get(name)
         return dict(cur) if cur else None
+
+    # -- the admin pages (/admin): the same rules as schema.sql's unique indexes, keys and cascades --
+    def insert_audit(self, row):
+        with self.lock:
+            self._audit_seq += 1
+            entry = {k: row.get(k) for k in AUDIT_FIELDS}
+            for k in ("before", "after"):                    # stored as JSON, like the jsonb columns
+                if entry[k] is not None:
+                    entry[k] = json.loads(json.dumps(entry[k], default=str))
+            self.audit.append(dict(entry, id=self._audit_seq, at=now_iso()))
+
+    def list_audit(self, entity=None, entity_id=None, actor=None, before_id=None, limit=50):
+        actor = re.sub(r"[*,()]", "", str(actor or "")).strip().lower()   # as SupabaseStore sends it
+        rows = [r for r in reversed(self.audit)
+                if (not entity or r["entity"] == entity) and (not entity_id or r["entity_id"] == entity_id)
+                and (not actor or actor in str(r.get("actor") or "").lower())
+                and (before_id is None or r["id"] < int(before_id))]
+        return [{k: json.loads(json.dumps(r[k])) for k in AUDIT_LIST_COLUMNS} for r in rows[:int(limit)]]
+
+    def list_cost_center_rows(self):
+        return [dict(c) for c in sorted(self.cost_centers, key=_cost_center_order)]
+
+    def _cost_center_clash(self, name, but=None):
+        """cost_centers_name_lower_unique, leaving out the row being renamed (named `but`)."""
+        return any(c["name"] != but and c["name"].lower() == str(name).lower() for c in self.cost_centers)
+
+    def add_cost_center(self, row):
+        with self.lock:
+            full = _row(COST_CENTER_FIELDS, dict(row, active=True), sort=100)
+            if self._cost_center_clash(full["name"]):
+                raise _conflict(f"cost_centers_name_lower_unique: {full['name']}")
+            self.cost_centers.append(full)
+            return dict(full)
+
+    def update_cost_center(self, name, patch):
+        with self.lock:
+            row = next((c for c in self.cost_centers if c["name"] == name), None)
+            if row is None:
+                return None
+            patch = _only(patch, COST_CENTER_FIELDS, never=())
+            new = patch.get("name", name)
+            if new != name:
+                if self._cost_center_clash(new, but=name):
+                    raise _conflict(f"cost_centers_name_lower_unique: {new}")
+                for card in self.cards.values():        # references cost_centers(name) on update cascade
+                    if card.get("default_cost_center") == name:
+                        card["default_cost_center"] = new
+            row.update(patch)
+            return dict(row)
+
+    def list_use_cases(self, active_only=False):
+        rows = sorted(self.use_cases.values(), key=lambda r: (r.get("sort") or 0, str(r["name"]).casefold()))
+        return [dict(r) for r in rows if not active_only or r.get("active")]
+
+    def _use_case_clash(self, name, but=None):
+        return any(u["id"] != but and u["name"].lower() == str(name).lower() for u in self.use_cases.values())
+
+    def create_use_case(self, row):
+        with self.lock:
+            full = _row(USE_CASE_FIELDS, row, id=str(uuid.uuid4()), created_at=now_iso(), active=True, sort=100)
+            if self._use_case_clash(full["name"]) or full["id"] in self.use_cases:
+                raise _conflict(f"use_cases_name_unique: {full['name']}")
+            self.use_cases[full["id"]] = full
+            return dict(full)
+
+    def update_use_case(self, use_case_id, patch):
+        if not _is_uuid(use_case_id):
+            return None
+        with self.lock:
+            row = self.use_cases.get(use_case_id)
+            if row is None:
+                return None
+            patch = _only(patch, USE_CASE_FIELDS)
+            if "name" in patch and self._use_case_clash(patch["name"], but=use_case_id):
+                raise _conflict(f"use_cases_name_unique: {patch['name']}")
+            row.update(patch)
+            return dict(row)
+
+    def coding_values_in_use(self):
+        return _count_values(self.transactions.values())
+
+    def card_usage(self, last4):
+        return {"transactions": sum(1 for t in self.transactions.values() if t.get("card_last4") == last4),
+                "statements": sum(1 for s in self.statements if last4 in (s.get("cards") or ())),
+                "supplementary": sum(1 for c in self.cards.values() if c.get("primary_last4") == last4)}
+
+    def delete_card(self, last4):
+        with self.lock:
+            if last4 not in self.cards:
+                return False
+            if any(t.get("card_last4") == last4 for t in self.transactions.values()):
+                raise _missing_fk(f"transactions reference card {last4}")    # transactions.card_last4
+            del self.cards[last4]
+            return True
+
+    def latest_notifications(self):
+        # Newest first, later entries first on a tie (Postgres: sent_at.desc,id.desc).
+        order = sorted(enumerate(self.notifications), key=lambda p: (str(p[1].get("sent_at") or ""), p[0]), reverse=True)
+        return _latest_per_card(n for _, n in order)
+
+    def list_people_rows(self):
+        return sorted((_row(PERSON_FIELDS, p) for p in self.people.values()), key=lambda p: str(p["name"]).casefold())
+
+    def update_person(self, person_id, patch):
+        if not _is_uuid(person_id):
+            return None
+        with self.lock:
+            p = self.people.get(person_id)
+            if p is None:
+                return None
+            patch = _only(patch, ("name", "email", "updated_by", "updated_at"))
+            if "email" in patch:
+                patch["email"] = _blank_to_none(patch["email"])
+            if "name" in patch and any(o["id"] != person_id and o["name"].lower() == str(patch["name"]).lower()
+                                       for o in self.people.values()):
+                raise _conflict(f"people_name_unique: {patch['name']}")
+            if "email" in patch and self._email_taken(patch["email"], but=person_id):
+                raise _conflict(f"people_email_unique: {patch['email']}")
+            p.update(patch)
+            return self._person_view(p)
+
+    def delete_person(self, person_id):
+        if not _is_uuid(person_id):
+            return False
+        with self.lock:
+            if self.people.pop(person_id, None) is None:
+                return False
+            for row in list(self.transactions.values()) + list(self.cards.values()):   # on delete set null
+                if row.get("person_id") == person_id:
+                    row["person_id"] = None
+            return True
+
+    def people_usage(self):
+        out = {}
+        for t in self.transactions.values():
+            if t.get("person_id"):
+                out[t["person_id"]] = out.get(t["person_id"], 0) + 1
+        return out
+
+    def reassign_person_transactions(self, from_id, to_id):
+        if not (_is_uuid(from_id) and _is_uuid(to_id)):
+            return 0
+        with self.lock:
+            moving = [t for t in self.transactions.values() if t.get("person_id") == from_id]
+            if moving and to_id not in self.people:
+                raise _missing_fk(f"transactions.person_id {to_id} is not a person")
+            for t in moving:
+                t["person_id"] = to_id
+            return len(moving)
+
+    def list_vendor_registry(self):
+        return {name: [dict(r) for _, r in sorted(getattr(self, table).items())]
+                for name, table, _ in _REGISTRY_TABLES}
+
+    def create_vendor(self, row):
+        with self.lock:
+            full = _row(VENDOR_FIELDS, row, id=str(uuid.uuid4()), created_at=now_iso(), kind="supplier",
+                        code_each=False, active=True)
+            if full["id"] in self.vendors or any(v["name"].lower() == full["name"].lower() for v in self.vendors.values()):
+                raise _conflict(f"vendors_name_unique: {full['name']}")
+            self.vendors[full["id"]] = full
+            return dict(full)
+
+    def update_vendor(self, vendor_id, patch):
+        if not _is_uuid(vendor_id):
+            return None
+        with self.lock:
+            row = self.vendors.get(vendor_id)
+            if row is None:
+                return None
+            patch = _only(patch, VENDOR_FIELDS)
+            if "name" in patch and any(v["id"] != vendor_id and v["name"].lower() == str(patch["name"]).lower()
+                                       for v in self.vendors.values()):
+                raise _conflict(f"vendors_name_unique: {patch['name']}")
+            row.update(patch)
+            return dict(row)
+
+    def _need_vendor(self, vendor_id):
+        if vendor_id not in self.vendors:
+            raise _missing_fk(f"vendor {vendor_id} does not exist")
+
+    def add_vendor_folder(self, row):
+        with self.lock:
+            full = _row(VENDOR_FOLDER_FIELDS, row, id=str(uuid.uuid4()), created_at=now_iso(),
+                        folder_key=_key(row.get("folder")))
+            self._need_vendor(full["vendor_id"])
+            if any(f["folder_key"] == full["folder_key"] for f in self.vendor_folders.values()):
+                raise _conflict(f"vendor_folders_key_unique: {full['folder_key']}")
+            self.vendor_folders[full["id"]] = full
+            return dict(full)
+
+    def delete_vendor_folder(self, folder_id):
+        if not _is_uuid(folder_id):
+            return False
+        with self.lock:
+            return self.vendor_folders.pop(folder_id, None) is not None
+
+    def add_vendor_pattern(self, row):
+        with self.lock:
+            full = _row(VENDOR_PATTERN_FIELDS, row, id=str(uuid.uuid4()), created_at=now_iso(), kind="descriptor",
+                        match_type="prefix", status="probation", source="admin")
+            self._need_vendor(full["vendor_id"])
+            if any((p["kind"], p["pattern"]) == (full["kind"], full["pattern"]) for p in self.vendor_patterns.values()):
+                raise _conflict(f"vendor_patterns_unique: {full['kind']} {full['pattern']}")
+            self.vendor_patterns[full["id"]] = full
+            return dict(full)
+
+    def update_vendor_pattern(self, pattern_id, patch):
+        if not _is_uuid(pattern_id):
+            return None
+        with self.lock:
+            row = self.vendor_patterns.get(pattern_id)
+            if row is None:
+                return None
+            patch = _only(patch, VENDOR_PATTERN_FIELDS, never=("id", "vendor_id", "created_by", "created_at"))
+            after = dict(row, **patch)
+            if any(p["id"] != pattern_id and (p["kind"], p["pattern"]) == (after["kind"], after["pattern"])
+                   for p in self.vendor_patterns.values()):
+                raise _conflict(f"vendor_patterns_unique: {after['kind']} {after['pattern']}")
+            row.update(patch)
+            return dict(row)
+
+    def delete_vendor_pattern(self, pattern_id):
+        if not _is_uuid(pattern_id):
+            return False
+        with self.lock:
+            return self.vendor_patterns.pop(pattern_id, None) is not None
+
+    def _vendor_coding_row(self, vendor_id, group_name):
+        return next((r for _, r in sorted(self.vendor_coding.items())
+                     if r["vendor_id"] == vendor_id and _key(r.get("group_name")) == _key(group_name)), None)
+
+    def set_vendor_coding(self, vendor_id, group_name, use_case_id, actor):
+        if not (_is_uuid(vendor_id) and _is_uuid(use_case_id)):
+            return None
+        with self.lock:
+            self._need_vendor(vendor_id)
+            if use_case_id not in self.use_cases:
+                raise _missing_fk(f"use case {use_case_id} does not exist")
+            now = now_iso()
+            row = self._vendor_coding_row(vendor_id, group_name)
+            if row:
+                row.update(use_case_id=use_case_id, updated_by=actor, updated_at=now)
+                return dict(row)
+            full = _row(VENDOR_CODING_FIELDS, {"vendor_id": vendor_id, "group_name": group_name or "",
+                                               "use_case_id": use_case_id, "created_by": actor},
+                        id=str(uuid.uuid4()), created_at=now, mode="suggest")
+            self.vendor_coding[full["id"]] = full
+            return dict(full)
+
+    def delete_vendor_coding(self, vendor_id, group_name):
+        if not _is_uuid(vendor_id):
+            return False
+        with self.lock:
+            row = self._vendor_coding_row(vendor_id, group_name)
+            return bool(row) and self.vendor_coding.pop(row["id"], None) is not None
+
+    def admin_transaction_rows(self):
+        return [dict({k: t.get(k) for k in ADMIN_TXN_COLUMNS}, also_invoice_ids=list(t.get("also_invoice_ids") or ()))
+                for _, t in sorted(self.transactions.items())]
+
+    def admin_invoice_rows(self):
+        return [{k: r.get(k) for k in ADMIN_INVOICE_COLUMNS} for _, r in sorted(self.invoices.items())]
+
+    def schema_status(self):
+        return {name: True for name, _ in SCHEMA_PROBES}

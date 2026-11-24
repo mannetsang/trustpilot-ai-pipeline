@@ -6,8 +6,9 @@ account). The service in [`cloud_run/`](cloud_run/) stores each line once,
 reads every invoice filed in the AP Invoice folder on Drive with Gemini,
 pairs purchases with invoices, posts an *invoices needed* card to each credit
 card's own Google Chat space, and serves a dashboard, organised by year and
-month, where card owners record the cost centre and usage of each charge and
-link or waive invoices.
+month, where card owners record the use case (what each charge was for) and
+the cost centre of each charge and link or waive invoices. AP manages cards,
+use cases, cost centres, vendors and people on the admin pages at `/admin`.
 
 Storage is a **dedicated Supabase project** (Postgres, schema in
 [`schema.sql`](schema.sql)), separate from every other Supabase project the
@@ -433,7 +434,7 @@ domain to be in `ALLOWED_DOMAINS` and derives the role:
 
 | Role | Who | May |
 |---|---|---|
-| `ap` | the addresses in `AP_EMAILS` (`ap@`, `manne@`, `snow@`, added 2026-10-20); everyone, in password and open mode | upload, index, match, notify, edit cards, edit every transaction |
+| `ap` | the addresses in `AP_EMAILS` (`ap@`, `manne@`, `snow@`, added 2026-10-20); everyone, in password and open mode | upload, index, match, notify, edit cards, edit every transaction; manage cards, use cases and cost centres, vendors and people in `/admin` |
 | `member` | anyone else in the domain (IAP mode only) | read everything; edit only the transactions of cards whose **owner e-mail** (set by AP under *Cards...*; one address or several, separated by commas) is theirs, which includes *Add receipt...* on cards with receipt upload. `/api/transactions` returns an `editable` flag per row and the page disables the rest. Card 4421's owner is `anais@superhairpieces.com` (2026-10-15); add Bo Li's address next to it to let Bo Li add receipts too |
 
 In IAP mode nothing on the dashboard service is reachable without IAP: it
@@ -450,6 +451,14 @@ IAP's public keys are cached in the process for an hour. There is no OAuth
 client and no token in either page in any mode: the dashboard has no
 sign-in button of its own, and the sign-in page's Google buttons are plain
 links to the dashboard.
+
+**The admin pages** (`/admin`, see "Admin pages" below) sit behind IAP like
+`/`: the page itself holds no data, and every `/api/admin` call checks the
+`ap` role, so a member who opens the address sees "These pages are for
+accounts payable only" and gets 403 from the API. Its writes need
+`X-Requested-With` like every other change, and are refused (403) in open
+mode against the real database, where anyone who reaches the URL would be
+AP; reads stay allowed there.
 
 **The sign-in page.** IAP guards every path of the service, so a page that
 shows before sign-in cannot live on it: `login/` is a second, public Cloud
@@ -514,13 +523,18 @@ Two other modes exist, one edit of the deploy workflow away (step 5):
   missing and possible invoices; the URL hash is `#/YYYY/MM?card=1610`, which
   is what the Chat card buttons open.
 - **Tiles** for the month (or the selected card): spend, purchases, invoices
-  found, missing, possible, waived, charges without a cost centre.
+  found, missing, possible, waived, and **No use case**: purchases whose Use
+  case box is empty. That is what "uncoded" means everywhere (the tile, the
+  filter, the month list, the Chat card and the voice assistant): a cost
+  centre alone does not code a purchase.
 - **AP panel** (AP only), one row: a slim drop zone for the statement
   (drop the file on it or click it), *Upload and process*, then
   *Re-run matching*, *Send reminders*,
   *Cards...* (label, holder, group, card number, linked under, name on
   card, owner e-mail, Chat space name, active flag, and whether a webhook is
-  configured for the card), plus the step list
+  configured for the card; a save there leaves the card's default cost
+  centre and receipt-upload switch, which live in `/admin`, as they are),
+  *Admin* (the admin pages), plus the step list
   of the running job. Nothing is posted to Chat on its own: after matching
   (and on *Send reminders*) the page lists which cards would get a reminder,
   with their counts and Chat spaces, and waits for *Send* or *Not now*.
@@ -545,8 +559,8 @@ Two other modes exist, one edit of the deploy workflow away (step 5):
   new it says so and reloads the months (not while a step of its own runs).
 - **Card chips** ("1610 - Yin Wei", the full label on hover; one line that
   scrolls sideways when there are more cards than fit) and a status filter
-  (all, missing, possible, matched, waived, no cost centre), a search box
-  over description, amounts, cost centre, usage and person, and on phones also a
+  (all, missing, possible, matched, waived, no use case), a search box
+  over description, amounts, cost centre, use case and person, and on phones also a
   card drop-down (the chips, with their counts, still show above it).
 - **Transaction table** (click a header to sort, drag its right edge to
   resize, *Columns* to hide columns or reset; the browser remembers all
@@ -558,12 +572,34 @@ Two other modes exist, one edit of the deploy workflow away (step 5):
   edge follows the mouse; the table is fitted again when you let go. While it fits, the header row stays pinned under the top bar
   as the page scrolls. The Card column is left out while one card is
   picked. Columns: date, card, description with city/country, amount
-  (with the original foreign amount), cost centre dropdown (the
-  `cost_centers` table, with an *Other...* free text), usage, note, the
-  **person** the transaction is assigned to, and the
+  (with the original foreign amount), cost centre dropdown (the active
+  places of the `cost_centers` table, with a *Custom…* free text), use case,
+  note, the **person** the transaction is assigned to, and the
   invoice column: the linked file with vendor, number and total, or the
   buttons *Confirm* / *Not this* on a possible match, *Link...* / *No
   invoice* on a missing one, *Undo* on a waived one. Edits save on change.
+- **Use case** (what the purchase was for; stored in `transactions.usage`).
+  A pick-list of the use cases AP keeps in `/admin` (those for any group
+  plus those of the card's group, in AP's order, *Other* last), then *Type
+  something else…*, which turns the cell into a text box that saves free
+  text when you leave it (empty or Esc gives up). A mouse pick saves at
+  once; with the keyboard, arrowing through the closed list saves nothing
+  until Enter or leaving the box, so passing through the list is not a
+  save. A typed name that matches a listed one, case and spaces aside, is
+  stored with the list's spelling. When the purchase has no cost centre
+  and its card has a **default cost centre** (set in `/admin`), saving a
+  use case fills the cost centre too, and the toast says so (*Use case saved
+  · cost centre set to Salon - Dufferin*); until then the Cost centre box
+  shows that default greyed (*— Salon - Dufferin when the use case is set
+  —*). A cost centre already there is never replaced, and a supplementary
+  card does not borrow its primary's default. A use case typed into the
+  Cost centre box (say *Marketing*) is stored as typed, and a toast points
+  to the Use case box, because the purchase still has no use case. When AP
+  has switched **coding suggestions** on (`/admin`, Settings) and the
+  vendor registry knows the purchase's vendor, an uncoded purchase shows a
+  *Use Shipping & Logistics* button under the box (its tooltip says which
+  vendor and pattern suggested it); nothing is filled in until someone
+  presses it or picks a value.
 - **Cards** (*Cards...*, AP). Each card is the account number the bank's
   export shows (its last four digits). Its row holds:
   - **Holder**: who uses the card. Saving a new holder adds them as a person
@@ -589,8 +625,9 @@ Two other modes exist, one edit of the deploy workflow away (step 5):
   missing** downloads an Excel file of the purchases still missing their
   invoice, for the group or card on screen, this month or all months
   (`GET /api/export/missing`). It has one row per purchase, with the group,
-  account, card number, primary card, holder and person, plus a *Totals*
-  sheet per group and currency.
+  account, card number, primary card, holder and person, cost centre and
+  use case (the column was headed *Usage* before November 2026), plus a
+  *Totals* sheet per group and currency.
 - **Person** (the `people` table; `transactions.person_id`). Each transaction
   can be assigned to a person - who made the purchase, or answers for it -
   from a drop-down of everyone added so far. A purchase nobody assigned
@@ -659,7 +696,8 @@ Two other modes exist, one edit of the deploy workflow away (step 5):
   month folders, searchable by vendor, file, folder and amount; ones already
   linked elsewhere are greyed out.
 - **Add receipt...** replaces *Link...* on the missing purchases of cards
-  with receipt upload (`RECEIPT_UPLOAD_CARDS`, today 4421). The dialog takes
+  with receipt upload (`RECEIPT_UPLOAD_CARDS`, today 4421, unless the card's
+  own switch in `/admin` says otherwise). The dialog takes
   photos (*Take photo* opens the phone's camera) or files (*Choose photo or
   PDF*; a drop zone on a computer), several photos for a long receipt, shows
   where the file will go with *Change*, and saves with *Save receipt*: the
@@ -672,7 +710,7 @@ Two other modes exist, one edit of the deploy workflow away (step 5):
 - **On a phone** (640px and narrower) the table becomes one block per
   purchase: date, description and amount, then the status (*Invoice
   missing*, *Invoice found* with the linked file, *Possible match*) and its
-  buttons, then cost centre and usage; a coloured edge (red missing, amber
+  buttons, then cost centre and use case; a coloured edge (red missing, amber
   possible, green found) shows the status while scrolling. The status
   filters above (*Missing*, *Matched*, ...) work as on a computer.
 - **Receipts list** (`#/YYYY/MM?card=4421&view=receipts`, the Chat card's
@@ -686,6 +724,175 @@ Two other modes exist, one edit of the deploy workflow away (step 5):
   the ones marked as having no receipt (with *Undo*). Someone who may only read the card sees the list with a note to
   ask AP to set them as the owner.
 - **Uploads this month** and **Last notifications** lists for AP.
+
+## Admin pages (/admin)
+
+AP's own pages, opened with *Admin* on the dashboard (AP only; see "Access
+and roles"). Six tabs down a dark sidebar, or a strip that scrolls sideways
+on a phone: *Cards*, *Use cases & cost centres*, *Vendors*, *People*,
+*History* and *Settings*. The address names the tab (`/admin#vendors`,
+`/admin#history?entity=card&entity_id=4431`), so a tab can be linked. An
+editor with unsaved changes asks before it is closed, before another tab
+opens and before the page is left. Every change made here, in the
+dashboard's *Cards...* dialog and through *New person…* is written to the
+History.
+
+**Use cases and cost centres (the November 2026 split).** Until then the
+Cost centre list mixed places with kinds of spending. Now:
+
+- a **cost centre** is where a purchase belongs: the seven salons (Dufferin,
+  Ridgeway, Consumer, Eglinton, STC, Rapistan, Brampton), US, EU and the new
+  *Head office* for online and head-office spending;
+- a **use case** is what it was for: the dashboard's Use case box (still the
+  `usage` field in the database, the API and the export). The list started
+  as the eleven former expense types in their old order: Marketing, IT &
+  Software, Shipping & Logistics, Travel, Meals & Entertainment, Office &
+  Supplies, Inventory / COGS, Professional Services, Utilities & Telecom,
+  Insurance & Government, Other. A use case is for every group or for one
+  card group (Hair, Beauty).
+- **Uncoded means no use case**, everywhere it is counted. A cost centre
+  alone does not code a purchase.
+- Applying the schema **retires** the eleven expense types in
+  `cost_centers` (never deletes them, and leaves any a purchase carries
+  active), once: `app_state` `coding_split` records it, so a later apply
+  never retires one AP has restored. A new database is seeded with the
+  places only.
+- Both lists are edited the same way: add, edit, reorder (↑ ↓, then *Save
+  order*), retire and restore; nothing is deleted. A retired name stays on
+  the purchases that carry it and in the export, and leaves the dashboard's
+  pickers. A rename that changes more than capitals or spaces is refused
+  while purchases carry the name (the message gives the count): add the new
+  name and retire the old one instead (*Add 'New' and retire 'Old'* does
+  both); purchases already coded keep the old name and still count as coded.
+  Renaming a cost centre that is a card's default renames the default too.
+- Under each list, the values typed on purchases that are not on it, each
+  with *Add as use case* or *Add to list*, and the use case names typed into
+  the Cost centre box (those purchases still count as having no use case).
+
+**Cards tab.** One row per card: holder (*not a person* when the holder is
+not linked to a person), group, owners (an address outside
+`ALLOWED_DOMAINS` is amber: it cannot sign in), default cost centre, Chat
+webhook, receipt upload, activity (transactions, those of the last three months,
+missing, last month seen), flags and the last change. Chips filter the
+cards by flag: *No owner*, *No group*, *Holder not linked to a person*, *No
+Chat webhook of its own*, *No activity in 90 days*, *Never used*, *Never
+reviewed*, *Default cost centre retired*, *No default cost centre (its
+primary card has one)*. *By owner* lists each owner's cards. A click opens
+the card's editor, which sends only the fields that changed:
+
+- **Default cost centre** (`cards.default_cost_center`): a salon card is
+  that salon. Saving a use case on one of the card's purchases that has no
+  cost centre fills it in (dashboard, above). A retired default fills
+  nothing until the card gets another. A supplementary card has its own
+  default (*Use the same* copies the primary's) because it may be used
+  somewhere else. **Fill into coded purchases without a cost centre**
+  (offered right after a new default is saved, with the count, and in the
+  editor) fills the default into the card's purchases that were given a use
+  case before the default existed. It never replaces a cost centre, and one
+  set meanwhile is kept.
+- **Receipt upload** (`cards.receipt_upload`): *On*, *Off*, or *Follow
+  server setting* (empty: `RECEIPT_UPLOAD_CARDS` decides). The card's own
+  setting wins, even over `RECEIPT_UPLOAD_CARDS=all`, for the dashboard's
+  *Add receipt...*, the receipts list and the Chat card's *Add receipts*,
+  in the service and the weekly reminder alike.
+- **Chat reminders on** is the card's `active` flag. Webhooks themselves are
+  not edited here (Settings says how).
+- **Delete card**, for unused cards only: no transactions, not listed on an
+  upload, not the primary of another card (the editor says what stops it).
+  When removing the card would move reissued receipt numbers to another
+  card ("receipts showing 3906 would count as card 3922's"), the page lists
+  them and asks again. While an import, a match or the weekly reminder runs,
+  the delete answers "an import or match is running; try again in a minute".
+  A statement that lists the card again adds it back.
+- **Add card** creates a card before its first statement, with its owners,
+  default and receipt setting in the same step.
+
+Under the table, **Numbers on receipts that no card claims**: receipts read
+from the Invoice folder that show a card number no card has, so they can
+never be matched. *Find the card* lists the cards with a purchase of the
+receipt's amount 0-21 days after it; *Use as card number of 4431* gives the
+number to that card (a second question when it replaces another number),
+then offers *Match Oct 2026 for card 4431* for each month concerned, since
+nothing else rematches them. *Ignore…* (with a reason) hides a misread
+number; *Restore* brings it back.
+
+**Use cases & cost centres tab.** The two lists side by side, as described
+above. Until the schema is applied the tab says what is missing and its
+buttons are disabled.
+
+**Vendors tab.** It does **not** change matching or where receipts are
+filed: the registry only feeds coding suggestions (Round B, which would let
+patterns help matching, comes later and is reviewed and backtested
+separately). Three views:
+
+- *Catalogue*: every vendor folder under the Invoice folder, with its
+  documents, months, how Gemini read the supplier's name, matched,
+  possible, documents nothing links to, purchases missing their invoice that
+  start like the folder's matched ones, and a *Needs attention* order. Read
+  from whole-table reads kept for 5 minutes; *Refresh* reads again. A
+  folder opens its detail: the descriptor starts linked to it (and to other
+  folders), its unmatched documents, its proposals, and *Register as vendor*.
+- *Registry*: the vendors. A vendor is a name, a kind (supplier, payment
+  processor, agent, not a vendor), *code each purchase* for marketplaces
+  such as Amazon (no default), its folders (several folders can be one
+  vendor; a folder belongs to one vendor), its patterns and its default use
+  case per card group. A pattern is how the card descriptor starts, the
+  whole descriptor, or the supplier name read on its documents; it is *On
+  (suggestions only)* or *Off*. Patterns that would catch other vendors are
+  refused: under three characters, a processor or platform word alone (`sq`,
+  `paypal`: add the next word) or a one-word start under four letters
+  (`air`).
+- *Proposals*, worked out from the link history on each read: a descriptor
+  start always linked to one folder (three times or more), one start linked
+  to two to four folders (one vendor?), and a registered supplier whose
+  purchases people coded one way (three or more, three in four the same).
+  *Accept* sends the change it describes; *Dismiss* hides it.
+
+**Coding suggestions** (Settings, **off** by default). When on, an uncoded
+purchase that someone may edit gets a suggestion when its vendor is found
+(an exact descriptor pattern, then the longest start, then its invoice's
+folder, then the supplier name on it) and that vendor has a default use
+case for the card's group or for any group. Marketplaces and non-suppliers
+get none. A suggestion is a button on the dashboard; nothing is written
+until someone presses it or picks a value.
+
+**People tab.** Everyone purchases can be assigned to, with the cards they
+hold, the cards they own by e-mail, and their purchases. A holder whose
+e-mail is not among the card's owners gets *Make owner of 4431*. Edit
+renames (refused when the name exists, offering a merge; the cards they
+hold follow, and a default label with them) and sets the e-mail, which
+gives no rights by itself: owning a card is what lets someone code it.
+*Merge into…* moves purchases and cards to another person and deletes this
+one. *Delete* says what it would unassign first; a card holder is never
+deleted (merge them, or change the card's holder). *Link card holders*
+links every card holder to a person, adding the missing ones, and the page
+lists names that look like the same person.
+
+**History tab.** The `admin_audit` log, newest first: who (the signed-in
+e-mail, or the typed name in open and password mode), when, what changed
+(before and after), filterable by kind, id and person, with *Load older*.
+Written on a best-effort basis: a change is never refused because its log
+row could not be written. **History starts at the deploy** of these pages;
+earlier changes are only in the rows' *Updated by*.
+
+**Settings tab.** Read only, apart from the suggestions switch: the sign-in
+mode, the AP addresses (`AP_EMAILS`: change the default in `main.py` and
+the deploy workflow, then push; a console-only edit is undone by the next
+deploy), receipt upload per card, which cards have their own Chat webhook
+(Secret Manager `ap-reconciliation-card-webhooks`; a new version reaches
+the service on its next deploy or instance), and whether every table and
+column the pages need is there, with the date and retired names of the
+coding split.
+
+**Data model.** The pages add the tables `use_cases`, `vendors`,
+`vendor_folders`, `vendor_patterns`, `vendor_coding` and `admin_audit`, the
+columns `cards.default_cost_center` (follows a cost-centre rename) and
+`cards.receipt_upload`, `cost_centers.active`, `description` and the
+updated stamps, and `people.updated_by`/`updated_at`. People's e-mails and
+cost-centre names are unique ignoring case. `app_state` keys:
+`coding_split` (the one-time split), `coding_settings` (the suggestions
+switch), `vendor_registry` (a version counted up on each registry change),
+`vendor_proposals` (dismissed proposals) and `ignored_card_numbers`.
 
 ## Chat reminders per card
 
@@ -707,7 +914,18 @@ space in Google Chat, click the space name, **Apps & integrations**,
 reconciliation`, save and copy the URL. Cards that are inactive (the flag
 under *Cards...*) are never notified.
 
-On cards with receipt upload (`RECEIPT_UPLOAD_CARDS`, today 4421) the card's
+Each Chat card names the month, the purchases with no invoice (count and
+total), the possible matches to confirm and, when there are any, **Without
+use case: n** (the card's purchases with an empty Use case box). Its footer
+asks for the receipts, and to open the dashboard to confirm possible
+matches, "say what each purchase was for (its use case)" or mark a charge as
+having no invoice. **Reminders are about receipts:** a card whose receipts
+are all in gets no reminder even when some of its purchases still lack a
+use case (its notify result stays `nothing missing`). Coding progress is
+the dashboard's *No use case* tile and filter.
+
+On cards with receipt upload (`RECEIPT_UPLOAD_CARDS`, today 4421, or the
+card's own switch in `/admin`) the card's
 *Invoice folder* button is replaced by **Add receipts**, first and blue,
 linking to `<dashboard>/receipts/<last4>/<YYYY>/<MM>`. That path (not a
 `#` link, which a Google sign-in on the way can drop) redirects to the
@@ -721,16 +939,17 @@ phone. Chat cards posted before keep their old button until the next send.
 | Method and path | Auth | What it does |
 |---|---|---|
 | `GET /` | none | the dashboard page |
+| `GET /admin` | none (IAP guards the path, as for `/`) | the admin pages; the page holds no data, every `/api/admin` call checks the role |
 | `GET /health` | none | `{"ok": true, "store": ..., "last_job": ...}`; `?deep=1` adds reachability checks for Supabase and the Invoice folder, how many card webhooks are configured (counts only: it answers without the password) and the auth mode. (`/healthz` is answered by Cloud Run's front end itself, not the container.) |
 | `GET /api/config` | none | `auth` (`password`, `open` or `iap`), `auth_disabled`, dashboard URL, sign-in page URL (`login_url`), Invoice folder URL, `ai_enabled` |
 | `POST /api/login` | none, but `X-Requested-With: XMLHttpRequest` in password mode (403 without) | password mode: `{"password": "..."}` sets the session cookie (401 wrong, 429 after too many wrong ones); a no-op in the other modes |
 | `POST /api/logout` | none, but `X-Requested-With: XMLHttpRequest` in every mode (403 without) | clears the session cookie (*Lock*) |
 | `GET /api/me` | signed in | e-mail, name, role, cards owned |
-| `GET /api/months` | signed in | month navigation with per-card counts, cards, cost centres, people |
-| `GET /api/transactions?year&month[&card]` | signed in | the month's transactions with their invoice, `editable` flag, `person_id`, the people list, uploads and recent notifications |
-| `PATCH /api/transactions/<id>` | signed in, AP or the card's owner | body: `cost_center`, `usage`, `note`, `person_id` (a person's id, or `""` to clear; 400 for one that does not exist), and/or `action` (`waive` with `reason`, `unwaive`, `confirm`, `link` with `invoice_id`, `unlink`) |
+| `GET /api/months` | signed in | month navigation with per-card counts (`uncoded`: purchases without a use case), cards, cost centres (active ones), `use_cases` (active ones: `id`, `name`, `group_name`, `description`, in AP's order), people |
+| `GET /api/transactions?year&month[&card]` | signed in | the month's transactions with their invoice, `editable` flag, `person_id`, the people list, uploads and recent notifications, plus `use_cases` (as above) and `suggestions` (the switch); while it is on, an editable purchase without a use case whose vendor has a default carries `suggestion` (`usage`; `cost_center`, the card's active default when the purchase has none; `vendor`; `source`, what suggested it) |
+| `PATCH /api/transactions/<id>` | signed in, AP or the card's owner | body: `cost_center`, `usage` (the use case), `note`, `person_id` (a person's id, or `""` to clear; 400 for one that does not exist), and/or `action` (`waive` with `reason`, `unwaive`, `confirm`, `link` with `invoice_id`, `unlink`). A cost centre or use case typed with other capitals or spaces is stored with the list's spelling; anything else is stored as typed. Setting a use case on a purchase with no cost centre, without sending `cost_center`, fills the card's active default cost centre and answers `filled_cost_center`; if someone set a cost centre meanwhile it answers 409 *This purchase changed meanwhile; reload.* A use case name sent as `cost_center` on a row without a use case answers a `hint` |
 | `GET /api/people` | signed in | `{"people": [{"id", "name", "email"}]}`, by name |
-| `POST /api/people` | signed in | `{"name"[, "email"]}`: adds a person (`201 {"person", "created": true}`), or answers `200` with the one already named so (case and extra spaces aside); 400 for an empty name, one over 100 characters or a bad e-mail |
+| `POST /api/people` | signed in | `{"name"[, "email"]}`: adds a person (`201 {"person", "created": true}`, recorded in the History), or answers `200` with the one already named so (case and extra spaces aside); 400 for an empty name, one over 100 characters or a bad e-mail; 409 for an e-mail another person has |
 | `POST /api/ask?year&month[&card]` | signed in | voice mode: `{"question": "..."}` (up to 500 characters; `card` is four digits) answered as `{"answer", "source": "gemini" \| "summary"}` for the browser to read aloud; read only |
 | `POST /api/transactions/<id>/rematch` | signed in, AP or the card's owner | *Rematch*: reads new invoices for the purchase's months, then looks for its invoice again, as a background job (202 with the job, polled through `/api/jobs/current?id=`; 409 while another job runs; 400 for a waived, non-purchase or hand-linked row). The job's result has `outcome` (`found`, `same`, `kept`, `none` or `conflict`), the status and invoice the row now has, `changed`, `invoices_read`, `read_errors` with `read_error_files`, and the updated row; its progress has `stage` and `percent` |
 | `GET /api/transactions/<id>` | signed in | one row as the table shows it (with `checks` and `invoice.reading`); the receipt dialog polls it while the file is read |
@@ -739,9 +958,9 @@ phone. Chat cards posted before keep their old button until the next send.
 | `DELETE /api/transactions/<id>/receipt` | signed in, AP or the card's owner | *Remove...*: unlinks a receipt added from the dashboard and sends its file to the Drive trash; the file stays out of matching even when the trash fails (`200` with `"trashed": false` and a `warning`) |
 | `GET /receipts/<last4>/<YYYY>/<MM>` | signed in | the Chat card's *Add receipts*: redirects to the receipts list |
 | `GET /api/invoices?year&month` | signed in | invoices of month-1..month+1 with a `linked` flag (the picker) |
-| `GET /api/cards` | signed in | cards |
-| `POST /api/cards` | AP | `{"last4", "label", "holder_name", "group_name", "card_number", "primary_last4", "name_on_card", "owner_email", "chat_space", "active"}`; `owner_email` may list several addresses (commas, semicolons or spaces), stored lower-case as `a@x, b@x`; 400 if one is not an address, a card number is not four digits, is another statement card or is already another card's, or a primary card is the card itself, not on the dashboard, or itself supplementary or a primary already. A new holder is added as a person (`cards.person_id`), only once nothing in the save was refused. Answers the cards and the people |
-| `GET /api/export/missing` | signed in | Excel file of the purchases still missing their invoice; `?group=Hair` (`-` for the cards in no group), `?card=4431`, `?year=&month=` for one month (else every month); 400 for a bad card or month. Totals per group and currency, never added across currencies. Header `X-Rows`: how many |
+| `GET /api/cards` | signed in | cards, each with `default_cost_center` (`""` for none), `receipt_upload` (whether it is on) and `receipt_upload_setting` (the card's own `true`/`false`, or `null` to follow `RECEIPT_UPLOAD_CARDS`) |
+| `POST /api/cards` | AP | `{"last4", "label", "holder_name", "group_name", "card_number", "primary_last4", "name_on_card", "owner_email", "chat_space", "active"}`; `owner_email` may list several addresses (commas, semicolons or spaces), stored lower-case as `a@x, b@x`; 400 if one is not an address, a card number is not four digits, is another statement card or is already another card's, or a primary card is the card itself, not on the dashboard, or itself supplementary or a primary already. A new holder is added as a person (`cards.person_id`), only once nothing in the save was refused. An unknown `last4` answers 404 unless the body has `"create": true` (409 if that card exists); a create that would take reissued receipt numbers from another card answers 409 with `alias_changes` (`number`, `before`, `after`) unless `"confirm": true`. `expect_card_number` (optional; `""` for none) refuses with 409 when the card's number is no longer that, so a page cannot replace a number it has not seen. `default_cost_center` (an active cost centre, snapped to its spelling; `""` or `null` clears; else 400) and `receipt_upload` (`true`, `false` or `null`; else 400). 400 for a body that is not a JSON object. Answers the cards, the people, `card` (the saved card), and `fillable` (the purchases with a use case and no cost centre the new default could fill) when an active default was set. Each create and change is recorded in the History |
+| `GET /api/export/missing` | signed in | Excel file of the purchases still missing their invoice (the use case column is headed *Use case*, formerly *Usage*); `?group=Hair` (`-` for the cards in no group), `?card=4431`, `?year=&month=` for one month (else every month); 400 for a bad card or month. Totals per group and currency, never added across currencies. Header `X-Rows`: how many |
 | `GET /api/statements?year&month` | signed in | uploads that touched the month |
 | `POST /api/statements[?background=1]` | AP | multipart `file`; `?sync=1` also indexes, matches and notifies (`&notify=0` to skip the cards) |
 | `POST /api/index?year&month[&limit]` | AP | read up to `limit` (max 100) new invoices for month-1..month+1 |
@@ -749,9 +968,45 @@ phone. Chat cards posted before keep their old button until the next send.
 | `POST /api/notify?year&month[&card][&dry_run=1]` | AP | post the Chat cards (`dry_run` returns the payloads instead) |
 | `POST /api/jobs?kind=index\|match\|notify&year&month[&card][&limit=8]` | AP | the same step as a background job, answered at once with `202 {status: started, job}` (`409 busy` while another runs). What the dashboard uses: an invoice read or a match can run for minutes and office networks drop a silent response after a minute or so. `index` loops over batches of `limit` files until nothing new is left |
 | `GET /api/jobs/current[?id=…]` | signed in | the job with that id (the last ten stay readable, so a tab keeps its own result when someone else starts the next job; 404 after a restart), else the newest: `id`, `name`, `started`, `finished`, `running`, `progress` (`read`, `live`, `remaining`, `note`, `year`, `month`, …) and, once finished, `result` or `error` |
+| `GET /api/admin/settings` | AP | what the Settings tab shows: auth mode, store, AI, allowed domains, `ap_emails` and how to change them, receipt upload (`env`, `all`, `per_card`), webhooks (which cards have their own; no URLs), `schema` (each table and column the pages need: `true` when present; `coding_split`), `coding_split`, `coding` (`suggestions`, `by`, `at`), `registry_version`; `schema_error` when the check itself failed |
+| `PUT /api/admin/settings/coding` | AP | `{"suggestions": true\|false}`: the coding-suggestions switch (400 for anything else) |
+| `GET /api/admin/cards` | AP | the Cards tab: every card as in `/api/cards` plus `activity`, `flags`, `owners`, `last_notification`, `last_change`, `default_cost_center_active`, `primary_default`, `deletable` and `delete_blockers`; `counts` per flag, `flag_labels`, groups, people, active cost centres, `owners` (cards per owner address), `unclaimed` (receipt card numbers no card claims, with `ignored`) |
+| `DELETE /api/admin/cards/<last4>[?confirm=1]` | AP | deletes an unused card: 409 with `counts` when it has transactions, an upload lists it or it is a primary card; 409 with `alias_changes` when receipt numbers would move to another card, until `?confirm=1`; 409 "an import or match is running" while a job holds the lease or runs in this instance; 400 for a `last4` that is not four digits, 404 unknown |
+| `POST /api/admin/cards/<last4>/fill-default` | AP | fills the card's active default cost centre into its purchases with a use case and no cost centre (never over one set meanwhile): `{"filled", "cost_center"}`; 400 when the card has no active default |
+| `GET /api/admin/card-numbers/<n>` | AP | the receipts showing card number `n` and the likely cards (purchases of the receipt's amount 0-21 days later; each with `card_number`, `card_number_receipts`, `months`), `considered`, `ignored`; 404 when no receipt shows it |
+| `POST\|DELETE /api/admin/card-numbers/<n>/ignore` | AP | POST `{"reason"}` (1-200 characters) hides a misread number from the panel; DELETE brings it back (404 when not ignored) |
+| `GET /api/admin/coding` | AP | every cost centre (with `uses`, `card_defaults`) and use case (with `uses`), retired ones included; `usage_not_listed`, `cost_centers_not_listed`, `cost_centers_like_use_cases`, `groups`, `schema_missing` |
+| `POST /api/admin/cost-centers` | AP | `{"name", "sort"?, "description"?}`: 201; 409 with `existing` (`name`, `active`) when the name exists ignoring case |
+| `PATCH /api/admin/cost-centers?name=<current name>` | AP | `{"name"?, "sort"?, "description"?, "active"?}`: a rename beyond capitals and spaces is 409 with `uses` while purchases carry the name; a rename carries over to cards' defaults; retiring answers `warnings` naming the cards it was the default of |
+| `POST /api/admin/cost-centers/order` | AP | `{"names": [...]}` in the new order (names not sent keep their place after them; unknown or repeated ones are 400) |
+| `POST /api/admin/use-cases` | AP | `{"name", "group_name"?, "description"?, "sort"?}`: 201, placed before *Other* when no sort is given; 400 for a group no card has; 409 with `existing` (`id`, `name`, `active`) |
+| `PATCH /api/admin/use-cases/<id>` | AP | `{"name"?, "group_name"?, "description"?, "sort"?, "active"?}`: the same rename rule (409 with `uses`); retiring answers `warnings` naming vendors that suggest it |
+| `POST /api/admin/use-cases/order` | AP | `{"ids": [...]}` in the new order, as for cost centres |
+| `GET /api/admin/vendors?q&sort&registered&page&per[&fresh=1]` | AP | the folder catalogue, a page at a time (`sort`: `attention`, `volume`, `name`; `registered`: `all`, `yes`, `no`), with `generated_at` and `registry_available`. Whole-table reads are reused for 5 minutes; `fresh=1` reads again |
+| `GET /api/admin/vendors/folder?name=<folder>` | AP | one folder: its descriptor starts (each with `problem` and `owner`), unmatched documents, vendor and `proposals`; 400 without a name, 404 for a folder with no documents |
+| `GET /api/admin/registry` | AP | `available`, `version`, `vendors` (each with `folders`, `patterns`, `coding` and `resolves`), active `use_cases`, `groups`, `kinds`, `folder_names` |
+| `POST /api/admin/vendors` | AP | `{"name", "kind"?, "code_each"?, "note"?, "folders"?, "patterns"?, "source"?}`: 201 `{"vendor"}`; 409 with `clash` (`name`, `folder` or `pattern`), `value` and `existing` (`id`, `name`); 400 for a pattern that would catch other vendors |
+| `PATCH /api/admin/vendors/<id>` | AP | `{"name"?, "kind"?, "code_each"?, "active"?, "note"?}`: `{"vendor", "warnings"}` (coding defaults that a marketplace or non-supplier no longer uses) |
+| `POST /api/admin/vendors/<id>/folders`, `DELETE /api/admin/vendor-folders/<id>` | AP | add `{"folder"}` or `{"folders": [...]}` (201; 200 when the vendor already holds them all; 409 when another vendor holds one), or remove one |
+| `POST /api/admin/vendors/<id>/patterns`, `PATCH\|DELETE /api/admin/vendor-patterns/<id>` | AP | add `{"pattern", "kind"?: "descriptor"\|"invoice_vendor", "match_type"?: "prefix"\|"exact"}` (a supplier name is always exact; new patterns start on), set `{"status": "probation"\|"off"}` (shown as On and Off; matching does not use patterns, so `trusted` is 400), or remove one |
+| `PUT /api/admin/vendors/<id>/coding` | AP | `{"group_name": ""\|group, "use_case_id": id\|null}`: the vendor's default use case for that group (or any group); 400 for a marketplace, a non-supplier, or a use case not active for that group |
+| `GET /api/admin/proposals`, `POST /api/admin/proposals/dismiss` | AP | the proposals from link history, each with `text`, `evidence`, `effect` and the `accept` request (`method`, `path`, `body`); dismiss takes `{"id", "undo"?}` |
+| `GET /api/admin/people` | AP | everyone with `cards_held`, `cards_owned` (by e-mail), `cannot_code`, `purchases`; `holders_unlinked`; `duplicates` (pairs that look like the same person) |
+| `PATCH /api/admin/people/<id>` | AP | `{"name"?, "email"?}`: a rename the cards held follow (409 with `merge_into` when the name exists); the e-mail is stored lower-case, `""` clears it, 409 when another person has it |
+| `POST /api/admin/people/<id>/merge` | AP | `{"into": id}`: moves purchases and held cards, deletes this person, copies the e-mail when the target has none |
+| `DELETE /api/admin/people/<id>[?confirm=1]` | AP | 409 with `holds_cards` for a card holder (always); 409 with `counts` for someone assigned to purchases, until `?confirm=1` |
+| `POST /api/admin/people/link-holders` | AP | links every card holder to a person, adding missing ones: `linked`, `duplicates`, `people` |
+| `GET /api/admin/audit?entity&entity_id&actor&before_id&limit` | AP | History entries newest first (`limit` 1-200, default 50), `next_before_id`, `entities`; `available: false` while the table is missing |
 
 Job endpoints answer `409 {"status": "busy"}` while another job runs and
 `500 {"status": "error"}` with the message when one fails.
+
+Every `/api/admin` call answers 401 when not signed in and 403 for a member. Its writes (POST, PATCH, PUT,
+DELETE) also need `X-Requested-With`, are refused with 403 in open mode against the real database, and
+are recorded in the History. A uuid id that is not one answers 404. Errors are `{"error": "..."}`; one
+about a field starts with its name and a colon (`default_cost_center: not an active cost centre`). A
+table or column the database does not have yet answers 502 with `"schema_missing": true` (see
+Troubleshooting), and a duplicate the database refused answers 409.
 
 ## Configuration
 
@@ -780,7 +1035,7 @@ Job endpoints answer `409 {"status": "busy"}` while another job runs and
 | `GEMINI_EXTRACT_MODEL` / `GEMINI_MATCH_MODEL` | see `main.py` | the reading and judging models |
 | `AI_DISABLED` | | `1` skips every model call: no invoice reading, rules only, no PDF statements |
 | `INDEX_BATCH` / `INDEX_WORKERS` | `30` / `4` | files per index call and download threads |
-| `RECEIPT_UPLOAD_CARDS` | `4421` | cards (comma-separated last four digits, or `all`) whose rows get *Add receipt...* and whose Chat card gets *Add receipts*. The default lives in `main.py`, so the service and the weekly job agree; when setting it in the workflow, set it on both |
+| `RECEIPT_UPLOAD_CARDS` | `4421` | cards (comma-separated last four digits, or `all`) whose rows get *Add receipt...* and whose Chat card gets *Add receipts*. The default lives in `main.py`, so the service and the weekly job agree; when setting it in the workflow, set it on both. A card's own *Receipt upload* setting in `/admin` (Cards tab: On or Off) wins over this list, `all` included; *Follow server setting* leaves it to the list |
 
 ## Secrets
 
@@ -823,15 +1078,41 @@ this repo.
    keep the database password in the password manager (nothing here uses it),
    and note the **project ref** (Project Settings, General).
 2. **Schema.** Applied to `bkkifrwfgtcnmfynbbdd` on 2026-10-09 (23 statements);
-   re-applied 2026-11-18 for orders charged in parts (42 statements).
+   re-applied 2026-11-18 for orders charged in parts (42 statements); to be
+   re-applied for the admin pages (128 statements; see the end of this step).
    To re-apply after a schema change: the Management API token is Secret
    Manager `SUPABASE_ACCESS_TOKEN` (or a personal token from avatar, *Account*,
    *Access Tokens*, in the gitignored root `.env` as `SUPABASE_ACCESS_TOKEN=...`), then
    `python ap-reconciliation\setup_db.py --project-ref bkkifrwfgtcnmfynbbdd`
-   and expect `ok: applied 42 statements from schema.sql to project bkkifrwfgtcnmfynbbdd`.
+   and expect `ok: applied 128 statements from schema.sql to project bkkifrwfgtcnmfynbbdd`
+   (`--dry-run` first prints the SQL and the same count without calling
+   Supabase). The count is of lines ending in `;`, so it includes the lines
+   inside the `do` blocks.
    The Table Editor now shows `cards`, `statements`, `invoices`,
-   `transactions`, `notifications`, `cost_centers` and the `month_summary`
-   view. Delete the token from `.env` (or keep it for future schema changes).
+   `transactions`, `notifications`, `cost_centers`, `people`, `use_cases`,
+   the `vendor*` tables, `admin_audit` and the `month_summary` view. Delete
+   the token from `.env` (or keep it for future schema changes).
+
+   **The admin pages (November 2026) need it applied again, 128
+   statements, before their code is pushed**: `CARD_FIELDS` gained
+   `default_cost_center` and `receipt_upload`, so the new code cannot save a
+   card on the old schema. In this order, from the repo root:
+   `python ap-reconciliation\setup_db.py --project-ref bkkifrwfgtcnmfynbbdd --dry-run`
+   then
+   `python ap-reconciliation\setup_db.py --project-ref bkkifrwfgtcnmfynbbdd`
+   then push. If the apply stops with `schema.sql not applied: two people
+   share the e-mail …` or `… cost centres differ only in capitals …`,
+   nothing of the admin pages was applied (the check runs first, and the
+   request is one transaction): fix the named rows in the Supabase Table
+   Editor (give one person another e-mail or none; rename one cost centre)
+   and run it again; every statement can be run twice. Between the apply and
+   the deploy, the old dashboard still lists the retired expense types in its
+   Cost centre picker, and its *No cost centre* tile (cost centres) no
+   longer agrees with the server's month counts (use cases): deploy right
+   after. After the deploy,
+   `/admin#settings` shows every schema item present and the coding split
+   done with 11 retired names, `/api/months` lists the 10 places as cost
+   centres, and a card save shows a row in the History.
 3. **Service-role key.** The secret `ap-reconciliation-supabase-service-key`
    exists (created 2026-10-09). Project Settings, *API Keys*, reveal
    `service_role`, then run the line below and paste the key at the prompt:
@@ -967,7 +1248,7 @@ curl "http://127.0.0.1:8765/api/transactions?year=2026&month=9"
 ```
 
 Every row is `missing` (no invoices are read with `AI_DISABLED`), every row
-is editable, and the cost centre, usage, waive and link actions all work
+is editable, and the cost centre, use case, waive and link actions all work
 against memory. Restarting the server forgets everything.
 
 **Dry-run CLI.** Parses a file, indexes the real Invoice folder, matches and
@@ -1043,6 +1324,7 @@ next idle period, or at once with *Run workflow*.
 | *Google Drive error ... 404* on the Invoice folder | the folder id is wrong, or the service is on ADC and the folder is not shared with the compute service account |
 | `database error: GET transactions -> 401` (PostgREST) | `SUPABASE_SERVICE_KEY` is wrong: the anon key instead of `service_role`, or the key was rotated in Supabase. Add the right one as a new secret version and redeploy |
 | `database error: ... 404 ... relation "..." does not exist` | the schema is not applied to this project: `setup_db.py --project-ref <ref>` |
+| *the database is missing a table or column this needs* (502, `"schema_missing": true`), or a tab of `/admin` says it needs the database update | the code was deployed before `schema.sql` was applied (One-time setup, step 2): run `setup_db.py --project-ref bkkifrwfgtcnmfynbbdd`, then check `/admin#settings`, which lists each table and column and whether it is there. Until then the dashboard's Use case list is empty (typed text still saves), and the registry, the History and the coding lists are read-only or empty |
 | `database error: ... 5xx` or connection errors for hours | the Supabase project is paused (free-tier projects pause after a week idle). Restore it from the dashboard; consider the paid tier |
 | Anyone can open the dashboard without signing in | the service was deployed open (`--allow-unauthenticated --no-iap`, `AUTH_DISABLED=1`; `/api/config` says `"auth": "open"`). Deploy behind IAP as step 5 says |
 | (password mode) The deploy fails, the revision's log says `DASHBOARD_PASSWORD is set but blank` | the latest version of `ap-reconciliation-dashboard-password` is empty or whitespace: add a real one as step 5 says and deploy again |

@@ -52,15 +52,21 @@ def _lines(txns, limit=25):
 
 
 BLUE = {"red": 0.0, "green": 0.478, "blue": 1.0, "alpha": 1.0}
+# The cost centre fills itself from the card's default once the use case is set, so the footers ask for
+# the use case only (the dashboard's Use case box, the usage field).
 RECEIPTS_FOOTER = ("Tap Add receipts to photograph or upload each receipt from your phone or computer: it is saved "
                    "in this month's Invoice folder under the vendor's name and linked to the purchase. Open the "
-                   "dashboard to confirm possible matches, add the cost centre and usage, or mark a charge as "
-                   "having no invoice.")
+                   "dashboard to confirm possible matches, say what each purchase was for (its use case), or mark "
+                   "a charge as having no invoice.")
+FOLDER_FOOTER = ("Upload the invoice or receipt to the Invoice folder for this month (a sub-folder named after the "
+                 "vendor), or open the dashboard to link an existing file, say what each purchase was for (its use "
+                 "case), or mark the charge as having no invoice.")
 
 
 def missing_invoices_card(card, year, month, missing, possible, dashboard_url="", folder_url="", uncoded=0,
                           receipts_url=""):
-    """cardsV2 payload listing a card's purchases that still have no invoice.
+    """cardsV2 payload listing a card's purchases that still have no invoice. uncoded: the card's purchases
+    without a use case this month.
 
     receipts_url (cards with receipt upload) puts "Add receipts" first and the dashboard second, with
     no Invoice folder button: the receipt reaches the right folder from the phone."""
@@ -75,7 +81,7 @@ def missing_invoices_card(card, year, month, missing, possible, dashboard_url=""
             f"<b>Month:</b> {month_label(year, month)}<br>"
             f"<b>Missing:</b> {len(missing)} purchase{'s' if len(missing) != 1 else ''} · {money(total_missing, currency)}"
             + (f"<br><b>To confirm:</b> {len(possible)} possible match{'es' if len(possible) != 1 else ''}" if possible else "")
-            + (f"<br><b>Without cost centre:</b> {uncoded}" if uncoded else ""))
+            + (f"<br><b>Without use case:</b> {uncoded}" if uncoded else ""))
     sections = [{"widgets": [{"textParagraph": {"text": head}}]}]
     if missing:
         sections.append({"header": "No invoice found", "widgets": [{"textParagraph": {"text": _lines(missing)}}]})
@@ -94,9 +100,7 @@ def missing_invoices_card(card, year, month, missing, possible, dashboard_url=""
             buttons.append({"text": "Open dashboard", "onClick": {"openLink": {"url": link}}, "color": dict(BLUE)})
         if folder_url:
             buttons.append({"text": "Invoice folder", "onClick": {"openLink": {"url": folder_url}}})
-        footer = ("Upload the invoice or receipt to the Invoice folder for this month (a sub-folder named after the "
-                  "vendor), or open the dashboard to link an existing file, add the cost centre and usage, or mark "
-                  "the charge as having no invoice.")
+        footer = FOLDER_FOOTER
     sections.append({"widgets": [{"textParagraph": {"text": footer}}] + ([{"buttonList": {"buttons": buttons}}] if buttons else [])})
     card_id = f"ap-{card.get('last4', 'x')}-{int(year)}-{int(month):02d}"
     return {"cardsV2": [{"cardId": card_id, "card": {"sections": sections}}]}

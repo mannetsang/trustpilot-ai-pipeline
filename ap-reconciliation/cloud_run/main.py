@@ -6,7 +6,7 @@ each line once (deterministic ids), walks the AP mailbox's Drive folder
 Invoice/YYYY MM/<vendor>/ to read every new invoice with Gemini, pairs
 purchases with invoices (rules first, Gemini judge for the rest), posts one
 "invoices needed" card to each credit card's Google Chat space, and serves the
-dashboard where card owners add the cost centre and usage of their charges,
+dashboard where card owners add the use case (and cost centre) of their charges,
 link or waive invoices, month by month. On cards in RECEIPT_UPLOAD_CARDS the
 holder can also photograph or upload a receipt from the dashboard: it is saved
 to Invoice/YYYY MM/<vendor>/ and linked to the purchase.
@@ -29,13 +29,15 @@ Endpoints
   GET  /api/config               auth mode, dashboard and sign-in page URLs (public, no secrets)
   POST /api/login  POST /api/logout  password mode: {"password"} sets the session cookie / clears it
   GET  /api/me                   who am I, role (ap | member), cards I own
-  GET  /api/months               year/month navigation with per-card counts
-  GET  /api/transactions?year&month[&card]
+  GET  /api/months               year/month navigation with per-card counts, the cost centres and use cases
+  GET  /api/transactions?year&month[&card]   the month's rows (with a use-case suggestion each when switched on)
   GET  /api/transactions/<id>    one row (the page polls it while an uploaded receipt is being read)
-  PATCH /api/transactions/<id>   cost_center, usage, note, person_id ("" clears it),
-                                 action=waive|unwaive|confirm|link|unlink
+  PATCH /api/transactions/<id>   cost_center, usage (the use case), note, person_id ("" clears it),
+                                 action=waive|unwaive|confirm|link|unlink; setting the use case fills an
+                                 empty cost centre from the card's default (filled_cost_center)
   GET  /api/people               the people a transaction can be assigned to
-  POST /api/people               {name[, email]}: add one (201), or the one already named so (200)
+  POST /api/people               {name[, email]}: add one (201), or the one already named so (200); 409 for
+                                 an e-mail someone else has
   POST /api/transactions/<id>/rematch  read new invoices, then look for this purchase's invoice again (202, a job)
   GET  /api/transactions/<id>/receipt-target  where Add receipt… would save: month and vendor folder, folders
   POST /api/transactions/<id>/receipt   multipart file (1-10 pages), vendor_folder, upload_id: save the
@@ -44,7 +46,9 @@ Endpoints
   GET  /receipts/<last4>/<YYYY>/<MM>  the Chat card's Add receipts: redirects to that card's receipts list
   POST /api/ask?year&month[&card]  voice mode: {"question"} -> a short answer to read aloud (read only)
   GET  /api/invoices?year&month[&all=1]  invoices of the surrounding month folders (link picker)
-  GET  /api/cards  POST /api/cards (AP)     card labels, owners, Chat space names
+  GET  /api/cards  POST /api/cards (AP)     card labels, owners, Chat space names, default cost centre,
+                                 receipt upload; POST answers 404 for an unknown card unless create: true
+  GET  /api/export/missing?group&card&year&month  the purchases still missing a receipt, as .xlsx
   GET  /api/statements?year&month           uploads
   POST /api/statements (AP, multipart file; ?sync=1 also indexes, matches and notifies)
   DELETE /api/statements/<id> (AP)          remove an upload and its untouched lines
@@ -54,6 +58,21 @@ Endpoints
   POST /api/notify?year&month[&card] (AP)   post the "invoices needed" Chat cards
   POST /api/jobs?kind=index|match|notify&year&month[&card] (AP)  the same steps in the background (202)
   GET  /api/jobs/current                    the running or last background job: progress, then result
+  GET  /admin                                the accounts-payable admin pages (every /api/admin call is AP only;
+                                             its writes are refused in open mode on a real database)
+  GET  /api/admin/settings  PUT /api/admin/settings/coding {suggestions}
+  GET  /api/admin/cards  DELETE /api/admin/cards/<last4>[?confirm=1]  POST /api/admin/cards/<last4>/fill-default
+  GET  /api/admin/card-numbers/<n>  POST|DELETE /api/admin/card-numbers/<n>/ignore
+  GET  /api/admin/coding  POST /api/admin/cost-centers  PATCH /api/admin/cost-centers?name=
+  POST /api/admin/cost-centers/order  POST /api/admin/use-cases  PATCH /api/admin/use-cases/<id>
+  POST /api/admin/use-cases/order
+  GET  /api/admin/vendors?q&sort&registered&page&per[&fresh=1]  GET /api/admin/vendors/folder?name=
+  GET  /api/admin/registry  POST /api/admin/vendors  PATCH /api/admin/vendors/<id>
+  POST /api/admin/vendors/<id>/folders  DELETE /api/admin/vendor-folders/<id>
+  POST /api/admin/vendors/<id>/patterns  PATCH|DELETE /api/admin/vendor-patterns/<id>
+  PUT  /api/admin/vendors/<id>/coding  GET /api/admin/proposals  POST /api/admin/proposals/dismiss
+  GET  /api/admin/people  PATCH|DELETE /api/admin/people/<id>  POST /api/admin/people/<id>/merge
+  POST /api/admin/people/link-holders  GET /api/admin/audit?entity&entity_id&actor&before_id&limit
 The weekly reminder is a Cloud Run job running `python main.py remind`, and the Drive import one
 running `python main.py sync` every 15 minutes (see the deploy workflow).
 
@@ -95,6 +114,7 @@ try:
 except Exception:  # noqa: BLE001
     pass
 
+import admin  # noqa: E402
 import assistant  # noqa: E402
 import chat  # noqa: E402
 import invoices as invoice_index  # noqa: E402
@@ -103,7 +123,8 @@ import receipts  # noqa: E402
 import statements  # noqa: E402
 from drive import FOLDER, Drive, DriveError  # noqa: E402
 from gemini import Gemini, GeminiError  # noqa: E402
-from store import MemoryStore, StoreError, SupabaseStore, month_folder_name, neighbouring_months, now_iso  # noqa: E402
+from store import (CARD_FIELDS, UUID_RE, VENDOR_FIELDS, MemoryStore, StoreError, SupabaseStore,  # noqa: E402
+                   month_folder_name, neighbouring_months, now_iso, person_named)
 
 app = Flask(__name__, static_folder=os.path.join(HERE, "static"), static_url_path="/static")
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
@@ -187,8 +208,24 @@ RECEIPT_MAX = 40                # ...per person
 RECEIPT_MAX_BODY = receipts.MAX_PDF_BYTES + 1024 * 1024     # a receipt's request: the PDF limit plus form overhead
 
 
-def receipt_upload_enabled(last4):
+def receipt_upload_env(last4):
+    """What RECEIPT_UPLOAD_CARDS says for the card, whatever the card's own setting."""
     return bool(RECEIPT_UPLOAD_CARDS & {"all", "*"}) or str(last4) in RECEIPT_UPLOAD_CARDS
+
+
+def receipt_upload_enabled(card):
+    """card: a cards row or a last4. The row's own receipt_upload (true/false) wins, even over
+    RECEIPT_UPLOAD_CARDS=all; null, or no row, follows RECEIPT_UPLOAD_CARDS."""
+    if isinstance(card, dict):
+        row, last4 = card, str(card.get("last4") or "")
+    else:
+        last4 = str(card)
+        try:
+            row = next((c for c in get_store().list_cards() if c["last4"] == last4), None)
+        except Exception:  # noqa: BLE001  (store down: the env decides)
+            row = None
+    own = (row or {}).get("receipt_upload")
+    return bool(own) if own is not None else receipt_upload_env(last4)
 
 
 def auth_mode():
@@ -262,6 +299,7 @@ def set_clients(store=None, drive=None, gemini=None):
     with _client_lock:
         if store is not None:
             _clients["store"] = store
+            admin.invalidate()          # the admin pages' cached reads belong to the store they came from
         if drive is not None:
             _clients["drive"] = drive
         if gemini is not None:
@@ -465,6 +503,16 @@ def cards_owned_by(email, cards=None):
 
 def may_edit(user, card_last4, cards=None):
     return user["role"] == "ap" or card_last4 in cards_owned_by(user["email"], cards)
+
+
+def require_admin(write=False):
+    """The /api/admin routes: accounts payable only. Their changes are refused while a real database
+    is open to anyone (AUTH_DISABLED=1 without a password): the audit could not say who made them."""
+    user = require_user(ap_only=True)
+    if write and STORE_KIND != "memory" and auth_mode() == "open":
+        raise AuthError(403, "admin changes are refused while the dashboard is open to anyone "
+                             "(AUTH_DISABLED=1 without DASHBOARD_PASSWORD)")
+    return user
 
 
 # ---------------------------------------------------------------------------
@@ -1019,10 +1067,12 @@ def notify_month(year, month, card=None, sent_by="", dry_run=False, dashboard=No
             bucket["missing"].append(t)
         elif t.get("invoice_status") == "possible":
             bucket["possible"].append(t)
-        if not (t.get("cost_center") or ""):
+        if not str(t.get("usage") or "").strip():       # uncoded: no use case (Nov 2026: was no cost centre)
             bucket["uncoded"] += 1
     results, folder = [], month_folder_url(year, month) if not dry_run else ""
     for last4, bucket in sorted(by_card.items()):
+        # Reminders are about receipts: a card whose receipts are all in gets no card, even when some
+        # purchases have no use case yet (the dashboard's "No use case" KPI shows that).
         if not bucket["missing"] and not bucket["possible"]:
             results.append({"card": last4, "sent": False, "detail": "nothing missing"})
             continue
@@ -1033,7 +1083,7 @@ def notify_month(year, month, card=None, sent_by="", dry_run=False, dashboard=No
         # Cards with receipt upload get "Add receipts" (a server path: it survives the Google sign-in,
         # a #fragment would not) instead of the Invoice folder button.
         receipts_url = (f"{base.rstrip('/')}/receipts/{last4}/{year}/{month:02d}"
-                        if base and receipt_upload_enabled(last4) else "")
+                        if base and receipt_upload_enabled(card_info) else "")
         payload = chat.missing_invoices_card(card_info, year, month, bucket["missing"], bucket["possible"],
                                              base, "" if receipts_url else folder, bucket["uncoded"],
                                              receipts_url=receipts_url)
@@ -1179,7 +1229,11 @@ def card_view(c, aliases=None, by_last4=None):
             "supplementary": sorted(o["last4"] for o in by_last4.values() if o.get("primary_last4") == c["last4"]),
             "webhook_configured": bool(CARD_WEBHOOKS.get(c["last4"])),
             "webhook_default": bool(chat.webhook_for(CARD_WEBHOOKS, c["last4"])),
-            "receipt_upload": receipt_upload_enabled(c["last4"])}
+            "default_cost_center": c.get("default_cost_center") or "",
+            # The card's own switch (True, False, or None: RECEIPT_UPLOAD_CARDS decides); receipt_upload is
+            # what applies.
+            "receipt_upload_setting": c.get("receipt_upload"),
+            "receipt_upload": receipt_upload_enabled(c)}
 
 
 def card_views(cards, seen=None):
@@ -1224,7 +1278,7 @@ REMOVED = "upload withdrawn: removed with Remove…"
 def receipt_access(user, txn, need_enabled=True):
     """AuthError(403) unless the card has receipt upload (when need_enabled) and the user may edit it."""
     last4 = txn["card_last4"]
-    if need_enabled and not receipt_upload_enabled(last4):
+    if need_enabled and not receipt_upload_enabled(last4):     # the card's own switch, else the env
         raise AuthError(403, f"Receipt upload isn't switched on for card {last4}.")
     if not may_edit(user, last4):
         raise AuthError(403, f"Only the card's owner or accounts payable can add receipts to card {last4}.")
@@ -1555,11 +1609,186 @@ def remove_receipt(user, txn_id):
 
 
 # ---------------------------------------------------------------------------
+# Admin pages (/admin): shared helpers. The pure work (catalogue, proposals, flags) is in admin.py.
+# ---------------------------------------------------------------------------
+class AdminError(Exception):
+    """A refusal from an admin route: its status and JSON body ({"error": ..., plus extra fields the
+    page reads, such as "existing" or "clash"). A field error starts with the field's name and a colon,
+    so the page shows it next to that field."""
+
+    def __init__(self, status, message, **extra):
+        super().__init__(message)
+        self.status, self.body = status, {"error": message, **extra}
+
+
+SCHEMA_MISSING = ("the database is missing a table or column this needs: apply schema.sql with setup_db.py "
+                  "(see /admin#settings)")
+AUDIT_ENTITIES = ["card", "card_number", "cost_center", "use_case", "vendor", "vendor_folder", "vendor_pattern",
+                  "vendor_coding", "person", "setting", "proposal"]                       # schema.sql's vocabulary
+VENDOR_KINDS = ["supplier", "processor", "agent", "not_vendor"]
+KIND_WORDS = {"processor": "a payment processor", "agent": "an agent", "not_vendor": "not a vendor"}
+NO_ACTIVITY = {"transactions": 0, "recent": 0, "missing": 0, "first_month": None, "last_month": None}
+
+
+def json_body():
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        raise AuthError(400, "the body must be a JSON object")
+    return body
+
+
+def actor():
+    """Who is making this change, as the audit records it: the IAP e-mail, or the typed name."""
+    return str((getattr(g, "user", None) or {}).get("email") or "unknown")[:200]
+
+
+def jsonable(value):
+    return None if value is None else json.loads(json.dumps(value, default=str))
+
+
+def audit(entity, entity_id, action, before=None, after=None, note=None):
+    """Best effort: a change whose audit row cannot be written is still made (and said in the log)."""
+    try:
+        get_store().insert_audit({"actor": actor(), "auth_mode": auth_mode(), "entity": entity,
+                                  "entity_id": str(entity_id)[:200], "action": action,
+                                  "before": jsonable(before), "after": jsonable(after), "note": note})
+    except Exception as exc:  # noqa: BLE001
+        print(f"audit: not recorded ({entity} {str(entity_id)[:80]} {action}): {exc}")
+
+
+def plural(n, word, many=None):
+    return f"{n} {word if n == 1 else (many or word + 's')}"
+
+
+def text_field(body, field, limit, required=False):
+    """A name or note typed by a person, spaces tidied; None when left empty (a 400 when required)."""
+    value = admin.norm_space(body.get(field))
+    if required and not 1 <= len(value) <= limit:
+        raise AdminError(400, f"{field}: 1 to {limit} characters")
+    if len(value) > limit:
+        raise AdminError(400, f"{field}: at most {limit} characters")
+    return value or None
+
+
+def int_field(body, field, default=None):
+    value = body.get(field)
+    if value is None:
+        return default
+    if isinstance(value, str) and re.fullmatch(r"-?\d{1,7}", value.strip()):
+        value = int(value.strip())
+    if isinstance(value, bool) or not isinstance(value, int) or abs(value) > 1_000_000:
+        raise AdminError(400, f"{field}: a whole number")
+    return value
+
+
+def bool_field(body, field):
+    value = body.get(field)
+    if not isinstance(value, bool):
+        raise AdminError(400, f"{field}: true or false")
+    return value
+
+
+def uuid_or_404(value, what):
+    if not UUID_RE.match(str(value or "")):
+        raise AdminError(404, f"no such {what}")
+    return str(value)
+
+
+def fresh_requested():
+    """?fresh=1: read the whole-table reads again (the page's Refresh)."""
+    if request.args.get("fresh") == "1":
+        admin.invalidate("transactions", "invoices", "registry")
+
+
+def admin_registry(store, fresh=False):
+    """The vendor registry (admin.RegistryIndex), or None while its tables are missing or unreadable."""
+    try:
+        return admin.registry(store, fresh)
+    except StoreError as exc:
+        print(f"vendor registry: not read ({exc})")
+        return None
+
+
+def need_registry(store):
+    """The registry, read fresh, for a write that needs it; 502 while schema.sql is not applied."""
+    reg = admin_registry(store, fresh=True)
+    if reg is None:
+        raise AdminError(502, SCHEMA_MISSING, schema_missing=True)
+    return reg
+
+
+def all_use_cases(store):
+    """Every use case row (retired too, with "active"), or [] while the table is missing or unreadable."""
+    try:
+        return store.list_use_cases()
+    except StoreError as exc:
+        print(f"use cases: not read ({exc})")
+        return []
+
+
+def use_case_list(store, rows=None):
+    """The active use cases as the pages show them, in the store's order (sort, then name): the dashboard
+    keeps that order when it filters by group. Server code that checks "active" uses the full rows."""
+    rows = all_use_cases(store) if rows is None else rows
+    return [{k: u.get(k) for k in ("id", "name", "group_name", "description")} for u in rows if u.get("active")]
+
+
+def coding_settings(store):
+    try:
+        return store.get_state("coding_settings") or {}
+    except StoreError as exc:
+        print(f"coding settings: not read ({exc})")
+        return {}
+
+
+def bump_registry(store):
+    """Best effort: count registry changes in app_state (Settings shows the version), and drop the
+    cached registry so the next read sees the change."""
+    try:
+        state = store.get_state("vendor_registry") or {}
+        store.set_state("vendor_registry", {"version": int(state.get("version") or 0) + 1, "at": now_iso(),
+                                            "by": actor()})
+    except Exception as exc:  # noqa: BLE001
+        print(f"vendor registry: version not counted ({exc})")
+    admin.invalidate("registry")
+
+
+def vendor_entries(store, reg):
+    """Every vendor as GET /api/admin/registry lists it: the vendor row with its folders, patterns and
+    coding rows (each naming its use case and group) and the purchases it resolves."""
+    if reg is None:
+        return []
+    names = {u["id"]: u["name"] for u in all_use_cases(store)}
+    try:
+        resolves = admin.vendor_resolves(reg, admin.invoice_rows(store), admin.transaction_rows(store))
+    except StoreError as exc:
+        print(f"vendor registry: purchases not counted ({exc})")
+        resolves = {}
+    out = []
+    for v in reg.nested():
+        v["coding"] = [dict(c, use_case=names.get(c.get("use_case_id")),
+                            group_label=admin.norm_space(c.get("group_name")) or "Any group") for c in v["coding"]]
+        v["resolves"] = dict(resolves.get(v["id"]) or {"purchases": 0, "uncoded": 0, "missing": 0})
+        out.append(v)
+    return out
+
+
+def vendor_payload(store, reg, vendor_id):
+    """One vendor in the shape GET /api/admin/registry lists it; every vendor write answers this."""
+    return next((v for v in vendor_entries(store, reg) if v["id"] == vendor_id), None)
+
+
+# ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 @app.errorhandler(AuthError)
 def _auth_error(exc):
     return jsonify({"error": exc.message}), exc.status
+
+
+@app.errorhandler(AdminError)
+def _admin_error(exc):
+    return jsonify(exc.body), exc.status
 
 
 @app.errorhandler(statements.StatementError)
@@ -1575,6 +1804,10 @@ def _receipt_error(exc):
 @app.errorhandler(StoreError)
 def _store_error(exc):
     print(f"store error: {exc}")
+    if exc.missing:             # schema.sql not applied yet: say what to do rather than the raw error
+        return jsonify({"error": SCHEMA_MISSING, "schema_missing": True}), 502
+    if exc.code == "23505":     # a unique index refused it: someone else saved the same thing first
+        return jsonify({"error": "that already exists (someone may have just added it); reload"}), 409
     return jsonify({"error": f"database error: {exc}"}), 502
 
 
@@ -1614,7 +1847,7 @@ def _headers(response):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "same-origin"
-    if request.path in ("/", "/index.html"):
+    if request.path in ("/", "/index.html", "/admin", "/static/index.html", "/static/admin.html"):
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     return response
 
@@ -1622,6 +1855,13 @@ def _headers(response):
 @app.route("/")
 def index():
     return send_from_directory(app.static_folder, "index.html")
+
+
+@app.route("/admin")
+def admin_page():
+    """The accounts-payable admin pages. No require_user: IAP guards the path like "/", the page holds
+    no data, and every /api/admin call checks the AP role itself."""
+    return send_from_directory(app.static_folder, "admin.html")
 
 
 @app.route("/health")
@@ -1701,8 +1941,11 @@ def api_me():
 def api_months():
     require_user()
     store = get_store()
+    # cost_centers: the active ones (retired ones stay on the purchases that carry them); use_cases: the
+    # Use case box's list, [] while schema.sql is not applied.
     return jsonify({"months": month_list(store), "cards": card_views(store.list_cards()),
-                    "cost_centers": store.list_cost_centers(), "people": store.list_people()})
+                    "cost_centers": store.list_cost_centers(), "people": store.list_people(),
+                    "use_cases": use_case_list(store)})
 
 
 def _year_month():
@@ -1727,8 +1970,34 @@ def api_transactions():
     rows = with_invoices(store, txns)
     for row in rows:
         row["editable"] = user["role"] == "ap" or row["card_last4"] in owned
+    # Each list read once: the suggestions below use the same reads (on Supabase every call is a request,
+    # and a month holds hundreds of purchases).
+    cost_centers = store.list_cost_centers()
+    try:
+        use_case_rows = store.list_use_cases()
+    except StoreError as exc:
+        print(f"use cases: not read ({exc})")
+        use_case_rows = []
+    suggestions = bool(coding_settings(store).get("suggestions"))
+    if suggestions and use_case_rows:
+        # A use case to offer on each purchase the person may code and nobody has, from the vendor
+        # registry (AP's switch in /admin#settings). A suggestion only: nothing is written.
+        try:
+            registry = admin_registry(store)
+            if registry is not None:
+                active_cc = set(cost_centers)
+                cards_by_last4 = {c["last4"]: c for c in cards}
+                for row in rows:
+                    if row["editable"] and row.get("type") == "purchase" and not str(row.get("usage") or "").strip():
+                        s = admin.suggest_coding(row, cards_by_last4.get(row["card_last4"]), registry, use_case_rows,
+                                                 active_cc)
+                        if s:
+                            row["suggestion"] = s
+        except StoreError as exc:
+            print(f"coding suggestions: none this time ({exc})")
     return jsonify({"year": year, "month": month, "transactions": rows,
-                    "cards": card_views(cards), "cost_centers": store.list_cost_centers(),
+                    "cards": card_views(cards), "cost_centers": cost_centers,
+                    "use_cases": use_case_list(store, use_case_rows), "suggestions": suggestions,
                     "people": store.list_people(), "statements": store.list_statements(year, month),
                     "notifications": store.list_notifications(year, month)[:20]})
 
@@ -1758,9 +2027,15 @@ def api_people_create():
     email = str(body.get("email") or "").strip().lower() or None
     if email and not EMAIL_RE.match(email):
         return jsonify({"error": f"'{email[:80]}' is not an e-mail address"}), 400
-    person, created = get_store().create_person(name, email, user["email"])
+    try:
+        person, created = get_store().create_person(name, email, user["email"])
+    except StoreError as exc:
+        if exc.conflict:            # people_email_unique: an e-mail belongs to one person
+            return jsonify({"error": "email: that e-mail already belongs to someone"}), 409
+        raise
     if created:
         print(f"person {name!r} added by {user['email']}")
+        audit("person", person["id"], "create", None, person)
     return jsonify({"person": person, "created": created}), 201 if created else 200
 
 
@@ -1783,8 +2058,10 @@ def api_transaction_update(txn_id):
     txn = store.get_transaction(txn_id)
     if not txn:
         return jsonify({"error": "transaction not found"}), 404
-    if not may_edit(user, txn["card_last4"]):
+    cards = store.list_cards()
+    if not may_edit(user, txn["card_last4"], cards):
         return jsonify({"error": "you can only edit transactions of cards you own"}), 403
+    card = next((c for c in cards if c["last4"] == txn["card_last4"]), None) or {}
     body = request.get_json(silent=True) or {}
     if not isinstance(body, dict):
         return jsonify({"error": "the body must be a JSON object"}), 400
@@ -1793,6 +2070,33 @@ def api_transaction_update(txn_id):
         if field in body:
             value = str(body.get(field) or "").strip()
             patch[field] = value[:limit] or None
+    # Coding: a value typed as a list entry spelled another way ("marketing") is saved in the list's
+    # spelling; anything else is kept as typed (free text stays allowed).
+    active_cc, listed, filled, hint = None, None, None, None
+    if "cost_center" in body or "usage" in body:
+        active_cc = store.list_cost_centers()
+        if patch.get("cost_center"):
+            patch["cost_center"] = admin.snap_name(patch["cost_center"], active_cc) or patch["cost_center"]
+        if patch.get("usage"):
+            listed = all_use_cases(store)
+            snapped = admin.snap_use_case(patch["usage"], listed, card.get("group_name") or "")
+            if snapped:
+                patch["usage"] = snapped
+        # The card's default cost centre (a salon's card is that salon) fills an empty one when the use
+        # case is set. Only the purchase's own card counts, and a retired default fills nothing.
+        default = card.get("default_cost_center")
+        if (patch.get("usage") and "cost_center" not in body and txn.get("type") == "purchase"
+                and not str(txn.get("cost_center") or "").strip() and default and default in active_cc):
+            patch["cost_center"] = default
+            filled = default
+        # "Marketing" typed in the Cost centre box: a use case since Nov 2026, so the purchase still has
+        # none. Nothing is moved; the person is told.
+        value = patch.get("cost_center") if "cost_center" in body else None
+        usage_after = patch["usage"] if "usage" in patch else txn.get("usage")
+        if value and not str(usage_after or "").strip():
+            listed = all_use_cases(store) if listed is None else listed
+            if any(admin.name_key(u["name"]) == admin.name_key(value) for u in listed):
+                hint = f"{value} is a use case now: put it in the Use case box"
     if "person_id" in body:
         person_id = str(body.get("person_id") or "").strip()
         if person_id and not store.get_person(person_id):
@@ -1854,6 +2158,9 @@ def api_transaction_update(txn_id):
     if not patch:
         return jsonify({"error": "nothing to update"}), 400
     patch.update({"updated_by": user["email"], "updated_at": now_iso()})
+    if filled:
+        # Fill only the empty cost centre this request read: one someone set meanwhile is kept.
+        expect = dict(expect or {}, cost_center=txn.get("cost_center"))
     try:
         updated = store.update_transaction(txn_id, patch, expect=expect)
     except StoreError as exc:
@@ -1864,7 +2171,12 @@ def api_transaction_update(txn_id):
         return jsonify({"error": "This purchase changed meanwhile; reload."}), 409
     row = with_invoices(store, [updated])[0]
     row["editable"] = True  # may_edit passed above; the dashboard re-renders the row from this
-    return jsonify({"transaction": row})
+    out = {"transaction": row}
+    if filled:
+        out["filled_cost_center"] = filled
+    if hint:
+        out["hint"] = hint
+    return jsonify(out)
 
 
 @app.route("/api/transactions/<txn_id>/rematch", methods=["POST"])
@@ -1999,14 +2311,32 @@ def api_cards():
 
 @app.route("/api/cards", methods=["POST"])
 def api_cards_update():
+    """Save a card's settings (the Cards… dialog, /admin). Only the fields sent change. A card not on the
+    dashboard is added only with create: true (statements add theirs on import), so a typo in last4
+    cannot quietly make a new card."""
     user = require_user(ap_only=True)
     body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"error": "the body must be a JSON object"}), 400
     last4 = statements.last4(body.get("last4"))
     if not last4:
         return jsonify({"error": "last4 must be four digits"}), 400
     store = get_store()
     cards = {c["last4"]: c for c in store.list_cards()}
     current = cards.get(last4) or {}
+    create = body.get("create") is True
+    if last4 not in cards and not create:
+        return jsonify({"error": f"card {last4} is not on the dashboard; add it with create: true"}), 404
+    if create and last4 in cards:
+        return jsonify({"error": f"card {last4} already exists"}), 409
+    if "expect_card_number" in body:
+        # The portal's "Use as card number" says which number it showed: a number changed since then
+        # (someone else saved one) is never replaced unseen.
+        expected = re.sub(r"[^0-9]", "", str(body.get("expect_card_number") or ""))
+        now_number = current.get("card_number") or ""
+        if expected != now_number:
+            return jsonify({"error": f"card_number: card {last4}'s number is now {now_number or 'empty'}, not what this "
+                                     "page showed; reload and try again", "card_number": now_number}), 409
     row = {"last4": last4, "updated_at": now_iso()}
     for field in ("label", "holder_name", "chat_space"):
         if field in body:
@@ -2050,6 +2380,22 @@ def api_cards_update():
         row["owner_email"] = ", ".join(emails)[:500] or None
     if "active" in body:
         row["active"] = bool(body.get("active"))
+    active_cc = None
+    if "default_cost_center" in body:
+        # A salon's card is that salon: filled into its purchases' empty cost centre when their use case
+        # is set. "" or null clears it.
+        value = admin.norm_space(body.get("default_cost_center"))
+        if value:
+            active_cc = store.list_cost_centers()
+            value = admin.snap_name(value, active_cc)
+            if not value:
+                return jsonify({"error": "default_cost_center: not an active cost centre"}), 400
+        row["default_cost_center"] = value or None
+    if "receipt_upload" in body:
+        # The card's own receipt upload switch; null follows RECEIPT_UPLOAD_CARDS.
+        if body["receipt_upload"] is not None and not isinstance(body["receipt_upload"], bool):
+            return jsonify({"error": "receipt_upload: true, false or null"}), 400
+        row["receipt_upload"] = body["receipt_upload"]
     changed = "holder_name" in body and (row["holder_name"] or "") != (current.get("holder_name") or "")
     if changed:
         # A label still the default one follows the new holder.
@@ -2058,9 +2404,21 @@ def api_cards_update():
         if not sent or sent in (old_label, default_card_label(last4, current.get("holder_name"))) \
                 and CARD_LABEL_RE.match(old_label or ""):
             row["label"] = default_card_label(last4, row["holder_name"])
-    # Last, once nothing more can be refused (people cannot be deleted): the holder as a person, the Person
-    # of the card's purchases nobody assigned to someone else. A card saved with its holder not yet a
-    # person links them too.
+    if create:
+        if "label" not in body and not row.get("label"):
+            row["label"] = default_card_label(last4, row.get("holder_name"))
+        row.setdefault("active", True)
+        if body.get("confirm") is not True:
+            # A known card is never itself a reissue alias (matching.card_aliases skips known numbers), so
+            # adding one can take receipt numbers from another card: said first, added on confirm.
+            changes = admin.alias_changes(list(cards.values()), list(cards.values()) + [row], last4)
+            if changes:
+                return jsonify({"error": f"adding card {last4} changes which card receipts showing "
+                                         + ", ".join(c["number"] for c in changes)
+                                         + " belong to; send confirm: true to add it anyway",
+                                "alias_changes": changes}), 409
+    # Last, once nothing more can be refused: the holder as a person, the Person of the card's purchases
+    # nobody assigned to someone else. A card saved with its holder not yet a person links them too.
     if changed or ("holder_name" in body and row["holder_name"] and not current.get("person_id")):
         if row["holder_name"]:
             person, _ = store.create_person(row["holder_name"], created_by=user["email"])
@@ -2069,9 +2427,28 @@ def api_cards_update():
             row["person_id"] = None
     store.upsert_cards([row])
     matching.forget_card_aliases()
-    print(f"card {last4} updated by {user['email']}")
-    return jsonify({"cards": card_views(store.list_cards(), store.invoice_card_numbers()),
-                    "people": store.list_people()})
+    print(f"card {last4} {'added' if create else 'updated'} by {user['email']}")
+    all_cards = store.list_cards()
+    saved = next((c for c in all_cards if c["last4"] == last4), None) or dict(current, **row)
+    before = None if create else {k: current.get(k) for k in CARD_FIELDS}
+    after = {k: saved.get(k) for k in CARD_FIELDS}
+    if create or {k: v for k, v in before.items() if k != "updated_at"} != {k: v for k, v in after.items() if k != "updated_at"}:
+        audit("card", last4, "create" if create else "update", before, after)
+    views = card_views(all_cards, store.invoice_card_numbers())
+    out = {"cards": views, "people": store.list_people(),
+           "card": next((v for v in views if v["last4"] == last4), None)}
+    new_default = saved.get("default_cost_center")
+    if new_default and new_default != current.get("default_cost_center"):
+        # The purchases already coded without a cost centre, which the fill rule would have filled had
+        # the default been there: the page offers to fill them (POST /api/admin/cards/<last4>/fill-default).
+        try:
+            if new_default in (active_cc if active_cc is not None else store.list_cost_centers()):
+                out["fillable"] = sum(1 for t in admin.transaction_rows(store, fresh=True)
+                                      if t.get("card_last4") == last4 and t.get("type") == "purchase"
+                                      and str(t.get("usage") or "").strip() and not str(t.get("cost_center") or "").strip())
+        except StoreError as exc:
+            print(f"card {last4}: purchases to fill not counted ({exc})")
+    return jsonify(out)
 
 
 NO_GROUP = "-"                         # ?group=- : the cards in no group
@@ -2122,7 +2499,7 @@ def missing_receipts_xlsx(store, group="", card=None, year=None, month=None):
     ws = wb.active
     ws.title = "Missing receipts"
     head = ["Group", "Card (account)", "Card number", "Linked under", "Card holder", "Person", "Date", "Description",
-            "Amount", "Currency", "Foreign amount", "Foreign currency", "Cost centre", "Usage", "Note", "Dashboard"]
+            "Amount", "Currency", "Foreign amount", "Foreign currency", "Cost centre", "Use case", "Note", "Dashboard"]
     ws.append(head)
     for cell in ws[1]:
         cell.font = Font(bold=True)
@@ -2353,6 +2730,1236 @@ def api_job_current():
         if lease_live(lease, holder_prefix="job:"):
             view["elsewhere"] = {"job": lease.get("job"), "since": lease.get("acquired_at")}
     return jsonify(view)
+
+
+# ---------------------------------------------------------------------------
+# Admin pages (/admin): AP only. Reads under require_admin(), writes under require_admin(write=True);
+# every write is audited (best effort). Matching never reads anything written here in Round A.
+# ---------------------------------------------------------------------------
+@app.route("/api/admin/settings")
+def api_admin_settings():
+    """What the service runs with, read only, plus the one switch it has (coding suggestions)."""
+    require_admin()
+    store = get_store()
+    cards = store.list_cards()
+    out_schema, schema_error = {}, None
+    try:
+        out_schema = dict(store.schema_status())
+    except StoreError as exc:
+        print(f"settings: schema not checked ({exc})")
+        schema_error = str(exc)[:300]
+    split = store.get_state("coding_split") or None
+    out_schema["coding_split"] = bool(split)
+    coding = coding_settings(store)
+    registry_state = store.get_state("vendor_registry") or {}
+    body = {
+        "auth_mode": auth_mode(), "store": STORE_KIND, "ai_enabled": not AI_DISABLED,
+        "allowed_domains": sorted(ALLOWED_DOMAINS), "ap_emails": sorted(AP_EMAILS),
+        "ap_emails_how": ("AP_EMAILS: main.py (default) and .github/workflows/deploy-ap-reconciliation.yml line 61; "
+                          "change both and push. A console-only edit is undone by the next deploy."),
+        "receipt_upload": {"env": sorted(RECEIPT_UPLOAD_CARDS), "all": bool(RECEIPT_UPLOAD_CARDS & {"all", "*"}),
+                           "from_default": "RECEIPT_UPLOAD_CARDS" not in os.environ,
+                           "per_card": {c["last4"]: bool(c["receipt_upload"]) for c in cards
+                                        if c.get("receipt_upload") is not None}},
+        "webhooks": {"cards": sorted(k for k in CARD_WEBHOOKS if k != "default"), "default": "default" in CARD_WEBHOOKS,
+                     "secret": "ap-reconciliation-card-webhooks",
+                     "how": ("Webhooks are set in Secret Manager; a new version reaches the service on its next "
+                             "deploy or new instance.")},
+        "alias_cache_seconds": matching.CARD_ALIASES_MAX_AGE,
+        "schema": out_schema, "coding_split": split,
+        "coding": {"suggestions": bool(coding.get("suggestions")), "by": coding.get("by"), "at": coding.get("at")},
+        "registry_version": int(registry_state.get("version") or 0),
+        "iap_note": "IAP's own access list is managed in the Cloud console; the service cannot read it.",
+    }
+    if schema_error:
+        body["schema_error"] = schema_error
+    return jsonify(body)
+
+
+@app.route("/api/admin/settings/coding", methods=["PUT"])
+def api_admin_settings_coding():
+    """{"suggestions": bool}: offer card owners a use case from the vendor registry (off by default)."""
+    user = require_admin(write=True)
+    body = json_body()
+    suggestions = bool_field(body, "suggestions")
+    store = get_store()
+    before = coding_settings(store) or None
+    after = {"suggestions": suggestions, "by": user["email"], "at": now_iso()}
+    store.set_state("coding_settings", after)
+    audit("setting", "coding", "update", before, after)
+    return jsonify({"coding": after})
+
+
+# -- cards ----------------------------------------------------------------------------------
+def last4_or_400(last4):
+    if not re.fullmatch(r"\d{4}", str(last4 or "")):
+        raise AdminError(400, "last4: four digits")
+    return last4
+
+
+def card_label(c):
+    return c.get("label") or default_card_label(c["last4"], c.get("holder_name"))
+
+
+def ignored_numbers(store):
+    """{number: {"reason", "by", "at"}}: card numbers on receipts AP said to leave alone."""
+    return dict((store.get_state("ignored_card_numbers") or {}).get("numbers") or {})
+
+
+@app.route("/api/admin/cards")
+def api_admin_cards():
+    """Every card with what needs attention (flags), its activity, last change and whether it can be
+    deleted, plus the card numbers receipts show that no card claims."""
+    require_admin()
+    fresh_requested()
+    store = get_store()
+    cards = store.list_cards()
+    by_last4 = {c["last4"]: c for c in cards}
+    views = card_views(cards, store.invoice_card_numbers())
+    activity = admin.card_activity(store.month_summary(), dt.date.today())
+    active_cc = store.list_cost_centers()
+    uploads = store.list_statements()
+    try:
+        last_change, audit_available = {}, True
+        for r in store.list_audit(entity="card", limit=200):        # newest first: the first per card wins
+            last_change.setdefault(r["entity_id"], {"at": r["at"], "actor": r["actor"], "action": r["action"]})
+    except StoreError as exc:
+        print(f"admin cards: no history ({exc})")
+        last_change, audit_available = {}, False
+    try:
+        notified = store.latest_notifications()
+    except StoreError as exc:
+        print(f"admin cards: no notifications ({exc})")
+        notified = {}
+    counts = {"all": len(views), **{f: 0 for f in admin.FLAGS}}
+    rows = []
+    for view in views:
+        last4 = view["last4"]
+        c = by_last4[last4]
+        a = activity.get(last4) or dict(NO_ACTIVITY)
+        default = c.get("default_cost_center") or ""
+        primary_default = (by_last4.get(c.get("primary_last4") or "") or {}).get("default_cost_center") or None
+        flags = admin.card_flags(view, a, c.get("updated_at"), active_cc, primary_default)
+        for f in flags:
+            counts[f] += 1
+        # What stops a delete, worked out in bulk (the DELETE route checks again with card_usage).
+        blockers = []
+        if a["transactions"]:
+            blockers.append(plural(a["transactions"], "transaction"))
+        listing = [u for u in uploads if last4 in (u.get("cards") or ())]
+        if listing:
+            blockers.append(f"listed on upload {listing[0].get('file_name') or listing[0].get('id')}"
+                            + (f" and {plural(len(listing) - 1, 'other')}" if len(listing) > 1 else ""))
+        if view["supplementary"]:
+            blockers.append("primary of " + ", ".join(view["supplementary"]))
+        rows.append(dict(view, updated_at=c.get("updated_at"), receipt_upload_env=receipt_upload_env(last4),
+                         activity=a, flags=flags, owners=admin.owner_list(c.get("owner_email"), ALLOWED_DOMAINS),
+                         last_notification=notified.get(last4), last_change=last_change.get(last4),
+                         default_cost_center_active=not default or default in active_cc,
+                         primary_default=primary_default, deletable=not blockers, delete_blockers=blockers))
+    return jsonify({"cards": rows, "counts": counts, "flag_labels": admin.FLAG_LABELS,
+                    "groups": admin.card_groups(cards), "people": store.list_people(), "cost_centers": active_cc,
+                    "owners": admin.owners_index(cards), "allowed_domains": sorted(ALLOWED_DOMAINS),
+                    "unclaimed": admin.unclaimed_numbers(admin.invoice_rows(store), cards, ignored_numbers(store)),
+                    "audit_available": audit_available})
+
+
+@app.route("/api/admin/card-numbers/<number>")
+def api_admin_card_number(number):
+    """The receipts showing a number no card claims, and the cards with a purchase of their amount soon
+    after (the likely owner)."""
+    require_admin()
+    if not re.fullmatch(r"\d{4}", number):
+        raise AdminError(400, "number: four digits")
+    fresh_requested()
+    store = get_store()
+    result = admin.likely_cards(number, admin.invoice_rows(store), admin.transaction_rows(store), store.list_cards())
+    if not result["invoices"]:
+        raise AdminError(404, f"no receipt shows card number {number}")
+    result["ignored"] = ignored_numbers(store).get(number) or None
+    return jsonify(result)
+
+
+@app.route("/api/admin/card-numbers/<number>/ignore", methods=["POST"])
+def api_admin_card_number_ignore(number):
+    user = require_admin(write=True)
+    if not re.fullmatch(r"\d{4}", number):
+        raise AdminError(400, "number: four digits")
+    body = json_body()
+    reason = admin.norm_space(body.get("reason"))
+    if not 1 <= len(reason) <= 200:
+        raise AdminError(400, "reason: say why (1-200 characters)")
+    store = get_store()
+    state = store.get_state("ignored_card_numbers") or {}
+    numbers = dict(state.get("numbers") or {})
+    before = numbers.get(number)
+    numbers[number] = {"reason": reason, "by": user["email"], "at": now_iso()}
+    store.set_state("ignored_card_numbers", dict(state, numbers=numbers))
+    audit("card_number", number, "ignore", before, numbers[number])
+    return jsonify({"ignored": numbers[number]})
+
+
+@app.route("/api/admin/card-numbers/<number>/ignore", methods=["DELETE"])
+def api_admin_card_number_unignore(number):
+    require_admin(write=True)
+    if not re.fullmatch(r"\d{4}", number):
+        raise AdminError(400, "number: four digits")
+    store = get_store()
+    state = store.get_state("ignored_card_numbers") or {}
+    numbers = dict(state.get("numbers") or {})
+    if number not in numbers:
+        raise AdminError(404, "not ignored")
+    before = numbers.pop(number)
+    store.set_state("ignored_card_numbers", dict(state, numbers=numbers))
+    audit("card_number", number, "unignore", before, None)
+    return jsonify({"ok": True})
+
+
+def card_in_use(last4, counts):
+    return AdminError(409, f"card {last4} is used ({plural(counts.get('transactions', 0), 'transaction')}, "
+                           f"{plural(counts.get('statements', 0), 'upload')}, "
+                           f"{plural(counts.get('supplementary', 0), 'supplementary card')}); only an unused card "
+                           "can be deleted", counts=counts)
+
+
+def alias_moves(changes):
+    """Where the receipt numbers would go, in words: "they would count as card 3922's"."""
+    after = {c["after"] for c in changes}
+    if len(after) == 1 and None not in after:
+        return f"they would count as card {next(iter(after))}'s"
+    return "; ".join(f"{c['number']} would count as " + (f"card {c['after']}'s" if c["after"] else "no card's")
+                     for c in changes)
+
+
+def deletable_card(store, last4):
+    """(cards, the card's row, the receipt numbers its delete would move) when the card may be deleted;
+    the refusal otherwise (404 unknown, 409 used, 409 moving receipt numbers without ?confirm=1)."""
+    cards = store.list_cards()
+    row = next((c for c in cards if c["last4"] == last4), None)
+    if row is None:
+        raise AdminError(404, f"card {last4} is not on the dashboard")
+    counts = store.card_usage(last4)
+    if any(counts.values()):
+        raise card_in_use(last4, counts)
+    changes = admin.alias_changes(cards, [c for c in cards if c["last4"] != last4], last4)
+    if changes and request.args.get("confirm") != "1":
+        raise AdminError(409, f"deleting card {last4} changes which card receipts showing "
+                              f"{', '.join(c['number'] for c in changes)} belong to ({alias_moves(changes)})",
+                         alias_changes=changes)
+    return cards, row, changes
+
+
+@app.route("/api/admin/cards/<last4>", methods=["DELETE"])
+def api_admin_card_delete(last4):
+    """Delete a card nothing uses: no transaction, no upload listing it, no supplementary card. A delete
+    that would hand its receipt numbers to another card is said first (?confirm=1 goes ahead)."""
+    require_admin(write=True)
+    last4_or_400(last4)
+    store = get_store()
+    deletable_card(store, last4)
+    # Checked again under the job lock and the job lease: an import that read the card list before the
+    # delete would otherwise fail on the transactions' foreign key. A job of this instance holds the store
+    # lease under this instance's own holder, which take_lease would hand back, so the lock comes first.
+    if not _job_lock.acquire(blocking=False):
+        raise AdminError(409, "an import or match is running; try again in a minute")
+    try:
+        lease = take_lease("card-delete")
+        if lease is None:
+            raise AdminError(409, "an import or match is running; try again in a minute")
+        try:
+            _cards, row, changes = deletable_card(store, last4)
+            try:
+                deleted = store.delete_card(last4)
+            except StoreError as exc:
+                if exc.conflict:            # a transaction arrived meanwhile (the foreign key)
+                    raise card_in_use(last4, store.card_usage(last4)) from None
+                raise
+            if not deleted:
+                raise AdminError(404, f"card {last4} is not on the dashboard")
+        finally:
+            lease.release()
+    finally:
+        _job_lock.release()
+    matching.forget_card_aliases()
+    note = ("alias changes confirmed: " + "; ".join(f"{c['number']} {c['before'] or '-'} -> {c['after'] or '-'}"
+                                                    for c in changes)) if changes else None
+    audit("card", last4, "delete", before=row, note=note)
+    print(f"card {last4} deleted by {actor()}")
+    return jsonify({"deleted": last4, "cards": card_views(store.list_cards(), store.invoice_card_numbers())})
+
+
+@app.route("/api/admin/cards/<last4>/fill-default", methods=["POST"])
+def api_admin_card_fill_default(last4):
+    """Fill the card's default cost centre into its purchases coded (a use case) before the default was
+    set, and still without a cost centre. A cost centre already set is never touched."""
+    user = require_admin(write=True)
+    last4_or_400(last4)
+    store = get_store()
+    card = next((c for c in store.list_cards() if c["last4"] == last4), None)
+    if card is None:
+        raise AdminError(404, f"card {last4} is not on the dashboard")
+    default = card.get("default_cost_center")
+    if not default or default not in store.list_cost_centers():
+        raise AdminError(400, "default_cost_center: the card has no active default")
+    rows = [t for t in admin.transaction_rows(store, fresh=True)
+            if t.get("card_last4") == last4 and t.get("type") == "purchase"
+            and str(t.get("usage") or "").strip() and not str(t.get("cost_center") or "").strip()]
+    filled, stamp = [], now_iso()
+    for t in rows:
+        # Compare and set on the empty value read: a cost centre someone set meanwhile is kept.
+        if store.update_transaction(t["id"], {"cost_center": default, "updated_by": user["email"], "updated_at": stamp},
+                                    expect={"cost_center": t.get("cost_center")}) is not None:
+            filled.append(t["id"])
+    admin.invalidate("transactions")
+    audit("card", last4, "fill_default", None, {"cost_center": default, "transactions": filled})
+    return jsonify({"filled": len(filled), "cost_center": default})
+
+
+# -- use cases and cost centres -------------------------------------------------------------
+def rename_refused(old, uses, what):
+    return AdminError(409, f"{plural(uses, 'purchase')} carry {old}; add the new {what} and retire this one instead. "
+                           f"Purchases already coded {old} keep {old} (they still count as coded); new purchases get "
+                           "the new name.", uses=uses)
+
+
+@app.route("/api/admin/coding")
+def api_admin_coding():
+    """The use cases and cost centres (retired ones too) with how much each is used, and the values
+    typed on purchases that are on neither list."""
+    require_admin()
+    store = get_store()
+    cards = store.list_cards()
+    cost_centers = store.list_cost_center_rows()
+    schema_missing = []
+    try:
+        use_cases = store.list_use_cases()
+    except StoreError as exc:
+        if not exc.missing:
+            raise
+        use_cases = []
+        schema_missing.append("use_cases")
+    overview = admin.coding_overview(store.coding_values_in_use(), cost_centers, use_cases, cards)
+    try:
+        # From the probes, not the rows: list_cost_center_rows() reads a missing active column as active.
+        status = store.schema_status()
+        for name in ("cost_centers.active", "use_cases"):
+            if status.get(name) is False and name not in schema_missing:
+                schema_missing.append(name)
+    except StoreError as exc:
+        print(f"admin coding: schema not checked ({exc})")
+    order = {"cost_centers.active": 0, "use_cases": 1}
+    return jsonify({
+        "cost_centers": [dict(r, uses=overview["cost_center_uses"].get(r["name"], 0),
+                              card_defaults=overview["card_defaults"].get(r["name"], [])) for r in cost_centers],
+        "use_cases": [dict(u, uses=overview["use_case_uses"].get(u["id"], 0)) for u in use_cases],
+        "usage_not_listed": overview["usage_not_listed"], "cost_centers_not_listed": overview["cost_centers_not_listed"],
+        "cost_centers_like_use_cases": overview["cost_centers_like_use_cases"],
+        "groups": admin.card_groups(cards), "schema_missing": sorted(schema_missing, key=order.get)})
+
+
+def cost_center_clash(rows, name, but=None):
+    key = admin.name_key(name)
+    return next((r for r in rows if r["name"] != but and admin.name_key(r["name"]) == key), None)
+
+
+def cost_center_exists(row):
+    return AdminError(409, f"a cost centre named {row['name']} already exists",
+                      existing={"name": row["name"], "active": row.get("active", True) is not False})
+
+
+@app.route("/api/admin/cost-centers", methods=["POST"])
+def api_admin_cost_center_add():
+    user = require_admin(write=True)
+    body = json_body()
+    name = text_field(body, "name", 100, required=True)
+    description = text_field(body, "description", 300)
+    store = get_store()
+    rows = store.list_cost_center_rows()
+    clash = cost_center_clash(rows, name)
+    if clash:
+        raise cost_center_exists(clash)
+    sort = int_field(body, "sort", max((int(r.get("sort") or 0) for r in rows), default=0) + 10)
+    try:
+        row = store.add_cost_center({"name": name, "sort": sort, "description": description,
+                                     "updated_by": user["email"], "updated_at": now_iso()})
+    except StoreError as exc:
+        clash = cost_center_clash(store.list_cost_center_rows(), name) if exc.conflict else None
+        if clash:
+            raise cost_center_exists(clash) from None
+        raise
+    audit("cost_center", row["name"], "create", None, row)
+    return jsonify({"cost_center": row}), 201
+
+
+@app.route("/api/admin/cost-centers", methods=["PATCH"])
+def api_admin_cost_center_update():
+    """?name=<the exact current name>: rename, describe, move, retire or restore a cost centre. A name
+    purchases carry is not renamed (they would keep the old one): add the new name and retire the old."""
+    user = require_admin(write=True)
+    name = request.args.get("name") or ""
+    body = json_body()
+    store = get_store()
+    rows = store.list_cost_center_rows()
+    row = next((r for r in rows if r["name"] == name), None)
+    if row is None:
+        raise AdminError(404, f"no cost centre named {name}")
+    patch = {}
+    if "name" in body:
+        new = text_field(body, "name", 100, required=True)
+        if new != name:
+            if admin.name_key(new) != admin.name_key(name):
+                # A change of capitals or spaces is always allowed: every comparison ignores them.
+                uses = admin.uses(name, store.coding_values_in_use()["cost_center"])
+                if uses:
+                    raise rename_refused(name, uses, "name")
+            clash = cost_center_clash(rows, new, but=name)
+            if clash:
+                raise cost_center_exists(clash)
+            patch["name"] = new
+    if "description" in body:
+        patch["description"] = text_field(body, "description", 300)
+    if "sort" in body:
+        patch["sort"] = int_field(body, "sort", row.get("sort"))
+    if "active" in body:
+        patch["active"] = bool_field(body, "active")
+    if not patch:
+        raise AdminError(400, "nothing to update")
+    patch.update({"updated_by": user["email"], "updated_at": now_iso()})
+    try:
+        saved = store.update_cost_center(name, patch)
+    except StoreError as exc:
+        clash = cost_center_clash(store.list_cost_center_rows(), patch.get("name", name), but=name) if exc.conflict else None
+        if clash:
+            raise cost_center_exists(clash) from None
+        raise
+    if saved is None:
+        raise AdminError(404, f"no cost centre named {name}")
+    was, now_active = row.get("active", True) is not False, saved.get("active", True) is not False
+    warnings = []
+    if was and not now_active:
+        warnings = [f"Card {c['last4']} ({card_label(c)}) defaults to {saved['name']}: its purchases are no longer "
+                    "filled until it gets another default."
+                    for c in store.list_cards() if c.get("default_cost_center") == saved["name"]]
+    action = ("rename" if saved["name"] != name else "retire" if was and not now_active
+              else "restore" if now_active and not was else "update")
+    audit("cost_center", saved["name"], action, row, saved, note=f"renamed from {name}" if action == "rename" else None)
+    return jsonify({"cost_center": saved, "warnings": warnings})
+
+
+def new_order(given, current, field):
+    """The full new order: the names (or ids) given, then any the page did not know of (added meanwhile)
+    in their current order. An unknown or repeated entry is a 400."""
+    if not isinstance(given, list) or not all(isinstance(v, str) for v in given):
+        raise AdminError(400, f"{field}: the list in its new order")
+    unknown = [v for v in given if v not in current]
+    if unknown:
+        raise AdminError(400, f"{field}: {unknown[0]} is not on the list")
+    if len(set(given)) != len(given):
+        raise AdminError(400, f"{field}: each entry once")
+    return list(given) + [v for v in current if v not in given]
+
+
+@app.route("/api/admin/cost-centers/order", methods=["POST"])
+def api_admin_cost_center_order():
+    user = require_admin(write=True)
+    body = json_body()
+    store = get_store()
+    rows = store.list_cost_center_rows()
+    before = [r["name"] for r in rows]
+    names = new_order(body.get("names"), before, "names")
+    sorts, stamp = {r["name"]: r.get("sort") for r in rows}, now_iso()
+    for i, name in enumerate(names):
+        if sorts.get(name) != (i + 1) * 10:
+            store.update_cost_center(name, {"sort": (i + 1) * 10, "updated_by": user["email"], "updated_at": stamp})
+    audit("cost_center", "*", "reorder", before, names)
+    return jsonify({"cost_centers": store.list_cost_center_rows()})
+
+
+def use_case_group(body, store):
+    """group_name: empty for any card, else one of the card groups (in its spelling)."""
+    group = admin.norm_space(body.get("group_name"))
+    if not group:
+        return None
+    snapped = admin.snap_name(group, admin.card_groups(store.list_cards()))
+    if not snapped:
+        raise AdminError(400, f"group_name: no card is in a group named '{group}'")
+    return snapped
+
+
+def use_case_clash(rows, name, but=None):
+    key = admin.name_key(name)
+    return next((u for u in rows if u["id"] != but and admin.name_key(u["name"]) == key), None)
+
+
+def use_case_exists(row):
+    return AdminError(409, f"a use case named {row['name']} already exists"
+                           + ("" if row.get("active") else " (retired: restore it)"),
+                      existing={"id": row["id"], "name": row["name"], "active": bool(row.get("active"))})
+
+
+@app.route("/api/admin/use-cases", methods=["POST"])
+def api_admin_use_case_add():
+    user = require_admin(write=True)
+    body = json_body()
+    name = text_field(body, "name", 80, required=True)
+    description = text_field(body, "description", 300)
+    store = get_store()
+    rows = store.list_use_cases()
+    group = use_case_group(body, store)
+    clash = use_case_clash(rows, name)
+    if clash:
+        raise use_case_exists(clash)
+    # Before "Other" (999) by default: a plain max + 10 would put a new use case after it.
+    sort = int_field(body, "sort", admin.new_use_case_sort(rows))
+    try:
+        row = store.create_use_case({"name": name, "description": description, "group_name": group, "sort": sort,
+                                     "active": True, "created_by": user["email"], "created_at": now_iso()})
+    except StoreError as exc:
+        clash = use_case_clash(store.list_use_cases(), name) if exc.conflict else None
+        if clash:
+            raise use_case_exists(clash) from None
+        raise
+    audit("use_case", row["id"], "create", None, row)
+    return jsonify({"use_case": row}), 201
+
+
+@app.route("/api/admin/use-cases/<use_case_id>", methods=["PATCH"])
+def api_admin_use_case_update(use_case_id):
+    user = require_admin(write=True)
+    uuid_or_404(use_case_id, "use case")
+    body = json_body()
+    store = get_store()
+    rows = store.list_use_cases()
+    row = next((u for u in rows if u["id"] == use_case_id), None)
+    if row is None:
+        raise AdminError(404, "no such use case")
+    patch = {}
+    if "name" in body:
+        new = text_field(body, "name", 80, required=True)
+        if new != row["name"]:
+            if admin.name_key(new) != admin.name_key(row["name"]):
+                uses = admin.uses(row["name"], store.coding_values_in_use()["usage"])
+                if uses:
+                    raise rename_refused(row["name"], uses, "use case")
+            clash = use_case_clash(rows, new, but=use_case_id)
+            if clash:
+                raise use_case_exists(clash)
+            patch["name"] = new
+    if "group_name" in body:
+        patch["group_name"] = use_case_group(body, store)
+    if "description" in body:
+        patch["description"] = text_field(body, "description", 300)
+    if "sort" in body:
+        patch["sort"] = int_field(body, "sort", row.get("sort"))
+    if "active" in body:
+        patch["active"] = bool_field(body, "active")
+    if not patch:
+        raise AdminError(400, "nothing to update")
+    patch.update({"updated_by": user["email"], "updated_at": now_iso()})
+    try:
+        saved = store.update_use_case(use_case_id, patch)
+    except StoreError as exc:
+        clash = use_case_clash(store.list_use_cases(), patch.get("name", row["name"]), but=use_case_id) if exc.conflict else None
+        if clash:
+            raise use_case_exists(clash) from None
+        raise
+    if saved is None:
+        raise AdminError(404, "no such use case")
+    was, now_active = bool(row.get("active")), bool(saved.get("active"))
+    warnings = []
+    if was and not now_active:
+        reg = admin_registry(store)
+        if reg is not None:
+            # A vendor default naming a retired use case suggests nothing any more.
+            for c in reg.coding:
+                if c.get("use_case_id") == use_case_id and c.get("vendor_id") in reg.vendors:
+                    group = admin.norm_space(c.get("group_name"))
+                    warnings.append(f"Vendor {reg.vendors[c['vendor_id']]['name']} suggests it for "
+                                    + (f"{group} cards" if group else "all cards"))
+    action = ("rename" if saved["name"] != row["name"] else "retire" if was and not now_active
+              else "restore" if now_active and not was else "update")
+    audit("use_case", use_case_id, action, row, saved)
+    return jsonify({"use_case": saved, "warnings": warnings})
+
+
+@app.route("/api/admin/use-cases/order", methods=["POST"])
+def api_admin_use_case_order():
+    user = require_admin(write=True)
+    body = json_body()
+    store = get_store()
+    rows = store.list_use_cases()
+    before = [u["id"] for u in rows]
+    ids = new_order(body.get("ids"), before, "ids")
+    sorts, stamp = {u["id"]: u.get("sort") for u in rows}, now_iso()
+    for i, use_case_id in enumerate(ids):
+        if sorts.get(use_case_id) != (i + 1) * 10:
+            store.update_use_case(use_case_id, {"sort": (i + 1) * 10, "updated_by": user["email"], "updated_at": stamp})
+    names = {u["id"]: u["name"] for u in rows}
+    audit("use_case", "*", "reorder", [names[i] for i in before], [names[i] for i in ids])
+    return jsonify({"use_cases": store.list_use_cases()})
+
+
+# -- vendors: the folder catalogue, the registry and proposals (matching is unchanged) --------
+def vendor_or_404(reg, vendor_id):
+    uuid_or_404(vendor_id, "vendor")
+    vendor = reg.vendors.get(vendor_id)
+    if vendor is None:
+        raise AdminError(404, "no such vendor")
+    return vendor
+
+
+def brief(vendor):
+    return {"id": vendor["id"], "name": vendor["name"]}
+
+
+def clean_folders(values, reg, vendor_id=None):
+    """[folder] cleaned and checked: 1-200 characters, each once, none another vendor holds (409). The
+    folders this vendor already holds are left out."""
+    if not isinstance(values, list) or not all(isinstance(v, str) for v in values):
+        raise AdminError(400, "folders: a list of folder names")
+    out, seen = [], set()
+    for value in values:
+        folder = admin.norm_space(value)
+        if not 1 <= len(folder) <= 200:
+            raise AdminError(400, "folders: each folder name is 1 to 200 characters")
+        key = admin.folder_key(folder)
+        if key in seen:
+            continue
+        seen.add(key)
+        owner = reg.folder_owner(key)
+        if owner is not None and owner["id"] == vendor_id:
+            continue
+        if owner is not None:
+            raise AdminError(409, f"folder '{folder}' already belongs to vendor {owner['name']}", clash="folder",
+                             value=folder, existing=brief(owner))
+        out.append(folder)
+    return out
+
+
+def clean_pattern(spec, reg, vendor_id=None, field="pattern"):
+    """(kind, match_type, pattern) normalised and checked, or None when this vendor already holds it.
+    A pattern another vendor holds is a 409."""
+    if isinstance(spec, str):
+        spec = {"pattern": spec}
+    if not isinstance(spec, dict):
+        raise AdminError(400, f"{field}: a pattern, or {{pattern, kind, match_type}}")
+    kind = spec.get("kind") or "descriptor"
+    # A supplier name on documents is matched whole: exact unless said otherwise.
+    match_type = spec.get("match_type") or ("exact" if kind == "invoice_vendor" else "prefix")
+    pattern = admin.normalise_pattern(spec.get("pattern"))
+    problem = admin.pattern_problem(pattern, kind, match_type)
+    if problem:
+        raise AdminError(400, problem if field == "pattern" else f"{field}: {problem}")
+    owner = reg.pattern_owner(kind, pattern)
+    if owner is not None and owner["id"] == vendor_id:
+        return None
+    if owner is not None:
+        raise AdminError(409, f"'{pattern}' already names vendor {owner['name']}", clash="pattern", value=pattern,
+                         kind=kind, existing=brief(owner))
+    return kind, match_type, pattern
+
+
+def raced(store, vendor_id, what, value, kind=None):
+    """A folder or pattern taken by another vendor between the check and the insert: 409 with the vendor as
+    it was saved, and who holds the item now."""
+    bump_registry(store)
+    reg = admin_registry(store, fresh=True)
+    owner = None
+    if reg is not None:
+        owner = reg.folder_owner(admin.folder_key(value)) if what == "folder" else reg.pattern_owner(kind, value)
+    extra = {"clash": what, "value": value, "existing": brief(owner) if owner else None,
+             "vendor": vendor_payload(store, reg, vendor_id)}
+    if kind:
+        extra["kind"] = kind
+    return AdminError(409, f"{what} '{value}' was taken by " + (f"vendor {owner['name']}" if owner else "another vendor")
+                      + " meanwhile; the rest was saved", **extra)
+
+
+def registry_write_done(store, vendor_id):
+    """After a registry write: count it, drop the cached registry, and answer the vendor as saved."""
+    bump_registry(store)
+    return vendor_payload(store, admin_registry(store, fresh=True), vendor_id)
+
+
+@app.route("/api/admin/vendors")
+def api_admin_vendors():
+    """The vendor folders under Invoice/, one row each, a page at a time: how the purchases link to them
+    and what needs attention. Read from cached whole-table reads (5 minutes; ?fresh=1 reads again)."""
+    require_admin()
+    fresh_requested()
+    store = get_store()
+    reg = admin_registry(store)
+    rows = admin.catalogue(admin.invoice_rows(store), admin.transaction_rows(store), reg)
+    sort = request.args.get("sort") if request.args.get("sort") in admin.CATALOGUE_SORTS else "attention"
+    registered = request.args.get("registered") if request.args.get("registered") in ("all", "yes", "no") else "all"
+    page = admin.catalogue_page(rows, q=request.args.get("q") or "", sort=sort, page=request.args.get("page") or 1,
+                                per=request.args.get("per") or 50, registered=registered)
+    stamps = [s for s in (admin.cached_at("transactions"), admin.cached_at("invoices")) if s]
+    page.update(generated_at=min(stamps) if stamps else None, registry_available=reg is not None)
+    return jsonify(page)
+
+
+def current_proposals(store, reg, invoices=None, transactions=None):
+    """(proposals, dismissed ids) computed now from the link history; none while the registry is missing."""
+    dismissed = (store.get_state("vendor_proposals") or {}).get("dismissed") or {}
+    if reg is None:
+        return [], dismissed
+    invoices = admin.invoice_rows(store) if invoices is None else invoices
+    transactions = admin.transaction_rows(store) if transactions is None else transactions
+    return admin.proposals(invoices, transactions, reg, all_use_cases(store), store.list_cards(), set(dismissed)), dismissed
+
+
+@app.route("/api/admin/vendors/folder")
+def api_admin_vendor_folder():
+    """?name=<folder>: one folder's descriptors, spellings and unmatched documents (the name goes in the
+    query string: folders hold commas and slashes)."""
+    require_admin()
+    name = request.args.get("name") or ""
+    if not admin.norm_space(name):
+        raise AdminError(400, "name: the folder's name")
+    fresh_requested()
+    store = get_store()
+    reg = admin_registry(store)
+    invoices, transactions = admin.invoice_rows(store), admin.transaction_rows(store)
+    detail = admin.folder_detail(name, invoices, transactions, reg)
+    if detail is None:
+        raise AdminError(404, f"no documents in a folder named {admin.norm_space(name)}")
+    key = detail["folder_key"]
+    proposals, _ = current_proposals(store, reg, invoices, transactions)
+    detail["proposals"] = [p for p in proposals
+                           if admin.folder_key(p["evidence"].get("folder")) == key
+                           or key in {admin.folder_key(f) for f in p["evidence"].get("folders") or ()}]
+    return jsonify(detail)
+
+
+@app.route("/api/admin/registry")
+def api_admin_registry():
+    require_admin()
+    fresh_requested()
+    store = get_store()
+    reg = admin_registry(store)
+    state = store.get_state("vendor_registry") or {}
+    return jsonify({"available": reg is not None, "version": int(state.get("version") or 0),
+                    "vendors": vendor_entries(store, reg), "use_cases": use_case_list(store),
+                    "groups": admin.card_groups(store.list_cards()), "kinds": VENDOR_KINDS,
+                    "folder_names": admin.folder_names(admin.invoice_rows(store))})
+
+
+@app.route("/api/admin/vendors", methods=["POST"])
+def api_admin_vendor_add():
+    """Register a vendor with its folders and patterns in one go (the editor, or a proposal's Accept).
+    Everything is checked before anything is written; patterns start "probation" (suggestions only)."""
+    user = require_admin(write=True)
+    body = json_body()
+    store = get_store()
+    reg = need_registry(store)
+    name = text_field(body, "name", 100, required=True)
+    note = text_field(body, "note", 500)
+    kind = body.get("kind") or "supplier"
+    if kind not in VENDOR_KINDS:
+        raise AdminError(400, "kind: supplier, processor, agent or not_vendor")
+    code_each = bool_field(body, "code_each") if "code_each" in body else False
+    source = body.get("source") or "admin"
+    if source not in ("admin", "proposal"):
+        raise AdminError(400, "source: admin or proposal")
+    clash = next((v for v in reg.vendors.values() if admin.name_key(v["name"]) == admin.name_key(name)), None)
+    if clash:
+        raise AdminError(409, f"a vendor named {clash['name']} already exists", clash="name", value=name,
+                         existing=brief(clash))
+    folders = clean_folders(body.get("folders") or [], reg)
+    patterns_in = body.get("patterns") or []
+    if not isinstance(patterns_in, list):
+        raise AdminError(400, "patterns: a list of {pattern, kind, match_type}")
+    patterns, seen = [], set()
+    for spec in patterns_in:
+        p = clean_pattern(spec, reg, field="patterns")
+        if p and (p[0], p[2]) not in seen:
+            seen.add((p[0], p[2]))
+            patterns.append(p)
+    stamp = now_iso()
+    try:
+        vendor = store.create_vendor({"name": name, "kind": kind, "code_each": code_each, "active": True, "note": note,
+                                      "created_by": user["email"], "created_at": stamp})
+    except StoreError as exc:
+        if not exc.conflict:
+            raise
+        admin.invalidate("registry")
+        reg = admin_registry(store, fresh=True)
+        clash = next((v for v in (reg.vendors.values() if reg else ())
+                      if admin.name_key(v["name"]) == admin.name_key(name)), None)
+        raise AdminError(409, f"a vendor named {name} already exists", clash="name", value=name,
+                         existing=brief(clash) if clash else None) from None
+    what, value, kind_now = None, None, None
+    try:
+        for folder in folders:
+            what, value, kind_now = "folder", folder, None
+            store.add_vendor_folder({"vendor_id": vendor["id"], "folder": folder, "folder_key": admin.folder_key(folder),
+                                     "created_by": user["email"], "created_at": stamp})
+        for p_kind, match_type, pattern in patterns:
+            what, value, kind_now = "pattern", pattern, p_kind
+            store.add_vendor_pattern({"vendor_id": vendor["id"], "kind": p_kind, "match_type": match_type,
+                                      "pattern": pattern, "status": "probation", "source": source,
+                                      "created_by": user["email"], "created_at": stamp})
+    except StoreError as exc:
+        if not exc.conflict:
+            bump_registry(store)            # the vendor is saved: the next read must see it
+            raise
+        error = raced(store, vendor["id"], what, value, kind_now)
+        audit("vendor", vendor["id"], "create", None, error.body.get("vendor"), note=f"partly saved: {error.body['error']}")
+        raise error from None
+    nested = vendor_payload(store, admin_registry(store, fresh=True), vendor["id"])
+    audit("vendor", vendor["id"], "create", None, nested)
+    bump_registry(store)
+    return jsonify({"vendor": nested}), 201
+
+
+@app.route("/api/admin/vendors/<vendor_id>", methods=["PATCH"])
+def api_admin_vendor_update(vendor_id):
+    user = require_admin(write=True)
+    uuid_or_404(vendor_id, "vendor")
+    body = json_body()
+    store = get_store()
+    reg = need_registry(store)
+    vendor = vendor_or_404(reg, vendor_id)
+    patch = {}
+    if "name" in body:
+        name = text_field(body, "name", 100, required=True)
+        clash = next((v for v in reg.vendors.values()
+                      if v["id"] != vendor_id and admin.name_key(v["name"]) == admin.name_key(name)), None)
+        if clash:
+            raise AdminError(409, f"a vendor named {clash['name']} already exists", clash="name", value=name,
+                             existing=brief(clash))
+        patch["name"] = name
+    if "kind" in body:
+        if body["kind"] not in VENDOR_KINDS:
+            raise AdminError(400, "kind: supplier, processor, agent or not_vendor")
+        patch["kind"] = body["kind"]
+    for field in ("code_each", "active"):
+        if field in body:
+            patch[field] = bool_field(body, field)
+    if "note" in body:
+        patch["note"] = text_field(body, "note", 500)
+    if not patch:
+        raise AdminError(400, "nothing to update")
+    patch.update({"updated_by": user["email"], "updated_at": now_iso()})
+    try:
+        saved = store.update_vendor(vendor_id, patch)
+    except StoreError as exc:
+        if exc.conflict:
+            raise AdminError(409, f"a vendor named {patch.get('name')} already exists", clash="name",
+                             value=patch.get("name"), existing=None) from None
+        raise
+    if saved is None:
+        raise AdminError(404, "no such vendor")
+    # Default use cases that stop applying: a marketplace is coded purchase by purchase, and only a
+    # supplier's purchases get a default.
+    coded = [c for c in reg.coding if c["vendor_id"] == vendor_id]
+    warnings = []
+    was_codable = vendor.get("kind") == "supplier" and not vendor.get("code_each")
+    if coded and was_codable and (saved.get("code_each") or saved.get("kind") != "supplier"):
+        why = ("it is coded purchase by purchase" if saved.get("code_each")
+               else f"it is {KIND_WORDS.get(saved.get('kind'), saved.get('kind'))}")
+        warnings.append(f"{saved['name']}'s default use case{'s' if len(coded) != 1 else ''} "
+                        f"({plural(len(coded), 'group')}) will be ignored: {why}.")
+    nested = registry_write_done(store, vendor_id)
+    audit("vendor", vendor_id, "update", {k: vendor.get(k) for k in VENDOR_FIELDS}, saved)
+    return jsonify({"vendor": nested, "warnings": warnings})
+
+
+@app.route("/api/admin/vendors/<vendor_id>/folders", methods=["POST"])
+def api_admin_vendor_folders(vendor_id):
+    """{"folder"} or {"folders": [...]}: more Drive folders holding this vendor's documents."""
+    user = require_admin(write=True)
+    uuid_or_404(vendor_id, "vendor")
+    body = json_body()
+    store = get_store()
+    reg = need_registry(store)
+    vendor_or_404(reg, vendor_id)
+    values = body.get("folders") if "folders" in body else [body.get("folder")]
+    if not values or not all(isinstance(v, str) for v in values):
+        raise AdminError(400, "folders: a list of folder names")
+    folders, stamp = clean_folders(values, reg, vendor_id), now_iso()
+    for folder in folders:
+        try:
+            row = store.add_vendor_folder({"vendor_id": vendor_id, "folder": folder, "folder_key": admin.folder_key(folder),
+                                           "created_by": user["email"], "created_at": stamp})
+        except StoreError as exc:
+            if not exc.conflict:
+                bump_registry(store)
+                raise
+            raise raced(store, vendor_id, "folder", folder) from None
+        audit("vendor_folder", row["id"], "create", None, row)
+    nested = registry_write_done(store, vendor_id)
+    return jsonify({"vendor": nested}), 201 if folders else 200
+
+
+@app.route("/api/admin/vendor-folders/<folder_id>", methods=["DELETE"])
+def api_admin_vendor_folder_delete(folder_id):
+    require_admin(write=True)
+    uuid_or_404(folder_id, "folder")
+    store = get_store()
+    reg = need_registry(store)
+    row = next((f for f in reg.folders if f["id"] == folder_id), None)
+    if row is None or not store.delete_vendor_folder(folder_id):
+        raise AdminError(404, "no such folder")
+    audit("vendor_folder", folder_id, "delete", row, None)
+    return jsonify({"vendor": registry_write_done(store, row["vendor_id"])})
+
+
+@app.route("/api/admin/vendors/<vendor_id>/patterns", methods=["POST"])
+def api_admin_vendor_pattern_add(vendor_id):
+    """{"pattern", "kind"?, "match_type"?, "source"?}: what names the vendor (a card descriptor's start,
+    or the supplier name on its documents). Saved "probation": suggestions only, never matching."""
+    user = require_admin(write=True)
+    uuid_or_404(vendor_id, "vendor")
+    body = json_body()
+    store = get_store()
+    reg = need_registry(store)
+    vendor_or_404(reg, vendor_id)
+    source = body.get("source") or "admin"
+    if source not in ("admin", "proposal"):
+        raise AdminError(400, "source: admin or proposal")
+    p = clean_pattern(body, reg, vendor_id)
+    if p is None:                   # this vendor's already
+        return jsonify({"vendor": vendor_payload(store, reg, vendor_id)})
+    kind, match_type, pattern = p
+    try:
+        row = store.add_vendor_pattern({"vendor_id": vendor_id, "kind": kind, "match_type": match_type,
+                                        "pattern": pattern, "status": "probation", "source": source,
+                                        "created_by": user["email"], "created_at": now_iso()})
+    except StoreError as exc:
+        if not exc.conflict:
+            raise
+        raise raced(store, vendor_id, "pattern", pattern, kind) from None
+    audit("vendor_pattern", row["id"], "create", None, row)
+    return jsonify({"vendor": registry_write_done(store, vendor_id)}), 201
+
+
+@app.route("/api/admin/vendor-patterns/<pattern_id>", methods=["PATCH"])
+def api_admin_vendor_pattern_update(pattern_id):
+    """{"status"?: "probation"|"off", "note"?}. Round A takes no "trusted": patterns do not match yet."""
+    user = require_admin(write=True)
+    uuid_or_404(pattern_id, "pattern")
+    body = json_body()
+    store = get_store()
+    reg = need_registry(store)
+    row = next((p for p in reg.patterns if p["id"] == pattern_id), None)
+    if row is None:
+        raise AdminError(404, "no such pattern")
+    patch = {}
+    if "status" in body:
+        if body["status"] not in ("probation", "off"):
+            raise AdminError(400, "status: probation (on) or off; matching does not use patterns yet")
+        patch["status"] = body["status"]
+    if "note" in body:
+        patch["note"] = text_field(body, "note", 500)
+    if not patch:
+        raise AdminError(400, "nothing to update")
+    patch.update({"updated_by": user["email"], "updated_at": now_iso()})
+    saved = store.update_vendor_pattern(pattern_id, patch)
+    if saved is None:
+        raise AdminError(404, "no such pattern")
+    audit("vendor_pattern", pattern_id, "update", row, saved)
+    return jsonify({"vendor": registry_write_done(store, row["vendor_id"])})
+
+
+@app.route("/api/admin/vendor-patterns/<pattern_id>", methods=["DELETE"])
+def api_admin_vendor_pattern_delete(pattern_id):
+    require_admin(write=True)
+    uuid_or_404(pattern_id, "pattern")
+    store = get_store()
+    reg = need_registry(store)
+    row = next((p for p in reg.patterns if p["id"] == pattern_id), None)
+    if row is None or not store.delete_vendor_pattern(pattern_id):
+        raise AdminError(404, "no such pattern")
+    audit("vendor_pattern", pattern_id, "delete", row, None)
+    return jsonify({"vendor": registry_write_done(store, row["vendor_id"])})
+
+
+@app.route("/api/admin/vendors/<vendor_id>/coding", methods=["PUT"])
+def api_admin_vendor_coding(vendor_id):
+    """{"group_name": "" | group, "use_case_id": id | null}: the use case suggested for the vendor's
+    purchases on the group's cards ("" any card); null removes it."""
+    user = require_admin(write=True)
+    uuid_or_404(vendor_id, "vendor")
+    body = json_body()
+    store = get_store()
+    reg = need_registry(store)
+    vendor = vendor_or_404(reg, vendor_id)
+    group = use_case_group(body, store) or ""
+    if vendor.get("code_each"):
+        raise AdminError(400, f"{vendor['name']} is coded purchase by purchase (code each), so it has no default")
+    if vendor.get("kind") != "supplier":
+        raise AdminError(400, f"{vendor['name']} is {KIND_WORDS.get(vendor.get('kind'), vendor.get('kind'))}, "
+                              "so it has no default")
+    if "use_case_id" not in body:
+        raise AdminError(400, "use_case_id: a use case, or null to remove the default")
+    key = admin.name_key(group)
+    before = next((c for c in reg.coding if c["vendor_id"] == vendor_id and admin.name_key(c.get("group_name")) == key), None)
+    use_case_id = body.get("use_case_id")
+    if use_case_id is None:
+        if store.delete_vendor_coding(vendor_id, group):
+            audit("vendor_coding", f"{vendor_id}:{key}", "delete", before, None)
+    else:
+        allowed = {u["id"] for u in admin.use_cases_for_group(all_use_cases(store), group)}
+        if use_case_id not in allowed:
+            raise AdminError(400, f"use_case_id: not an active use case for {group or 'any group'}")
+        saved = store.set_vendor_coding(vendor_id, group, use_case_id, user["email"])
+        audit("vendor_coding", f"{vendor_id}:{key}", "update", before, saved)
+    return jsonify({"vendor": registry_write_done(store, vendor_id)})
+
+
+@app.route("/api/admin/proposals")
+def api_admin_proposals():
+    """What the link history suggests registering (aliases, folders that are one vendor, coding), worked
+    out on each read; each carries the request that accepts it."""
+    require_admin()
+    fresh_requested()
+    store = get_store()
+    reg = admin_registry(store)
+    proposals, dismissed = current_proposals(store, reg)
+    return jsonify({"proposals": proposals, "dismissed": len(dismissed), "available": reg is not None})
+
+
+@app.route("/api/admin/proposals/dismiss", methods=["POST"])
+def api_admin_proposal_dismiss():
+    """{"id", "undo"?}: hide a proposal (or show it again)."""
+    user = require_admin(write=True)
+    body = json_body()
+    proposal_id = str(body.get("id") or "").strip()
+    if not 1 <= len(proposal_id) <= 500:
+        raise AdminError(400, "id: the proposal's id")
+    undo = body.get("undo") is True
+    store = get_store()
+    state = store.get_state("vendor_proposals") or {}
+    dismissed = dict(state.get("dismissed") or {})
+    if undo:
+        dismissed.pop(proposal_id, None)
+    else:
+        dismissed[proposal_id] = {"by": user["email"], "at": now_iso()}
+    store.set_state("vendor_proposals", dict(state, dismissed=dismissed))
+    audit("proposal", proposal_id, "undismiss" if undo else "dismiss")
+    return jsonify({"ok": True})
+
+
+# -- people -----------------------------------------------------------------------------------
+def likely_person(name, people):
+    """The person a card holder probably is: the same name, else the same words (or the words of one
+    inside the other's, at least two: "NEW FRONTIER GLOBAL LIMITED" is "New Frontier Global")."""
+    same = person_named(people, name)
+    if same:
+        return same
+    mine = set(admin.person_tokens(name))
+    for p in people:
+        theirs = set(admin.person_tokens(p.get("name")))
+        small, big = sorted((mine, theirs), key=len)
+        if mine and theirs and (mine == theirs or (len(small) >= 2 and small <= big)):
+            return p
+    return None
+
+
+def duplicate_pairs(rows):
+    by_id = {p["id"]: p for p in rows}
+    return [[{"id": a, "name": by_id[a]["name"]}, {"id": b, "name": by_id[b]["name"]}]
+            for a, b in admin.likely_duplicate_people(rows)]
+
+
+def holder_change(card, person_id, holder):
+    """The card row for a new holder name (rename or merge): the label follows when it is the default one."""
+    change = {"last4": card["last4"], "person_id": person_id, "holder_name": holder, "updated_at": now_iso()}
+    old_label = card.get("label") or default_card_label(card["last4"], card.get("holder_name"))
+    if CARD_LABEL_RE.match(old_label) and old_label == default_card_label(card["last4"], card.get("holder_name")):
+        change["label"] = default_card_label(card["last4"], holder)
+    return change
+
+
+def move_card_holder(store, card, person_id, holder, note):
+    """Rewrite a card's holder (and default label), and audit it on the card, so its History shows it."""
+    change = holder_change(card, person_id, holder)
+    store.upsert_cards([change])
+    fields = ("holder_name", "label", "person_id")
+    audit("card", card["last4"], "update", {k: card.get(k) for k in fields}, {k: change.get(k, card.get(k)) for k in fields},
+          note=note)
+
+
+@app.route("/api/admin/people")
+def api_admin_people():
+    """Everyone purchases can be assigned to: the cards they hold and own, what they can code, and the
+    card holders not linked to anyone yet."""
+    require_admin()
+    store = get_store()
+    rows = store.list_people_rows()
+    cards = store.list_cards()
+    usage = store.people_usage()
+    people = []
+    for p in rows:
+        email = (p.get("email") or "").lower()
+        held = sorted(c["last4"] for c in cards if c.get("person_id") == p["id"])
+        owned = sorted(c["last4"] for c in cards if email and email in owner_emails(c.get("owner_email")))
+        people.append(dict(p, cards_held=held, cards_owned=owned,
+                           # holds the card but cannot code its purchases (not one of its owners)
+                           cannot_code=[last4 for last4 in held if last4 not in owned] if email else [],
+                           purchases=usage.get(p["id"], 0)))
+    unlinked = []
+    for c in cards:
+        if c.get("holder_name") and not c.get("person_id"):
+            likely = likely_person(c["holder_name"], rows)
+            unlinked.append({"last4": c["last4"], "holder_name": c["holder_name"],
+                             "likely": {"id": likely["id"], "name": likely["name"]} if likely else None})
+    return jsonify({"people": people, "holders_unlinked": unlinked, "duplicates": duplicate_pairs(rows)})
+
+
+@app.route("/api/admin/people/<person_id>", methods=["PATCH"])
+def api_admin_person_update(person_id):
+    """{"name"?, "email"?}. A rename rewrites the holder (and a default label) on the person's cards; a
+    name someone else has is a 409 that offers a merge."""
+    user = require_admin(write=True)
+    uuid_or_404(person_id, "person")
+    body = json_body()
+    store = get_store()
+    rows = store.list_people_rows()
+    person = next((p for p in rows if p["id"] == person_id), None)
+    if person is None:
+        raise AdminError(404, "no such person")
+    patch = {}
+    if "name" in body:
+        new = text_field(body, "name", PERSON_NAME_MAX, required=True)
+        other = next((p for p in rows if p["id"] != person_id and admin.name_key(p["name"]) == admin.name_key(new)), None)
+        if other:
+            raise AdminError(409, f"{other['name']} already exists; merge instead?",
+                             merge_into={"id": other["id"], "name": other["name"]})
+        if new != person["name"]:
+            patch["name"] = new
+    if "email" in body:
+        # Lower case like owner_emails() (cards_owned compares with it); "" is no e-mail (NULL), so two
+        # people without one never clash on people_email_unique.
+        email = str(body.get("email") or "").strip().lower() or None
+        if email and not EMAIL_RE.match(email):
+            raise AdminError(400, f"email: '{email[:80]}' is not an e-mail address")
+        other = next((p for p in rows if p["id"] != person_id and email and (p.get("email") or "").lower() == email), None)
+        if other:
+            raise AdminError(409, f"email: that e-mail already belongs to {other['name']}")
+        if email != (person.get("email") or None):
+            patch["email"] = email
+    if not patch:
+        return jsonify({"person": {k: person.get(k) for k in ("id", "name", "email")}, "cards_updated": []})
+    patch.update({"updated_by": user["email"], "updated_at": now_iso()})
+    saved = store.update_person(person_id, patch)
+    if saved is None:
+        raise AdminError(404, "no such person")
+    updated = []
+    if "name" in patch:
+        for c in store.list_cards():
+            if c.get("person_id") == person_id:
+                move_card_holder(store, c, person_id, patch["name"], "via person rename")
+                updated.append(c["last4"])
+    audit("person", person_id, "rename" if "name" in patch else "update", person, dict(person, **patch))
+    return jsonify({"person": saved, "cards_updated": updated})
+
+
+@app.route("/api/admin/people/<person_id>/merge", methods=["POST"])
+def api_admin_person_merge(person_id):
+    """{"into": id}: one person in two names. Their purchases and cards move to `into`, then they are
+    deleted; their e-mail goes along when `into` has none."""
+    user = require_admin(write=True)
+    uuid_or_404(person_id, "person")
+    body = json_body()
+    into = str(body.get("into") or "")
+    if into == person_id:
+        raise AdminError(400, "into: another person")
+    uuid_or_404(into, "person to merge into")
+    store = get_store()
+    rows = {p["id"]: p for p in store.list_people_rows()}
+    source, target = rows.get(person_id), rows.get(into)
+    if source is None:
+        raise AdminError(404, "no such person")
+    if target is None:
+        raise AdminError(404, "no such person to merge into")
+    moved = store.reassign_person_transactions(person_id, into)
+    cards_moved = []
+    for c in store.list_cards():
+        if c.get("person_id") == person_id:
+            move_card_holder(store, c, into, target["name"], "via person merge")
+            cards_moved.append(c["last4"])
+    email = source.get("email")
+    store.delete_person(person_id)
+    after = {k: target.get(k) for k in ("id", "name", "email")}
+    if email and not target.get("email"):
+        # After the delete, so the unique e-mail index never sees it twice.
+        after = store.update_person(into, {"email": email, "updated_by": user["email"], "updated_at": now_iso()}) or after
+    audit("person", into, "merge", {"source": source, "target": target},
+          {"target": after, "transactions": moved, "cards": cards_moved})
+    return jsonify({"person": after, "moved": {"transactions": moved, "cards": cards_moved}})
+
+
+@app.route("/api/admin/people/<person_id>", methods=["DELETE"])
+def api_admin_person_delete(person_id):
+    """A card holder is never deleted (the card would bring them back); a person with purchases only on
+    ?confirm=1 (the purchases are unassigned)."""
+    require_admin(write=True)
+    uuid_or_404(person_id, "person")
+    store = get_store()
+    person = next((p for p in store.list_people_rows() if p["id"] == person_id), None)
+    if person is None:
+        raise AdminError(404, "no such person")
+    held = sorted(c["last4"] for c in store.list_cards() if c.get("person_id") == person_id)
+    counts = {"transactions": store.people_usage().get(person_id, 0), "cards": held}
+    name = person["name"]
+    if held:
+        raise AdminError(409, f"{name} holds card{'s' if len(held) > 1 else ''} {', '.join(held)}: merge {name} into "
+                              "the right person, or change the card's holder first", counts=counts, holds_cards=held)
+    if counts["transactions"] and request.args.get("confirm") != "1":
+        raise AdminError(409, f"{name} is assigned to {plural(counts['transactions'], 'purchase')}; deleting "
+                              "unassigns them", counts=counts)
+    if not store.delete_person(person_id):
+        raise AdminError(404, "no such person")
+    audit("person", person_id, "delete", person, None)
+    return jsonify({"deleted": person_id, "counts": counts})
+
+
+@app.route("/api/admin/people/link-holders", methods=["POST"])
+def api_admin_link_holders():
+    """Every card whose holder is not a person yet: the person of that name (made when there is none)."""
+    user = require_admin(write=True)
+    store = get_store()
+    linked = []
+    for c in store.list_cards():
+        if not c.get("holder_name") or c.get("person_id"):
+            continue
+        person, created = store.create_person(c["holder_name"], created_by=user["email"])
+        store.upsert_cards([{"last4": c["last4"], "person_id": person["id"], "updated_at": now_iso()}])
+        if created:
+            audit("person", person["id"], "create", None, person)
+        audit("card", c["last4"], "link", {"person_id": None}, {"person_id": person["id"]})
+        linked.append({"last4": c["last4"], "person": {"id": person["id"], "name": person["name"]}, "created": created})
+    return jsonify({"linked": linked, "duplicates": duplicate_pairs(store.list_people_rows()),
+                    "people": store.list_people()})
+
+
+# -- history ----------------------------------------------------------------------------------
+@app.route("/api/admin/audit")
+def api_admin_audit():
+    require_admin()
+    try:
+        limit = max(1, min(200, int(request.args.get("limit") or 50)))
+    except ValueError:
+        raise AdminError(400, "limit: a whole number") from None
+    before_id = request.args.get("before_id") or None
+    if before_id is not None:
+        if not re.fullmatch(r"\d{1,18}", before_id):
+            raise AdminError(400, "before_id: a whole number")
+        before_id = int(before_id)
+    entity = (request.args.get("entity") or "").strip() or None
+    entity_id = (request.args.get("entity_id") or "").strip() or None
+    who = (request.args.get("actor") or "").strip() or None
+    try:
+        entries = get_store().list_audit(entity=entity, entity_id=entity_id, actor=who, before_id=before_id, limit=limit)
+    except StoreError as exc:
+        if not exc.missing:
+            raise
+        return jsonify({"entries": [], "next_before_id": None, "available": False, "entities": AUDIT_ENTITIES})
+    return jsonify({"entries": entries, "next_before_id": entries[-1]["id"] if len(entries) == limit else None,
+                    "available": True, "entities": AUDIT_ENTITIES})
 
 
 def remind_latest():

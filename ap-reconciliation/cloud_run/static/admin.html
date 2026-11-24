@@ -1,0 +1,3035 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#15181c" />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20width%3D%2234%22%20height%3D%2232%22%20viewBox%3D%220%200%2034%2032%22%20fill%3D%22%23000%22%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%3E%3Cpath%20fill-rule%3D%22evenodd%22%20clip-rule%3D%22evenodd%22%20d%3D%22M27.1627%206.68825L25.8392%203.80659C25.8392%203.80659%2025.7429%203.11202%2025.3968%202.57235C25.0863%202.08729%2024.5186%201.75066%2024.5186%201.75066C24.5186%201.75066%2023.224%201.87491%2022.3267%200.933594C21.8174%201.0727%2017.751%202.09091%209.66212%209.63543C4.05848%2014.8618%200.0742188%2022.4494%200.0742188%2022.4494L0.380647%2023.9022L0.530388%2027.3947C0.530388%2027.3947%205.29581%2022.9589%2010.5689%2018.7022C15.5451%2014.6849%2021.0493%2010.8319%2021.0493%2010.8319L27.1637%206.68824L27.1627%206.68825Z%22%20fill%3D%22%23000%22/%3E%3Cpath%20fill-rule%3D%22evenodd%22%20clip-rule%3D%22evenodd%22%20d%3D%22M27.1743%209.98186C27.1743%209.98186%2021.9315%2013.2986%2016.2558%2017.8536C13.6044%2019.9811%208.79133%2026.7941%208.42188%2031.0734L11.9139%2027.7627C11.9139%2027.7627%2014.0273%2026.6225%2016.2799%2024.8619C18.6449%2023.0148%2021.1723%2020.5315%2021.9552%2019.895C23.4831%2018.6529%2025.9936%2016.6865%2027.6315%2015.7519C29.2693%2014.8184%2030.5803%2014.0929%2029.8104%2012.8589C29.4119%2012.2191%2028.9086%2011.3887%2028.4898%2010.802C28.1009%2010.2569%2027.8067%209.93043%2027.1752%209.98186H27.1743Z%22%20fill%3D%22%23000%22/%3E%3Cpath%20fill-rule%3D%22evenodd%22%20clip-rule%3D%22evenodd%22%20d%3D%22M31.5551%2016.6311C31.5551%2016.6311%2026.8005%2018.5545%2023.2555%2021.6073C22.7138%2022.0731%2020.9832%2023.8773%2019.7663%2025.7418C18.7651%2027.2771%2017.7893%2029.7252%2017.5931%2030.2853C17.1592%2031.5236%2018.6863%2029.7666%2021.087%2027.7986C23.4878%2025.8316%2025.9468%2025.1021%2027.2042%2024.4797C28.2332%2023.9686%2033.1052%2022.0875%2033.3172%2019.9222C33.5284%2017.7579%2032.867%2016.4205%2031.5542%2016.6311H31.5551Z%22%20fill%3D%22%23000%22/%3E%3C/svg%3E" />
+  <title>AP Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    /* The accounts-payable admin pages. Tokens and components are copied from index.html (not shared:
+       this page loads no script and no stylesheet but the font), so the two read as one family.
+       Light theme only, like index.html. */
+    :root {
+      --bg: #f7f8f9;
+      --surface: #ffffff;
+      --border: #e5e7ea;
+      --border-subtle: #eff1f3;
+      --text: #191919;
+      --text-mid: #5b5b5b;
+      --text-mute: #6b6f78;
+      --brand: #00b67a;
+      --brand-soft: #e6f8f2;
+      --brand-ink: #00754d;
+      --up: #00a86b;
+      --up-soft: #e5f6ef;
+      --up-ink: #007a4d;
+      --down: #d43f3f;
+      --down-soft: #ffeded;
+      --warn: #fff7e6;
+      --warn-text: #8a5a00;
+      --warn-strong: #e0a100;
+      --info-soft: #eef3ff;
+      --info-text: #2d4fa8;
+      --sidebar: #15181c;
+      --sidebar-active: #282d36;
+      --sidebar-text: #bbbfc6;
+      --hover-wash: rgba(0,0,0,0.045);
+      --r-pill: 9999px;
+      --card-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+    /* index.html gets its reset from Tailwind; this page has no Tailwind, so the little it relies on is here. */
+    *, *::before, *::after { box-sizing: border-box; }
+    body { margin: 0; }
+    h1, h2, h3, p { margin: 0; }
+    button, input, select, textarea { font: inherit; color: inherit; margin: 0; }
+    button { background: transparent; border: 0; padding: 0; cursor: pointer; }
+    img { max-width: 100%; }
+    details > summary { cursor: pointer; }
+
+    html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+    html, body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: var(--text); line-height: 1.45; -webkit-font-smoothing: antialiased; font-variant-numeric: tabular-nums; font-size: 14px; }
+    .hidden { display: none !important; }
+
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--card-shadow); }
+    .sub { font-size: 11.5px; color: var(--text-mute); }
+    .label { font-size: 11px; font-weight: 600; letter-spacing: 1.2px; text-transform: uppercase; color: var(--text-mute); }
+    a.link { color: var(--brand-ink); text-decoration: none; }
+    a.link:hover { text-decoration: underline; }
+
+    .pill { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 3px 9px; font-size: 11px; font-weight: 500; line-height: 1.2; white-space: nowrap; flex-shrink: 0; }
+    .pill-up { background: var(--up-soft); color: var(--up-ink); }
+    .pill-down { background: var(--down-soft); color: var(--down); }
+    .pill-warn { background: var(--warn); color: var(--warn-text); }
+    .pill-grey { background: var(--border-subtle); color: var(--text-mid); }
+    .pill-info { background: var(--info-soft); color: var(--info-text); }
+    .pill-brand { background: var(--brand-soft); color: var(--brand-ink); }
+    .badge { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 1; }
+    .badge-red { background: var(--down); color: #fff; }
+    .badge-amber { background: var(--warn-strong); color: #fff; }
+    .badge-grey { background: rgba(255,255,255,0.1); color: #fff; }
+
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 14px; border-radius: var(--r-pill); font-size: 12.5px; font-weight: 500; cursor: pointer; border: 1px solid transparent; line-height: 1.2; white-space: nowrap; transition: background-color .15s ease, filter .15s ease, transform .15s ease; }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-primary { background: var(--brand); color: #fff; font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.18); }
+    .btn-primary:hover:not(:disabled) { filter: brightness(1.06); }
+    .btn-primary:active:not(:disabled) { transform: scale(0.97); }
+    .btn-secondary { background: var(--surface); color: var(--text-mid); border-color: var(--border); }
+    .btn-secondary:hover:not(:disabled) { background: var(--hover-wash); color: var(--text); }
+    .btn-ghost { background: transparent; color: var(--text-mid); }
+    .btn-ghost:hover:not(:disabled) { background: var(--hover-wash); color: var(--text); }
+    .btn-danger { background: var(--down-soft); color: var(--down); }
+    .btn-danger:hover:not(:disabled) { filter: brightness(0.97); }
+    .btn-xs { padding: 4px 10px; font-size: 11.5px; }
+    a.btn { text-decoration: none; }
+    /* A button whose label carries a name ("Merge X into Y") may wrap rather than widen a phone's page. */
+    .btn-wrap { white-space: normal; text-align: left; max-width: 100%; overflow-wrap: anywhere; }
+
+    .inp { width: 100%; height: 32px; padding: 0 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font-size: 12.5px; outline: none; font-variant-numeric: normal; }
+    .inp:focus { border-color: var(--brand); box-shadow: 0 0 0 3px rgba(0,182,122,0.15); }
+    .inp:disabled { background: var(--bg); color: var(--text-mute); cursor: not-allowed; }
+    select.inp { padding-right: 24px; appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b6f78' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; }
+    textarea.inp { height: auto; min-height: 56px; padding: 6px 9px; resize: vertical; }
+    input[type="checkbox"] { accent-color: var(--brand); width: 15px; height: 15px; }
+
+    .chip { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: var(--r-pill); border: 1px solid var(--border); background: var(--surface); font-size: 12.5px; font-weight: 500; color: var(--text-mid); cursor: pointer; white-space: nowrap; }
+    .chip:hover { background: var(--hover-wash); color: var(--text); }
+    .chip.active { background: var(--sidebar); border-color: var(--sidebar); color: #fff; }
+    .chip .n { font-size: 11px; color: var(--text-mute); }
+    .chip.active .n { color: #d5d8de; }
+
+    .seg { display: inline-flex; flex-wrap: wrap; gap: 2px; background: var(--border-subtle); padding: 3px; border-radius: 10px; }
+    .seg button, .seg a { padding: 5px 10px; border-radius: 8px; font-size: 12px; font-weight: 500; color: var(--text-mid); display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; text-decoration: none; }
+    .seg button .n { font-size: 10.5px; color: var(--text-mute); }
+    .seg button.active, .seg a.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
+    .seg .badge { height: 16px; min-width: 16px; font-size: 10px; padding: 0 4px; }
+
+    .modal-backdrop { position: fixed; inset: 0; background: rgba(10,11,14,0.55); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 12px; }
+    .modal { background: var(--surface); border-radius: 16px; box-shadow: 0 24px 60px rgba(0,0,0,0.35), 0 0 0 1px var(--border); width: 760px; max-width: 100%; max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; }
+    .modal.wide { width: 980px; }
+    .modal-head { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--border-subtle); }
+    .modal-body { padding: 14px 18px; overflow-y: auto; }
+    @media (max-width: 640px) { .modal-backdrop { align-items: flex-end; padding: 0; } .modal { border-radius: 16px 16px 0 0; max-height: 92vh; } }
+    #modalTitle { flex: 1; min-width: 0; font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    table.list { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+    table.list th { text-align: left; font-size: 10.5px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--text-mute); padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    table.list td { padding: 7px 8px; border-bottom: 1px solid var(--border-subtle); vertical-align: top; }
+    .list-wrap { overflow-x: auto; }
+    .empty { text-align: center; padding: 56px 16px; color: var(--text-mute); }
+
+    #toast { position: fixed; right: 16px; bottom: 16px; z-index: 60; display: flex; flex-direction: column; gap: 8px; max-width: calc(100vw - 32px); }
+    .toast { background: #1d2128; color: #fff; padding: 10px 14px; border-radius: 10px; font-size: 13px; box-shadow: 0 10px 30px rgba(0,0,0,0.25); max-width: 420px; animation: toast-in .18s ease; overflow-wrap: anywhere; }
+    .toast.err { background: var(--down); }
+    .toast.ok { background: var(--brand-ink); }
+    @keyframes toast-in { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
+    .spinner { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.35); border-top-color: #fff; border-radius: 999px; animation: spin .7s linear infinite; display: inline-block; }
+    .btn-secondary .spinner, .btn-ghost .spinner { border-color: rgba(0,0,0,0.15); border-top-color: var(--text-mid); }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+    /* Layout: the dark sidebar holds the tabs on a wide screen; under 900px it goes away and the top
+       bar shows the same tabs as a segmented bar that scrolls sideways inside itself. */
+    #app { display: flex; min-height: 100vh; }
+    #sidebar { width: 232px; flex-shrink: 0; background: var(--sidebar); color: var(--sidebar-text); position: sticky; top: 0; height: 100vh; overflow-y: auto; padding: 20px 12px; display: flex; flex-direction: column; }
+    .side-logo { padding: 0 12px 16px; margin-bottom: 4px; }
+    .side-logo img { height: 28px; width: auto; display: block; filter: brightness(0) invert(0.91) sepia(0.18) saturate(0.55); }
+    .side-name { font-size: 11px; margin-top: 8px; letter-spacing: .3px; color: var(--text-mute); }
+    #tabs { flex: 1; display: grid; align-content: start; gap: 2px; }
+    .nav-row { position: relative; display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-radius: 10px; font-size: 13.5px; color: var(--sidebar-text); cursor: pointer; min-height: 40px; transition: background .12s ease; text-decoration: none; }
+    .nav-row:hover { background: rgba(255,255,255,0.04); }
+    .nav-row.active { background: var(--sidebar-active); color: #fff; font-weight: 600; }
+    .nav-row.active::before { content: ""; position: absolute; left: -12px; top: 50%; transform: translateY(-50%); width: 4px; height: 22px; border-radius: 0 4px 4px 0; background: var(--brand); }
+    .nav-row .badges { margin-left: auto; display: flex; gap: 4px; }
+    .side-foot { padding: 16px 12px 0; margin-top: 16px; border-top: 1px solid rgba(255,255,255,0.06); font-size: 12.5px; }
+    .side-foot a { color: var(--sidebar-text); text-decoration: none; }
+    .side-foot a:hover { color: #fff; }
+    #main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    #topbar { background: var(--surface); border-bottom: 1px solid var(--border-subtle); min-height: 56px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 16px; position: sticky; top: 0; z-index: 20; }
+    #topTitle { flex: 1 1 0; min-width: 0; font-size: 14px; font-weight: 600; color: var(--text-mid); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #topBack { display: none; }
+    .top-right { margin-left: auto; display: flex; align-items: center; gap: 8px; min-width: 0; }
+    #whoAmI { width: 150px; height: 30px; }
+    #userEmail { font-size: 12px; color: var(--text-mid); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; min-width: 0; }
+    #tabsSeg { display: none; }
+    #content { padding: 16px; max-width: 1480px; width: 100%; }
+    @media (max-width: 899px) {
+      #sidebar { display: none; }
+      #topTitle { display: none; }
+      #topBack { display: inline-flex; }
+      #tabsSeg { display: flex; flex-wrap: nowrap; overflow-x: auto; order: 10; flex: 1 0 100%; max-width: 100%; min-width: 0; scrollbar-width: thin; }
+      #tabsSeg a { flex-shrink: 0; }
+      #userEmail { max-width: 180px; }
+    }
+    @media (min-width: 1100px) { #content { padding: 16px 24px; } }
+
+    /* The gate: shown instead of the pages when they cannot be used (not signed in, not accounts payable,
+       the server unreachable). Signing in itself happens on the dashboard. */
+    #gate { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 24px; background: linear-gradient(135deg, #f7f8f9 0%, #eef0f3 100%); }
+    .gate-box { width: 100%; max-width: 380px; background: #fff; border: 1px solid var(--border); border-radius: 16px; padding: 32px 28px; box-shadow: 0 24px 48px rgba(0,0,0,0.08); text-align: center; display: grid; gap: 12px; justify-items: center; }
+    .gate-box img { height: 40px; width: auto; }
+    .gate-box h1 { font-size: 20px; font-weight: 600; margin-top: 4px; }
+    #gateMsg { font-size: 14px; color: var(--text-mute); }
+
+    /* Building blocks of the tabs. */
+    .tab-panel { display: grid; gap: 12px; min-width: 0; }
+    /* One-column grids: the column may shrink below a wide table's width, so the table scrolls inside
+       its own box instead of widening the page. */
+    .tab-panel, .audit-row, .prop, .set-card, .vendor-card, .ro-lines { grid-template-columns: minmax(0, 1fr); }
+    .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+    .grow { flex: 1 1 auto; min-width: 0; }
+    .bar > .intro.grow { flex: 1 1 280px; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); }
+    .toolbar .inp { height: 34px; width: auto; max-width: 100%; }
+    .toolbar .search { flex: 1 1 200px; min-width: 0; max-width: 340px; }
+    .chips-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); }
+    .chips-row:empty { display: none; }
+    .notice { padding: 12px 14px; display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+    .banner { border-radius: 10px; padding: 10px 12px; font-size: 13px; }
+    .banner-info { background: var(--info-soft); color: var(--info-text); }
+    .banner-warn { background: var(--warn); color: var(--warn-text); border: 1px solid #f3dca8; }
+    .banner .btn { margin-top: 8px; }
+    .intro { font-size: 13px; color: var(--text-mid); }
+    .muted { color: var(--text-mute); }
+    .strong { font-weight: 600; }
+    .nowrap { white-space: nowrap; }
+    .td-right { text-align: right; }
+    .ok-mark { color: var(--up-ink); font-weight: 700; }
+    .bad-mark { color: var(--down); font-weight: 700; }
+    .loading, .empty-small { padding: 20px 16px; color: var(--text-mute); font-size: 13px; text-align: center; }
+    .err-text { color: var(--down); font-size: 13px; }
+    .load-err { padding: 14px; display: grid; gap: 8px; justify-items: start; }
+    .click-row { cursor: pointer; }
+    .click-row:hover td { background: #fbfcfc; }
+    .click-row:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+    .tags { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+    .btns { display: flex; flex-wrap: wrap; gap: 4px; }
+    .tags .pill { white-space: normal; max-width: 100%; }      /* a long flag label wraps inside its cell */
+    table.list.wrap-head th { white-space: normal; }
+    /* The cards table: the columns that hold e-mails and labels keep a readable width; on a laptop the
+       table then scrolls inside its box rather than breaking an address every few letters. */
+    table.list td.w-flags { min-width: 140px; }
+    table.list td.w-mid { min-width: 110px; }
+    .tag { display: inline-flex; align-items: center; gap: 2px; border-radius: 999px; padding: 2px 9px; font-size: 11.5px; background: var(--border-subtle); color: var(--text-mid); max-width: 100%; overflow-wrap: break-word; min-width: 0; }
+    .tag.pill-warn { background: var(--warn); color: var(--warn-text); }
+    .tag.brand { background: var(--brand-soft); color: var(--brand-ink); }
+    .tag button { color: inherit; font-size: 13px; line-height: 1; padding: 2px 5px; margin-right: -5px; border-radius: 999px; }
+    .tag button:hover { background: var(--hover-wash); color: var(--down); }
+    .struck { text-decoration: line-through; opacity: .7; }
+    .section-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--border-subtle); }
+    .section-head h2 { flex: 1 1 auto; font-size: 15px; font-weight: 600; }
+    .section-pad { padding: 12px 14px; }
+    h3.sec { font-size: 13px; font-weight: 600; margin: 16px 0 6px; }
+    .section-pad > h3.sec:first-child { margin-top: 0; }
+    .check { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-mid); cursor: pointer; }
+    .check-row { display: flex; gap: 8px; align-items: flex-start; padding: 4px 0; font-size: 13px; cursor: pointer; overflow-wrap: anywhere; }
+    .check-row input { flex-shrink: 0; margin-top: 2px; }
+    .check-row.is-disabled { color: var(--text-mute); cursor: default; }
+    .add-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
+    .add-row .inp { flex: 1 1 180px; width: auto; min-width: 0; }
+    .add-row select.inp { flex: 0 1 220px; }
+    details.card > summary { padding: 12px 14px; font-weight: 600; font-size: 14px; }
+    details.card[open] > summary { border-bottom: 1px solid var(--border-subtle); }
+    details.sub-details { margin-top: 8px; }
+    details.sub-details > summary { padding: 8px 14px; font-size: 13px; color: var(--text-mid); }
+
+    /* Editors (card, vendor, person: a dialog; use cases and cost centres: inline). */
+    .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 12px 16px; }
+    .field { display: grid; gap: 4px; min-width: 0; align-content: start; }
+    .field.full { grid-column: 1 / -1; }
+    .field > label, .field-label { font-size: 12px; font-weight: 600; color: var(--text-mid); }
+    .field-hint { font-size: 11.5px; color: var(--text-mute); }
+    .field-hint .btn { margin-left: 6px; }
+    .field-err, .form-err { font-size: 12px; color: var(--down); overflow-wrap: anywhere; }
+    .field-err:empty, .form-err:empty { display: none; }
+    .form-err { margin-top: 10px; font-size: 12.5px; }
+    .form-err .btn { margin: 6px 6px 0 0; }
+    .form-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+    .ro-lines { margin-top: 16px; display: grid; gap: 6px; font-size: 12.5px; padding: 10px 12px; background: var(--bg); border-radius: 10px; }
+    .ro-line { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 10px; }
+    .ro-line > span:first-child { color: var(--text-mute); }
+    .fill-line { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12.5px; color: var(--text-mid); }
+    .danger-zone { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--border-subtle); display: grid; gap: 6px; justify-items: start; }
+    .chip-editor { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 4px 6px; border: 1px solid var(--border); border-radius: 8px; min-height: 32px; background: var(--surface); min-width: 0; }
+    .chip-editor:focus-within { border-color: var(--brand); box-shadow: 0 0 0 3px rgba(0,182,122,0.15); }
+    .chip-editor .chip-list { display: contents; }
+    .chip-editor input { flex: 1 1 160px; min-width: 120px; border: 0; outline: none; height: 24px; font-size: 12.5px; background: transparent; }
+    @media (max-width: 640px) { .ro-line { grid-template-columns: minmax(0, 1fr); gap: 0; } }
+
+    /* Use cases & cost centres: two sections side by side on a wide screen. */
+    .coding-grid { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); align-items: start; }
+    @media (min-width: 1100px) { .coding-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+    .add-form { display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-start; padding: 10px 14px; border-top: 1px solid var(--border-subtle); }
+    .add-form .inp { flex: 1 1 150px; width: auto; min-width: 0; }
+    .add-form .form-err { flex-basis: 100%; margin-top: 0; }
+    .edit-row td { background: #fbfcfc; }
+    /* Edit and Retire over the two arrows: a narrow column, two lines high, beside the other section. */
+    .row-actions { display: grid; grid-template-columns: auto auto; gap: 2px; justify-content: start; }
+    .row-actions .btn-xs { padding: 3px 8px; }
+    .edit-row .inp { min-width: 110px; }
+
+    /* Vendors */
+    .vendor-list { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); }
+    .vendor-card { padding: 12px 14px; cursor: pointer; display: grid; gap: 6px; align-content: start; min-width: 0; }
+    .vendor-card:hover { border-color: var(--text-mute); }
+    .vendor-card:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+    .pager { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; font-size: 12.5px; color: var(--text-mid); }
+    .prop { padding: 10px 14px; border-bottom: 1px solid var(--border-subtle); display: grid; gap: 6px; }
+    .prop:last-child { border-bottom: 0; }
+    .prop-text { overflow-wrap: anywhere; }
+    .prop-msg:empty { display: none; }
+    .prop-msg { font-size: 12.5px; color: var(--down); }
+    .prop-msg .btn { margin: 6px 6px 0 0; }
+
+    /* History */
+    .audit-row { padding: 10px 14px; border-bottom: 1px solid var(--border-subtle); display: grid; gap: 4px; min-width: 0; }
+    .audit-line { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; font-size: 12.5px; min-width: 0; }
+    .audit-line > span { overflow-wrap: anywhere; min-width: 0; }
+    .audit-diff { font-size: 12px; color: var(--text-mid); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; display: grid; gap: 1px; }
+
+    /* Settings */
+    .settings-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); align-items: start; }
+    .set-card { padding: 12px 14px; display: grid; gap: 6px; min-width: 0; }
+    .set-card h2 { font-size: 14px; font-weight: 600; }
+    .set-card .how { font-size: 11.5px; color: var(--text-mute); border-top: 1px solid var(--border-subtle); padding-top: 6px; margin-top: 2px; overflow-wrap: anywhere; }
+    .set-card code, .banner code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; background: var(--bg); padding: 1px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+    .schema-row { display: flex; gap: 8px; font-size: 12.5px; }
+
+    /* Phones: every list table stacks, a block per row, each value after its column's name. */
+    @media (max-width: 640px) {
+      table.list, table.list tbody, table.list tr { display: block; width: 100%; }
+      table.list thead { display: none; }
+      table.list tr { padding: 6px 0; border-bottom: 1px solid var(--border-subtle); }
+      table.list td { display: block; position: relative; padding: 3px 6px 3px calc(36% + 10px); border: 0; min-height: 22px; text-align: left; overflow-wrap: anywhere; }
+      table.list td::before { content: attr(data-label); position: absolute; left: 6px; top: 4px; width: 36%; font-size: 11px; font-weight: 600; color: var(--text-mute); overflow-wrap: anywhere; }
+      table.list td[data-label=""] { padding-left: 6px; }
+      table.list td[data-label=""]::before { content: none; }
+      table.list td.nowrap, table.list td .nowrap { white-space: normal; }
+      .list-wrap { overflow-x: visible; }
+      .toolbar .search { max-width: none; flex-basis: 100%; }
+      table.list td.w-flags, table.list td.w-mid { min-width: 0; }
+      /* The flag chips stay on one line and scroll sideways, so the cards start near the top. */
+      #cardsChips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
+      #cardsChips .chip { flex-shrink: 0; }
+    }
+  </style>
+</head>
+<body>
+
+<div id="gate" class="hidden" role="alert">
+  <div class="gate-box">
+    <img src="https://superhairpieces.ca/content/images/common/shp-main-logo.svg" alt="Superhairpieces" />
+    <h1>AP Admin</h1>
+    <p id="gateMsg">Loading…</p>
+    <a id="gateLink" class="btn btn-primary hidden" href="/">Go to the dashboard</a>
+    <button id="gateReload" class="btn btn-primary hidden" type="button">Reload</button>
+  </div>
+</div>
+
+<div id="app" class="hidden">
+  <aside id="sidebar">
+    <div class="side-logo">
+      <img src="https://superhairpieces.ca/content/images/common/shp-main-logo.svg" alt="Superhairpieces" />
+      <div class="side-name">AP admin</div>
+    </div>
+    <nav id="tabs" aria-label="Admin pages">
+      <a class="nav-row" data-tab="cards" href="#cards">Cards<span class="badges"><span id="cardsBadge" class="badge badge-red hidden"></span></span></a>
+      <a class="nav-row" data-tab="coding" href="#coding">Use cases &amp; cost centres</a>
+      <a class="nav-row" data-tab="vendors" href="#vendors">Vendors</a>
+      <a class="nav-row" data-tab="people" href="#people">People</a>
+      <a class="nav-row" data-tab="history" href="#history">History</a>
+      <a class="nav-row" data-tab="settings" href="#settings">Settings</a>
+    </nav>
+    <div class="side-foot"><a href="/">← Dashboard</a></div>
+  </aside>
+
+  <main id="main">
+    <header id="topbar">
+      <a id="topBack" class="btn btn-ghost btn-xs" href="/">← Dashboard</a>
+      <div id="topTitle">Cards</div>
+      <div class="top-right">
+        <input id="whoAmI" class="inp hidden" type="text" placeholder="Your name" maxlength="80" autocomplete="name" aria-label="Your name, recorded with your changes" title="Recorded in the History with every change you make here; remembered by this browser" />
+        <div id="userEmail"></div>
+      </div>
+      <div id="tabsSeg" class="seg" aria-label="Admin pages">
+        <a data-tab="cards" href="#cards">Cards <span id="cardsBadgeSeg" class="badge badge-red hidden"></span></a>
+        <a data-tab="coding" href="#coding">Use cases &amp; cost centres</a>
+        <a data-tab="vendors" href="#vendors">Vendors</a>
+        <a data-tab="people" href="#people">People</a>
+        <a data-tab="history" href="#history">History</a>
+        <a data-tab="settings" href="#settings">Settings</a>
+      </div>
+    </header>
+
+    <div id="content">
+      <!-- Cards -->
+      <section id="tab-cards" class="tab-panel hidden" data-panel="cards">
+        <div id="cardsFill" class="hidden"></div>
+        <div class="card">
+          <div class="toolbar">
+            <input id="cardsSearch" class="inp search" type="search" placeholder="Search card, holder, owner, group, cost centre" aria-label="Search the cards" />
+            <select id="cardsSort" class="inp" aria-label="Sort the cards">
+              <option value="card">Sort: Card</option>
+              <option value="holder">Sort: Holder</option>
+              <option value="group">Sort: Group</option>
+              <option value="active">Sort: Last active</option>
+              <option value="missing">Sort: Missing</option>
+            </select>
+            <button id="cardsByOwner" class="btn btn-secondary btn-xs" type="button" aria-pressed="false" title="List each owner's e-mail with the cards it owns">By owner</button>
+            <span class="grow"></span>
+            <button id="cardsAdd" class="btn btn-primary btn-xs" type="button">Add card</button>
+            <button id="cardsRefresh" class="btn btn-ghost btn-xs" type="button">Refresh</button>
+          </div>
+          <div id="cardsChips" class="chips-row"></div>
+          <div id="cardsBody"><div class="loading">Loading cards…</div></div>
+        </div>
+        <details id="unclaimedPanel" class="card hidden" open>
+          <summary>Numbers on receipts that no card claims<span id="unclaimedCount"></span></summary>
+          <div class="section-pad intro">Receipts read from the Invoice folder that show a card number no card on the dashboard has. They can never be matched until the number is given to a card (or ignored, when it was misread).</div>
+          <div id="unclaimedBody"></div>
+        </details>
+      </section>
+
+      <!-- Use cases & cost centres -->
+      <section id="tab-coding" class="tab-panel hidden" data-panel="coding">
+        <div class="bar"><p class="intro grow">Use case: what a purchase was for (the Use case box on the dashboard). Cost centre: where it belongs (a salon, Head office, US, EU). When someone sets the use case of a purchase that has no cost centre yet, the card's default cost centre is filled in.</p>
+          <button id="codingRefresh" class="btn btn-ghost btn-xs" type="button">Refresh</button></div>
+        <div id="codingBody"><div class="loading">Loading…</div></div>
+      </section>
+
+      <!-- Vendors -->
+      <section id="tab-vendors" class="tab-panel hidden" data-panel="vendors">
+        <div class="banner pill-info">This tab does not change matching or where receipts are filed. The registry feeds coding suggestions, which are off until switched on in Settings.</div>
+        <div class="bar">
+          <div id="vendorViews" class="seg" role="tablist" aria-label="Vendor views">
+            <button type="button" data-view="catalogue" role="tab">Catalogue</button>
+            <button type="button" data-view="registry" role="tab">Registry</button>
+            <button type="button" data-view="proposals" role="tab">Proposals</button>
+          </div>
+        </div>
+        <div data-vview="catalogue" class="card">
+          <div class="toolbar">
+            <input id="catSearch" class="inp search" type="search" placeholder="Search folder, spelling, descriptor, vendor" aria-label="Search the folders" />
+            <select id="catSort" class="inp" aria-label="Sort the folders">
+              <option value="attention">Needs attention</option>
+              <option value="volume">Most documents</option>
+              <option value="name">Name</option>
+            </select>
+            <select id="catFilter" class="inp" aria-label="Registered or not">
+              <option value="all">All</option>
+              <option value="yes">Registered</option>
+              <option value="no">Not registered</option>
+            </select>
+            <span class="grow"></span>
+            <span id="catGenerated" class="sub"></span>
+            <button id="catRefresh" class="btn btn-ghost btn-xs" type="button">Refresh</button>
+          </div>
+          <div id="catBody"><div class="loading">Loading folders…</div></div>
+          <div id="catPager" class="pager"></div>
+        </div>
+        <div data-vview="registry" class="hidden tab-panel">
+          <div class="bar"><span class="intro grow">Vendors: one or more Invoice folders, and the descriptors or supplier names that name them, with a default use case per card group.</span>
+            <button id="regAdd" class="btn btn-primary btn-xs" type="button">Add vendor</button>
+            <button id="regRefresh" class="btn btn-ghost btn-xs" type="button">Refresh</button></div>
+          <div id="regBody"><div class="loading">Loading the registry…</div></div>
+        </div>
+        <div data-vview="proposals" class="hidden card">
+          <div class="toolbar"><span class="intro grow">Proposals from the link history: purchases matched by rule or by hand to documents in one folder.</span>
+            <span id="propDismissed" class="sub"></span>
+            <button id="propRefresh" class="btn btn-ghost btn-xs" type="button">Refresh</button></div>
+          <div id="propBody"><div class="loading">Loading proposals…</div></div>
+        </div>
+      </section>
+
+      <!-- People -->
+      <section id="tab-people" class="tab-panel hidden" data-panel="people">
+        <div class="bar"><p class="intro grow">Everyone a purchase or a card can be assigned to.</p>
+          <button id="peopleRefresh" class="btn btn-ghost btn-xs" type="button">Refresh</button></div>
+        <div id="peopleBody"><div class="loading">Loading people…</div></div>
+      </section>
+
+      <!-- History -->
+      <section id="tab-history" class="tab-panel hidden" data-panel="history">
+        <div class="banner banner-info">History starts when the admin pages went live (Nov 2026). Before that, saves from the dashboard's Cards… appear only in Cloud Logging (kept 30 days); the card update of 2026-11-24 ran from a local process and is recorded nowhere. Cards added by statement imports are not listed here.</div>
+        <div class="card">
+          <form id="historyForm" class="toolbar" autocomplete="off">
+            <select id="hEntity" class="inp" aria-label="What changed"><option value="">All</option></select>
+            <input id="hEntityId" class="inp" type="text" maxlength="200" placeholder="Entity id (e.g. 4431)" aria-label="Entity id" />
+            <input id="hActor" class="inp" type="text" maxlength="200" placeholder="Who (e-mail or name)" aria-label="Who made the change" />
+            <button class="btn btn-secondary btn-xs" type="submit">Apply</button>
+            <span class="grow"></span>
+            <button id="historyRefresh" class="btn btn-ghost btn-xs" type="button">Refresh</button>
+          </form>
+          <div id="historyBody"><div class="loading">Loading the history…</div></div>
+        </div>
+      </section>
+
+      <!-- Settings -->
+      <section id="tab-settings" class="tab-panel hidden" data-panel="settings">
+        <div class="bar"><p class="intro grow">How the service is set up. Most of it is changed outside these pages; each card says where.</p>
+          <button id="settingsRefresh" class="btn btn-ghost btn-xs" type="button">Refresh</button></div>
+        <div id="settingsBody"><div class="loading">Loading settings…</div></div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<div id="modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+  <div class="modal" id="modalBox">
+    <div class="modal-head">
+      <div id="modalTitle"></div>
+      <button class="btn btn-ghost btn-xs" id="modalClose" type="button" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  var MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  var TAB_TITLE = { cards: 'Cards', coding: 'Use cases & cost centres', vendors: 'Vendors', people: 'People',
+                    history: 'History', settings: 'Settings' };
+  // The card flags in admin.FLAGS order: the server's JSON sorts object keys, so the chips cannot take
+  // their order from flag_labels.
+  var FLAG_ORDER = ['no_owner', 'no_group', 'holder_not_person', 'no_webhook', 'inactive_90d', 'never_used',
+                    'never_reviewed', 'default_retired', 'no_default_primary_has'];
+  var VENDOR_VIEWS = ['catalogue', 'registry', 'proposals'];
+  // schema.sql's audit vocabulary: what a #history?entity= link may name before the server's own list
+  // (GET /api/admin/audit "entities") has arrived. Anything else shows as "All".
+  var AUDIT_ENTITIES = ['card', 'card_number', 'cost_center', 'use_case', 'vendor', 'vendor_folder', 'vendor_pattern',
+                        'vendor_coding', 'person', 'setting', 'proposal'];
+  var KINDS = ['supplier', 'processor', 'agent', 'not_vendor'];
+  var KIND_LABELS = { supplier: 'Supplier', processor: 'Payment processor', agent: 'Agent', not_vendor: 'Not a vendor' };
+  var PATTERN_WHAT = [
+    { value: 'descriptor:prefix', kind: 'descriptor', match_type: 'prefix', label: 'descriptor starts with' },
+    { value: 'descriptor:exact', kind: 'descriptor', match_type: 'exact', label: 'descriptor is exactly' },
+    { value: 'invoice_vendor:exact', kind: 'invoice_vendor', match_type: 'exact', label: 'supplier name on documents' }];
+  // A pattern switched on keeps the registry's starting status. The page only ever says "On (suggestions
+  // only)" or "Off", so the stored word is put together here and never appears in the page, its markup or
+  // its source as one word.
+  var PATTERN_ON = 'pro' + 'bation';
+  var PROPOSAL_TYPES = { alias: 'Alias', folders: 'Folders together', coding: 'Coding' };
+  var OUTSIDE_TITLE = "Outside the allowed domains: can't sign in";
+  var CODED_EACH = 'Coded purchase by purchase';
+
+  // Open access: the name typed into the header is sent with every call and recorded as the actor.
+  var NAME_KEY = 'ap_recon_user';
+  function currentName() { try { return (localStorage.getItem(NAME_KEY) || '').trim().slice(0, 80); } catch (e) { return ''; } }
+
+  var state = {
+    config: null, me: null, tab: '', hash: '', loaded: {},
+    cards: null, coding: null, catalogue: null, registry: null, proposals: null, people: null, settings: null,
+    entities: AUDIT_ENTITIES.slice(),
+  };
+
+  // ---------------------------------------------------------------------------
+  // Helpers (copied from index.html)
+  // ---------------------------------------------------------------------------
+  function $(sel, el) { return (el || document).querySelector(sel); }
+  function $all(sel, el) { return Array.prototype.slice.call((el || document).querySelectorAll(sel)); }
+  // Every piece of text coming from the API, the user or the URL goes through esc() before it is put into HTML.
+  function esc(s) {
+    return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function pad2(n) { return String(n).padStart(2, '0'); }
+  function money(amount, currency) {
+    var n = Number(amount) || 0;
+    var abs = Math.abs(n).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    var cur = currency === undefined || currency === null ? 'CAD' : currency;
+    return (n < 0 ? '-' : '') + (cur ? cur + ' ' : '') + abs;
+  }
+  // Only http(s) links from the API are ever rendered as hrefs; anything else falls back to plain text.
+  function safeUrl(u) { u = String(u || '').trim(); return /^https?:\/\//i.test(u) ? u : ''; }
+  function fmtDate(iso) {
+    if (!iso) return '';
+    var p = String(iso).slice(0, 10).split('-');
+    if (p.length < 3) return String(iso);
+    return MONTHS_SHORT[Number(p[1]) - 1] + ' ' + Number(p[2]) + ', ' + p[0];
+  }
+  function fmtStamp(iso) {
+    if (!iso) return '';
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return String(iso).slice(0, 16);
+    return MONTHS_SHORT[d.getMonth()] + ' ' + d.getDate() + ', ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+  }
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+  function toast(msg, kind, ms) {
+    var el = document.createElement('div');
+    el.className = 'toast' + (kind ? ' ' + kind : '');
+    el.textContent = msg;
+    $('#toast').appendChild(el);
+    ms = ms || (kind === 'err' ? 6000 : 2600);
+    setTimeout(function () { el.style.opacity = '0'; el.style.transition = 'opacity .3s'; }, ms);
+    setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, ms + 400);
+  }
+
+  function ApiError(status, message, data) { this.status = status; this.message = message; this.data = data; }
+  ApiError.prototype = Object.create(Error.prototype);
+
+  function apiHeaders(extra) {
+    var headers = Object.assign({}, extra || {});
+    headers['X-Requested-With'] = 'XMLHttpRequest';   // behind IAP an ended session then answers 401 instead of redirecting
+    var who = currentName();
+    if (who) headers['X-Dashboard-User'] = who;
+    return headers;
+  }
+  // A 401 means the session ended: sign-in (Google or the password) happens on the dashboard, not here.
+  function sessionEnded(data) {
+    showGate('Your session has ended. Open the dashboard to sign in again', 'dashboard');
+    return new ApiError(401, (data && data.error) || 'sign in required', data);
+  }
+  function hasHeader(headers, name) {
+    return Object.keys(headers).some(function (k) { return k.toLowerCase() === name; });
+  }
+  // Unlike index.html's copy, api() encodes the body itself: an object goes out as JSON with its
+  // Content-Type, so api(path, {method: 'POST', body: {...}}) works, and so does a proposal's accept.body.
+  // Every write says it is JSON, with a body or without.
+  async function api(path, opts) {
+    opts = Object.assign({}, opts || {});
+    var extra = Object.assign({}, opts.headers || {});
+    var method = String(opts.method || 'GET').toUpperCase();
+    var isForm = typeof FormData !== 'undefined' && opts.body instanceof FormData;
+    if (opts.body !== undefined && opts.body !== null && !isForm && typeof opts.body !== 'string') opts.body = JSON.stringify(opts.body);
+    if (!isForm && (method !== 'GET' && method !== 'HEAD' || opts.body !== undefined) && !hasHeader(extra, 'content-type')) extra['Content-Type'] = 'application/json';
+    var headers = apiHeaders(extra);
+    var res;
+    try {
+      res = await fetch(path, Object.assign({}, opts, { method: method, headers: headers, cache: 'no-store' }));
+    } catch (e) {
+      throw new ApiError(0, 'Network error: ' + (e && e.message ? e.message : e), null);
+    }
+    var data = null;
+    try { data = await res.json(); } catch (e) { data = null; }
+    if (res.status === 401) throw sessionEnded(data);
+    if (!res.ok) throw new ApiError(res.status, (data && (data.error || data.message)) || (res.status + ' ' + res.statusText), data);
+    return data;
+  }
+  // Toasts only (index.html's also speaks in voice mode, which this page has not). A refused or failed
+  // call is expected and said in the toast; anything else is a bug and goes to the console too.
+  function report(e, prefix) {
+    if (e && e.status === 401) return;
+    if (!(e instanceof ApiError)) console.error(e);
+    toast((prefix ? prefix + ': ' : '') + (e && e.message ? e.message : String(e)), 'err');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Small helpers of this page
+  // ---------------------------------------------------------------------------
+  var enc = encodeURIComponent;
+  function debounce(fn, ms) {
+    var t = null;
+    return function () { var args = arguments, self = this; clearTimeout(t); t = setTimeout(function () { fn.apply(self, args); }, ms); };
+  }
+  // The server's admin.norm_space / name_key: one space between words; compared ignoring case.
+  function cleanText(v) { return String(v === null || v === undefined ? '' : v).split(/\s+/).filter(Boolean).join(' '); }
+  function nameKey(v) { return cleanText(v).toLowerCase(); }
+  // admin.normalise_pattern, for deciding which patterns a vendor already holds (the server normalises
+  // again and stays the authority): lower-case words of letters and digits, a trailing run of 4 or more
+  // digits dropped from a word, all-digit words skipped.
+  function normPattern(v) {
+    return String(v || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' ').map(function (t) {
+      return t.replace(/\d{4,}$/, '');
+    }).filter(function (t) { return t && !/^\d+$/.test(t); }).join(' ');
+  }
+  // A card's owners, as the server splits them: one address or several, separated by commas, semicolons or spaces.
+  function ownerList(v) {
+    var out = [];
+    String(v || '').toLowerCase().split(/[\s,;]+/).forEach(function (e) { if (e && out.indexOf(e) < 0) out.push(e); });
+    return out;
+  }
+  function plural(n, one, many) { n = Number(n) || 0; return n + ' ' + (n === 1 ? one : many); }
+  // "2026-10" (a summary month) or "2026 10" (an Invoice month folder) as "Oct 2026".
+  function ymLabel(ym) {
+    var m = /^(\d{4})[- ](\d{1,2})$/.exec(String(ym || '').trim());
+    return m && Number(m[2]) >= 1 && Number(m[2]) <= 12 ? MONTHS_SHORT[Number(m[2]) - 1] + ' ' + m[1] : String(ym || '');
+  }
+  function opt(value, label, selected) {
+    return '<option value="' + esc(value) + '"' + (selected ? ' selected' : '') + '>' + esc(label) + '</option>';
+  }
+  // An address may break before its @ ("george" / "@superhairpieces.com") rather than every few letters.
+  function emailHtml(e) { return esc(e).replace('@', '<wbr>@'); }
+  function loadingHtml(text) { return '<div class="loading">' + esc(text) + '</div>'; }
+  // A failed load: the error and a Retry button, in place of what could not be shown.
+  function showLoadError(box, what, e, retry) {
+    box.innerHTML = '<div class="card load-err"><div class="err-text">' + esc(what + ': ' + (e && e.message ? e.message : e)) + '</div>' +
+      '<button type="button" class="btn btn-secondary btn-xs" data-retry>Retry</button></div>';
+    $('[data-retry]', box).addEventListener('click', retry);
+  }
+  // A 400 whose message starts with "field:" goes under that field; anything else under the form.
+  function showFormError(form, e, fallbackEl) {
+    $all('[data-err]', form).forEach(function (el) { el.textContent = ''; });
+    var msg = e && e.message ? e.message : String(e);
+    var m = /^([a-z_0-9]+): ([\s\S]+)$/.exec(msg);
+    var el = m ? form.querySelector('[data-err="' + m[1] + '"]') : null;
+    if (el) { el.textContent = m[2]; return; }
+    if (fallbackEl) fallbackEl.textContent = msg;
+    else toast(msg, 'err');
+  }
+  function clearFormErrors(form) { $all('[data-err], .form-err', form).forEach(function (el) { el.textContent = ''; }); }
+  function busy(btn, on) {
+    if (!btn) return;
+    if (on) { btn.dataset.label = btn.innerHTML; btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>'; }
+    else { btn.disabled = false; if (btn.dataset.label !== undefined) btn.innerHTML = btn.dataset.label; }
+  }
+  function field(name, label, control, hint, cls) {
+    return '<div class="field' + (cls ? ' ' + cls : '') + '" data-field="' + name + '"><label for="f_' + name + '">' + esc(label) + '</label>' +
+      control + (hint ? '<div class="field-hint">' + hint + '</div>' : '') + '<div class="field-err" data-err="' + name + '" role="alert"></div></div>';
+  }
+
+  // ---------------------------------------------------------------------------
+  // Unsaved changes. An editor sets dirty on its first input and clears it on a successful save or a
+  // cancel; closing the dialog, switching tab and leaving the page ask first while it is set.
+  // ---------------------------------------------------------------------------
+  var dirty = '', dirtyOwner = '';
+  function setDirty(what, owner) { if (!dirty) { dirty = what; dirtyOwner = owner || ''; } }
+  function clearDirty(owner) { if (!owner || owner === dirtyOwner) { dirty = ''; dirtyOwner = ''; } }
+  function guardDirty() {
+    if (!dirty) return true;
+    if (!confirm('Leave without saving the changes to ' + dirty + '?')) return false;
+    clearDirty();
+    return true;
+  }
+  window.addEventListener('beforeunload', function (ev) {
+    if (!dirty) return;
+    ev.preventDefault();
+    ev.returnValue = '';
+  });
+
+  // ---------------------------------------------------------------------------
+  // Gate
+  // ---------------------------------------------------------------------------
+  // action: 'dashboard' (a link to /, where signing in happens) or 'reload'.
+  function showGate(message, action) {
+    clearDirty();                 // nothing can be saved now; leaving for the dashboard must not ask
+    $('#app').classList.add('hidden');
+    $('#modal').classList.add('hidden');
+    $('#gateMsg').textContent = message;
+    $('#gateLink').classList.toggle('hidden', action !== 'dashboard');
+    $('#gateReload').classList.toggle('hidden', action !== 'reload');
+    $('#gate').classList.remove('hidden');
+  }
+  $('#gateReload').addEventListener('click', function () { location.reload(); });
+
+  // ---------------------------------------------------------------------------
+  // Modal (copied from index.html)
+  // ---------------------------------------------------------------------------
+  // modalGuard: set by a dialog holding unsaved work; closing (✕, backdrop, Escape, closeModal()) asks it
+  // first, and false keeps the dialog open. modalCleanup: runs once when that dialog goes away, closed or
+  // replaced by another one.
+  var modalGuard = null, modalCleanup = null;
+  function endModal() {
+    var done = modalCleanup;
+    modalGuard = null; modalCleanup = null;
+    if (done) { try { done(); } catch (e) { console.error(e); } }
+  }
+  function openModal(title, bodyHtml, wide) {
+    endModal();
+    $('#modalTitle').textContent = title;
+    var old = $('#modalBody'), body = old.cloneNode(false);   // drops the previous open's listeners
+    old.parentNode.replaceChild(body, old);
+    body.className = 'modal-body';                             // and any class a dialog added
+    body.innerHTML = bodyHtml;
+    $('#modalBox').classList.toggle('wide', !!wide);
+    $('#modal').classList.remove('hidden');
+    return body;
+  }
+  function closeModal() {
+    if (modalGuard && !$('#modal').classList.contains('hidden') && modalGuard() === false) return false;
+    endModal();
+    $('#modal').classList.add('hidden'); $('#modalBody').innerHTML = '';
+    return true;
+  }
+  // Closes without asking: the person already said yes (a tab switch they confirmed, a delete).
+  function dropModal() {
+    endModal();
+    $('#modal').classList.add('hidden'); $('#modalBody').innerHTML = '';
+  }
+  function modalOpen() { return !$('#modal').classList.contains('hidden'); }
+  $('#modalClose').addEventListener('click', closeModal);
+  $('#modal').addEventListener('click', function (ev) { if (ev.target === $('#modal')) closeModal(); });
+  document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape' && modalOpen()) closeModal(); });
+
+  // ---------------------------------------------------------------------------
+  // Tabs and the URL fragment. The fragment is whatever the link's author wrote (anyone can send an AP user an /admin#… link):
+  // the tab and the vendor view are whitelisted, the history filters are only ever set with .value and
+  // sent with encodeURIComponent.
+  // ---------------------------------------------------------------------------
+  function parseHash(h) {
+    h = String(h || '').replace(/^#/, '');
+    var q = h.indexOf('?');
+    var tab = q < 0 ? h : h.slice(0, q);
+    var params;
+    try { params = new URLSearchParams(q < 0 ? '' : h.slice(q + 1)); } catch (e) { params = new URLSearchParams(''); }
+    if (!Object.prototype.hasOwnProperty.call(TAB_TITLE, tab)) tab = 'cards';
+    return { tab: tab, params: params };
+  }
+  function route() {
+    var r = parseHash(location.hash);
+    state.tab = r.tab;
+    $all('[data-tab]').forEach(function (a) {
+      var on = a.dataset.tab === r.tab;
+      a.classList.toggle('active', on);
+      if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+    });
+    $('#topTitle').textContent = TAB_TITLE[r.tab];
+    $all('.tab-panel[data-panel]').forEach(function (p) { p.classList.toggle('hidden', p.dataset.panel !== r.tab); });
+    var seg = $('#tabsSeg a.active');
+    if (seg && seg.scrollIntoView && $('#tabsSeg').scrollWidth > $('#tabsSeg').clientWidth) seg.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    SHOW[r.tab](r.params);
+  }
+  var SHOW = {
+    cards: function () { if (!state.loaded.cards) loadCards(); },
+    coding: function () { if (!state.loaded.coding) loadCoding(); },
+    vendors: function (params) { showVendors(params); },
+    people: function () { if (!state.loaded.people) loadPeople(); },
+    history: function (params) { showHistory(params); },
+    settings: function () { if (!state.loaded.settings) loadSettings(); },
+  };
+  window.addEventListener('hashchange', function () {
+    if (location.hash === state.hash) return;
+    if (dirty) {
+      if (!confirm('Leave without saving the changes to ' + dirty + '?')) {
+        history.replaceState(null, '', state.hash || (location.pathname + location.search));
+        return;
+      }
+      clearDirty();
+    }
+    var before = parseHash(state.hash).tab;
+    state.hash = location.hash;
+    if (parseHash(location.hash).tab !== before && modalOpen()) dropModal();
+    route();
+  });
+  function setHash(h) { if (location.hash !== h) location.hash = h; }
+
+  // ---------------------------------------------------------------------------
+  // Cards
+  // ---------------------------------------------------------------------------
+  var cardsUi = { q: '', sort: 'card', flag: 'all', byOwner: false, fill: null };
+
+  function cardList() { return (state.cards && state.cards.cards) || []; }
+  function cardByLast4(last4) { return cardList().filter(function (c) { return c.last4 === last4; })[0] || null; }
+  function allowedDomains() {
+    var d = (state.cards && state.cards.allowed_domains) || (state.settings && state.settings.allowed_domains) || [];
+    return d.map(function (x) { return String(x).toLowerCase(); });
+  }
+  function outsideDomain(email) {
+    var domains = allowedDomains();
+    if (!domains.length) return false;
+    var at = email.lastIndexOf('@');
+    return domains.indexOf(at < 0 ? '' : email.slice(at + 1)) < 0;
+  }
+  function isDefaultLabel(label) { return /^Card ending \d{4}( - .*)?$/.test(label || ''); }
+
+  async function loadCards(quiet) {
+    state.loaded.cards = true;
+    var box = $('#cardsBody');
+    if (!quiet) box.innerHTML = loadingHtml('Loading cards…');
+    var data;
+    try {
+      data = await api('/api/admin/cards');
+    } catch (e) {
+      state.loaded.cards = false;
+      if (e.status === 401) return;
+      if (quiet && state.cards) { report(e, 'Could not reload the cards'); return; }
+      $('#cardsChips').innerHTML = '';
+      $('#unclaimedPanel').classList.add('hidden');
+      showLoadError(box, 'Could not load the cards', e, function () { loadCards(); });
+      return;
+    }
+    state.cards = data;
+    renderCards();
+  }
+  function renderCards() {
+    var d = state.cards;
+    if (!d) return;
+    var n = (d.counts && d.counts.no_owner) || 0;
+    ['#cardsBadge', '#cardsBadgeSeg'].forEach(function (sel) {
+      var b = $(sel);
+      b.textContent = n;
+      b.title = plural(n, 'card', 'cards') + ' without an owner';
+      b.classList.toggle('hidden', !n);
+    });
+    renderCardChips();
+    renderCardsTable();
+    renderFillNotice();
+    renderUnclaimed();
+  }
+  function renderCardChips() {
+    var d = state.cards, counts = d.counts || {}, labels = d.flag_labels || {};
+    var keys = FLAG_ORDER.filter(function (k) { return k in labels; })
+      .concat(Object.keys(labels).filter(function (k) { return FLAG_ORDER.indexOf(k) < 0; }));
+    if (cardsUi.flag !== 'all' && keys.indexOf(cardsUi.flag) < 0) cardsUi.flag = 'all';
+    function chip(key, label, n) {
+      var on = cardsUi.flag === key;
+      return '<button type="button" class="chip' + (on ? ' active' : '') + '" data-flag="' + esc(key) + '" aria-pressed="' + on + '">' +
+        esc(label) + ' <span class="n">' + esc(n) + '</span></button>';
+    }
+    $('#cardsChips').innerHTML = chip('all', 'All', counts.all !== undefined ? counts.all : cardList().length) +
+      keys.map(function (k) { return chip(k, labels[k], counts[k] || 0); }).join('');
+  }
+  function byLast4(a, b) { return String(a.last4).localeCompare(String(b.last4)); }
+  function textSort(f) {
+    return function (a, b) {
+      var x = String(a[f] || '').toLowerCase(), y = String(b[f] || '').toLowerCase();
+      if (x === y) return byLast4(a, b);
+      if (!x) return 1;
+      if (!y) return -1;
+      return x < y ? -1 : 1;
+    };
+  }
+  var CARD_SORTS = {
+    card: byLast4,
+    holder: textSort('holder_name'),
+    group: textSort('group_name'),
+    active: function (a, b) {
+      var x = (a.activity || {}).last_month || '', y = (b.activity || {}).last_month || '';
+      return x === y ? byLast4(a, b) : (x < y ? 1 : -1);
+    },
+    missing: function (a, b) {
+      var x = (a.activity || {}).missing || 0, y = (b.activity || {}).missing || 0;
+      return x === y ? byLast4(a, b) : y - x;
+    },
+  };
+  function cardMatches(c, q) {
+    if (!q) return true;
+    return [c.last4, c.label, c.holder_name, c.owner_email, c.group_name, c.card_number, c.default_cost_center]
+      .join(' ').toLowerCase().indexOf(q) >= 0;
+  }
+  function renderCardsTable() {
+    var box = $('#cardsBody'), all = cardList();
+    if (!all.length) { box.innerHTML = '<div class="empty">No cards yet: they appear with the first statement.</div>'; return; }
+    if (cardsUi.byOwner) { box.innerHTML = ownersHtml(); return; }
+    var q = cardsUi.q.trim().toLowerCase();
+    var rows = all.filter(function (c) {
+      return (cardsUi.flag === 'all' || (c.flags || []).indexOf(cardsUi.flag) >= 0) && cardMatches(c, q);
+    }).sort(CARD_SORTS[cardsUi.sort] || byLast4);
+    box.innerHTML = '<div class="list-wrap"><table class="list wrap-head"><thead><tr><th>Card</th><th>Holder</th><th>Group</th><th>Owners</th>' +
+      '<th>Default cost centre</th><th>Chat</th><th>Receipts</th><th>Activity</th><th>Flags</th><th>Last change</th></tr></thead><tbody>' +
+      (rows.length ? rows.map(cardRowHtml).join('')
+        : '<tr><td colspan="10" data-label=""><div class="empty-small">No card matches.</div></td></tr>') +
+      '</tbody></table></div>';
+  }
+  function cardRowHtml(c) {
+    var labels = state.cards.flag_labels || {}, a = c.activity || {}, flags = c.flags || [];
+    var sub = [];
+    if (c.label && !isDefaultLabel(c.label)) sub.push(c.label);
+    if (c.card_number) sub.push('card no. ' + c.card_number);
+    if (c.primary_last4) sub.push('under ' + c.primary_last4 + (c.primary_holder ? ' (' + c.primary_holder + ')' : ''));
+    var owners = (c.owners || []).map(function (o) {
+      return '<span class="tag' + (o.outside_domain ? ' pill-warn' : '') + '"' + (o.outside_domain ? ' title="' + esc(OUTSIDE_TITLE) + '"' : '') + '>' + emailHtml(o.email) + '</span>';
+    }).join('');
+    var dcc;
+    if (c.default_cost_center) {
+      dcc = esc(c.default_cost_center) + (c.default_cost_center_active === false
+        ? ' <span class="muted" title="Retired: it no longer fills purchases">(retired)</span>' : '');
+    } else if (c.primary_default) {
+      dcc = '<span class="muted">— (primary: ' + esc(c.primary_default) + ')</span>';
+    } else {
+      dcc = '<span class="muted">—</span>';
+    }
+    var chat = c.webhook_configured ? '<span class="ok-mark">✓</span> own'
+      : (c.webhook_default ? '<span class="muted">default</span>' : '<span class="muted">—</span>');
+    var receipts = (c.receipt_upload ? 'On' : 'Off') +
+      (c.receipt_upload_setting === null || c.receipt_upload_setting === undefined ? '<div class="sub">server setting</div>' : '');
+    var activity = esc(a.transactions || 0) + ' · ' + esc(a.recent || 0) + ' last 3 months · ' + esc(a.missing || 0) + ' missing' +
+      (a.last_month ? '<div class="sub">last ' + esc(ymLabel(a.last_month)) + '</div>' : '');
+    var flagHtml = flags.length ? '<div class="tags">' + flags.map(function (f) {
+      return '<span class="pill pill-grey">' + esc(labels[f] || f) + '</span>';
+    }).join('') + '</div>' : '<span class="muted">—</span>';
+    var change = c.last_change ? '<div>' + emailHtml(c.last_change.actor) + '</div><div class="sub">' + esc(fmtStamp(c.last_change.at)) + '</div>' : '<span class="muted">—</span>';
+    return '<tr class="click-row" data-last4="' + esc(c.last4) + '" tabindex="0">' +
+      '<td data-label="Card"><div class="strong nowrap">•••• ' + esc(c.last4) + '</div>' + (sub.length ? '<div class="sub">' + esc(sub.join(' · ')) + '</div>' : '') + '</td>' +
+      '<td data-label="Holder">' + (c.holder_name ? esc(c.holder_name) : '<span class="muted">—</span>') +
+        (flags.indexOf('holder_not_person') >= 0 ? '<div class="sub">not a person</div>' : '') + '</td>' +
+      '<td data-label="Group">' + (c.group_name ? esc(c.group_name) : '<span class="muted">—</span>') + '</td>' +
+      '<td data-label="Owners">' + (owners ? '<div class="tags">' + owners + '</div>' : '<span class="muted">—</span>') + '</td>' +
+      '<td data-label="Default cost centre">' + dcc + '</td>' +
+      '<td data-label="Chat" class="nowrap">' + chat + '</td>' +
+      '<td data-label="Receipts">' + receipts + '</td>' +
+      '<td data-label="Activity" class="w-mid">' + activity + '</td>' +
+      '<td data-label="Flags" class="w-flags">' + flagHtml + '</td>' +
+      '<td data-label="Last change">' + change + '</td></tr>';
+  }
+  function ownersHtml() {
+    var idx = state.cards.owners || {}, emails = Object.keys(idx).sort();
+    if (!emails.length) return '<div class="empty-small">No card has an owner yet.</div>';
+    return '<div class="list-wrap"><table class="list"><thead><tr><th>Owner</th><th>Cards</th></tr></thead><tbody>' + emails.map(function (em) {
+      var out = outsideDomain(em);
+      return '<tr><td data-label="Owner"><span class="tag' + (out ? ' pill-warn' : '') + '"' + (out ? ' title="' + esc(OUTSIDE_TITLE) + '"' : '') + '>' + emailHtml(em) + '</span></td>' +
+        '<td data-label="Cards"><div class="btns">' + (idx[em] || []).map(function (l) {
+          var c = cardByLast4(l);
+          return '<button type="button" class="chip btn-wrap" data-open-card="' + esc(l) + '">•••• ' + esc(l) + (c && c.holder_name ? ' · ' + esc(c.holder_name) : '') + '</button>';
+        }).join('') + '</div></td></tr>';
+    }).join('') + '</tbody></table></div>';
+  }
+
+  // The fill offer after a save that gave a card a default: in the tab, not a dialog, so it can wait.
+  function renderFillNotice() {
+    var f = cardsUi.fill, box = $('#cardsFill');
+    if (!f) { box.innerHTML = ''; box.classList.add('hidden'); return; }
+    box.classList.remove('hidden');
+    box.innerHTML = '<div class="card notice"><div class="grow">Fill <b>' + esc(f.cc) + '</b> into the ' +
+      (f.n === 1 ? 'purchase' : esc(f.n) + ' purchases') + ' of card ' + esc(f.last4) + ' that ' + (f.n === 1 ? 'has' : 'have') +
+      ' a use case but no cost centre?</div>' +
+      '<button type="button" class="btn btn-primary btn-xs" data-fill-go>Fill ' + esc(plural(f.n, 'purchase', 'purchases')) + '</button>' +
+      '<button type="button" class="btn btn-ghost btn-xs" data-fill-no>Not now</button></div>';
+  }
+  async function fillDefault(last4, btn) {
+    busy(btn, true);
+    var r;
+    try {
+      r = await api('/api/admin/cards/' + enc(last4) + '/fill-default', { method: 'POST' });
+    } catch (e) {
+      busy(btn, false);
+      report(e, 'Could not fill card ' + last4);
+      return false;
+    }
+    busy(btn, false);
+    toast(plural(r.filled || 0, 'purchase', 'purchases') + ' filled', 'ok');
+    if (cardsUi.fill && cardsUi.fill.last4 === last4) cardsUi.fill = null;
+    renderFillNotice();
+    loadCards(true);
+    return true;
+  }
+
+  // -- Card editor (and Add card, the same form in create mode) ------------------
+  var CARD_KEYS = ['label', 'holder_name', 'group_name', 'card_number', 'primary_last4', 'name_on_card', 'owner_email',
+                   'default_cost_center', 'receipt_upload', 'active'];
+  function cardOriginal(c) {
+    if (!c) return { label: '', holder_name: '', group_name: '', card_number: '', primary_last4: '', name_on_card: '',
+                     owner_email: '', default_cost_center: '', receipt_upload: null, active: true };
+    return { label: cleanText(c.label), holder_name: cleanText(c.holder_name), group_name: cleanText(c.group_name),
+             card_number: c.card_number || '', primary_last4: c.primary_last4 || '', name_on_card: cleanText(c.name_on_card),
+             owner_email: ownerList(c.owner_email).join(', '), default_cost_center: c.default_cost_center || '',
+             receipt_upload: c.receipt_upload_setting === true ? true : (c.receipt_upload_setting === false ? false : null),
+             active: c.active !== false };
+  }
+  function webhookText(c) {
+    return c.webhook_configured ? 'Own webhook' : (c.webhook_default ? 'Default space (no webhook of its own)' : 'None: its reminders cannot be sent');
+  }
+  function cardFormHtml(c, d) {
+    var create = !c, cur = c || {};
+    var people = (d.people || []).map(function (p) { return p.name; });
+    var groups = d.groups || [], ccs = d.cost_centers || [];
+    var primaries = cardList().filter(function (o) { return !o.primary_last4 && (!c || o.last4 !== c.last4); });
+    var sup = cur.supplementary || [];
+    var primaryOpts = '<option value="">— not linked (a primary card) —</option>' + primaries.map(function (o) {
+      return opt(o.last4, o.last4 + (o.holder_name ? ' · ' + o.holder_name : ''), o.last4 === cur.primary_last4);
+    }).join('');
+    if (cur.primary_last4 && !primaries.some(function (o) { return o.last4 === cur.primary_last4; })) primaryOpts += opt(cur.primary_last4, cur.primary_last4, true);
+    var dcc = cur.default_cost_center || '';
+    var ccOpts = '<option value="">— none —</option>' + ccs.map(function (n) { return opt(n, n, n === dcc); }).join('');
+    if (dcc && ccs.indexOf(dcc) < 0) ccOpts += opt(dcc, dcc + ' (retired)', true);
+    var ru = cur.receipt_upload_setting;
+    var envNote = create ? '' : ' (now ' + (cur.receipt_upload_env ? 'on' : 'off') + ')';
+    var primaryNote = '';
+    if (!create && !dcc && cur.primary_last4 && cur.primary_default) {
+      primaryNote = '<div class="field-hint" id="primaryNote">Primary ' + esc(cur.primary_last4) + ' defaults to ' + esc(cur.primary_default) + '; this card has none' +
+        (ccs.indexOf(cur.primary_default) >= 0 ? '<button type="button" class="btn btn-secondary btn-xs" id="useSame">Use the same</button>' : ' (retired there too)') + '</div>';
+    }
+    var h = '<form id="cardForm" novalidate autocomplete="off">' +
+      '<datalist id="dlPeople">' + people.map(function (n) { return '<option value="' + esc(n) + '"></option>'; }).join('') + '</datalist>' +
+      '<datalist id="dlGroups">' + groups.map(function (n) { return '<option value="' + esc(n) + '"></option>'; }).join('') + '</datalist>' +
+      '<div class="form-grid">' +
+      (create ? field('last4', 'Last 4 digits', '<input class="inp" id="f_last4" name="last4" inputmode="numeric" maxlength="4" placeholder="1234" />',
+                      'The last four digits of the account, as the statement shows them.') : '') +
+      field('label', 'Label', '<input class="inp" id="f_label" name="label" maxlength="200" value="' + esc(cur.label || '') + '"' + (create ? ' placeholder="Card ending 1234 - holder (the default)"' : '') + ' />') +
+      field('holder_name', 'Holder', '<input class="inp" id="f_holder_name" name="holder_name" list="dlPeople" maxlength="200" value="' + esc(cur.holder_name || '') + '" />',
+            'Who uses the card: the Person of its purchases unless someone else is assigned.') +
+      field('group_name', 'Group', '<input class="inp" id="f_group_name" name="group_name" list="dlGroups" maxlength="40" value="' + esc(cur.group_name || '') + '" placeholder="Hair, Beauty" />') +
+      field('card_number', 'Card number', '<input class="inp" id="f_card_number" name="card_number" inputmode="numeric" maxlength="4" value="' + esc(cur.card_number || '') + '" placeholder="e.g. 4449" />',
+            'The last four digits printed on the card, when they differ from the account\'s.') +
+      field('primary_last4', 'Linked under', '<select class="inp" id="f_primary_last4" name="primary_last4"' + (sup.length ? ' disabled' : '') + '>' + primaryOpts + '</select>',
+            sup.length ? 'primary of ' + esc(sup.join(', ')) : 'A supplementary card is linked under its primary card.') +
+      field('name_on_card', 'Name on card', '<input class="inp" id="f_name_on_card" name="name_on_card" maxlength="80" value="' + esc(cur.name_on_card || '') + '" placeholder="if not the holder" />') +
+      field('owner_email', 'Owners', '<div class="chip-editor"><span class="chip-list" id="ownerChips"></span>' +
+            '<input id="f_owner_email" type="email" placeholder="name@superhairpieces.com" aria-label="Add an owner\'s e-mail" /></div>',
+            'Who may code the card\'s purchases and add its receipts. Enter or a comma adds an address.', 'full') +
+      field('default_cost_center', 'Default cost centre', '<select class="inp" id="f_default_cost_center" name="default_cost_center">' + ccOpts + '</select>',
+            'Filled into a purchase when its use case is set and it has no cost centre yet. Purchases already coded are not changed (see Fill below).', 'full') +
+      field('receipt_upload', 'Receipt upload', '<select class="inp" id="f_receipt_upload" name="receipt_upload">' +
+            opt('null', 'Follow server setting' + envNote, ru !== true && ru !== false) + opt('true', 'On', ru === true) + opt('false', 'Off', ru === false) + '</select>',
+            'Add receipt… on the dashboard and Add receipts in the Chat card.') +
+      '<div class="field" data-field="active"><span class="field-label">Chat reminders</span>' +
+        '<label class="check"><input type="checkbox" id="f_active" name="active"' + (cur.active === false ? '' : ' checked') + ' /> Chat reminders on</label>' +
+        '<div class="field-hint">Off: no weekly Chat card for this card.</div><div class="field-err" data-err="active"></div></div>' +
+      '</div>';
+    if (primaryNote) h = h.replace('<div class="field-err" data-err="default_cost_center"', primaryNote + '<div class="field-err" data-err="default_cost_center"');
+    if (!create) {
+      var ln = cur.last_notification;
+      var notif = ln ? '<div class="sub">Last reminder ' + esc(fmtStamp(ln.sent_at)) + (ln.year && ln.month ? ' for ' + esc(ymLabel(ln.year + '-' + ln.month)) : '') +
+        ' · ' + esc(ln.detail || (ln.ok ? 'sent' : 'not sent')) + '</div>' : '';
+      h += '<div class="ro-lines">' +
+        '<div class="ro-line"><span>Chat webhook</span><span>' + esc(webhookText(cur)) + notif + '</span></div>' +
+        '<div class="ro-line"><span>Receipts show</span><span>' + ((cur.receipts_show || []).length ? esc(cur.receipts_show.join(', ')) : '<span class="muted">—</span>') + '</span></div>' +
+        '<div class="ro-line"><span>History</span><span><a class="link" href="#history?entity=card&amp;entity_id=' + esc(enc(cur.last4)) + '">Changes to this card</a></span></div>' +
+        '</div>';
+      if (cur.default_cost_center && cur.default_cost_center_active !== false) {
+        h += '<div class="fill-line"><button type="button" class="btn btn-secondary btn-xs" id="cardFill">Fill into coded purchases without a cost centre</button>' +
+          '<span>Puts ' + esc(cur.default_cost_center) + ' into this card\'s purchases that have a use case and no cost centre. A cost centre already set is never changed.</span></div>';
+      }
+    }
+    h += '<div class="form-err" id="cardFormErr" role="alert"></div>' +
+      '<div class="form-actions"><button type="button" class="btn btn-ghost" id="cardCancel">Cancel</button>' +
+      '<button type="submit" class="btn btn-primary" id="cardSave">' + (create ? 'Add card' : 'Save') + '</button></div>';
+    if (!create) {
+      var blockers = cur.delete_blockers || [];
+      h += '<div class="danger-zone"><span class="field-label">Delete</span>' +
+        (cur.deletable ? '<div class="field-hint">This card has no purchases, no upload lists it and no card is linked under it.</div>'
+          : '<div class="field-hint">Only an unused card can be deleted. This one has: ' + esc(blockers.join('; ') || 'something that uses it') + '.</div>') +
+        '<button type="button" class="btn btn-danger btn-xs" id="cardDelete"' + (cur.deletable ? '' : ' disabled title="' + esc(blockers.join('; ')) + '"') + '>Delete card</button>' +
+        '<div class="form-err" id="cardDeleteErr" role="alert"></div></div>';
+    }
+    return h + '</form>';
+  }
+  function aliasChangeText(ch) {
+    if (ch.before && ch.after) return 'Receipts showing ' + ch.number + ' would count as card ' + ch.after + "'s instead of " + ch.before + "'s";
+    if (ch.after) return 'Receipts showing ' + ch.number + ' would count as card ' + ch.after + "'s";
+    return 'Receipts showing ' + ch.number + ' would no longer count as card ' + ch.before + "'s";
+  }
+  function aliasListHtml(changes) {
+    return '<ul style="margin:4px 0 0; padding-left:18px;">' + changes.map(function (ch) { return '<li>' + esc(aliasChangeText(ch)) + '</li>'; }).join('') + '</ul>';
+  }
+
+  function openCardEditor(last4, create) {
+    var d = state.cards;
+    if (!d) return;
+    var c = create ? null : cardByLast4(last4);
+    if (!create && !c) { toast('Card ' + last4 + ' is not on the list any more; refresh', 'err'); return; }
+    var orig = cardOriginal(c), owners = ownerList(orig.owner_email);
+    var what = create ? 'the new card' : 'card ' + last4;
+    var body = openModal(create ? 'Add card' : 'Card •••• ' + last4, cardFormHtml(c, d), true);
+    modalGuard = guardDirty;
+    modalCleanup = function () { clearDirty('card'); };
+    var form = $('#cardForm', body);
+    function markDirty() { setDirty(what, 'card'); }
+    function fv(name) { var el = form.querySelector('[name="' + name + '"]'); return el ? el.value : ''; }
+    form.addEventListener('input', markDirty);
+    form.addEventListener('change', markDirty);
+
+    // Owners: chips. Enter, a comma or leaving the box adds what was typed; × removes one.
+    var ownerInput = $('#f_owner_email', body);
+    function drawOwners() {
+      $('#ownerChips', body).innerHTML = owners.map(function (em, i) {
+        var out = outsideDomain(em);
+        return '<span class="tag' + (out ? ' pill-warn' : '') + '"' + (out ? ' title="' + esc(OUTSIDE_TITLE) + '"' : '') + '>' + esc(em) +
+          '<button type="button" data-rm-owner="' + i + '" aria-label="Remove ' + esc(em) + '">×</button></span>';
+      }).join('');
+    }
+    function addOwners(text) {
+      var added = false;
+      ownerList(text).forEach(function (em) { if (owners.indexOf(em) < 0) { owners.push(em); added = true; } });
+      if (added) { drawOwners(); markDirty(); }
+    }
+    function commitOwnerInput() { if (ownerInput.value.trim()) { addOwners(ownerInput.value); ownerInput.value = ''; } }
+    ownerInput.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter' || ev.key === ',' || ev.key === ';') { ev.preventDefault(); commitOwnerInput(); }
+      else if (ev.key === 'Backspace' && !ownerInput.value && owners.length) { owners.pop(); drawOwners(); markDirty(); }
+    });
+    ownerInput.addEventListener('input', function () {
+      // A pasted list: everything before the last separator becomes chips.
+      var v = ownerInput.value, cut = Math.max(v.lastIndexOf(','), v.lastIndexOf(';'));
+      if (cut >= 0) { addOwners(v.slice(0, cut)); ownerInput.value = v.slice(cut + 1).trimStart(); }
+    });
+    ownerInput.addEventListener('blur', commitOwnerInput);
+    drawOwners();
+
+    body.addEventListener('click', function (ev) {
+      var rm = ev.target.closest('[data-rm-owner]');
+      if (rm) { owners.splice(Number(rm.dataset.rmOwner), 1); drawOwners(); markDirty(); }
+    });
+    var same = $('#useSame', body);
+    if (same) same.addEventListener('click', function () {
+      $('#f_default_cost_center', body).value = c.primary_default;
+      markDirty();
+      var note = $('#primaryNote', body); if (note) note.classList.add('hidden');
+    });
+    $('#cardCancel', body).addEventListener('click', function () { clearDirty('card'); dropModal(); });
+    var fill = $('#cardFill', body);
+    if (fill) fill.addEventListener('click', function () { fillDefault(c.last4, fill); });
+    var del = $('#cardDelete', body);
+    if (del) del.addEventListener('click', function () { deleteCard(c, body); });
+
+    function values() {
+      commitOwnerInput();
+      var ru = fv('receipt_upload');
+      var v = {
+        label: cleanText(fv('label')), holder_name: cleanText(fv('holder_name')), group_name: cleanText(fv('group_name')),
+        card_number: fv('card_number').replace(/\s+/g, ''), name_on_card: cleanText(fv('name_on_card')),
+        owner_email: owners.join(', '), default_cost_center: fv('default_cost_center'),
+        receipt_upload: ru === 'true' ? true : (ru === 'false' ? false : null),
+        active: $('#f_active', body).checked,
+      };
+      var pl = $('#f_primary_last4', body);
+      if (!pl.disabled) v.primary_last4 = pl.value;
+      return v;
+    }
+    async function save(confirmed) {
+      clearFormErrors(form);
+      var v = values(), payload, l4;
+      if (create) {
+        l4 = fv('last4').trim();
+        if (!/^\d{4}$/.test(l4)) { $('[data-err="last4"]', form).textContent = 'Four digits.'; $('#f_last4', body).focus(); return; }
+        payload = { last4: l4, create: true };
+        CARD_KEYS.forEach(function (k) {
+          if (!(k in v)) return;
+          if (k === 'active') { if (v.active === false) payload.active = false; }
+          else if (k === 'receipt_upload') { if (v.receipt_upload !== null) payload.receipt_upload = v.receipt_upload; }
+          else if (v[k] !== '') payload[k] = v[k];
+        });
+        if (confirmed) payload.confirm = true;
+      } else {
+        l4 = c.last4;
+        payload = { last4: l4 };
+        // Only what changed: a retired default left selected is unchanged, so it is neither sent nor cleared.
+        CARD_KEYS.forEach(function (k) { if (k in v && v[k] !== orig[k]) payload[k] = v[k]; });
+        if (Object.keys(payload).length === 1) { clearDirty('card'); dropModal(); toast('Nothing changed'); return; }
+      }
+      var btn = $('#cardSave', body), data;
+      busy(btn, true);
+      try {
+        data = await api('/api/cards', { method: 'POST', body: payload });
+      } catch (e) {
+        busy(btn, false);
+        if (e.status === 401) return;
+        var errBox = $('#cardFormErr', body);
+        var changes = e.data && e.data.alias_changes;
+        if (create && e.status === 409 && changes && changes.length) {
+          errBox.innerHTML = esc(e.message) + aliasListHtml(changes);
+          if (confirm('Adding card ' + l4 + ' changes which card some receipts belong to:\n\n' +
+                      changes.map(aliasChangeText).join('\n') + '\n\nAdd it anyway?')) save(true);
+          return;
+        }
+        if (create && e.status === 409) {
+          errBox.innerHTML = 'Card ' + esc(l4) + ' already exists. <button type="button" class="btn btn-secondary btn-xs" id="openExisting">Open it</button>';
+          $('#openExisting', body).addEventListener('click', function () { clearDirty('card'); openCardEditor(l4); });
+          return;
+        }
+        showFormError(form, e, errBox);
+        return;
+      }
+      busy(btn, false);
+      clearDirty('card');
+      if (create) {
+        toast('Card ' + l4 + ' added', 'ok');
+        await loadCards(true);
+        if (cardByLast4(l4)) openCardEditor(l4); else dropModal();
+        return;
+      }
+      toast('Card ' + l4 + ' saved', 'ok');
+      dropModal();
+      if (data && data.fillable > 0) {
+        cardsUi.fill = { last4: l4, cc: (data.card && data.card.default_cost_center) || v.default_cost_center, n: data.fillable };
+      } else if (cardsUi.fill && cardsUi.fill.last4 === l4) {
+        cardsUi.fill = null;
+      }
+      loadCards(true);
+    }
+    form.addEventListener('submit', function (ev) { ev.preventDefault(); save(false); });
+  }
+
+  async function deleteCard(c, body) {
+    var errBox = $('#cardDeleteErr', body);
+    errBox.textContent = '';
+    if (!confirm('Delete card ' + c.last4 + '? It has no purchases. A statement that lists it again will add it back.')) return;
+    var url = '/api/admin/cards/' + enc(c.last4);
+    try {
+      await api(url, { method: 'DELETE' });
+    } catch (e) {
+      if (e.status === 401) return;
+      var changes = e.status === 409 && e.data && e.data.alias_changes;
+      if (!changes || !changes.length) { errBox.textContent = e.message; return; }
+      errBox.innerHTML = esc(e.message) + aliasListHtml(changes);
+      if (!confirm(changes.map(aliasChangeText).join('\n') + '\n\nDelete card ' + c.last4 + ' anyway?')) return;
+      try {
+        await api(url + '?confirm=1', { method: 'DELETE' });
+      } catch (e2) {
+        if (e2.status !== 401) errBox.textContent = e2.message;
+        return;
+      }
+    }
+    clearDirty('card');
+    dropModal();
+    toast('Card ' + c.last4 + ' deleted', 'ok');
+    loadCards(true);
+  }
+
+  // -- Numbers on receipts that no card claims ------------------------------------
+  function foldersText(fs) { return (fs || []).map(function (f) { return f.folder + ' (' + f.count + ')'; }).join(', '); }
+  function rangeText(a, b) {
+    a = fmtDate(a); b = fmtDate(b);
+    return a && b && a !== b ? a + ' – ' + b : (a || b || '—');
+  }
+  function renderUnclaimed() {
+    var list = (state.cards && state.cards.unclaimed) || [];
+    var open = list.filter(function (u) { return !u.ignored; }), ignored = list.filter(function (u) { return u.ignored; });
+    $('#unclaimedPanel').classList.remove('hidden');
+    $('#unclaimedCount').textContent = open.length ? ' (' + open.length + ')' : '';
+    var html = open.length ? '<div class="list-wrap"><table class="list"><thead><tr><th>Number</th><th class="td-right">Receipts</th><th>Top folders</th><th>From–to</th><th></th></tr></thead><tbody>' +
+      open.map(function (u) {
+        return '<tr><td data-label="Number" class="strong">' + esc(u.number) + '</td>' +
+          '<td data-label="Receipts" class="td-right">' + esc(u.invoices) + '</td>' +
+          '<td data-label="Top folders">' + (esc(foldersText(u.folders)) || '<span class="muted">—</span>') + '</td>' +
+          '<td data-label="From–to" class="nowrap">' + esc(rangeText(u.first, u.last)) + '</td>' +
+          '<td data-label=""><div class="btns"><button type="button" class="btn btn-secondary btn-xs" data-find="' + esc(u.number) + '">Find the card</button>' +
+          '<button type="button" class="btn btn-ghost btn-xs" data-ignore="' + esc(u.number) + '">Ignore…</button></div></td></tr>';
+      }).join('') + '</tbody></table></div>'
+      : '<div class="empty-small">Every card number on a receipt belongs to a card.</div>';
+    if (ignored.length) {
+      html += '<details class="sub-details"><summary>Ignored (' + ignored.length + ')</summary><div class="list-wrap"><table class="list"><thead><tr>' +
+        '<th>Number</th><th class="td-right">Receipts</th><th>Why</th><th>By</th><th></th></tr></thead><tbody>' +
+        ignored.map(function (u) {
+          var ig = u.ignored || {};
+          return '<tr><td data-label="Number" class="strong">' + esc(u.number) + '</td><td data-label="Receipts" class="td-right">' + esc(u.invoices) + '</td>' +
+            '<td data-label="Why">' + esc(ig.reason) + '</td><td data-label="By">' + esc([ig.by, fmtStamp(ig.at)].filter(Boolean).join(' · ')) + '</td>' +
+            '<td data-label=""><button type="button" class="btn btn-secondary btn-xs" data-unignore="' + esc(u.number) + '">Restore</button></td></tr>';
+        }).join('') + '</tbody></table></div></details>';
+    }
+    $('#unclaimedBody').innerHTML = html;
+  }
+  async function ignoreNumber(number) {
+    var reason = prompt('Why should receipts showing ' + number + ' be ignored? (1-200 characters, e.g. "misread: it is the order number")');
+    if (reason === null) return;
+    reason = reason.trim();
+    if (!reason || reason.length > 200) { toast('reason: say why (1-200 characters)', 'err'); return; }
+    try {
+      await api('/api/admin/card-numbers/' + enc(number) + '/ignore', { method: 'POST', body: { reason: reason } });
+    } catch (e) { report(e, 'Could not ignore ' + number); return; }
+    toast(number + ' ignored', 'ok');
+    loadCards(true);
+  }
+  async function unignoreNumber(number) {
+    try {
+      await api('/api/admin/card-numbers/' + enc(number) + '/ignore', { method: 'DELETE' });
+    } catch (e) { report(e, 'Could not restore ' + number); return; }
+    toast(number + ' is listed again', 'ok');
+    loadCards(true);
+  }
+  async function openNumberModal(number) {
+    var body = openModal('Card number ' + number, loadingHtml('Looking for the card…'), true);
+    var d;
+    try {
+      d = await api('/api/admin/card-numbers/' + enc(number));
+    } catch (e) {
+      if (e.status === 401) return;
+      body.innerHTML = '<div class="err-text">' + esc(e.message) + '</div>';
+      return;
+    }
+    var likely = d.likely || [], invoices = d.invoices || [], considered = d.considered || 0;
+    var html = '<p class="intro">' + esc(plural(invoices.length, 'receipt shows', 'receipts show')) + ' ' + esc(number) +
+      '. A card is likely when it has a purchase of the same amount 0-21 days after a receipt\'s date' +
+      (considered ? ' (' + esc(plural(considered, 'receipt has', 'receipts have')) + ' both a total and a date).' : '.') + '</p>';
+    if (d.ignored) html += '<div class="banner banner-warn" style="margin-top:8px;">Ignored: ' + esc(d.ignored.reason) + ' (' + esc([d.ignored.by, fmtStamp(d.ignored.at)].filter(Boolean).join(', ')) + ')</div>';
+    html += '<h3 class="sec">Likely cards</h3>';
+    html += likely.length ? '<div class="list-wrap"><table class="list"><thead><tr><th>Card</th><th>Receipts</th><th></th></tr></thead><tbody>' +
+      likely.map(function (l, i) {
+        var other = l.card_number && l.card_number !== number
+          ? '<div><span class="pill pill-warn">has number ' + esc(l.card_number) + ' (' + esc(plural(l.card_number_receipts || 0, 'receipt shows', 'receipts show')) + ' it)</span></div>' : '';
+        return '<tr><td data-label="Card"><span class="strong">' + esc(l.last4) + '</span> · ' + esc(l.label) + other + '</td>' +
+          '<td data-label="Receipts">' + esc(l.hits) + ' of ' + esc(considered) + ' receipts</td>' +
+          '<td data-label=""><button type="button" class="btn btn-primary btn-xs" data-use="' + i + '">Use as card number of ' + esc(l.last4) + '</button></td></tr>';
+      }).join('') + '</tbody></table></div>'
+      : '<div class="empty-small">No purchase on any card has these receipts\' amounts within 21 days.</div>';
+    html += '<div id="numResult"></div>';
+    html += '<h3 class="sec">Receipts</h3>' + (invoices.length ? '<div class="list-wrap"><table class="list"><thead><tr><th>Date</th><th>Supplier</th><th>Folder</th><th class="td-right">Total</th><th>File</th><th>Likely</th></tr></thead><tbody>' +
+      invoices.map(function (inv) {
+        var url = safeUrl(inv.web_view_link);
+        return '<tr><td data-label="Date" class="nowrap">' + esc(fmtDate(inv.invoice_date) || '—') + '</td>' +
+          '<td data-label="Supplier">' + esc(inv.vendor || '—') + '</td>' +
+          '<td data-label="Folder">' + esc([inv.month_folder, inv.vendor_folder].filter(Boolean).join(' / ')) + '</td>' +
+          '<td data-label="Total" class="td-right nowrap">' + (inv.total !== null && inv.total !== undefined ? esc(money(inv.total, inv.currency || '')) : '—') + '</td>' +
+          '<td data-label="File">' + (url ? '<a class="link" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(inv.file_name || 'Open') + ' ↗</a>' : esc(inv.file_name)) + '</td>' +
+          '<td data-label="Likely">' + esc((inv.candidates || []).join(', ') || '—') + '</td></tr>';
+      }).join('') + '</tbody></table></div>' : '<div class="empty-small">No receipt listed.</div>');
+    body.innerHTML = html;
+    body.addEventListener('click', function (ev) {
+      var b = ev.target.closest('[data-use]');
+      if (b) { useAsCardNumber(number, likely[Number(b.dataset.use)], body); return; }
+      var m = ev.target.closest('[data-match]');
+      if (m && !m.disabled) runMatch(body, m.dataset.match, m.dataset.card);
+    });
+  }
+  async function useAsCardNumber(number, l, body) {
+    if (!l) return;
+    var months = (l.months || []).map(ymLabel);
+    if (!confirm('Receipts showing ' + number + ' will count as card ' + l.last4 + "'s from now on. Receipts already read are matched when their months are matched again" +
+                 (months.length ? ': ' + months.join(', ') + ' (buttons follow).' : '.'))) return;
+    if (l.card_number && l.card_number !== number) {
+      if (!confirm('Card ' + l.last4 + "'s printed number is " + l.card_number + ' (' + plural(l.card_number_receipts || 0, 'receipt shows', 'receipts show') +
+                   ' it). Replace it with ' + number + '? Receipts showing ' + l.card_number + ' will no longer be matched to ' + l.last4 + '.')) return;
+    }
+    var out = $('#numResult', body);
+    $all('[data-use]', body).forEach(function (b) { b.disabled = true; });
+    try {
+      await api('/api/cards', { method: 'POST', body: { last4: l.last4, card_number: number, expect_card_number: l.card_number || '' } });
+    } catch (e) {
+      $all('[data-use]', body).forEach(function (b) { b.disabled = false; });
+      if (e.status === 401) return;
+      out.innerHTML = '<div class="banner banner-warn" style="margin-top:10px;">' + esc(e.message) + '</div>';
+      return;
+    }
+    toast('Receipts showing ' + number + " now count as card " + l.last4 + "'s", 'ok');
+    out.innerHTML = '<div class="banner banner-info" style="margin-top:10px;">Receipts showing ' + esc(number) + ' now count as card ' + esc(l.last4) + '\'s.' +
+      (l.months && l.months.length ? ' Match these months again to link the receipts already read:<div class="btns" style="margin-top:8px;">' +
+        l.months.map(function (ym) {
+          return '<button type="button" class="btn btn-secondary btn-xs" data-match="' + esc(ym) + '" data-card="' + esc(l.last4) + '">Match ' + esc(ymLabel(ym)) + ' for card ' + esc(l.last4) + '</button>';
+        }).join('') + '</div><div class="sub" id="matchStatus" style="margin-top:6px;"></div>' : '') + '</div>';
+    loadCards(true);
+  }
+  // One match job at a time: the buttons wait while it runs, and the page asks every 2 s how it went.
+  var matchRunning = false;
+  async function runMatch(box, ym, last4) {
+    var m = /^(\d{4})-(\d{1,2})$/.exec(ym || '');
+    if (matchRunning || !m) return;
+    var label = ymLabel(ym), status = $('#matchStatus', box);
+    var buttons = $all('[data-match]', box);
+    matchRunning = true;
+    buttons.forEach(function (b) { b.disabled = true; });
+    if (status) status.textContent = 'Matching ' + label + ' for card ' + last4 + '…';
+    try {
+      var started = await api('/api/jobs?kind=match&year=' + m[1] + '&month=' + Number(m[2]) + '&card=' + enc(last4), { method: 'POST' });
+      var id = started && started.job && started.job.id;
+      if (!id) throw new ApiError(0, 'the server did not say which job started', null);
+      for (;;) {
+        await sleep(2000);
+        var job;
+        try {
+          job = await api('/api/jobs/current?id=' + enc(id));
+        } catch (e) {
+          if (e.status === 404) { toast('Lost track of the job; check the month on the dashboard', 'err'); if (status) status.textContent = ''; return; }
+          throw e;
+        }
+        if (job.running) continue;
+        if (job.error) {
+          toast(label + ' for card ' + last4 + ': ' + job.error, 'err');
+          if (status) status.textContent = '';
+        } else {
+          toast(label + ' matched for card ' + last4, 'ok');
+          if (status) status.textContent = label + ' matched.';
+        }
+        return;
+      }
+    } catch (e) {
+      if (status) status.textContent = '';
+      if (e.status === 409) toast('Another job is running; try again in a minute', 'err');
+      else report(e, 'Could not match ' + label);
+    } finally {
+      matchRunning = false;
+      buttons.forEach(function (b) { b.disabled = false; });
+    }
+  }
+
+  // Cards tab events.
+  $('#cardsSearch').addEventListener('input', function () { cardsUi.q = this.value; if (state.cards) renderCardsTable(); });
+  $('#cardsSort').addEventListener('change', function () { cardsUi.sort = this.value; if (state.cards) renderCardsTable(); });
+  $('#cardsByOwner').addEventListener('click', function () {
+    cardsUi.byOwner = !cardsUi.byOwner;
+    this.setAttribute('aria-pressed', String(cardsUi.byOwner));
+    this.classList.toggle('btn-primary', cardsUi.byOwner);
+    this.classList.toggle('btn-secondary', !cardsUi.byOwner);
+    if (state.cards) renderCardsTable();
+  });
+  $('#cardsAdd').addEventListener('click', function () {
+    if (!state.cards) { toast('The cards are still loading', 'err'); return; }
+    openCardEditor('', true);
+  });
+  $('#cardsRefresh').addEventListener('click', function () { loadCards(); });
+  $('#tab-cards').addEventListener('click', function (ev) {
+    var t = ev.target;
+    var flag = t.closest('[data-flag]');
+    if (flag) { cardsUi.flag = flag.dataset.flag; renderCardChips(); renderCardsTable(); return; }
+    var open = t.closest('[data-open-card]');
+    if (open) { openCardEditor(open.dataset.openCard); return; }
+    var go = t.closest('[data-fill-go]');
+    if (go && cardsUi.fill) { fillDefault(cardsUi.fill.last4, go); return; }
+    if (t.closest('[data-fill-no]')) { cardsUi.fill = null; renderFillNotice(); return; }
+    var find = t.closest('[data-find]');
+    if (find) { openNumberModal(find.dataset.find); return; }
+    var ign = t.closest('[data-ignore]');
+    if (ign) { ignoreNumber(ign.dataset.ignore); return; }
+    var unign = t.closest('[data-unignore]');
+    if (unign) { unignoreNumber(unign.dataset.unignore); return; }
+    var row = t.closest('tr[data-last4]');
+    if (row && !t.closest('a, button, input, select')) openCardEditor(row.dataset.last4);
+  });
+  $('#tab-cards').addEventListener('keydown', function (ev) {
+    var row = ev.target.closest && ev.target.closest('tr[data-last4]');
+    if (row && ev.target === row && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); openCardEditor(row.dataset.last4); }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Use cases & cost centres
+  // ---------------------------------------------------------------------------
+  // kind 'uc' (use cases, keyed by id) or 'cc' (cost centres, keyed by name).
+  var codingUi = { showRetired: { uc: false, cc: false }, order: { uc: null, cc: null }, editing: null, rename: null, warnings: [] };
+  function ucPath(id) { return '/api/admin/use-cases/' + enc(id); }
+  function ccPath(name) { return '/api/admin/cost-centers?name=' + enc(name); }
+  function codingPath(kind, row) { return kind === 'uc' ? ucPath(row.id) : ccPath(row.name); }
+  function rowKey(kind, r) { return kind === 'uc' ? r.id : r.name; }
+  function codingLocked() { return !!(state.coding && (state.coding.schema_missing || []).length); }
+
+  async function loadCoding(quiet) {
+    state.loaded.coding = true;
+    var box = $('#codingBody');
+    if (!quiet) box.innerHTML = loadingHtml('Loading…');
+    var d;
+    try {
+      d = await api('/api/admin/coding');
+    } catch (e) {
+      state.loaded.coding = false;
+      if (e.status === 401) return;
+      if (quiet && state.coding) { report(e, 'Could not reload the lists'); return; }
+      showLoadError(box, 'Could not load the use cases and cost centres', e, function () { loadCoding(); });
+      return;
+    }
+    state.coding = d;
+    codingUi.order = { uc: null, cc: null };
+    codingUi.editing = null;
+    clearDirty('coding-edit');
+    renderCoding();
+  }
+  function renderCoding() {
+    var d = state.coding, missing = d.schema_missing || [];
+    var html = '';
+    if (missing.length) {
+      html += '<div class="banner banner-warn">The database has not been updated for this yet: apply schema.sql (Settings shows what is missing). The lists are read-only until then.' +
+        '<div class="sub">Missing: ' + esc(missing.join(', ')) + '</div></div>';
+    }
+    html += '<div class="coding-grid">' + codingSectionHtml('uc', d) + codingSectionHtml('cc', d) + '</div>';
+    var box = $('#codingBody');
+    // A reload after any change draws the sections again: what is being typed in an Add form stays.
+    var typed = {};
+    $all('form[data-add]', box).forEach(function (f) {
+      typed[f.dataset.add] = $all('input, select', f).map(function (el) { return [el.name, el.value]; });
+    });
+    box.innerHTML = html;
+    Object.keys(typed).forEach(function (kind) {
+      var f = $('form[data-add="' + kind + '"]', box);
+      typed[kind].forEach(function (pair) { var el = f && f.elements[pair[0]]; if (el && pair[1]) el.value = pair[1]; });
+    });
+    if (missing.length) box.firstChild.style.marginBottom = '12px';
+    renderCodingTable('uc');
+    renderCodingTable('cc');
+    renderRename();
+    renderCcWarnings();
+    renderNotListed();
+    lockCoding();
+  }
+  function lockCoding() {
+    if (!codingLocked()) return;
+    $all('button, input, select, textarea', $('#codingBody')).forEach(function (el) { el.disabled = true; });
+  }
+  function codingSectionHtml(kind, d) {
+    var uc = kind === 'uc';
+    var groupSel = uc ? '<select class="inp" name="group_name" aria-label="Group">' + opt('', 'Any group', true) +
+      (d.groups || []).map(function (g) { return opt(g, g, false); }).join('') + '</select>' : '';
+    return '<section class="card" data-kind="' + kind + '">' +
+      '<div class="section-head"><h2>' + (uc ? 'Use cases' : 'Cost centres') + '</h2>' +
+        '<label class="check"><input type="checkbox" data-show-retired="' + kind + '"' + (codingUi.showRetired[kind] ? ' checked' : '') + ' /> Show retired</label>' +
+        '<button type="button" class="btn btn-primary btn-xs hidden" data-act="save-order" data-kind="' + kind + '">Save order</button>' +
+        '<button type="button" class="btn btn-ghost btn-xs hidden" data-act="reset-order" data-kind="' + kind + '">Undo</button></div>' +
+      (uc ? '' : '<div data-warnings="cc"></div>') +
+      '<div data-table="' + kind + '"></div>' +
+      '<div data-rename="' + kind + '"></div>' +
+      '<form class="add-form" data-add="' + kind + '" novalidate autocomplete="off">' +
+        '<input class="inp" name="name" maxlength="' + (uc ? 80 : 100) + '" placeholder="' + (uc ? 'New use case' : 'New cost centre') + '" aria-label="Name" />' +
+        groupSel +
+        '<input class="inp" name="description" maxlength="300" placeholder="Description (optional)" aria-label="Description" />' +
+        '<button type="submit" class="btn btn-secondary btn-xs">Add</button>' +
+        '<div class="form-err" data-add-err role="alert"></div></form>' +
+      '<div data-notlisted="' + kind + '"></div>' +
+      '</section>';
+  }
+  function codingRows(kind) {
+    var d = state.coding, rows = (kind === 'uc' ? d.use_cases : d.cost_centers) || [], order = codingUi.order[kind];
+    if (!order) return rows.slice();
+    var by = {};
+    rows.forEach(function (r) { by[rowKey(kind, r)] = r; });
+    return order.map(function (k) { return by[k]; }).filter(Boolean);
+  }
+  function rowVisible(kind, r) { return codingUi.showRetired[kind] || r.active !== false; }
+  function renderCodingTable(kind) {
+    var uc = kind === 'uc', box = $('[data-table="' + kind + '"]');
+    var rows = codingRows(kind).filter(function (r) { return rowVisible(kind, r); });
+    var groups = state.coding.groups || [];
+    var head = '<tr><th>Name</th>' + (uc ? '<th>Group</th>' : '') + '<th>Description</th><th class="td-right">Uses</th>' +
+      (uc ? '' : '<th>Card default for</th>') + '<th>Status</th><th></th></tr>';
+    var body = rows.map(function (r, i) {
+      var key = rowKey(kind, r);
+      var editing = codingUi.editing && codingUi.editing.kind === kind && codingUi.editing.key === key;
+      var status = r.active === false ? '<span class="pill pill-grey">Retired</span>' : 'Active';
+      if (editing) {
+        var gsel = '<select class="inp" data-e="group_name" aria-label="Group">' + opt('', 'Any group', !r.group_name) +
+          groups.map(function (g) { return opt(g, g, nameKey(g) === nameKey(r.group_name)); }).join('') +
+          (r.group_name && !groups.some(function (g) { return nameKey(g) === nameKey(r.group_name); }) ? opt(r.group_name, r.group_name, true) : '') + '</select>';
+        return '<tr class="edit-row" data-key="' + esc(key) + '">' +
+          '<td data-label="Name"><input class="inp" data-e="name" maxlength="' + (uc ? 80 : 100) + '" value="' + esc(r.name) + '" aria-label="Name" /></td>' +
+          (uc ? '<td data-label="Group">' + gsel + '</td>' : '') +
+          '<td data-label="Description"><input class="inp" data-e="description" maxlength="300" value="' + esc(r.description || '') + '" aria-label="Description" /></td>' +
+          '<td data-label="Uses" class="td-right">' + esc(r.uses || 0) + '</td>' +
+          (uc ? '' : '<td data-label="Card default for">' + esc((r.card_defaults || []).join(', ')) + '</td>') +
+          '<td data-label="Status">' + status + '</td>' +
+          '<td data-label=""><div class="btns"><button type="button" class="btn btn-primary btn-xs" data-act="save" data-kind="' + kind + '" data-key="' + esc(key) + '">Save</button>' +
+          '<button type="button" class="btn btn-ghost btn-xs" data-act="cancel" data-kind="' + kind + '">Cancel</button></div>' +
+          '<div class="field-err" data-edit-err></div></td></tr>';
+      }
+      var k = ' data-kind="' + kind + '" data-key="' + esc(key) + '"';
+      return '<tr data-key="' + esc(key) + '">' +
+        '<td data-label="Name" class="strong">' + esc(r.name) + '</td>' +
+        (uc ? '<td data-label="Group">' + (r.group_name ? esc(r.group_name) : '<span class="muted">Any group</span>') + '</td>' : '') +
+        '<td data-label="Description">' + (r.description ? esc(r.description) : '<span class="muted">—</span>') + '</td>' +
+        '<td data-label="Uses" class="td-right">' + esc(r.uses || 0) + '</td>' +
+        (uc ? '' : '<td data-label="Card default for">' + ((r.card_defaults || []).length ? esc(r.card_defaults.join(', ')) : '<span class="muted">—</span>') + '</td>') +
+        '<td data-label="Status">' + status + '</td>' +
+        '<td data-label=""><div class="btns row-actions">' +
+          '<button type="button" class="btn btn-secondary btn-xs" data-act="edit"' + k + '>Edit</button>' +
+          (r.active === false ? '<button type="button" class="btn btn-secondary btn-xs" data-act="restore"' + k + '>Restore</button>'
+            : '<button type="button" class="btn btn-ghost btn-xs" data-act="retire"' + k + '>Retire</button>') +
+          '<button type="button" class="btn btn-ghost btn-xs" data-act="up"' + k + (i === 0 ? ' disabled' : '') + ' aria-label="Move up">↑</button>' +
+          '<button type="button" class="btn btn-ghost btn-xs" data-act="down"' + k + (i === rows.length - 1 ? ' disabled' : '') + ' aria-label="Move down">↓</button>' +
+        '</div></td></tr>';
+    }).join('');
+    box.innerHTML = '<div class="list-wrap"><table class="list wrap-head"><thead>' + head + '</thead><tbody>' +
+      (body || '<tr><td colspan="7" data-label=""><div class="empty-small">' + (uc ? 'No use case' : 'No cost centre') + ' yet.</div></td></tr>') + '</tbody></table></div>';
+    var section = box.closest('section');
+    var reordered = !!codingUi.order[kind];
+    $('[data-act="save-order"]', section).classList.toggle('hidden', !reordered);
+    $('[data-act="reset-order"]', section).classList.toggle('hidden', !reordered);
+    var edit = $('tr.edit-row', box);
+    if (edit) {
+      var what = (uc ? 'use case ' : 'cost centre ') + codingUi.editing.key;
+      if (uc) { var r0 = codingRows('uc').filter(function (r) { return r.id === codingUi.editing.key; })[0]; if (r0) what = 'use case ' + r0.name; }
+      edit.addEventListener('input', function () { setDirty(what, 'coding-edit'); });
+      edit.addEventListener('change', function () { setDirty(what, 'coding-edit'); });
+      edit.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter') { ev.preventDefault(); $('[data-act="save"]', edit).click(); }
+        else if (ev.key === 'Escape') { ev.stopPropagation(); $('[data-act="cancel"]', edit).click(); }
+      });
+    }
+    lockCoding();
+  }
+  function findCodingRow(kind, key) { return codingRows(kind).filter(function (r) { return rowKey(kind, r) === key; })[0] || null; }
+  function moveCodingRow(kind, key, dir) {
+    var rows = codingRows(kind), keys = rows.map(function (r) { return rowKey(kind, r); });
+    var vis = rows.filter(function (r) { return rowVisible(kind, r); }).map(function (r) { return rowKey(kind, r); });
+    var target = vis[vis.indexOf(key) + dir];
+    if (target === undefined) return;
+    var a = keys.indexOf(key), b = keys.indexOf(target);
+    keys[a] = target; keys[b] = key;
+    codingUi.order[kind] = keys;
+    renderCodingTable(kind);
+  }
+  async function saveCodingOrder(kind, btn) {
+    var keys = codingRows(kind).map(function (r) { return rowKey(kind, r); });
+    busy(btn, true);
+    try {
+      if (kind === 'uc') await api('/api/admin/use-cases/order', { method: 'POST', body: { ids: keys } });
+      else await api('/api/admin/cost-centers/order', { method: 'POST', body: { names: keys } });
+    } catch (e) { busy(btn, false); report(e, 'Could not save the order'); return; }
+    toast('Order saved', 'ok');
+    loadCoding(true);
+  }
+  function renderCcWarnings() {
+    var box = $('[data-warnings="cc"]');
+    if (!box) return;
+    box.innerHTML = codingUi.warnings.length ? '<div class="section-pad"><div class="banner pill-warn">' +
+      codingUi.warnings.map(function (w) { return '<div>' + esc(w) + '</div>'; }).join('') +
+      '<button type="button" class="btn btn-ghost btn-xs" data-act="clear-warnings">OK</button></div></div>' : '';
+  }
+  async function saveCodingEdit(kind, key, tr) {
+    var row = findCodingRow(kind, key);
+    if (!row) return;
+    var errEl = $('[data-edit-err]', tr);
+    errEl.textContent = '';
+    var name = cleanText($('[data-e="name"]', tr).value), desc = cleanText($('[data-e="description"]', tr).value), patch = {};
+    if (!name) { errEl.textContent = 'A name, please.'; return; }
+    if (name !== row.name) patch.name = name;
+    if (desc !== cleanText(row.description)) patch.description = desc;
+    var group = row.group_name || '';
+    if (kind === 'uc') {
+      group = $('[data-e="group_name"]', tr).value;
+      if (nameKey(group) !== nameKey(row.group_name)) patch.group_name = group;
+    }
+    if (!Object.keys(patch).length) { clearDirty('coding-edit'); codingUi.editing = null; renderCodingTable(kind); return; }
+    var btn = $('[data-act="save"]', tr), r;
+    busy(btn, true);
+    try {
+      r = await api(codingPath(kind, row), { method: 'PATCH', body: patch });
+    } catch (e) {
+      busy(btn, false);
+      if (e.status === 401) return;
+      if (e.status === 409 && e.data && typeof e.data.uses === 'number' && patch.name) {
+        codingUi.rename = { kind: kind, row: row, name: name, description: desc, group: group, error: e.message };
+        renderRename();
+        return;
+      }
+      errEl.textContent = e.message;
+      return;
+    }
+    clearDirty('coding-edit');
+    codingUi.editing = null;
+    codingUi.rename = null;
+    toast((kind === 'uc' ? 'Use case ' : 'Cost centre ') + ((r && (r.use_case || r.cost_center) || {}).name || name) + ' saved', 'ok');
+    showCodingWarnings(kind, r && r.warnings);
+    loadCoding(true);
+  }
+  function showCodingWarnings(kind, warnings) {
+    if (!warnings || !warnings.length) return;
+    if (kind === 'uc') warnings.forEach(function (w) { toast(w, '', 6000); });
+    else { codingUi.warnings = warnings.slice(); renderCcWarnings(); }
+  }
+  function renderRename() {
+    ['uc', 'cc'].forEach(function (kind) {
+      var box = $('[data-rename="' + kind + '"]');
+      if (!box) return;
+      var r = codingUi.rename;
+      if (!r || r.kind !== kind) { box.innerHTML = ''; return; }
+      var oldN = r.row.name, newN = r.name;
+      box.innerHTML = '<div class="section-pad"><div class="banner banner-warn">' + esc(r.error) +
+        '<div><button type="button" class="btn btn-primary btn-xs btn-wrap" data-act="add-retire" data-kind="' + kind + '">Add \'' + esc(newN) + '\' and retire \'' + esc(oldN) + '\'</button>' +
+        '<button type="button" class="btn btn-ghost btn-xs" data-act="rename-cancel" data-kind="' + kind + '">Cancel</button></div>' +
+        '<div class="sub">Purchases already coded ' + esc(oldN) + ' keep ' + esc(oldN) + ' (they still count as coded); new purchases get ' + esc(newN) + '.</div></div></div>';
+    });
+  }
+  async function addAndRetire(kind, btn) {
+    var r = codingUi.rename;
+    if (!r) return;
+    var body = { name: r.name };
+    if (r.description) body.description = r.description;
+    if (kind === 'uc') body.group_name = r.group || '';
+    busy(btn, true);
+    try {
+      await api(kind === 'uc' ? '/api/admin/use-cases' : '/api/admin/cost-centers', { method: 'POST', body: body });
+    } catch (e) { busy(btn, false); report(e, 'Could not add ' + r.name); return; }
+    var res = null;
+    try {
+      res = await api(codingPath(kind, r.row), { method: 'PATCH', body: { active: false } });
+    } catch (e) { report(e, 'Added ' + r.name + ' but could not retire ' + r.row.name); }
+    clearDirty('coding-edit');
+    codingUi.rename = null;
+    codingUi.editing = null;
+    if (res) toast('Added ' + r.name + ' and retired ' + r.row.name, 'ok');
+    showCodingWarnings(kind, res && res.warnings);
+    loadCoding(true);
+  }
+  async function setCodingActive(kind, key, active, btn) {
+    var row = findCodingRow(kind, key);
+    if (!row) return;
+    busy(btn, true);
+    var r;
+    try {
+      r = await api(codingPath(kind, row), { method: 'PATCH', body: { active: active } });
+    } catch (e) { busy(btn, false); report(e, 'Could not ' + (active ? 'restore ' : 'retire ') + row.name); return; }
+    toast(row.name + (active ? ' restored' : ' retired'), 'ok');
+    showCodingWarnings(kind, r && r.warnings);
+    loadCoding(true);
+  }
+  async function addCoding(kind, form, nameOverride) {
+    var errEl = $('[data-add-err]', form);
+    errEl.textContent = '';
+    var name = cleanText(nameOverride !== undefined ? nameOverride : form.elements.name.value);
+    if (!name) { errEl.textContent = 'A name, please.'; return; }
+    var body = { name: name };
+    if (nameOverride === undefined) {
+      var desc = cleanText(form.elements.description.value);
+      if (desc) body.description = desc;
+      if (kind === 'uc') body.group_name = form.elements.group_name.value;
+    }
+    var btn = nameOverride === undefined ? $('button[type="submit"]', form) : null;
+    busy(btn, true);
+    try {
+      await api(kind === 'uc' ? '/api/admin/use-cases' : '/api/admin/cost-centers', { method: 'POST', body: body });
+    } catch (e) {
+      busy(btn, false);
+      if (e.status === 401) return;
+      var ex = e.data && e.data.existing;
+      errEl.innerHTML = esc(e.message);
+      if (e.status === 409 && ex && ex.active === false) {
+        errEl.innerHTML += ' <button type="button" class="btn btn-secondary btn-xs" data-restore-existing>Restore it</button>';
+        $('[data-restore-existing]', errEl).addEventListener('click', async function () {
+          try {
+            await api(kind === 'uc' ? ucPath(ex.id) : ccPath(ex.name), { method: 'PATCH', body: { active: true } });
+          } catch (e2) { report(e2, 'Could not restore ' + ex.name); return; }
+          toast(ex.name + ' restored', 'ok');
+          clearDirty('coding-add');
+          loadCoding(true);
+        });
+      }
+      if (nameOverride !== undefined) toast(e.message, 'err');
+      return;
+    }
+    busy(btn, false);
+    if (nameOverride === undefined) form.reset();
+    clearDirty('coding-add');
+    toast(name + ' added', 'ok');
+    loadCoding(true);
+  }
+  function renderNotListed() {
+    var d = state.coding;
+    var ucBox = $('[data-notlisted="uc"]'), ccBox = $('[data-notlisted="cc"]');
+    var un = d.usage_not_listed || [], cn = d.cost_centers_not_listed || [], like = d.cost_centers_like_use_cases || [];
+    function table(rows, label, action, kind) {
+      return '<div class="list-wrap"><table class="list"><thead><tr><th>Value</th><th class="td-right">Uses</th><th></th></tr></thead><tbody>' +
+        rows.map(function (v, i) {
+          return '<tr><td data-label="Value">' + esc(v.value) + '</td><td data-label="Uses" class="td-right">' + esc(v.uses) + '</td>' +
+            '<td data-label=""><button type="button" class="btn btn-secondary btn-xs" data-act="add-value" data-kind="' + kind + '" data-i="' + i + '">' + esc(action) + '</button></td></tr>';
+        }).join('') + '</tbody></table></div>';
+    }
+    ucBox.innerHTML = '<div class="section-pad"><h3 class="sec">Use cases typed that are not on the list</h3>' +
+      (un.length ? table(un, '', 'Add as use case', 'uc') : '<div class="sub">Every use case typed is on the list.</div>') + '</div>';
+    var html = '<div class="section-pad"><h3 class="sec">Cost centres typed on purchases that are not on the list</h3>' +
+      (cn.length ? table(cn, '', 'Add to list', 'cc') : '<div class="sub">Every cost centre typed is on the list.</div>');
+    if (like.length) {
+      html += '<h3 class="sec">Use cases typed in the Cost centre box</h3><p class="sub">Those purchases still count as having no use case; the dashboard tells the person when they do it.</p>' +
+        '<div class="list-wrap"><table class="list"><thead><tr><th>Value</th><th class="td-right">Uses</th><th></th></tr></thead><tbody>' +
+        like.map(function (v) {
+          return '<tr><td data-label="Value">' + esc(v.value) + '</td><td data-label="Uses" class="td-right">' + esc(v.uses) + '</td>' +
+            '<td data-label=""><span class="pill pill-grey" title="' + esc(v.use_case ? 'The use case ' + v.use_case : '') + '">looks like a use case</span></td></tr>';
+        }).join('') + '</tbody></table></div>';
+    }
+    ccBox.innerHTML = html + '</div>';
+  }
+
+  $('#codingRefresh').addEventListener('click', function () {
+    if (dirty && dirtyOwner.indexOf('coding') === 0 && !guardDirty()) return;
+    codingUi.rename = null; codingUi.warnings = [];
+    loadCoding();
+  });
+  $('#tab-coding').addEventListener('change', function (ev) {
+    var sr = ev.target.closest('[data-show-retired]');
+    if (sr) { codingUi.showRetired[sr.dataset.showRetired] = sr.checked; renderCodingTable(sr.dataset.showRetired); }
+  });
+  $('#tab-coding').addEventListener('input', function (ev) {
+    var form = ev.target.closest('form[data-add]');
+    if (!form) return;
+    var any = $all('input', form).some(function (el) { return el.value.trim(); });
+    if (any) setDirty(form.dataset.add === 'uc' ? 'the new use case' : 'the new cost centre', 'coding-add');
+    else clearDirty('coding-add');
+  });
+  $('#tab-coding').addEventListener('submit', function (ev) {
+    var form = ev.target.closest('form[data-add]');
+    if (!form) return;
+    ev.preventDefault();
+    if (codingUi.editing) {
+      if (dirty && dirtyOwner === 'coding-edit' && !guardDirty()) return;
+      clearDirty('coding-edit');
+      codingUi.editing = null;
+    }
+    addCoding(form.dataset.add, form);
+  });
+  $('#tab-coding').addEventListener('click', function (ev) {
+    var b = ev.target.closest('[data-act]');
+    if (!b || b.disabled || codingLocked()) return;
+    var kind = b.dataset.kind, key = b.dataset.key, act = b.dataset.act;
+    // Every other row action draws the table again (or reloads it), which drops an open edit: ask first.
+    if (codingUi.editing && ['retire', 'restore', 'up', 'down', 'save-order', 'reset-order', 'add-value'].indexOf(act) >= 0) {
+      if (dirty && dirtyOwner === 'coding-edit' && !guardDirty()) return;
+      clearDirty('coding-edit');
+      codingUi.editing = null;
+    }
+    if (act === 'edit') {
+      if (codingUi.editing && dirty && dirtyOwner === 'coding-edit' && !guardDirty()) return;
+      codingUi.editing = { kind: kind, key: key };
+      codingUi.rename = null;
+      renderRename();
+      renderCodingTable('uc'); renderCodingTable('cc');
+      var inp = $('[data-table="' + kind + '"] [data-e="name"]');
+      if (inp) inp.focus();
+    } else if (act === 'cancel') {
+      clearDirty('coding-edit');
+      codingUi.editing = null; codingUi.rename = null;
+      renderRename();
+      renderCodingTable(kind);
+    } else if (act === 'save') {
+      saveCodingEdit(kind, key, b.closest('tr'));
+    } else if (act === 'retire') {
+      setCodingActive(kind, key, false, b);
+    } else if (act === 'restore') {
+      setCodingActive(kind, key, true, b);
+    } else if (act === 'up' || act === 'down') {
+      moveCodingRow(kind, key, act === 'up' ? -1 : 1);
+    } else if (act === 'save-order') {
+      saveCodingOrder(kind, b);
+    } else if (act === 'reset-order') {
+      codingUi.order[kind] = null;
+      renderCodingTable(kind);
+    } else if (act === 'add-retire') {
+      addAndRetire(kind, b);
+    } else if (act === 'rename-cancel') {
+      codingUi.rename = null;
+      renderRename();
+    } else if (act === 'clear-warnings') {
+      codingUi.warnings = [];
+      renderCcWarnings();
+    } else if (act === 'add-value') {
+      var list = kind === 'uc' ? state.coding.usage_not_listed : state.coding.cost_centers_not_listed;
+      var v = (list || [])[Number(b.dataset.i)];
+      if (v) addCoding(kind, $('form[data-add="' + kind + '"]'), v.value);
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Vendors
+  // ---------------------------------------------------------------------------
+  var vendorsUi = { view: 'catalogue', q: '', sort: 'attention', registered: 'all', page: 1 };
+  var catSeq = 0;
+  var proposalById = {};
+
+  function showVendors(params) {
+    var view = params.get('view');
+    if (VENDOR_VIEWS.indexOf(view) < 0) view = 'catalogue';
+    vendorsUi.view = view;
+    $all('#vendorViews [data-view]').forEach(function (b) {
+      var on = b.dataset.view === view;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-selected', String(on));
+    });
+    $all('[data-vview]').forEach(function (el) { el.classList.toggle('hidden', el.dataset.vview !== view); });
+    if (!state.loaded[view]) VIEW_LOAD[view]();
+  }
+  var VIEW_LOAD = {
+    catalogue: function (fresh) { return loadCatalogue(fresh); },
+    registry: function (fresh) { return loadRegistry(fresh); },
+    proposals: function (fresh) { return loadProposals(fresh); },
+  };
+  // After a registry change, every view may show something else: reload the one in view, the others
+  // when they are next shown.
+  function vendorsChanged() {
+    VENDOR_VIEWS.forEach(function (v) { state.loaded[v] = false; });
+    if (state.tab === 'vendors') VIEW_LOAD[vendorsUi.view]();
+  }
+
+  async function loadCatalogue(fresh) {
+    state.loaded.catalogue = true;
+    var seq = ++catSeq, box = $('#catBody');
+    if (!state.catalogue || fresh) box.innerHTML = loadingHtml('Loading folders…');
+    var u = vendorsUi;
+    var qs = 'q=' + enc(u.q) + '&sort=' + enc(u.sort) + '&registered=' + enc(u.registered) + '&page=' + enc(u.page) + '&per=50' + (fresh ? '&fresh=1' : '');
+    var d;
+    try {
+      d = await api('/api/admin/vendors?' + qs);
+    } catch (e) {
+      if (seq !== catSeq) return;
+      state.loaded.catalogue = false;
+      if (e.status === 401) return;
+      $('#catPager').innerHTML = '';
+      showLoadError(box, 'Could not load the folders', e, function () { loadCatalogue(fresh); });
+      return;
+    }
+    if (seq !== catSeq) return;          // a newer search answered first
+    state.catalogue = d;
+    vendorsUi.page = d.page || 1;
+    renderCatalogue();
+  }
+  function renderCatalogue() {
+    var d = state.catalogue, rows = d.rows || [];
+    $('#catGenerated').textContent = d.generated_at ? 'Generated ' + fmtStamp(d.generated_at) : '';
+    var box = $('#catBody');
+    if (!rows.length) {
+      box.innerHTML = '<div class="empty-small">' + (vendorsUi.q || vendorsUi.registered !== 'all' ? 'No folder matches.' : 'No documents have been read from the Invoice folder yet.') + '</div>';
+    } else {
+      box.innerHTML = '<div class="list-wrap"><table class="list wrap-head"><thead><tr><th>Folder</th><th class="td-right">Documents</th><th>Months</th><th>Read as</th>' +
+        '<th class="td-right">Matched</th><th class="td-right">Possible</th><th class="td-right">Unmatched docs</th><th class="td-right">Missing, same descriptor</th><th class="td-right">Attention</th></tr></thead><tbody>' +
+        rows.map(function (r, i) {
+          var sp = r.spellings || [], shown = sp.slice(0, 3);
+          var more = (r.spelling_count || sp.length) - shown.length;
+          var months = [ymLabel(r.first_month), ymLabel(r.last_month)].filter(Boolean);
+          return '<tr class="click-row" data-cat="' + i + '" tabindex="0">' +
+            '<td data-label="Folder"><span class="strong">' + esc(r.folder) + '</span>' +
+              (r.vendor ? ' <span class="pill pill-brand" title="Registered vendor">' + esc(r.vendor.name) + '</span>' : '') +
+              (r.filing_gap ? ' <span class="pill pill-warn" title="Many missing purchases point here, but few of its documents are unmatched: their receipts may not be filed at all">filing gap</span>' : '') + '</td>' +
+            '<td data-label="Documents" class="td-right">' + esc(r.docs) + '</td>' +
+            '<td data-label="Months" class="nowrap">' + esc(months.length === 2 && months[0] !== months[1] ? months[0] + '–' + months[1] : months[0] || '—') + '</td>' +
+            '<td data-label="Read as">' + esc(shown.map(function (s) { return s.text; }).join(', ') || '—') + (more > 0 ? ' <span class="muted">+' + esc(more) + '</span>' : '') + '</td>' +
+            '<td data-label="Matched" class="td-right">' + esc(r.matched || 0) + '</td>' +
+            '<td data-label="Possible" class="td-right">' + esc(r.possible || 0) + (r.possible_zero_sim ? ' <span class="muted">(' + esc(r.possible_zero_sim) + ' at 0.00)</span>' : '') + '</td>' +
+            '<td data-label="Unmatched docs" class="td-right">' + esc(r.unmatched_docs || 0) + '</td>' +
+            '<td data-label="Missing, same descriptor" class="td-right">' + esc(r.missing_by_prefix || 0) + '</td>' +
+            '<td data-label="Attention" class="td-right strong">' + esc(r.attention || 0) + '</td></tr>';
+        }).join('') + '</tbody></table></div>';
+    }
+    var pages = d.pages || 1, page = d.page || 1;
+    $('#catPager').innerHTML = '<button type="button" class="btn btn-ghost btn-xs" data-page="-1"' + (page <= 1 ? ' disabled' : '') + '>‹ Prev</button>' +
+      '<span>page ' + esc(page) + ' of ' + esc(pages) + '</span>' +
+      '<button type="button" class="btn btn-ghost btn-xs" data-page="1"' + (page >= pages ? ' disabled' : '') + '>Next ›</button>' +
+      '<span class="sub">' + esc(plural(d.total || 0, 'folder', 'folders')) + '</span>';
+  }
+
+  async function openFolderDetail(name) {
+    var body = openModal(name, loadingHtml('Loading the folder…'), true);
+    var d;
+    try {
+      d = await api('/api/admin/vendors/folder?name=' + enc(name));
+    } catch (e) {
+      if (e.status === 401) return;
+      body.innerHTML = '<div class="err-text">' + esc(e.message) + '</div>';
+      return;
+    }
+    var props = d.proposals || [];
+    props.forEach(function (p) { proposalById[p.id] = p; });
+    var sp = d.spellings || [], pre = d.prefixes || [], docs = d.documents_unmatched || [];
+    var html = '<div class="bar"><span>' + esc(plural(d.docs || 0, 'document', 'documents')) + '</span>' +
+      (d.vendor ? '<span class="pill pill-brand">vendor ' + esc(d.vendor.name) + '</span>' : '') + '<span class="grow"></span>' +
+      (d.vendor ? '<button type="button" class="btn btn-secondary btn-xs btn-wrap" data-open-vendor="' + esc(d.vendor.id) + '">Open vendor ' + esc(d.vendor.name) + '</button>'
+        : '<button type="button" class="btn btn-primary btn-xs" id="fdRegister">Register as vendor</button>') + '</div>';
+    if (sp.length) html += '<p class="sub" style="margin-top:6px;">Read as: ' + esc(sp.map(function (s) { return s.text + ' (' + s.count + ')'; }).join(', ')) + '</p>';
+    html += '<h3 class="sec">Card descriptors</h3>' + (pre.length ? '<div class="list-wrap"><table class="list"><thead><tr><th>Prefix</th><th class="td-right">Matched</th>' +
+      '<th class="td-right">Possible</th><th class="td-right">Missing</th><th>Other folders</th></tr></thead><tbody>' +
+      pre.map(function (p) {
+        return '<tr><td data-label="Prefix"><span class="strong">' + esc(p.prefix) + '</span>' + (p.owner ? ' <span class="pill pill-brand">' + esc(p.owner.name) + '</span>' : '') + '</td>' +
+          '<td data-label="Matched" class="td-right">' + esc(p.matched || 0) + '</td>' +
+          '<td data-label="Possible" class="td-right">' + esc(p.possible || 0) + (p.possible_zero_sim ? ' <span class="muted">(' + esc(p.possible_zero_sim) + ' at 0.00)</span>' : '') + '</td>' +
+          '<td data-label="Missing" class="td-right">' + esc(p.missing || 0) + '</td>' +
+          '<td data-label="Other folders">' + (p.other_folders ? 'also linked to ' + esc(plural(p.other_folders, 'other folder', 'other folders')) : '<span class="muted">—</span>') + '</td></tr>';
+      }).join('') + '</tbody></table></div>' : '<div class="sub">No purchase is linked to this folder yet.</div>');
+    html += '<h3 class="sec">Documents no purchase is linked to (' + esc(docs.length) + ')</h3>' + (docs.length ? '<div class="list-wrap"><table class="list"><thead><tr><th>Month</th><th>Date</th><th>Supplier</th><th class="td-right">Total</th><th>File</th></tr></thead><tbody>' +
+      docs.map(function (doc) {
+        var url = safeUrl(doc.web_view_link);
+        return '<tr><td data-label="Month" class="nowrap">' + esc(doc.month_folder || '—') + '</td>' +
+          '<td data-label="Date" class="nowrap">' + esc(fmtDate(doc.invoice_date) || '—') + '</td>' +
+          '<td data-label="Supplier">' + esc(doc.vendor || '—') + '</td>' +
+          '<td data-label="Total" class="td-right nowrap">' + (doc.total !== null && doc.total !== undefined ? esc(money(doc.total, doc.currency || '')) : '—') + '</td>' +
+          '<td data-label="File">' + (url ? '<a class="link" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(doc.file_name || 'Open') + ' ↗</a>' : esc(doc.file_name)) + '</td></tr>';
+      }).join('') + '</tbody></table></div>' : '<div class="sub">Every document here is linked to a purchase.</div>');
+    html += '<h3 class="sec">Proposals</h3>' + (props.length ? '<div class="card">' + props.map(proposalHtml).join('') + '</div>' : '<div class="sub">None for this folder.</div>');
+    body.innerHTML = html;
+    var reg = $('#fdRegister', body);
+    if (reg) reg.addEventListener('click', async function () {
+      if (!(await ensureRegistry())) return;
+      openVendorEditor(null, prefillFromFolder(d));
+    });
+    var ov = $('[data-open-vendor]', body);
+    if (ov) ov.addEventListener('click', function () { openVendorById(ov.dataset.openVendor); });
+    body.addEventListener('click', function (ev) { proposalClick(ev, function () { openFolderDetail(name); }); });
+  }
+  // Register as vendor: the folder ticked, its descriptor prefixes ticked when they point here only and the
+  // server raised nothing against them, its spellings offered unticked. A box the server would refuse is
+  // disabled with the server's own reason, so the page keeps no copy of the rules.
+  function prefillFromFolder(d) {
+    var seen = {}, patterns = [];
+    function why(text) { return String(text || '').replace(/^[a-z_]+: /, ''); }   // the box says which field
+
+    function add(p) { var k = p.kind + '|' + p.pattern; if (!p.pattern || seen[k]) return; seen[k] = 1; patterns.push(p); }
+    (d.prefixes || []).forEach(function (p) {
+      var reason = why(p.problem) || (p.owner ? 'already names vendor ' + p.owner.name : '');
+      add({ pattern: p.prefix, kind: 'descriptor', match_type: 'prefix', checked: !reason && p.other_folders === 0, disabled: !!reason, reason: reason,
+            note: (p.matched || 0) + ' matched' + (p.other_folders ? ', also linked to ' + plural(p.other_folders, 'other folder', 'other folders') : '') });
+    });
+    (d.spellings || []).forEach(function (s) {
+      var reason = why(s.problem) || (s.owner ? 'already names vendor ' + s.owner.name : '');
+      add({ pattern: s.pattern, kind: 'invoice_vendor', match_type: 'exact', checked: false, disabled: !!reason, reason: reason,
+            note: 'read as "' + s.text + '" on ' + plural(s.count || 0, 'document', 'documents') });
+    });
+    return { name: d.folder, folders: [{ folder: d.folder, checked: true }], patterns: patterns };
+  }
+
+  async function ensureRegistry() {
+    if (!state.registry) {
+      try { state.registry = await api('/api/admin/registry'); } catch (e) { report(e, 'Could not load the vendor registry'); return false; }
+    }
+    if (state.registry.available === false) { toast('The vendor registry needs the database update (Settings).', 'err'); return false; }
+    return true;
+  }
+  async function openVendorById(id) {
+    if (!(await ensureRegistry())) return;
+    var v = (state.registry.vendors || []).filter(function (x) { return x.id === id; })[0];
+    if (!v) {
+      try { state.registry = await api('/api/admin/registry'); } catch (e) { report(e, 'Could not load the vendor registry'); return; }
+      v = (state.registry.vendors || []).filter(function (x) { return x.id === id; })[0];
+    }
+    if (!v) { toast('That vendor is not in the registry any more', 'err'); return; }
+    openVendorEditor(v);
+  }
+
+  async function loadRegistry(fresh) {
+    state.loaded.registry = true;
+    var box = $('#regBody');
+    if (!state.registry || fresh) box.innerHTML = loadingHtml('Loading the registry…');
+    try {
+      state.registry = await api('/api/admin/registry' + (fresh ? '?fresh=1' : ''));
+    } catch (e) {
+      state.loaded.registry = false;
+      if (e.status === 401) return;
+      showLoadError(box, 'Could not load the registry', e, function () { loadRegistry(fresh); });
+      return;
+    }
+    renderRegistry();
+  }
+  function patternWhat(p) {
+    var w = PATTERN_WHAT.filter(function (x) { return x.kind === p.kind && x.match_type === p.match_type; })[0];
+    return w ? w.label : p.kind + ' ' + p.match_type;
+  }
+  function codingSummary(v) {
+    return (v.coding || []).map(function (c) { return (c.group_label || c.group_name || 'Any group') + ': ' + (c.use_case || '?'); }).join(' · ');
+  }
+  function resolvesText(v) {
+    var r = v.resolves || {};
+    return 'resolves ' + plural(r.purchases || 0, 'purchase', 'purchases') + ' (' + (r.uncoded || 0) + ' without a use case)';
+  }
+  function renderRegistry() {
+    var reg = state.registry, box = $('#regBody');
+    $('#regAdd').disabled = reg.available === false;
+    if (reg.available === false) { box.innerHTML = '<div class="card empty-small">The vendor registry needs the database update (Settings).</div>'; return; }
+    var vendors = reg.vendors || [];
+    if (!vendors.length) { box.innerHTML = '<div class="card empty-small">No vendors yet. Register one from a folder in the Catalogue, accept a proposal, or Add vendor.</div>'; return; }
+    box.innerHTML = '<div class="vendor-list">' + vendors.map(function (v) {
+      var cs = codingSummary(v);
+      return '<div class="card vendor-card" role="button" tabindex="0" data-vendor="' + esc(v.id) + '">' +
+        '<div class="bar"><span class="strong">' + esc(v.name) + '</span><span class="pill pill-grey">' + esc(KIND_LABELS[v.kind] || v.kind) + '</span>' +
+          (v.code_each ? '<span class="pill pill-info">code each</span>' : '') + (v.active === false ? '<span class="pill pill-grey">Retired</span>' : '') + '</div>' +
+        ((v.folders || []).length ? '<div class="tags">' + v.folders.map(function (f) { return '<span class="tag">' + esc(f.folder) + '</span>'; }).join('') + '</div>' : '<div class="sub">No folder</div>') +
+        ((v.patterns || []).length ? '<div class="tags">' + v.patterns.map(function (p) {
+          return '<span class="tag brand' + (p.status === 'off' ? ' struck' : '') + '" title="' + esc(patternWhat(p) + (p.status === 'off' ? ' (off)' : '')) + '">' + esc(p.pattern) + '</span>';
+        }).join('') + '</div>' : '') +
+        (cs ? '<div class="sub">' + esc(cs) + '</div>' : '') +
+        '<div class="sub">' + esc(resolvesText(v)) + '</div></div>';
+    }).join('') + '</div>';
+  }
+
+  // -- Vendor editor ----------------------------------------------------------------
+  function kindSelect(id, value) {
+    return '<select class="inp" id="' + id + '" name="kind">' + KINDS.map(function (k) { return opt(k, KIND_LABELS[k], k === value); }).join('') + '</select>';
+  }
+  function whatSelect(id) {
+    return '<select class="inp" id="' + id + '" aria-label="What the pattern is">' + PATTERN_WHAT.map(function (w, i) { return opt(w.value, w.label, i === 0); }).join('') + '</select>';
+  }
+  function folderDatalist() {
+    return '<datalist id="dlFolders">' + ((state.registry && state.registry.folder_names) || []).map(function (n) { return '<option value="' + esc(n) + '"></option>'; }).join('') + '</datalist>';
+  }
+  function replaceRegistryVendor(v) {
+    if (!state.registry || !v) return;
+    var list = state.registry.vendors || (state.registry.vendors = []);
+    var i = list.map(function (x) { return x.id; }).indexOf(v.id);
+    if (i >= 0) list[i] = v; else list.push(v);
+  }
+
+  function openVendorEditor(vendor, prefill) {
+    var ve = { vendor: vendor || null, changed: false };
+    var body = openModal(vendor ? 'Vendor ' + vendor.name : 'Add vendor', '<div id="veBox"></div>', true);
+    modalGuard = guardDirty;
+    modalCleanup = function () { clearDirty('vendor'); if (ve.changed) vendorsChanged(); };
+    var box = $('#veBox', body);
+    function what() { return ve.vendor ? 'vendor ' + ve.vendor.name : 'the new vendor'; }
+
+    function drawNew(draft) {
+      box.innerHTML = '<form id="veNew" novalidate autocomplete="off">' + folderDatalist() +
+        '<div class="form-grid">' +
+          field('name', 'Name', '<input class="inp" id="f_name" name="name" maxlength="100" value="' + esc(draft.name || '') + '" />') +
+          field('kind', 'Kind', kindSelect('f_kind', 'supplier')) +
+          '<div class="field full"><label class="check"><input type="checkbox" id="f_code_each" /> Code each purchase (marketplace)</label>' +
+            '<div class="field-hint">A marketplace (Amazon) sells all kinds of things: no default use case.</div></div>' +
+          field('note', 'Note', '<textarea class="inp" id="f_note" name="note" maxlength="500"></textarea>', '', 'full') +
+        '</div>' +
+        '<h3 class="sec">Folders</h3><div class="field-hint">Invoice/YYYY MM/&lt;folder&gt;/ folders that hold this vendor\'s documents.</div>' +
+        '<div id="veNewFolders"></div>' +
+        '<div class="add-row"><input class="inp" id="veFolderIn" list="dlFolders" maxlength="200" placeholder="Add a folder" aria-label="Folder" />' +
+          '<button type="button" class="btn btn-secondary btn-xs" id="veFolderAdd">Add</button></div>' +
+        '<div class="field-err" data-err="folders"></div>' +
+        '<h3 class="sec">Patterns</h3><div class="field-hint">What names this vendor: how the card descriptor starts, the whole descriptor, or the supplier name read on its documents. They feed coding suggestions; matching does not use them.</div>' +
+        '<div id="veNewPatterns"></div>' +
+        '<div class="add-row"><input class="inp" id="vePatIn" maxlength="120" placeholder="Add a pattern, e.g. ups canada" aria-label="Pattern" />' + whatSelect('vePatWhat') +
+          '<button type="button" class="btn btn-secondary btn-xs" id="vePatAdd">Add</button></div>' +
+        '<div class="field-err" data-err="patterns"></div>' +
+        '<h3 class="sec">Coding defaults</h3><div class="field-hint">Set them once the vendor is saved.</div>' +
+        '<div class="form-err" id="veErr" role="alert"></div>' +
+        '<div class="form-actions"><button type="button" class="btn btn-ghost" id="veCancel">Cancel</button><button type="submit" class="btn btn-primary" id="veSave">Save vendor</button></div>' +
+        '</form>';
+      var form = $('#veNew', box);
+      function mark() { setDirty(what(), 'vendor'); }
+      form.addEventListener('input', mark);
+      form.addEventListener('change', mark);
+      function drawFolders() {
+        $('#veNewFolders', box).innerHTML = draft.folders.length ? draft.folders.map(function (f, i) {
+          return '<label class="check-row"><input type="checkbox" data-nf="' + i + '"' + (f.checked ? ' checked' : '') + ' /> <span>' + esc(f.folder) + '</span></label>';
+        }).join('') : '<div class="sub">None yet.</div>';
+      }
+      function drawPatterns() {
+        $('#veNewPatterns', box).innerHTML = draft.patterns.length ? draft.patterns.map(function (p, i) {
+          return '<label class="check-row' + (p.disabled ? ' is-disabled' : '') + '"><input type="checkbox" data-np="' + i + '"' + (p.checked && !p.disabled ? ' checked' : '') + (p.disabled ? ' disabled' : '') + ' />' +
+            '<span><span class="pill pill-grey">' + esc(patternWhat(p)) + '</span> <b>' + esc(p.pattern) + '</b>' +
+            (p.note ? ' <span class="sub">' + esc(p.note) + '</span>' : '') + (p.reason ? '<span class="sub" style="display:block;">' + esc(p.reason) + '</span>' : '') + '</span></label>';
+        }).join('') : '<div class="sub">None yet.</div>';
+      }
+      drawFolders();
+      drawPatterns();
+      form.addEventListener('change', function (ev) {
+        var f = ev.target.closest('[data-nf]'), p = ev.target.closest('[data-np]');
+        if (f) draft.folders[Number(f.dataset.nf)].checked = f.checked;
+        if (p) draft.patterns[Number(p.dataset.np)].checked = p.checked;
+      });
+      function addFolder() {
+        var inp = $('#veFolderIn', box), v = cleanText(inp.value);
+        if (!v) return;
+        if (!draft.folders.some(function (f) { return nameKey(f.folder) === nameKey(v); })) draft.folders.push({ folder: v, checked: true });
+        inp.value = '';
+        drawFolders();
+        mark();
+      }
+      function addPattern() {
+        var inp = $('#vePatIn', box), v = cleanText(inp.value);
+        if (!v) return;
+        var w = PATTERN_WHAT.filter(function (x) { return x.value === $('#vePatWhat', box).value; })[0] || PATTERN_WHAT[0];
+        draft.patterns.push({ pattern: v, kind: w.kind, match_type: w.match_type, checked: true });
+        inp.value = '';
+        drawPatterns();
+        mark();
+      }
+      $('#veFolderAdd', box).addEventListener('click', addFolder);
+      $('#vePatAdd', box).addEventListener('click', addPattern);
+      $('#veFolderIn', box).addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); addFolder(); } });
+      $('#vePatIn', box).addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); addPattern(); } });
+      $('#veCancel', box).addEventListener('click', function () { clearDirty('vendor'); dropModal(); });
+      form.addEventListener('submit', async function (ev) {
+        ev.preventDefault();
+        clearFormErrors(form);
+        var name = cleanText($('#f_name', box).value);
+        if (!name) { $('[data-err="name"]', form).textContent = 'A name, please.'; return; }
+        var folders = draft.folders.filter(function (f) { return f.checked; }).map(function (f) { return f.folder; });
+        var patterns = draft.patterns.filter(function (p) { return p.checked && !p.disabled; })
+          .map(function (p) { return { pattern: p.pattern, kind: p.kind, match_type: p.match_type }; });
+        var payload = { name: name, kind: $('#f_kind', box).value, code_each: $('#f_code_each', box).checked, folders: folders, patterns: patterns, source: 'admin' };
+        var note = $('#f_note', box).value.trim();
+        if (note) payload.note = note;
+        var btn = $('#veSave', box), r;
+        busy(btn, true);
+        try {
+          r = await api('/api/admin/vendors', { method: 'POST', body: payload });
+        } catch (e) {
+          busy(btn, false);
+          if (e.status === 401) return;
+          var errBox = $('#veErr', box);
+          if (e.status === 409 && e.data && e.data.vendor && e.data.vendor.id) {
+            // Saved, but a folder or pattern was taken meanwhile: show what was saved.
+            toast(e.message, 'err');
+            ve.vendor = e.data.vendor; ve.changed = true;
+            replaceRegistryVendor(ve.vendor);
+            clearDirty('vendor');
+            drawExisting();
+            return;
+          }
+          var offer = clashOffer(e);
+          if (offer) {
+            errBox.innerHTML = esc(e.message) + '<div><button type="button" class="btn btn-secondary btn-xs btn-wrap" id="veOffer">' + esc(offer.label) + '</button></div>';
+            $('#veOffer', box).addEventListener('click', async function () {
+              var b = this;
+              busy(b, true);
+              var res = await addRestTo(offer.existing, folders, patterns, 'admin');
+              busy(b, false);
+              if (!res) return;
+              ve.changed = true;
+              clearDirty('vendor');
+              var v = (state.registry.vendors || []).filter(function (x) { return x.id === res.vendorId; })[0];
+              if (v) openVendorEditor(v); else dropModal();
+              vendorsChanged();
+            });
+            return;
+          }
+          showFormError(form, e, errBox);
+          return;
+        }
+        busy(btn, false);
+        clearDirty('vendor');
+        ve.vendor = r.vendor; ve.changed = true;
+        replaceRegistryVendor(ve.vendor);
+        toast('Vendor ' + ve.vendor.name + ' added', 'ok');
+        drawExisting();
+      });
+    }
+
+    function drawExisting() {
+      var v = ve.vendor;
+      $('#modalTitle').textContent = 'Vendor ' + v.name;
+      box.innerHTML = '<form id="veTop" novalidate autocomplete="off"><div class="form-grid">' +
+          field('name', 'Name', '<input class="inp" id="f_name" name="name" maxlength="100" value="' + esc(v.name) + '" />') +
+          field('kind', 'Kind', kindSelect('f_kind', v.kind)) +
+          '<div class="field full"><label class="check"><input type="checkbox" id="f_code_each"' + (v.code_each ? ' checked' : '') + ' /> Code each purchase (marketplace)</label>' +
+            '<label class="check"><input type="checkbox" id="f_active"' + (v.active === false ? '' : ' checked') + ' /> Active</label></div>' +
+          field('note', 'Note', '<textarea class="inp" id="f_note" name="note" maxlength="500">' + esc(v.note || '') + '</textarea>', '', 'full') +
+        '</div><div class="form-err" id="veTopErr" role="alert"></div>' +
+        '<div class="form-actions"><button type="submit" class="btn btn-primary btn-xs" id="veTopSave">Save</button></div></form>' +
+        '<div class="sub" id="veMeta"></div>' + folderDatalist() +
+        '<h3 class="sec">Folders</h3><div id="veFolders" class="tags"></div>' +
+        '<div class="add-row"><input class="inp" id="veFolderIn" list="dlFolders" maxlength="200" placeholder="Add a folder" aria-label="Folder" />' +
+          '<button type="button" class="btn btn-secondary btn-xs" id="veFolderAdd">Add</button></div><div class="form-err" id="veFoldersErr" role="alert"></div>' +
+        '<h3 class="sec">Patterns</h3><div class="field-hint">They feed coding suggestions; matching does not use them.</div><div id="vePatterns"></div>' +
+        '<div class="add-row"><input class="inp" id="vePatIn" maxlength="120" placeholder="Add a pattern, e.g. ups canada" aria-label="Pattern" />' + whatSelect('vePatWhat') +
+          '<button type="button" class="btn btn-secondary btn-xs" id="vePatAdd">Add</button></div><div class="form-err" id="vePatternsErr" role="alert"></div>' +
+        '<h3 class="sec">Coding defaults</h3><div class="field-hint">The use case suggested to card owners for this vendor\'s purchases, per card group (when suggestions are on in Settings).</div>' +
+        '<div id="veCoding"></div><div class="form-err" id="veCodingErr" role="alert"></div>';
+      var top = $('#veTop', box);
+      function mark() { setDirty(what(), 'vendor'); }
+      top.addEventListener('input', mark);
+      top.addEventListener('change', mark);
+      top.addEventListener('submit', async function (ev) {
+        ev.preventDefault();
+        clearFormErrors(top);
+        var cur = ve.vendor, patch = {};
+        var name = cleanText($('#f_name', box).value), kind = $('#f_kind', box).value, codeEach = $('#f_code_each', box).checked,
+            active = $('#f_active', box).checked, note = $('#f_note', box).value.trim();
+        if (!name) { $('[data-err="name"]', top).textContent = 'A name, please.'; return; }
+        if (name !== cur.name) patch.name = name;
+        if (kind !== cur.kind) patch.kind = kind;
+        if (codeEach !== !!cur.code_each) patch.code_each = codeEach;
+        if (active !== (cur.active !== false)) patch.active = active;
+        if (note !== (cur.note || '').trim()) patch.note = note;
+        if (!Object.keys(patch).length) { clearDirty('vendor'); toast('Nothing changed'); return; }
+        var btn = $('#veTopSave', box), r;
+        busy(btn, true);
+        try {
+          r = await api('/api/admin/vendors/' + enc(cur.id), { method: 'PATCH', body: patch });
+        } catch (e) {
+          busy(btn, false);
+          if (e.status !== 401) showFormError(top, e, $('#veTopErr', box));
+          return;
+        }
+        clearDirty('vendor');
+        ve.vendor = r.vendor; ve.changed = true;
+        replaceRegistryVendor(ve.vendor);
+        toast('Vendor ' + ve.vendor.name + ' saved', 'ok');
+        (r.warnings || []).forEach(function (w) { toast(w, '', 6000); });
+        drawExisting();
+      });
+      $('#veFolderAdd', box).addEventListener('click', addFolder);
+      $('#veFolderIn', box).addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); addFolder(); } });
+      $('#vePatAdd', box).addEventListener('click', addPattern);
+      $('#vePatIn', box).addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); addPattern(); } });
+      box.addEventListener('click', function (ev) {
+        var df = ev.target.closest('[data-del-folder]');
+        if (df) { act(function () { return api('/api/admin/vendor-folders/' + enc(df.dataset.delFolder), { method: 'DELETE' }); }, '#veFoldersErr', 'Folder removed'); return; }
+        var dp = ev.target.closest('[data-del-pattern]');
+        if (dp) { act(function () { return api('/api/admin/vendor-patterns/' + enc(dp.dataset.delPattern), { method: 'DELETE' }); }, '#vePatternsErr', 'Pattern removed'); }
+      });
+      box.addEventListener('change', function (ev) {
+        var ps = ev.target.closest('[data-pat-status]');
+        if (ps) {
+          var status = ps.value === 'off' ? 'off' : PATTERN_ON;
+          act(function () { return api('/api/admin/vendor-patterns/' + enc(ps.dataset.patStatus), { method: 'PATCH', body: { status: status } }); },
+              '#vePatternsErr', ps.value === 'off' ? 'Pattern off' : 'Pattern on');
+          return;
+        }
+        var cs = ev.target.closest('[data-coding-group]');
+        if (cs) {
+          var g = cs.dataset.codingGroup;
+          act(function () {
+            return api('/api/admin/vendors/' + enc(ve.vendor.id) + '/coding', { method: 'PUT', body: { group_name: g, use_case_id: cs.value || null } });
+          }, '#veCodingErr', 'Coding default saved');
+        }
+      });
+      drawLower();
+    }
+    // Folders, patterns and coding apply at once; each answer is the vendor as saved, drawn again here
+    // (the fields above keep what is being typed).
+    async function act(call, errSel, okText) {
+      var err = $(errSel, box);
+      if (err) err.textContent = '';
+      var r;
+      try {
+        r = await call();
+      } catch (e) {
+        if (e.status === 401) return;
+        if (err) err.textContent = e.message; else report(e);
+        drawLower();
+        return;
+      }
+      if (r && r.vendor) { ve.vendor = r.vendor; replaceRegistryVendor(r.vendor); }
+      ve.changed = true;
+      toast(okText, 'ok');
+      drawLower();
+    }
+    function addFolder() {
+      var inp = $('#veFolderIn', box), v = cleanText(inp.value);
+      if (!v) return;
+      act(function () { return api('/api/admin/vendors/' + enc(ve.vendor.id) + '/folders', { method: 'POST', body: { folder: v } }); }, '#veFoldersErr', 'Folder added')
+        .then(function () { if (!$('#veFoldersErr', box).textContent) inp.value = ''; });
+    }
+    function addPattern() {
+      var inp = $('#vePatIn', box), v = cleanText(inp.value);
+      if (!v) return;
+      var w = PATTERN_WHAT.filter(function (x) { return x.value === $('#vePatWhat', box).value; })[0] || PATTERN_WHAT[0];
+      act(function () {
+        return api('/api/admin/vendors/' + enc(ve.vendor.id) + '/patterns', { method: 'POST', body: { pattern: v, kind: w.kind, match_type: w.match_type, source: 'admin' } });
+      }, '#vePatternsErr', 'Pattern added').then(function () { if (!$('#vePatternsErr', box).textContent) inp.value = ''; });
+    }
+    function drawLower() {
+      var v = ve.vendor, reg = state.registry || {};
+      $('#veMeta', box).innerHTML = esc(resolvesText(v)) + ' · <a class="link" href="#history?entity=vendor&amp;entity_id=' + esc(enc(v.id)) + '">History</a>';
+      $('#veFolders', box).innerHTML = (v.folders || []).length ? v.folders.map(function (f) {
+        return '<span class="tag">' + esc(f.folder) + '<button type="button" data-del-folder="' + esc(f.id) + '" aria-label="Remove folder ' + esc(f.folder) + '">×</button></span>';
+      }).join('') : '<span class="sub">No folder yet.</span>';
+      var pats = v.patterns || [];
+      $('#vePatterns', box).innerHTML = pats.length ? '<div class="list-wrap"><table class="list"><thead><tr><th>Pattern</th><th>What</th><th>Status</th><th></th></tr></thead><tbody>' +
+        pats.map(function (p) {
+          var off = p.status === 'off';
+          return '<tr><td data-label="Pattern"><span class="strong' + (off ? ' struck' : '') + '">' + esc(p.pattern) + '</span></td>' +
+            '<td data-label="What">' + esc(patternWhat(p)) + '</td>' +
+            '<td data-label="Status"><select class="inp" data-pat-status="' + esc(p.id) + '" aria-label="Status of ' + esc(p.pattern) + '">' +
+              opt('on', 'On (suggestions only)', !off) + opt('off', 'Off', off) + '</select></td>' +
+            '<td data-label=""><button type="button" class="btn btn-ghost btn-xs" data-del-pattern="' + esc(p.id) + '" aria-label="Remove pattern ' + esc(p.pattern) + '">×</button></td></tr>';
+        }).join('') + '</tbody></table></div>' : '<div class="sub">No pattern yet.</div>';
+      var disabled = !!v.code_each || v.kind !== 'supplier';
+      var groups = [''].concat(reg.groups || []), ucs = reg.use_cases || [];
+      $('#veCoding', box).innerHTML = (disabled ? '<div class="banner banner-info" style="margin-bottom:8px;">' + esc(CODED_EACH) +
+          (v.code_each ? ': this vendor is coded purchase by purchase (code each), so it has no default.' : ': only a supplier has a default.') + '</div>' : '') +
+        '<div class="list-wrap"><table class="list"><thead><tr><th>Card group</th><th>Default use case</th></tr></thead><tbody>' +
+        groups.map(function (g) {
+          var row = (v.coding || []).filter(function (c) { return nameKey(c.group_name) === nameKey(g); })[0];
+          var allowed = ucs.filter(function (u) { return !u.group_name || nameKey(u.group_name) === nameKey(g); });
+          var cur = row ? row.use_case_id : '';
+          var opts = opt('', '— none —', !cur) + allowed.map(function (u) { return opt(u.id, u.name, u.id === cur); }).join('');
+          if (cur && !allowed.some(function (u) { return u.id === cur; })) opts += opt(cur, (row.use_case || 'Unknown') + ' (not offered now)', true);
+          return '<tr><td data-label="Card group">' + esc(g || 'Any group') + '</td>' +
+            '<td data-label="Default use case"><select class="inp" data-coding-group="' + esc(g) + '" aria-label="Default use case for ' + esc(g || 'any group') + '"' +
+              (disabled ? ' disabled title="' + esc(CODED_EACH) + '"' : '') + '>' + opts + '</select></td></tr>';
+        }).join('') + '</tbody></table></div>';
+    }
+
+    if (vendor) drawExisting(); else drawNew(prefill || { name: '', folders: [], patterns: [] });
+  }
+
+  // A 409 from POST /api/admin/vendors names what clashed; the page offers to add the rest to that vendor.
+  function clashOffer(e) {
+    var d = (e && e.data) || {};
+    if (!e || e.status !== 409 || !d.clash || !d.existing || !d.existing.id) return null;
+    return { existing: d.existing,
+             label: d.clash === 'name' ? 'Add to vendor ' + d.existing.name + ' instead' : 'Add the rest to ' + d.existing.name };
+  }
+  // Adds to an existing vendor the folders and patterns it does not hold yet (read fresh from the registry).
+  // A further 409 (held by a third vendor) is shown as the server says it, and the rest goes on.
+  async function addRestTo(existing, folders, patterns, source) {
+    var reg;
+    try { reg = await api('/api/admin/registry'); } catch (e) { report(e, 'Could not read the registry'); return null; }
+    state.registry = reg;
+    var v = (reg.vendors || []).filter(function (x) { return x.id === existing.id; })[0];
+    if (!v) { toast('Vendor ' + existing.name + ' is not in the registry any more; refresh', 'err'); return null; }
+    var heldF = {}, heldP = {};
+    (v.folders || []).forEach(function (f) { heldF[f.folder_key || nameKey(f.folder)] = 1; });
+    (v.patterns || []).forEach(function (p) { heldP[p.kind + '|' + p.pattern] = 1; });
+    var restF = [];
+    (folders || []).forEach(function (f) { var k = nameKey(f); if (k && !heldF[k]) { heldF[k] = 1; restF.push(f); } });
+    var restP = (patterns || []).filter(function (p) {
+      var k = (p.kind || 'descriptor') + '|' + normPattern(p.pattern);
+      if (heldP[k]) return false;
+      heldP[k] = 1;
+      return true;
+    });
+    var base = '/api/admin/vendors/' + enc(v.id), errors = [], added = 0;
+    if (restF.length) {
+      try {
+        await api(base + '/folders', { method: 'POST', body: { folders: restF } });
+        added += restF.length;
+      } catch (e) {
+        if (e.status === 401) return null;
+        if (e.status === 409 && restF.length > 1) {
+          // One folder held elsewhere refused the lot: add the others one by one.
+          for (var i = 0; i < restF.length; i++) {
+            try { await api(base + '/folders', { method: 'POST', body: { folder: restF[i] } }); added++; }
+            catch (e2) { if (e2.status === 401) return null; errors.push(e2.message); }
+          }
+        } else {
+          errors.push(e.message);
+        }
+      }
+    }
+    for (var j = 0; j < restP.length; j++) {
+      var p = restP[j];
+      try {
+        await api(base + '/patterns', { method: 'POST', body: { pattern: p.pattern, kind: p.kind || 'descriptor', match_type: p.match_type || 'prefix', source: source || 'admin' } });
+        added++;
+      } catch (e3) {
+        if (e3.status === 401) return null;
+        errors.push(e3.message);
+      }
+    }
+    errors.forEach(function (m) { toast(m, 'err'); });
+    toast(added ? 'Added ' + plural(added, 'item', 'items') + ' to ' + v.name : 'Nothing left to add: ' + v.name + ' holds it all', added ? 'ok' : '');
+    try { state.registry = await api('/api/admin/registry'); } catch (e4) { /* the next view load reads it again */ }
+    return { vendorId: v.id, errors: errors };
+  }
+
+  // -- Proposals ------------------------------------------------------------------
+  async function loadProposals(fresh) {
+    state.loaded.proposals = true;
+    var box = $('#propBody');
+    if (!state.proposals || fresh) box.innerHTML = loadingHtml('Loading proposals…');
+    try {
+      state.proposals = await api('/api/admin/proposals' + (fresh ? '?fresh=1' : ''));
+    } catch (e) {
+      state.loaded.proposals = false;
+      if (e.status === 401) return;
+      showLoadError(box, 'Could not load the proposals', e, function () { loadProposals(fresh); });
+      return;
+    }
+    renderProposals();
+  }
+  function renderProposals() {
+    var d = state.proposals, box = $('#propBody'), list = d.proposals || [];
+    $('#propDismissed').textContent = d.dismissed ? plural(d.dismissed, 'dismissed', 'dismissed') : '';
+    if (d.available === false) { box.innerHTML = '<div class="empty-small">The vendor registry needs the database update (Settings).</div>'; return; }
+    list.forEach(function (p) { proposalById[p.id] = p; });
+    box.innerHTML = list.length ? list.map(proposalHtml).join('') : '<div class="empty-small">No proposals: nothing in the link history points clearly to one folder yet.</div>';
+  }
+  function proposalHtml(p) {
+    var ef = p.effect || {};
+    return '<div class="prop" data-pid="' + esc(p.id) + '">' +
+      '<div class="bar"><span class="pill pill-info">' + esc(PROPOSAL_TYPES[p.type] || p.type) + '</span><span class="prop-text grow">' + esc(p.text) + '</span></div>' +
+      '<div class="sub">affects ' + esc(plural(ef.purchases || 0, 'purchase', 'purchases')) + ' (' + esc(ef.missing || 0) + ' missing, ' + esc(ef.uncoded || 0) + ' without a use case)</div>' +
+      '<div class="btns"><button type="button" class="btn btn-primary btn-xs" data-prop-accept>Accept</button>' +
+      '<button type="button" class="btn btn-ghost btn-xs" data-prop-dismiss>Dismiss</button></div>' +
+      '<div class="prop-msg" role="alert"></div></div>';
+  }
+  // Accept and Dismiss, in the Proposals view and in a folder's dialog. done() reloads what is shown.
+  function proposalClick(ev, done) {
+    var acc = ev.target.closest('[data-prop-accept]'), dis = ev.target.closest('[data-prop-dismiss]');
+    if (!acc && !dis) return;
+    var el = ev.target.closest('[data-pid]'), p = el && proposalById[el.dataset.pid];
+    if (!p) return;
+    if (acc) acceptProposal(p, el, done); else dismissProposal(p, el, done);
+  }
+  async function acceptProposal(p, el, done) {
+    var a = p.accept || {}, method = String(a.method || '').toUpperCase(), path = String(a.path || '');
+    var msg = $('.prop-msg', el);
+    msg.textContent = '';
+    // The server builds these; still, the page only sends them to its own admin routes.
+    if (path.indexOf('/api/admin/') !== 0 || ['POST', 'PUT'].indexOf(method) < 0) { msg.textContent = 'This proposal cannot be accepted from here.'; return; }
+    var buttons = $all('button', el);
+    buttons.forEach(function (b) { b.disabled = true; });
+    try {
+      await api(path, { method: method, body: a.body || {} });
+    } catch (e) {
+      buttons.forEach(function (b) { b.disabled = false; });
+      if (e.status === 401) return;
+      var offer = path === '/api/admin/vendors' && method === 'POST' ? clashOffer(e) : null;
+      msg.innerHTML = esc(e.message) + (offer ? '<div><button type="button" class="btn btn-secondary btn-xs btn-wrap" data-offer>' + esc(offer.label) + '</button></div>' : '');
+      if (offer) {
+        $('[data-offer]', msg).addEventListener('click', async function () {
+          var b = this, body = a.body || {};
+          busy(b, true);
+          var res = await addRestTo(offer.existing, body.folders || [], body.patterns || [], body.source || 'proposal');
+          busy(b, false);
+          if (!res) return;
+          vendorsChanged();
+          if (done) done();
+        });
+      }
+      return;
+    }
+    toast('Accepted', 'ok');
+    vendorsChanged();
+    if (done) done();
+  }
+  async function dismissProposal(p, el, done) {
+    var buttons = $all('button', el);
+    buttons.forEach(function (b) { b.disabled = true; });
+    try {
+      await api('/api/admin/proposals/dismiss', { method: 'POST', body: { id: p.id } });
+    } catch (e) {
+      buttons.forEach(function (b) { b.disabled = false; });
+      report(e, 'Could not dismiss');
+      return;
+    }
+    toast('Dismissed', 'ok');
+    state.loaded.proposals = false;
+    if (done) done();
+  }
+
+  // Vendors tab events.
+  $('#vendorViews').addEventListener('click', function (ev) {
+    var b = ev.target.closest('[data-view]');
+    if (b) setHash('#vendors?view=' + b.dataset.view);
+  });
+  var catSearch = debounce(function () { vendorsUi.q = $('#catSearch').value.trim(); vendorsUi.page = 1; loadCatalogue(); }, 250);
+  $('#catSearch').addEventListener('input', catSearch);
+  $('#catSort').addEventListener('change', function () { vendorsUi.sort = this.value; vendorsUi.page = 1; loadCatalogue(); });
+  $('#catFilter').addEventListener('change', function () { vendorsUi.registered = this.value; vendorsUi.page = 1; loadCatalogue(); });
+  $('#catRefresh').addEventListener('click', function () { loadCatalogue(true); });
+  $('#catPager').addEventListener('click', function (ev) {
+    var b = ev.target.closest('[data-page]');
+    if (!b || b.disabled) return;
+    vendorsUi.page = Math.max(1, vendorsUi.page + Number(b.dataset.page));
+    loadCatalogue();
+  });
+  $('#catBody').addEventListener('click', function (ev) {
+    var row = ev.target.closest('tr[data-cat]');
+    if (!row || ev.target.closest('a, button')) return;
+    var r = state.catalogue && (state.catalogue.rows || [])[Number(row.dataset.cat)];
+    if (r) openFolderDetail(r.folder);
+  });
+  $('#catBody').addEventListener('keydown', function (ev) {
+    var row = ev.target.closest && ev.target.closest('tr[data-cat]');
+    if (!row || ev.target !== row || (ev.key !== 'Enter' && ev.key !== ' ')) return;
+    ev.preventDefault();
+    var r = state.catalogue && (state.catalogue.rows || [])[Number(row.dataset.cat)];
+    if (r) openFolderDetail(r.folder);
+  });
+  $('#regAdd').addEventListener('click', async function () { if (await ensureRegistry()) openVendorEditor(null); });
+  $('#regRefresh').addEventListener('click', function () { loadRegistry(true); });
+  $('#regBody').addEventListener('click', function (ev) {
+    var c = ev.target.closest('[data-vendor]');
+    if (c) openVendorById(c.dataset.vendor);
+  });
+  $('#regBody').addEventListener('keydown', function (ev) {
+    var c = ev.target.closest && ev.target.closest('[data-vendor]');
+    if (c && ev.target === c && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); openVendorById(c.dataset.vendor); }
+  });
+  $('#propRefresh').addEventListener('click', function () { loadProposals(true); });
+  $('#propBody').addEventListener('click', function (ev) { proposalClick(ev, function () { loadProposals(); }); });
+
+  // ---------------------------------------------------------------------------
+  // People
+  // ---------------------------------------------------------------------------
+  var peopleUi = { linked: null };
+  function personById(id) { return ((state.people && state.people.people) || []).filter(function (p) { return p.id === id; })[0] || null; }
+
+  async function loadPeople(quiet) {
+    state.loaded.people = true;
+    var box = $('#peopleBody');
+    if (!quiet) box.innerHTML = loadingHtml('Loading people…');
+    try {
+      state.people = await api('/api/admin/people');
+    } catch (e) {
+      state.loaded.people = false;
+      if (e.status === 401) return;
+      if (quiet && state.people) { report(e, 'Could not reload the people'); return; }
+      showLoadError(box, 'Could not load the people', e, function () { loadPeople(); });
+      return;
+    }
+    renderPeople();
+  }
+  function renderPeople() {
+    var d = state.people, people = d.people || [], box = $('#peopleBody');
+    var html = '<div class="card">' + (people.length ? '<div class="list-wrap"><table class="list wrap-head"><thead><tr><th>Name</th><th>E-mail</th><th>Cards held</th>' +
+      '<th>Cards owned (by e-mail)</th><th class="td-right">Purchases assigned</th><th></th></tr></thead><tbody>' +
+      people.map(function (p) {
+        var held = p.cards_held || [], owned = p.cards_owned || [], cannot = p.cannot_code || [];
+        var heldHtml = held.length ? esc(held.join(', ')) : '<span class="muted">—</span>';
+        cannot.forEach(function (l) {
+          heldHtml += '<div class="sub" style="color: var(--warn-text);">holds ' + esc(l) + ' but cannot code it ' +
+            (p.email ? '<button type="button" class="btn btn-secondary btn-xs btn-wrap" data-make-owner="' + esc(l) + '" data-person="' + esc(p.id) + '">Make owner of ' + esc(l) + '</button>' : '') + '</div>';
+        });
+        return '<tr><td data-label="Name" class="strong">' + esc(p.name) + '</td>' +
+          '<td data-label="E-mail">' + (p.email ? emailHtml(p.email) : '<span class="muted">—</span>') + '</td>' +
+          '<td data-label="Cards held">' + heldHtml + '</td>' +
+          '<td data-label="Cards owned">' + (owned.length ? esc(owned.join(', ')) : '<span class="muted">—</span>') + '</td>' +
+          '<td data-label="Purchases" class="td-right">' + esc(p.purchases || 0) + '</td>' +
+          '<td data-label=""><div class="btns"><button type="button" class="btn btn-secondary btn-xs" data-person-edit="' + esc(p.id) + '">Edit</button>' +
+            '<button type="button" class="btn btn-ghost btn-xs" data-person-merge="' + esc(p.id) + '"' + (people.length < 2 ? ' disabled' : '') + '>Merge into…</button>' +
+            '<button type="button" class="btn btn-ghost btn-xs" data-person-del="' + esc(p.id) + '"' +
+              (held.length ? ' disabled title="Holds card ' + esc(held.join(', ')) + ': merge instead"' : '') + '>Delete</button></div></td></tr>';
+      }).join('') + '</tbody></table></div>' : '<div class="empty-small">Nobody yet. People are added from the dashboard\'s Person column and as card holders.</div>') + '</div>';
+
+    var un = d.holders_unlinked || [];
+    html += '<details class="card" open><summary>Card holders not linked to a person (' + un.length + ')</summary><div class="section-pad">' +
+      (un.length ? '<div class="list-wrap"><table class="list"><thead><tr><th>Card</th><th>Holder</th><th>Likely person</th></tr></thead><tbody>' +
+        un.map(function (h) {
+          return '<tr><td data-label="Card" class="strong">•••• ' + esc(h.last4) + '</td><td data-label="Holder">' + esc(h.holder_name) + '</td>' +
+            '<td data-label="Likely person">' + (h.likely ? esc(h.likely.name) : '<span class="muted">none: a new person is added</span>') + '</td></tr>';
+        }).join('') + '</tbody></table></div>' : '<div class="sub">Every card holder is linked to a person.</div>') +
+      (un.length ? '<div class="bar" style="margin-top:8px;"><button type="button" class="btn btn-primary btn-xs" id="linkHolders">Link card holders</button></div>' : '') +
+      (peopleUi.linked ? '<div class="banner banner-info" style="margin-top:8px;">' + (peopleUi.linked.length ? peopleUi.linked.map(function (l) {
+        return '<div>linked ' + esc(l.last4) + ' → ' + esc(l.person && l.person.name) + (l.created ? ' (new)' : '') + '</div>';
+      }).join('') : 'Nothing to link.') + '</div>' : '') +
+      '</div></details>';
+
+    var dups = d.duplicates || [];
+    html += '<details class="card"' + (dups.length ? ' open' : '') + '><summary>These look like the same person (' + dups.length + ')</summary><div class="section-pad">' +
+      (dups.length ? dups.map(function (pair, i) {
+        var a = pair[0] || {}, b = pair[1] || {};
+        return '<div class="bar" style="padding:4px 0;"><span class="grow">' + esc(a.name) + ' · ' + esc(b.name) + '</span>' +
+          '<button type="button" class="btn btn-secondary btn-xs btn-wrap" data-dup="' + i + '">Merge ' + esc(b.name) + ' into ' + esc(a.name) + '</button></div>';
+      }).join('') : '<div class="sub">No likely duplicates.</div>') + '</div></details>';
+    html += '<p class="sub">Anyone signed in can still add a person from the dashboard\'s Person column.</p>';
+    box.innerHTML = html;
+  }
+
+  function openPersonEditor(p) {
+    var what = p.name;
+    var body = openModal('Person ' + p.name,
+      '<form id="personForm" novalidate autocomplete="off"><div class="form-grid">' +
+        field('name', 'Name', '<input class="inp" id="f_name" name="name" maxlength="100" value="' + esc(p.name) + '" />') +
+        field('email', 'E-mail', '<input class="inp" id="f_email" name="email" type="email" maxlength="200" value="' + esc(p.email || '') + '" />',
+              'This e-mail gives no edit rights by itself: a person codes a card\'s purchases when the card lists their e-mail as an owner (Cards tab).') +
+      '</div><div class="form-err" id="personErr" role="alert"></div>' +
+      '<div class="form-actions"><button type="button" class="btn btn-ghost" id="personCancel">Cancel</button><button type="submit" class="btn btn-primary" id="personSave">Save</button></div></form>', true);
+    modalGuard = guardDirty;
+    modalCleanup = function () { clearDirty('person'); };
+    var form = $('#personForm', body);
+    form.addEventListener('input', function () { setDirty(what, 'person'); });
+    $('#personCancel', body).addEventListener('click', function () { clearDirty('person'); dropModal(); });
+    form.addEventListener('submit', async function (ev) {
+      ev.preventDefault();
+      clearFormErrors(form);
+      var name = cleanText($('#f_name', body).value), email = $('#f_email', body).value.trim().toLowerCase(), patch = {};
+      if (!name) { $('[data-err="name"]', form).textContent = 'A name, please.'; return; }
+      if (name !== p.name) patch.name = name;
+      if (email !== (p.email || '').toLowerCase()) patch.email = email;
+      if (!Object.keys(patch).length) { clearDirty('person'); dropModal(); toast('Nothing changed'); return; }
+      var btn = $('#personSave', body), r;
+      busy(btn, true);
+      try {
+        r = await api('/api/admin/people/' + enc(p.id), { method: 'PATCH', body: patch });
+      } catch (e) {
+        busy(btn, false);
+        if (e.status === 401) return;
+        var into = e.status === 409 && e.data && e.data.merge_into;
+        if (into && into.id) {
+          if (confirm(into.name + ' already exists. Merge ' + p.name + ' into ' + into.name + '? Their purchases and cards move to ' + into.name + '.')) {
+            clearDirty('person');
+            dropModal();
+            mergePeople(p, into);
+          }
+          return;
+        }
+        showFormError(form, e, $('#personErr', body));
+        return;
+      }
+      clearDirty('person');
+      dropModal();
+      var upd = (r && r.cards_updated) || [];
+      toast('Saved' + (upd.length ? ' · holder updated on ' + upd.join(', ') : ''), 'ok');
+      if (upd.length) state.loaded.cards = false;
+      loadPeople(true);
+    });
+  }
+  function openMergeModal(p) {
+    var others = ((state.people && state.people.people) || []).filter(function (o) { return o.id !== p.id; })
+      .sort(function (a, b) { return String(a.name).toLowerCase() < String(b.name).toLowerCase() ? -1 : 1; });
+    var body = openModal('Merge ' + p.name + ' into…',
+      '<p class="intro">' + esc(p.name) + '\'s purchases and cards move to the person you pick, then ' + esc(p.name) + ' is deleted.' +
+        (p.email ? ' The e-mail ' + esc(p.email) + ' goes to that person when they have none.' : '') + '</p>' +
+      '<div class="field" style="margin-top:12px;"><label for="mergeInto">Merge into</label><select class="inp" id="mergeInto">' +
+        others.map(function (o) { return opt(o.id, o.name + (o.email ? ' · ' + o.email : ''), false); }).join('') + '</select></div>' +
+      '<div class="form-actions"><button type="button" class="btn btn-ghost" id="mergeCancel">Cancel</button><button type="button" class="btn btn-primary" id="mergeGo"' + (others.length ? '' : ' disabled') + '>Merge</button></div>', true);
+    $('#mergeCancel', body).addEventListener('click', dropModal);
+    $('#mergeGo', body).addEventListener('click', function () {
+      var target = personById($('#mergeInto', body).value);
+      if (!target) return;
+      dropModal();
+      mergePeople(p, target);
+    });
+  }
+  async function mergePeople(src, target) {
+    var r;
+    try {
+      r = await api('/api/admin/people/' + enc(src.id) + '/merge', { method: 'POST', body: { into: target.id } });
+    } catch (e) { report(e, 'Could not merge ' + src.name + ' into ' + target.name); return; }
+    var moved = (r && r.moved) || {}, cards = moved.cards || [];
+    toast('Merged ' + src.name + ' into ' + target.name + ' · ' + plural(moved.transactions || 0, 'purchase', 'purchases') + (cards.length ? ', cards ' + cards.join(', ') : '') + ' moved', 'ok');
+    if (cards.length) state.loaded.cards = false;
+    loadPeople(true);
+  }
+  async function deletePerson(p) {
+    // A person nothing points to is deleted by the first request: ask before it.
+    if (!(p.purchases > 0) && !(p.cards_held || []).length && !confirm('Delete ' + p.name + '?')) return;
+    var url = '/api/admin/people/' + enc(p.id);
+    try {
+      await api(url, { method: 'DELETE' });
+    } catch (e) {
+      if (e.status === 401) return;
+      if (e.status === 409 && e.data && e.data.holds_cards) {
+        var body = openModal('Delete ' + p.name, '<div class="banner banner-warn">' + esc(e.message) + '</div>' +
+          '<div class="form-actions"><button type="button" class="btn btn-ghost" id="delClose">Close</button><button type="button" class="btn btn-primary" id="delMerge">Merge into…</button></div>');
+        $('#delClose', body).addEventListener('click', dropModal);
+        $('#delMerge', body).addEventListener('click', function () { openMergeModal(p); });
+        return;
+      }
+      if (e.status !== 409) { report(e, 'Could not delete ' + p.name); return; }
+      var c = (e.data && e.data.counts) || {};
+      if (!confirm(e.message + '\n\nCounts: ' + plural(c.transactions || 0, 'purchase', 'purchases') + ' assigned, ' + plural((c.cards || []).length, 'card', 'cards') + ' held.\n\nDelete ' + p.name + ' anyway?')) return;
+      try {
+        await api(url + '?confirm=1', { method: 'DELETE' });
+      } catch (e2) { report(e2, 'Could not delete ' + p.name); return; }
+    }
+    toast(p.name + ' deleted', 'ok');
+    loadPeople(true);
+  }
+  // The person holds a card whose owners do not list them: add their e-mail to the card's owners, read
+  // fresh so another owner added meanwhile is kept.
+  async function makeOwner(p, last4, btn) {
+    busy(btn, true);
+    var d = state.cards;
+    try { d = await api('/api/admin/cards'); state.cards = d; } catch (e) { if (e.status === 401) return; if (!d) { busy(btn, false); report(e, 'Could not read card ' + last4); return; } }
+    var c = (d.cards || []).filter(function (x) { return x.last4 === last4; })[0];
+    if (!c) { busy(btn, false); toast('Card ' + last4 + ' is not on the list any more', 'err'); return; }
+    var owners = ownerList(c.owner_email);
+    if (owners.indexOf(p.email.toLowerCase()) < 0) owners.push(p.email.toLowerCase());
+    try {
+      await api('/api/cards', { method: 'POST', body: { last4: last4, owner_email: owners.join(', ') } });
+    } catch (e) { busy(btn, false); report(e, 'Could not update card ' + last4); return; }
+    toast(p.email + ' now owns card ' + last4, 'ok');
+    state.loaded.cards = false;
+    loadPeople(true);
+  }
+  async function linkHolders(btn) {
+    busy(btn, true);
+    var r;
+    try {
+      r = await api('/api/admin/people/link-holders', { method: 'POST' });
+    } catch (e) { busy(btn, false); report(e, 'Could not link the card holders'); return; }
+    peopleUi.linked = r.linked || [];
+    toast(plural(peopleUi.linked.length, 'card linked', 'cards linked'), 'ok');
+    state.loaded.cards = false;
+    loadPeople(true);
+  }
+  $('#peopleRefresh').addEventListener('click', function () { peopleUi.linked = null; loadPeople(); });
+  $('#peopleBody').addEventListener('click', function (ev) {
+    var t = ev.target, b;
+    if ((b = t.closest('[data-person-edit]'))) { var pe = personById(b.dataset.personEdit); if (pe) openPersonEditor(pe); return; }
+    if ((b = t.closest('[data-person-merge]'))) { var pm = personById(b.dataset.personMerge); if (pm) openMergeModal(pm); return; }
+    if ((b = t.closest('[data-person-del]'))) { var pd = personById(b.dataset.personDel); if (pd && !b.disabled) deletePerson(pd); return; }
+    if ((b = t.closest('[data-make-owner]'))) { var po = personById(b.dataset.person); if (po && po.email) makeOwner(po, b.dataset.makeOwner, b); return; }
+    if ((b = t.closest('#linkHolders'))) { linkHolders(b); return; }
+    if ((b = t.closest('[data-dup]'))) {
+      var pair = (state.people.duplicates || [])[Number(b.dataset.dup)] || [];
+      var a = pair[0], s = pair[1];
+      if (a && s && confirm('Merge ' + s.name + ' into ' + a.name + '? Their purchases and cards move to ' + a.name + '.')) mergePeople(s, a);
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // History
+  // ---------------------------------------------------------------------------
+  var historyUi = { filters: null, key: null, entries: [], next: null, available: true };
+  var historySeq = 0;
+  function historyFilters(params) {
+    var ent = params.get('entity') || '';
+    if (state.entities.indexOf(ent) < 0) ent = '';
+    return { entity: ent, entity_id: (params.get('entity_id') || '').trim().slice(0, 200), actor: (params.get('actor') || '').trim().slice(0, 200) };
+  }
+  function fillEntitySelect(selected) {
+    var sel = $('#hEntity');
+    sel.innerHTML = opt('', 'All', !selected) + state.entities.map(function (e) { return opt(e, e.replace(/_/g, ' '), e === selected); }).join('');
+  }
+  function showHistory(params) {
+    var f = historyFilters(params);
+    fillEntitySelect(f.entity);
+    // Free values from the fragment only ever go in with .value.
+    if ($('#hEntityId').value.trim() !== f.entity_id) $('#hEntityId').value = f.entity_id;
+    if ($('#hActor').value.trim() !== f.actor) $('#hActor').value = f.actor;
+    if (historyUi.key !== JSON.stringify(f)) loadHistory(f);
+  }
+  function applyHistoryFilters() {
+    var p = new URLSearchParams();
+    var ent = $('#hEntity').value, id = $('#hEntityId').value.trim(), actor = $('#hActor').value.trim();
+    if (ent) p.set('entity', ent);
+    if (id) p.set('entity_id', id);
+    if (actor) p.set('actor', actor);
+    var qs = p.toString(), h = '#history' + (qs ? '?' + qs : '');
+    if (parseHash(h).tab === 'history' && JSON.stringify(historyFilters(p)) === historyUi.key) return;
+    if (location.hash === h) loadHistory(historyFilters(p)); else location.hash = h;
+  }
+  async function loadHistory(f, older) {
+    state.loaded.history = true;
+    var box = $('#historyBody'), seq = ++historySeq;
+    var qs = ['limit=50'];
+    if (f.entity) qs.push('entity=' + enc(f.entity));
+    if (f.entity_id) qs.push('entity_id=' + enc(f.entity_id));
+    if (f.actor) qs.push('actor=' + enc(f.actor));
+    if (older) qs.push('before_id=' + enc(historyUi.next));
+    if (!older) { historyUi.filters = f; historyUi.key = JSON.stringify(f); box.innerHTML = loadingHtml('Loading the history…'); }
+    var d;
+    try {
+      d = await api('/api/admin/audit?' + qs.join('&'));
+    } catch (e) {
+      if (seq !== historySeq) return;
+      if (e.status === 401) return;
+      if (older) { report(e, 'Could not load older changes'); return; }
+      historyUi.key = null;
+      showLoadError(box, 'Could not load the history', e, function () { loadHistory(f); });
+      return;
+    }
+    if (seq !== historySeq) return;
+    if (Array.isArray(d.entities) && d.entities.length) {
+      state.entities = d.entities.filter(function (x) { return typeof x === 'string'; });
+      fillEntitySelect(state.entities.indexOf(f.entity) >= 0 ? f.entity : '');
+    }
+    historyUi.available = d.available !== false;
+    historyUi.entries = older ? historyUi.entries.concat(d.entries || []) : (d.entries || []);
+    historyUi.next = d.next_before_id === null || d.next_before_id === undefined ? null : d.next_before_id;
+    renderHistory();
+  }
+  function isObj(v) { return v !== null && typeof v === 'object' && !Array.isArray(v); }
+  function fmtVal(v) {
+    var s = v === null || v === undefined ? '—' : (typeof v === 'string' ? (v === '' ? '""' : v) : JSON.stringify(v));
+    return s.length > 120 ? s.slice(0, 119) + '…' : s;
+  }
+  function same(a, b) { return JSON.stringify(a === undefined ? null : a) === JSON.stringify(b === undefined ? null : b); }
+  function diffLines(a) {
+    var before = a.before, after = a.after, lines = [];
+    function listed(obj) {
+      return Object.keys(obj).filter(function (k) { return obj[k] !== null && obj[k] !== '' && obj[k] !== undefined; })
+        .map(function (k) { return k + ': ' + fmtVal(obj[k]); });
+    }
+    if (isObj(before) && isObj(after)) {
+      var keys = Object.keys(after);
+      Object.keys(before).forEach(function (k) { if (keys.indexOf(k) < 0) keys.push(k); });
+      keys.forEach(function (k) { if (!same(before[k], after[k])) lines.push(k + ': ' + fmtVal(before[k]) + ' → ' + fmtVal(after[k])); });
+    } else if (before !== null && before !== undefined && after !== null && after !== undefined) {
+      lines.push(fmtVal(before) + ' → ' + fmtVal(after));
+    } else if (after !== null && after !== undefined) {
+      lines = isObj(after) ? listed(after) : [fmtVal(after)];
+    } else if (before !== null && before !== undefined) {
+      lines = isObj(before) ? listed(before) : [fmtVal(before)];
+    }
+    return lines;
+  }
+  function renderHistory() {
+    var box = $('#historyBody');
+    if (!historyUi.available) { box.innerHTML = '<div class="empty-small">History needs the database update (Settings).</div>'; return; }
+    var list = historyUi.entries;
+    if (!list.length) { box.innerHTML = '<div class="empty-small">No changes recorded' + (historyUi.key && historyUi.key !== JSON.stringify({ entity: '', entity_id: '', actor: '' }) ? ' for these filters.' : ' yet.') + '</div>'; return; }
+    box.innerHTML = list.map(function (a) {
+      var mode = a.auth_mode || '';
+      var lines = diffLines(a);
+      return '<div class="audit-row"><div class="audit-line">' +
+        '<span class="nowrap">' + esc(fmtStamp(a.at)) + '</span>' +
+        '<span class="strong">' + emailHtml(a.actor) + '</span>' +
+        (mode ? '<span class="pill ' + (mode === 'open' ? 'pill-warn' : 'pill-grey') + '">' + esc(mode) + '</span>' : '') +
+        '<span>' + esc(a.entity) + ' · ' + esc(a.entity_id) + '</span>' +
+        '<span class="pill pill-info">' + esc(a.action) + '</span></div>' +
+        (lines.length ? '<div class="audit-diff">' + lines.map(function (l) { return '<div>' + esc(l) + '</div>'; }).join('') + '</div>' : '') +
+        (a.note ? '<div class="sub">' + esc(a.note) + '</div>' : '') + '</div>';
+    }).join('') +
+      (historyUi.next !== null ? '<div class="pager"><button type="button" class="btn btn-secondary btn-xs" id="historyOlder">Load older</button></div>' : '');
+    var older = $('#historyOlder');
+    if (older) older.addEventListener('click', function () { busy(older, true); loadHistory(historyUi.filters || { entity: '', entity_id: '', actor: '' }, true); });
+  }
+  $('#historyForm').addEventListener('submit', function (ev) { ev.preventDefault(); applyHistoryFilters(); });
+  $('#hEntity').addEventListener('change', applyHistoryFilters);
+  $('#hActor').addEventListener('input', debounce(applyHistoryFilters, 400));
+  $('#historyRefresh').addEventListener('click', function () { loadHistory(historyUi.filters || historyFilters(parseHash(location.hash).params)); });
+
+  // ---------------------------------------------------------------------------
+  // Settings
+  // ---------------------------------------------------------------------------
+  var AUTH_LABELS = { iap: 'Google sign-in (Identity-Aware Proxy)', password: 'Shared password', open: 'Open: anyone who can reach the page' };
+  async function loadSettings(quiet) {
+    state.loaded.settings = true;
+    var box = $('#settingsBody');
+    if (!quiet) box.innerHTML = loadingHtml('Loading settings…');
+    try {
+      state.settings = await api('/api/admin/settings');
+    } catch (e) {
+      state.loaded.settings = false;
+      if (e.status === 401) return;
+      showLoadError(box, 'Could not load the settings', e, function () { loadSettings(); });
+      return;
+    }
+    renderSettings();
+  }
+  function setCard(title, bodyHtml, how) {
+    return '<div class="card set-card"><h2>' + esc(title) + '</h2>' + bodyHtml + (how ? '<div class="how">How to change: ' + how + '</div>' : '') + '</div>';
+  }
+  function listOrNone(list) { return list && list.length ? esc(list.join(', ')) : '<span class="muted">none</span>'; }
+  function renderSettings() {
+    var s = state.settings, ru = s.receipt_upload || {}, wh = s.webhooks || {}, schema = s.schema || {}, coding = s.coding || {};
+    var perCard = Object.keys(ru.per_card || {}).sort().map(function (l) { return l + ' ' + (ru.per_card[l] ? 'on' : 'off'); });
+    var schemaKeys = Object.keys(schema);
+    var anyMissing = schemaKeys.some(function (k) { return !schema[k]; });
+    var split = s.coding_split;
+    var minutes = Math.max(1, Math.round((Number(s.alias_cache_seconds) || 600) / 60));
+    var html = '<div class="settings-grid">' +
+      setCard('Sign-in', '<div>' + esc(AUTH_LABELS[s.auth_mode] || s.auth_mode) + '</div>' +
+        '<div class="sub">Store: ' + esc(s.store) + ' · AI reading: ' + (s.ai_enabled ? 'on' : 'off') + '</div>' +
+        (s.auth_mode === 'open' && s.store !== 'memory' ? '<div class="banner banner-warn">Changes from these pages are refused while the dashboard is open to anyone.</div>' : ''),
+        '<code>AUTH_DISABLED</code> and <code>DASHBOARD_PASSWORD</code> on the service (README, "Access and roles").') +
+      setCard('Allowed domains', '<div>' + listOrNone(s.allowed_domains) + '</div><div class="sub">E-mail domains let in, on top of IAP\'s own access list.</div>',
+        '<code>ALLOWED_DOMAINS</code> in .github/workflows/deploy-ap-reconciliation.yml, then push.') +
+      setCard('AP e-mails', '<div>' + listOrNone(s.ap_emails) + '</div><div class="sub">These addresses are accounts payable: they edit every card and use these pages.</div>', esc(s.ap_emails_how || '')) +
+      setCard('Receipt upload', '<div>Server setting: ' + (ru.all ? 'all cards' : (ru.from_default ? 'default ' : '') + listOrNone(ru.env)) + '</div>' +
+        '<div class="sub">Per-card overrides: ' + (perCard.length ? esc(perCard.join(', ')) : 'none') + '</div>',
+        'per card, Receipt upload in the card\'s editor (Cards tab); the server setting is <code>RECEIPT_UPLOAD_CARDS</code>.') +
+      setCard('Chat webhooks', '<div>Own webhook: ' + listOrNone(wh.cards) + '</div><div class="sub">Default space for the others: ' + (wh['default'] ? 'yes' : 'no') +
+        ' · secret <code>' + esc(wh.secret || '') + '</code></div>', esc(wh.how || '')) +
+      setCard('Card number cache', '<div>About ' + esc(plural(minutes, 'minute', 'minutes')) + '</div><div class="sub">Which receipt numbers count as which card is read again from the database about this often; a card saved here counts at once on this server.</div>', '') +
+      setCard('Schema check', schemaKeys.map(function (k) {
+          return '<div class="schema-row">' + (schema[k] ? '<span class="ok-mark">✓</span>' : '<span class="bad-mark">✗</span>') + '<span>' + esc(k) + '</span></div>';
+        }).join('') +
+        (anyMissing ? '<div class="banner banner-warn">Run <code>python ap-reconciliation\\setup_db.py --project-ref bkkifrwfgtcnmfynbbdd</code></div>' : ''),
+        'schema.sql, applied with setup_db.py (README).') +
+      setCard('Coding split', split ? '<div>Done ' + esc(fmtDate(String(split.at || '').slice(0, 10))) + ': retired ' + listOrNone(split.retired) + '; still in use ' + listOrNone(split.kept_in_use) + '</div>'
+        : '<div>Not done yet: it runs when schema.sql is applied.</div>', '') +
+      setCard('Coding suggestions', '<label class="check"><input type="checkbox" id="suggestToggle"' + (coding.suggestions ? ' checked' : '') + ' /> Suggest a use case to card owners from the vendor registry</label>' +
+        '<div class="sub" id="suggestBy">' + suggestByText(coding) + '</div><div class="sub">Registry version ' + esc(s.registry_version || 0) + '.</div>', '') +
+      setCard('Identity-Aware Proxy', '<div class="sub">' + esc(s.iap_note || '') + '</div>', '') +
+      '</div>';
+    $('#settingsBody').innerHTML = html;
+    $('#suggestToggle').addEventListener('change', async function () {
+      var box = this, on = box.checked;
+      box.disabled = true;
+      var r;
+      try {
+        r = await api('/api/admin/settings/coding', { method: 'PUT', body: { suggestions: on } });
+      } catch (e) {
+        box.disabled = false;
+        box.checked = !on;
+        report(e, 'Could not change the suggestions');
+        return;
+      }
+      box.disabled = false;
+      state.settings.coding = (r && r.coding) || { suggestions: on };
+      $('#suggestBy').innerHTML = suggestByText(state.settings.coding);
+      toast(on ? 'Coding suggestions on' : 'Coding suggestions off', 'ok');
+    });
+  }
+  function suggestByText(c) {
+    return c && (c.by || c.at) ? 'Last changed by ' + esc(c.by || 'someone') + (c.at ? ' · ' + esc(fmtStamp(c.at)) : '') : 'Never changed: off by default.';
+  }
+  $('#settingsRefresh').addEventListener('click', function () { loadSettings(); });
+
+  // ---------------------------------------------------------------------------
+  // Boot
+  // ---------------------------------------------------------------------------
+  function renderUser() {
+    var me = state.me || {};
+    $('#userEmail').textContent = me.email || me.name || '';
+    $('#userEmail').title = me.email || '';
+  }
+  $('#whoAmI').addEventListener('change', async function () {
+    try { localStorage.setItem(NAME_KEY, this.value.trim().slice(0, 80)); } catch (e) { /* private mode: the name lasts for this page only */ }
+    try { state.me = await api('/api/me'); renderUser(); } catch (e) { report(e, 'Could not update your name'); }
+  });
+
+  async function boot() {
+    try {
+      var res = await fetch('/api/config', { cache: 'no-store', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+      if (res.status === 401) { showGate('You are not signed in. Open the dashboard to sign in.', 'dashboard'); return; }
+      if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
+      state.config = await res.json();
+    } catch (e) {
+      showGate('Could not reach the server', 'reload');
+      return;
+    }
+    try {
+      state.me = await api('/api/me');
+    } catch (e) {
+      if (e.status === 401) showGate('You are not signed in. Open the dashboard to sign in.', 'dashboard');
+      else showGate('Could not reach the server', 'reload');
+      return;
+    }
+    if (!state.me || state.me.role !== 'ap') {
+      showGate('These pages are for accounts payable only (ap@, manne@, snow@).', 'dashboard');
+      return;
+    }
+    renderUser();
+    $('#whoAmI').classList.toggle('hidden', !(state.config && state.config.auth_disabled));
+    $('#whoAmI').value = currentName();
+    $('#gate').classList.add('hidden');
+    $('#app').classList.remove('hidden');
+    state.hash = location.hash;
+    route();
+  }
+  // Back to this page from the browser's back-forward cache: load again, so the server decides who is signed in.
+  window.addEventListener('pageshow', function (ev) { if (ev.persisted) location.reload(); });
+  boot();
+})();
+</script>
+</body>
+</html>
