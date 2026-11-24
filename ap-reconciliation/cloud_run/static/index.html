@@ -1573,7 +1573,18 @@
     sel.innerHTML = optHtml;
   }
 
+  // The group shown is one that still exists (a remembered group whose cards all moved is forgotten), and a
+  // card opened by a link shows its own group, for this visit only: the remembered one stays as picked.
+  function checkGroup() {
+    var g = state.group;
+    var gone = g === '-' ? !state.cards.some(function (c) { return !c.group_name; })
+      : g && groupNames().map(function (n) { return n.toLowerCase(); }).indexOf(g.toLowerCase()) < 0;
+    if (gone && state.cards.length) { state.group = ''; saveGroup(''); }
+    if (state.card && !inGroup(state.card)) state.group = groupOf(state.card) || '-';
+  }
+
   function renderMonth() {
+    checkGroup();
     $('#monthTitle').textContent = monthLabel(state.year, state.month);
     updateRerunButton();
     renderKpis();
@@ -1637,7 +1648,6 @@
   function renderGroupSelect() {
     var names = groupNames(), sel = $('#groupSelect');
     var ungrouped = state.cards.some(function (c) { return !c.group_name; });
-    if (state.group && state.group !== '-' && names.map(function (n) { return n.toLowerCase(); }).indexOf(state.group.toLowerCase()) < 0) state.group = '';
     sel.classList.toggle('hidden', !names.length);
     sel.innerHTML = '<option value="">All groups</option>' + names.map(function (n) {
       return '<option value="' + esc(n) + '"' + (state.group.toLowerCase() === n.toLowerCase() ? ' selected' : '') + '>' + esc(n) + '</option>';
@@ -1876,6 +1886,7 @@
   }
   // After a single-row change the month's counts are recomputed here instead of reloading everything.
   function refreshCounts() {
+    checkGroup();
     renderKpis();
     renderCardStrip();
     renderToolbar();
@@ -2246,8 +2257,8 @@
     var b = ev.target.closest('button[data-export]'); if (!b) return;
     closeExportMenu();
     var q = [];
-    if (state.group) q.push('group=' + encodeURIComponent(state.group));
-    if (state.card) q.push('card=' + encodeURIComponent(state.card));
+    if (state.card) q.push('card=' + encodeURIComponent(state.card));          // the card shown is the scope
+    else if (state.group) q.push('group=' + encodeURIComponent(state.group));
     if (b.dataset.export === 'month') q.push('year=' + state.year, 'month=' + state.month);
     var btn = $('#exportBtn');
     btn.disabled = true;
@@ -3088,7 +3099,6 @@
       }).map(function (g) { return '<option value="' + esc(g) + '"></option>'; }).join('') + '</datalist>' +
       '<div class="list-wrap"><table class="list" id="cardsTable"><thead><tr><th>Card</th><th>Label</th><th>Holder</th><th>Group</th><th>Card no.</th><th>Linked under</th><th>Name on card</th><th>Owner email</th><th>Chat space</th><th>Active</th><th>Webhook</th><th></th></tr></thead><tbody>' +
       (state.cards.length ? state.cards.map(function (c) {
-        var primaries = state.cards.filter(function (o) { return o.last4 !== c.last4 && !o.primary_last4; });
         return '<tr data-last4="' + esc(c.last4) + '">' +
           '<td class="font-medium" style="white-space:nowrap;">•••• ' + esc(c.last4) +
             ((c.receipts_show || []).length ? '<div class="sub" style="font-weight:400;" title="The card was reissued: merchants that keep it on file show the new number. Their receipts are matched to this card.">receipts show ' + c.receipts_show.map(esc).join(', ') + '</div>' : '') + '</td>' +
@@ -3096,11 +3106,7 @@
           '<td><input class="inp" data-cf="holder_name" value="' + esc(c.holder_name || '') + '" style="min-width:130px;" /></td>' +
           '<td><input class="inp" data-cf="group_name" list="groupList" value="' + esc(c.group_name || '') + '" placeholder="Hair, Beauty" style="min-width:90px;" /></td>' +
           '<td><input class="inp" data-cf="card_number" inputmode="numeric" maxlength="4" value="' + esc(c.card_number || '') + '" placeholder="e.g. 4449" title="The last four digits printed on the card, when they differ from the account\'s" style="width:72px;" /></td>' +
-          '<td><select class="inp" data-cf="primary_last4" title="A supplementary card: the primary card it is linked under" style="min-width:110px;"' + ((c.supplementary || []).length ? ' disabled' : '') + '>' +
-            '<option value="">— primary —</option>' + primaries.map(function (o) {
-              return '<option value="' + esc(o.last4) + '"' + (o.last4 === c.primary_last4 ? ' selected' : '') + '>' + esc(o.last4 + (o.holder_name ? ' · ' + o.holder_name : '')) + '</option>';
-            }).join('') + '</select>' +
-            ((c.supplementary || []).length ? '<div class="sub" style="white-space:nowrap;">primary of ' + c.supplementary.map(esc).join(', ') + '</div>' : '') + '</td>' +
+          '<td data-primary-cell>' + primaryCellHtml(c, c.primary_last4 || '') + '</td>' +
           '<td><input class="inp" data-cf="name_on_card" value="' + esc(c.name_on_card || '') + '" placeholder="if not the holder" title="The name printed on the card or the statement, when someone else uses it" style="min-width:110px;" /></td>' +
           '<td><input class="inp" data-cf="owner_email" type="email" multiple value="' + esc(c.owner_email || '') + '" placeholder="name@superhairpieces.com" title="One address, or several separated by commas" style="min-width:220px;" /></td>' +
           '<td><input class="inp" data-cf="chat_space" value="' + esc(c.chat_space || '') + '" style="min-width:140px;" /></td>' +
@@ -3109,6 +3115,17 @@
           '<td class="td-right"><button class="btn btn-secondary btn-xs" data-save-card="' + esc(c.last4) + '">Save</button></td></tr>';
       }).join('') : '<tr><td colspan="12"><div class="empty" style="padding: 24px;">No cards yet; they appear after the first upload.</div></td></tr>') +
       '</tbody></table></div>';
+  }
+  // A card's "Linked under" picker: the cards it can be linked under (not itself, not a supplementary card),
+  // and none for a primary card that has cards of its own.
+  function primaryCellHtml(c, selected) {
+    var sup = c.supplementary || [];
+    var primaries = state.cards.filter(function (o) { return o.last4 !== c.last4 && !o.primary_last4; });
+    return '<select class="inp" data-cf="primary_last4" title="A supplementary card: the primary card it is linked under" style="min-width:110px;"' + (sup.length ? ' disabled' : '') + '>' +
+      '<option value="">— primary —</option>' + primaries.map(function (o) {
+        return '<option value="' + esc(o.last4) + '"' + (o.last4 === selected ? ' selected' : '') + '>' + esc(o.last4 + (o.holder_name ? ' · ' + o.holder_name : '')) + '</option>';
+      }).join('') + '</select>' +
+      (sup.length ? '<div class="sub" style="white-space:nowrap;">primary of ' + sup.map(esc).join(', ') + '</div>' : '');
   }
   async function openCardsModal() {
     try {
@@ -3131,6 +3148,15 @@
         var fresh = state.cards.find(function (c) { return c.last4 === payload.last4; });
         var lbl = tr.querySelector('[data-cf="label"]');
         if (fresh && lbl && document.activeElement !== lbl) lbl.value = fresh.label || '';
+        // A link changes what the other rows may be linked under: every row's picker is redrawn, keeping a
+        // pick not saved yet.
+        $all('#cardsTable tr[data-last4]', body).forEach(function (row) {
+          var c = state.cards.find(function (x) { return x.last4 === row.dataset.last4; });
+          var cell = row.querySelector('[data-primary-cell]');
+          if (!c || !cell) return;
+          var sel = cell.querySelector('select');
+          cell.innerHTML = primaryCellHtml(c, row === tr || !sel ? (c.primary_last4 || '') : sel.value);
+        });
       } catch (e) {
         report(e, 'Could not save the card');
       }

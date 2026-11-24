@@ -78,7 +78,8 @@ class SupabaseRequestShapingTests(unittest.TestCase):
         methods = [(c["method"], c["table"]) for c in self.calls]
         self.assertEqual(methods, [("GET", "cards"), ("POST", "cards"), ("PATCH", "cards")])
         inserted = self.calls[1]["json"]
-        self.assertEqual(tuple(sorted(inserted[0])), tuple(sorted(store_module.CARD_FIELDS)))
+        # The columns the batch names, on every new row (PostgREST wants one set of keys), and no others.
+        self.assertEqual(tuple(sorted(inserted[0])), ("active", "holder_name", "label", "last4"))
         self.assertEqual((inserted[0]["last4"], inserted[0]["active"]), ("4421", True))
         self.assertEqual(self.calls[2]["params"], {"last4": "eq.1610"})
         self.assertEqual(self.calls[2]["json"], {"holder_name": "Yin Wei"})

@@ -2012,15 +2012,26 @@ def api_cards_update():
         if field in body:
             row[field] = " ".join((body.get(field) or "").split())[:200] or None
     if "group_name" in body:
-        row["group_name"] = " ".join(str(body.get("group_name") or "").split())[:GROUP_MAX] or None
+        group = " ".join(str(body.get("group_name") or "").split())[:GROUP_MAX] or None
+        # One spelling per group: 'hair' joins the cards already in 'Hair'.
+        same = next((c["group_name"] for c in cards.values() if c["last4"] != last4 and c.get("group_name")
+                     and group and c["group_name"].lower() == group.lower()), None)
+        row["group_name"] = same or group
     if "name_on_card" in body:
         row["name_on_card"] = " ".join(str(body.get("name_on_card") or "").split())[:80] or None
     if "card_number" in body:
-        number = re.sub(r"\D", "", str(body.get("card_number") or ""))
+        number = re.sub(r"[^0-9]", "", str(body.get("card_number") or ""))
         if number and len(number) != 4:
             return jsonify({"error": "card_number: the last four digits printed on the card"}), 400
         if number and number in cards and number != last4:
             return jsonify({"error": f"card_number: {number} is a statement card of its own"}), 400
+        other = next((c["last4"] for c in cards.values() if c["last4"] != last4 and c.get("card_number") == number), None) \
+            if number else None
+        if other:
+            return jsonify({"error": f"card_number: {number} is already the number on card {other}"}), 400
+        reissued = matching.card_aliases(list(cards)).get(number) if number else None
+        if reissued and reissued != last4 and number in store.invoice_card_numbers():
+            return jsonify({"error": f"card_number: receipts showing {number} are card {reissued}'s (its reissued number)"}), 400
         row["card_number"] = number if number and number != last4 else None
     if "primary_last4" in body:
         primary = statements.last4(body.get("primary_last4")) if body.get("primary_last4") else None
@@ -2029,22 +2040,6 @@ def api_cards_update():
         if primary and (cards[primary].get("primary_last4") or any(c.get("primary_last4") == last4 for c in cards.values())):
             return jsonify({"error": "primary_last4: a supplementary card is linked under a primary card, one level"}), 400
         row["primary_last4"] = primary
-    changed = "holder_name" in body and (row["holder_name"] or "") != (current.get("holder_name") or "")
-    if changed or ("holder_name" in body and row["holder_name"] and not current.get("person_id")):
-        # The holder as a person: the Person of the card's purchases nobody assigned to someone else. A card
-        # saved with its holder not yet a person links them too.
-        if row["holder_name"]:
-            person, _ = store.create_person(row["holder_name"], created_by=user["email"])
-            row["person_id"] = person["id"]
-        else:
-            row["person_id"] = None
-    if changed:
-        # A label still the default one follows the new holder.
-        old_label = current.get("label") or default_card_label(last4, current.get("holder_name"))
-        sent = row.get("label") if "label" in body else old_label
-        if not sent or sent in (old_label, default_card_label(last4, current.get("holder_name"))) \
-                and CARD_LABEL_RE.match(old_label or ""):
-            row["label"] = default_card_label(last4, row["holder_name"])
     if "owner_email" in body:
         # Several owners (the card holder and someone who files their receipts) are kept as one
         # comma-separated, lower-case list.
@@ -2055,6 +2050,23 @@ def api_cards_update():
         row["owner_email"] = ", ".join(emails)[:500] or None
     if "active" in body:
         row["active"] = bool(body.get("active"))
+    changed = "holder_name" in body and (row["holder_name"] or "") != (current.get("holder_name") or "")
+    if changed:
+        # A label still the default one follows the new holder.
+        old_label = current.get("label") or default_card_label(last4, current.get("holder_name"))
+        sent = row.get("label") if "label" in body else old_label
+        if not sent or sent in (old_label, default_card_label(last4, current.get("holder_name"))) \
+                and CARD_LABEL_RE.match(old_label or ""):
+            row["label"] = default_card_label(last4, row["holder_name"])
+    # Last, once nothing more can be refused (people cannot be deleted): the holder as a person, the Person
+    # of the card's purchases nobody assigned to someone else. A card saved with its holder not yet a
+    # person links them too.
+    if changed or ("holder_name" in body and row["holder_name"] and not current.get("person_id")):
+        if row["holder_name"]:
+            person, _ = store.create_person(row["holder_name"], created_by=user["email"])
+            row["person_id"] = person["id"]
+        else:
+            row["person_id"] = None
     store.upsert_cards([row])
     matching.forget_card_aliases()
     print(f"card {last4} updated by {user['email']}")
@@ -2076,7 +2088,11 @@ def in_group(card, group):
 
 def _text_cell(cell, value):
     """A spreadsheet cell holding text as text: a description such as '=SUM(...)' or '+1 800 ...' is never
-    read as a formula by Excel."""
+    read as a formula by Excel, and control characters a note pasted from Word may hold (a vertical tab)
+    are left out, as Excel files cannot hold them."""
+    from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+    if isinstance(value, str):
+        value = ILLEGAL_CHARACTERS_RE.sub("", value)
     cell.value = value
     if isinstance(value, str):
         cell.data_type = "s"
@@ -2111,7 +2127,7 @@ def missing_receipts_xlsx(store, group="", card=None, year=None, month=None):
     for cell in ws[1]:
         cell.font = Font(bold=True)
     base = dashboard_url()
-    totals = {}
+    totals, names = {}, {}
     for t, c in rows:
         primary = cards.get(c.get("primary_last4") or "") or {}
         person = people.get(t.get("person_id") or "") or people.get(c.get("person_id") or "") or c.get("holder_name") or ""
@@ -2128,7 +2144,9 @@ def missing_receipts_xlsx(store, group="", card=None, year=None, month=None):
             _text_cell(ws.cell(row=ws.max_row, column=col), value)
         if link:
             ws.cell(row=ws.max_row, column=len(values)).hyperlink = link
-        key = (c.get("group_name") or "(no group)", t.get("currency") or "")
+        group_key = " ".join((c.get("group_name") or "").split()).lower()
+        names.setdefault(group_key, c.get("group_name") or "(no group)")
+        key = (group_key, t.get("currency") or "")
         n, total = totals.get(key, (0, 0.0))
         totals[key] = (n + 1, round(total + float(t["amount"]), 2))
     for col, width in zip("ABCDEFGHIJKLMNOP", (10, 14, 12, 18, 16, 16, 11, 40, 12, 9, 14, 10, 18, 24, 24, 40)):
@@ -2139,8 +2157,10 @@ def missing_receipts_xlsx(store, group="", card=None, year=None, month=None):
     summary.append(["Group", "Currency", "Purchases missing a receipt", "Amount"])
     for cell in summary[1]:
         cell.font = Font(bold=True)
-    for (g_name, cur), (n, total) in sorted(totals.items()):
-        summary.append([g_name, cur, n, total])
+    for (group_key, cur), (n, total) in sorted(totals.items()):
+        summary.append([None] * 4)
+        for col, value in enumerate([names[group_key], cur, n, total], start=1):
+            _text_cell(summary.cell(row=summary.max_row, column=col), value)
     for col, width in zip("ABCD", (16, 10, 28, 14)):
         summary.column_dimensions[col].width = width
     out = io.BytesIO()
@@ -2156,8 +2176,11 @@ def api_export_missing():
     store = get_store()
     group = " ".join(str(request.args.get("group") or "").split())[:GROUP_MAX]
     card = statements.last4(request.args.get("card")) if request.args.get("card") else None
+    if request.args.get("card") and not card:
+        return jsonify({"error": "card: the four digits of a card"}), 400
     year, month = request.args.get("year"), request.args.get("month")
-    if (year or month) and not (str(year).isdigit() and str(month).isdigit() and 1 <= int(month) <= 12):
+    if (year or month) and not (re.fullmatch(r"20[0-9][0-9]", str(year or "")) and re.fullmatch(r"[0-9]{1,2}", str(month or ""))
+                                and 1 <= int(month) <= 12):
         return jsonify({"error": "year and month: both, as numbers"}), 400
     data, n = missing_receipts_xlsx(store, group, card, year, month)
     name = "missing-receipts" + (f"-{re.sub(r'[^A-Za-z0-9]+', '-', group).strip('-') or 'no-group'}" if group else "") + \

@@ -80,6 +80,33 @@ class CardFieldTests(CardsTestCase):
         self.assertEqual(self.card("4431")["card_number"], "")
 
 
+    def test_a_number_two_cards_could_claim_is_refused(self):
+        self.assertEqual(self.save(last4="4431", card_number="4449").status_code, 200)
+        r = self.save(last4="9456", card_number="4449")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("4431", r.get_json()["error"])
+        # 7444 is 7436's reissued number; once a receipt shows it, it cannot be another card's.
+        self.assertEqual(self.save(last4="3914", card_number="7444").status_code, 200)
+        self.assertEqual(self.save(last4="3914", card_number="").status_code, 200)
+        self.store.upsert_invoices([dict(inv("r", "Shop", 5.0, "2026-10-03", month_folder="2026 10", card="7444"))])
+        r = self.save(last4="3914", card_number="7444")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("7436", r.get_json()["error"])
+
+    def test_a_refused_save_creates_nobody(self):
+        r = self.save(last4="4431", holder_name="George", owner_email="not an address")
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(self.store.list_people(), [])
+        self.assertEqual(self.card("4431")["holder_name"], "")
+        r = self.save(last4="4431", holder_name="George", card_number="12")
+        self.assertEqual((r.status_code, self.store.list_people()), (400, []))
+
+    def test_a_group_keeps_the_spelling_its_cards_have(self):
+        self.save(last4="4431", group_name="Hair")
+        r = self.save(last4="7436", group_name="hair ")
+        self.assertEqual(self.card("7436", r.get_json()["cards"])["group_name"], "Hair")
+
+
 class CardNumberMatchingTests(CardsTestCase):
     def test_a_receipt_showing_the_number_on_the_card_is_that_cards(self):
         self.save(last4="4431", card_number="4449")
@@ -91,6 +118,34 @@ class CardNumberMatchingTests(CardsTestCase):
         self.store.insert_transactions([txn("t", "2026-10-03", "CANADA POST", 719.97, card="4431")])
         matching.match_month(self.store, None, 2026, 10, use_ai=False, log=lambda *a: None)
         self.assertEqual(self.store.get_transaction("t")["invoice_id"], "cp")
+
+    def test_a_number_entered_on_two_cards_matches_neither(self):
+        cards = [{"last4": "4431", "card_number": "5555"}, {"last4": "9456", "card_number": "5555"},
+                 {"last4": "3914", "card_number": "6666"}]
+        aliases = matching.all_card_aliases(cards)
+        self.assertNotIn("5555", aliases)
+        self.assertEqual(aliases["6666"], "3914")
+
+
+class NewCardInsertTests(unittest.TestCase):
+    """A statement bringing a new card names only last4 and its label: the insert names no column the
+    batch does not set, so it works against a table without the newer card columns."""
+
+    def test_the_insert_carries_the_batchs_columns(self):
+        from unittest import mock
+        from test_review_fixes import FakeResponse
+        import store as store_module
+        calls = []
+
+        def fake_request(method, url, params=None, json=None, headers=None, timeout=None):
+            calls.append((method, url.rsplit("/", 1)[1], json))
+            return FakeResponse()
+        st = store_module.SupabaseStore("https://x.supabase.co", "service-key")
+        with mock.patch.object(store_module.requests, "request", fake_request):
+            st.upsert_cards([{"last4": "1234", "label": "Card ending 1234"}, {"last4": "5678", "group_name": "Hair"}])
+        insert = next(c for c in calls if c[0] == "POST")
+        self.assertEqual(insert[2], [{"last4": "1234", "label": "Card ending 1234", "group_name": None, "active": True},
+                                     {"last4": "5678", "label": None, "group_name": "Hair", "active": True}])
 
 
 class ExportTests(CardsTestCase):
@@ -145,9 +200,21 @@ class ExportTests(CardsTestCase):
         cell = next(row[7] for row in sheet.iter_rows(min_row=2) if str(row[7].value).startswith("="))
         self.assertEqual(cell.data_type, "s")
 
-    def test_a_bad_month_is_refused(self):
-        self.assertEqual(self.client.get("/api/export/missing?year=2026").status_code, 400)
-        self.assertEqual(self.client.get("/api/export/missing?year=2026&month=13").status_code, 400)
+    def test_a_bad_month_or_card_is_refused(self):
+        for q in ("year=2026", "year=2026&month=13", "year=abc&month=1", "year=2026&month=%D9%A1", "year=99999&month=1",
+                  "card=abc"):
+            self.assertEqual(self.client.get("/api/export/missing?" + q).status_code, 400, q)
+
+    def test_control_characters_are_left_out(self):
+        self.store.update_transaction("h1", {"note": "see\x0bpage 2\x00"})
+        _, rows, _ = self.export("?card=4431")
+        self.assertEqual(next(x for x in rows if x["Description"] == "UPS CANADA BILLING")["Note"], "seepage 2")
+
+    def test_totals_add_up_one_group_however_its_cards_spell_it(self):
+        self.store.upsert_cards([{"last4": "9456", "group_name": "beauty "}])     # written before spellings were kept
+        _, _, totals = self.export("")
+        self.assertEqual([t for t in totals if str(t[0]).lower() == "beauty"],
+                         [["Beauty", "CAD", 1, 45.5], ["Beauty", "USD", 1, 30.0]])
 
 
 if __name__ == "__main__":

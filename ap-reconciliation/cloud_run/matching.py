@@ -170,10 +170,16 @@ def all_card_aliases(cards):
     it, and the reissue numbers card_aliases works out, where none was entered."""
     known = {str(c.get("last4")) for c in cards if c.get("last4")}
     out = card_aliases(known)
+    entered = {}
     for c in cards:
         number = str(c.get("card_number") or "")
         if re.fullmatch(r"\d{4}", number) and number != c.get("last4") and number not in known:
-            out[number] = c["last4"]
+            entered.setdefault(number, set()).add(c["last4"])
+    for number, owners in entered.items():
+        if len(owners) == 1:
+            out[number] = next(iter(owners))
+        else:
+            out.pop(number, None)        # entered on two cards: no telling whose receipts show it
     return out
 
 

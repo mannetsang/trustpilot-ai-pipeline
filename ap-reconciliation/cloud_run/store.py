@@ -210,11 +210,14 @@ class SupabaseStore:
             return
         known = {c["last4"] for c in self.select("cards", {"select": "last4", "order": "last4"})}
         new, seen = [], set()
+        # New rows carry the columns the batch names (all of them, for PostgREST): a statement bringing a card
+        # never names a column it does not set, so it imports whatever columns the table has grown since.
+        keys = [k for k in CARD_FIELDS if k in ("last4", "active") or any(k in r for r in rows)]
         for r in rows:
             if r["last4"] in known or r["last4"] in seen:
                 continue
             seen.add(r["last4"])
-            row = {k: r.get(k) for k in CARD_FIELDS}
+            row = {k: r.get(k) for k in keys}
             if row["active"] is None:
                 row["active"] = True
             new.append(row)
