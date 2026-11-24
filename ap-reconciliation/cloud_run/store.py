@@ -25,7 +25,8 @@ TRANSACTION_FIELDS = (
     "match_method", "match_note", "cost_center", "usage", "note", "updated_by", "updated_at",
     "created_at", "raw", "rejected_invoice_ids", "invoice_part", "person_id", "also_invoice_ids",
 )
-CARD_FIELDS = ("last4", "label", "holder_name", "owner_email", "chat_space", "active", "updated_at")
+CARD_FIELDS = ("last4", "label", "holder_name", "owner_email", "chat_space", "active", "updated_at",
+               "group_name", "card_number", "primary_last4", "name_on_card", "person_id")
 INVOICE_FIELDS = (
     "id", "file_name", "mime_type", "web_view_link", "folder_path", "month_folder", "vendor_folder",
     "modified_time", "size", "vendor", "invoice_number", "invoice_date", "total", "currency",

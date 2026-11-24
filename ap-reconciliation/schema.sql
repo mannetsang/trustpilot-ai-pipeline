@@ -126,6 +126,17 @@ create table if not exists people (
 );
 create unique index if not exists people_name_unique on people (lower(name));
 alter table transactions add column if not exists person_id uuid references people(id) on delete set null;
+-- About each card (Cards…): the team its spending belongs to (group_name: Hair, Beauty), the last four
+-- digits printed on the card when the statement shows the account's (card_number: account 4431, card
+-- 4449; merchants print the card's, so receipts showing it are this card's), the account a supplementary
+-- card is linked under (primary_last4: 7436 under 4431), the name printed on the card or the statement
+-- when someone else uses it (name_on_card: 9456 is Henry Li's, used by Linda), and the holder as a person
+-- (person_id: the Person of the card's purchases nobody assigned to someone else).
+alter table cards add column if not exists group_name text;
+alter table cards add column if not exists card_number text;
+alter table cards add column if not exists primary_last4 text;
+alter table cards add column if not exists name_on_card text;
+alter table cards add column if not exists person_id uuid references people(id) on delete set null;
 create index if not exists transactions_person_idx on transactions (person_id);
 drop index if exists transactions_invoice_unique;
 create unique index if not exists transactions_invoice_whole_unique on transactions (invoice_id)

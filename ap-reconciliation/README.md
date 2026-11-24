@@ -518,8 +518,9 @@ Two other modes exist, one edit of the deploy workflow away (step 5):
 - **AP panel** (AP only), one row: a slim drop zone for the statement
   (drop the file on it or click it), *Upload and process*, then
   *Re-run matching*, *Send reminders*,
-  *Cards...* (label, holder, owner e-mail, Chat space name, active flag,
-  and whether a webhook is configured for the card), plus the step list
+  *Cards...* (label, holder, group, card number, linked under, name on
+  card, owner e-mail, Chat space name, active flag, and whether a webhook is
+  configured for the card), plus the step list
   of the running job. Nothing is posted to Chat on its own: after matching
   (and on *Send reminders*) the page lists which cards would get a reminder,
   with their counts and Chat spaces, and waits for *Send* or *Not now*.
@@ -563,9 +564,36 @@ Two other modes exist, one edit of the deploy workflow away (step 5):
   invoice column: the linked file with vendor, number and total, or the
   buttons *Confirm* / *Not this* on a possible match, *Link...* / *No
   invoice* on a missing one, *Undo* on a waived one. Edits save on change.
+- **Cards** (*Cards...*, AP). Each card is the account number the bank's
+  export shows (its last four digits). Its row holds:
+  - **Holder**: who uses the card. Saving a new holder adds them as a person
+    and keeps a label still in the *Card ending 4431 - George* form in step.
+  - **Group** (`cards.group_name`: Hair, Beauty): the team the spending
+    belongs to.
+  - **Card no.** (`card_number`): the last four digits printed on the card
+    when they differ from the account's (account 4431, card 4449). Receipts
+    showing it are this card's.
+  - **Linked under** (`primary_last4`): a supplementary card's primary card,
+    one level (7436 under 4431). The card strip, the table and the export say
+    "under 4431 (George)"; the primary lists its supplementary cards.
+  - **Name on card**: the name printed on the card or the statement when
+    someone else uses it (9456 is printed Henry Li and used by Linda).
+
+  The **group picker** next to the card picker (shown once a card has a
+  group; remembered per browser) narrows everything below it to that
+  group's cards: the card strip, the table, the counts and the spend, which
+  stays one total per currency. *No group* shows the cards in none. **Export
+  missing** downloads an Excel file of the purchases still missing their
+  invoice, for the group or card on screen, this month or all months
+  (`GET /api/export/missing`). It has one row per purchase, with the group,
+  account, card number, primary card, holder and person, plus a *Totals*
+  sheet per group and currency.
 - **Person** (the `people` table; `transactions.person_id`). Each transaction
   can be assigned to a person - who made the purchase, or answers for it -
-  from a drop-down of everyone added so far; *— none —* clears it. *New
+  from a drop-down of everyone added so far. A purchase nobody assigned
+  shows the card's holder, greyed and in italics; search, sort and the export
+  count it as theirs. The empty choice shows that holder (or *— none —* when
+  the card has none) and clears an assignment. *New
   person…* turns the cell into a name box: Enter (or leaving it) adds the
   person and assigns the row, Esc gives up. A name already there, case and
   extra spaces aside, assigns that person instead of adding a second. Anyone
@@ -709,7 +737,8 @@ phone. Chat cards posted before keep their old button until the next send.
 | `GET /receipts/<last4>/<YYYY>/<MM>` | signed in | the Chat card's *Add receipts*: redirects to the receipts list |
 | `GET /api/invoices?year&month` | signed in | invoices of month-1..month+1 with a `linked` flag (the picker) |
 | `GET /api/cards` | signed in | cards |
-| `POST /api/cards` | AP | `{"last4", "label", "holder_name", "owner_email", "chat_space", "active"}`; `owner_email` may list several addresses (commas, semicolons or spaces), stored lower-case as `a@x, b@x`; 400 if one is not an address |
+| `POST /api/cards` | AP | `{"last4", "label", "holder_name", "group_name", "card_number", "primary_last4", "name_on_card", "owner_email", "chat_space", "active"}`; `owner_email` may list several addresses (commas, semicolons or spaces), stored lower-case as `a@x, b@x`; 400 if one is not an address, a card number is not four digits or is another statement card, or a primary card is the card itself, not on the dashboard, or itself supplementary or a primary already. A new holder is added as a person (`cards.person_id`). Answers the cards and the people |
+| `GET /api/export/missing` | signed in | Excel file of the purchases still missing their invoice; `?group=Hair` (`-` for the cards in no group), `?card=4431`, `?year=&month=` for one month (else every month). Header `X-Rows`: how many |
 | `GET /api/statements?year&month` | signed in | uploads that touched the month |
 | `POST /api/statements[?background=1]` | AP | multipart `file`; `?sync=1` also indexes, matches and notifies (`&notify=0` to skip the cards) |
 | `POST /api/index?year&month[&limit]` | AP | read up to `limit` (max 100) new invoices for month-1..month+1 |

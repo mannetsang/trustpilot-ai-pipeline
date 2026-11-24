@@ -104,6 +104,9 @@
     .btn-split > #rematchBtn { border-top-right-radius: 0; border-bottom-right-radius: 0; }
     .btn-split > #rematchMore { border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -1px; padding-left: 9px; padding-right: 10px; }
     #rematchMenu { top: calc(100% + 6px); left: 0; right: auto; min-width: 250px; max-width: calc(100vw - 32px); padding: 6px; gap: 2px; }   /* id: wins over .col-menu */
+    /* The Person drop-down showing the card holder because nobody else was assigned. */
+    select.person-default { color: var(--text-mute); font-style: italic; }
+    #exportMenu { top: calc(100% + 6px); left: auto; right: 0; min-width: 220px; max-width: calc(100vw - 32px); padding: 6px; gap: 2px; }
     .rematch-menu button { text-align: left; padding: 8px 10px; border-radius: 8px; font-size: 13px; color: var(--text); background: none; border: 0; cursor: pointer; }
     .rematch-menu button:hover:not(:disabled), .rematch-menu button:focus-visible { background: var(--hover-wash); }
     .rematch-menu button:disabled { color: var(--text-mute); cursor: not-allowed; }
@@ -578,7 +581,12 @@
           <div class="toolbar">
             <div class="seg" id="statusSeg"></div>
             <input id="search" class="inp" type="search" placeholder="Search description, amount, cost centre, usage, person" style="max-width: 320px; flex: 1; min-width: 180px;" />
+            <select id="groupSelect" class="inp hidden" style="width: auto; min-width: 120px;" aria-label="Group" title="Show one group's cards: their purchases, spend and missing receipts"></select>
             <select id="cardSelect" class="inp" style="width: auto; min-width: 150px;" aria-label="Card"></select>
+            <span class="relative">
+              <button id="exportBtn" class="btn btn-secondary btn-xs" type="button" aria-haspopup="menu" aria-expanded="false" title="Download the purchases still missing a receipt (Excel), for the group or card shown">Export missing</button>
+              <div id="exportMenu" class="col-menu rematch-menu hidden" role="menu" aria-label="Export missing receipts"></div>
+            </span>
             <div id="rowCount" class="sub ml-auto"></div>
             <button id="receiptsBtn" class="btn btn-secondary btn-xs hidden" type="button" title="This card's purchases that still need a receipt, one block each, made for a phone">Receipts list</button>
             <button id="colsBtn" class="btn btn-secondary btn-xs" type="button" title="Show or hide columns; reset widths and sorting">Columns</button>
@@ -639,6 +647,7 @@
     config: null, me: null,
     months: [], cards: [], costCenters: [], people: [],
     year: null, month: null, card: '', view: '', status: 'all', q: '',     // view: '' (the table) or 'receipts'
+    group: readGroup(),                                                    // '' all groups, '-' cards in none
     txns: [], statements: [], notifications: [],
     loaded: false, jobRunning: false,
   };
@@ -646,6 +655,9 @@
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
+  // The group picked last on this browser ('' every group, '-' the cards in no group).
+  function readGroup() { try { return localStorage.getItem('apGroup') || ''; } catch (e) { return ''; } }
+  function saveGroup(g) { try { localStorage.setItem('apGroup', g || ''); } catch (e) { /* private mode: not remembered */ } }
   function $(sel, el) { return (el || document).querySelector(sel); }
   function $all(sel, el) { return Array.prototype.slice.call((el || document).querySelectorAll(sel)); }
   // Every piece of text coming from the API or the user goes through esc() before it is put into HTML.
@@ -1262,6 +1274,45 @@
     for (var i = 0; i < state.cards.length; i++) if (state.cards[i].last4 === last4) return state.cards[i].label || ('Card ending ' + last4);
     return 'Card ending ' + last4;
   }
+  function cardInfo(last4) {
+    for (var i = 0; i < state.cards.length; i++) if (state.cards[i].last4 === last4) return state.cards[i];
+    return null;
+  }
+  // "under 4431 (George)" for a supplementary card, '' for any other.
+  function primaryNote(last4) {
+    var c = cardInfo(last4);
+    if (!c || !c.primary_last4) return '';
+    return 'under ' + c.primary_last4 + (c.primary_holder ? ' (' + c.primary_holder + ')' : '');
+  }
+  // Everything known about a card, one line: its label, the number on the card, its primary card, the
+  // name printed on it, its group.
+  function cardTitle(last4) {
+    var c = cardInfo(last4) || {}, bits = [cardLabel(last4)];
+    if (c.card_number) bits.push('card number •••• ' + c.card_number);
+    if (c.primary_last4) bits.push('supplementary card ' + primaryNote(last4));
+    if ((c.supplementary || []).length) bits.push('supplementary cards: ' + c.supplementary.join(', '));
+    if (c.name_on_card) bits.push('name on the card: ' + c.name_on_card);
+    if (c.group_name) bits.push(c.group_name + ' group');
+    return bits.join(' · ');
+  }
+  function groupOf(last4) { var c = cardInfo(last4); return (c && c.group_name) || ''; }
+  function inGroup(last4) {
+    if (!state.group) return true;
+    var g = groupOf(last4).toLowerCase();
+    return state.group === '-' ? !g : g === state.group.toLowerCase();
+  }
+  function groupNames() {
+    var seen = {};
+    state.cards.forEach(function (c) { if (c.group_name) seen[c.group_name.toLowerCase()] = seen[c.group_name.toLowerCase()] || c.group_name; });
+    return Object.keys(seen).sort().map(function (k) { return seen[k]; });
+  }
+  // Who a purchase is for, by name: the person assigned, else the card's holder (a person, or the name
+  // the statement or Cards… gives).
+  function personFor(t) {
+    if (t.person_id) return personName(t.person_id);
+    var c = cardInfo(t.card_last4);
+    return (c && (personName(c.person_id) || c.holder_name)) || '';
+  }
   // Receipt upload is switched on per card on the server (RECEIPT_UPLOAD_CARDS); card_view says which.
   function receiptsOn(last4) {
     for (var i = 0; i < state.cards.length; i++) if (state.cards[i].last4 === last4) return !!state.cards[i].receipt_upload;
@@ -1273,7 +1324,9 @@
   function isPurchase(t) { return !t.type || t.type === 'purchase'; }
   function warnChecks(t) { return (t.checks || []).filter(function (c) { return c && c.level === 'warn'; }); }
   function infoChecks(t) { return (t.checks || []).filter(function (c) { return c && c.level !== 'warn'; }); }
-  function scopeTxns() { return state.card ? state.txns.filter(function (t) { return t.card_last4 === state.card; }) : state.txns; }
+  function scopeTxns() {
+    return state.txns.filter(function (t) { return (!state.card || t.card_last4 === state.card) && inGroup(t.card_last4); });
+  }
   function matchesStatus(t, status) {
     if (status === 'all') return true;
     if (status === 'uncoded') return t.type === 'purchase' && !(t.cost_center || '');
@@ -1281,9 +1334,9 @@
   }
   function matchesSearch(t, q) {
     if (!q) return true;
-    var hay = [t.description, t.supplier, t.city, t.country, t.merchant_category, t.cost_center, t.usage, t.note, t.updated_by, personName(t.person_id),
+    var hay = [t.description, t.supplier, t.city, t.country, t.merchant_category, t.cost_center, t.usage, t.note, t.updated_by, personFor(t),
       String(t.amount), money(t.amount, t.currency), t.source_amount !== null && t.source_amount !== undefined ? String(t.source_amount) : '',
-      t.invoice && t.invoice.vendor, t.invoice && t.invoice.invoice_number]
+      t.invoice && t.invoice.vendor, t.invoice && t.invoice.invoice_number, groupOf(t.card_last4)]
       .concat((t.also_invoices || []).map(function (a) { return (a.invoice_number || '') + ' ' + (a.file_name || ''); }))
       .join(' ').toLowerCase();
     return hay.indexOf(q) >= 0;
@@ -1384,7 +1437,7 @@
     invoice: function (t) { var inv = t.invoice; return (STATUS_RANK[t.invoice_status] === undefined ? 9 : STATUS_RANK[t.invoice_status]) + '|' + ((inv && (inv.vendor || inv.file_name)) || '').toLowerCase(); },
     cost: function (t) { return (t.cost_center || '\uffff').toLowerCase(); },      // empty ones last
     usage: function (t) { return (t.usage || '\uffff').toLowerCase(); },
-    person: function (t) { return (personName(t.person_id) || '\uffff').toLowerCase(); },
+    person: function (t) { return (personFor(t) || '\uffff').toLowerCase(); },
     by: function (t) { return (t.updated_at || '') + ' ' + (t.updated_by || ''); },
   };
   function sortRows(rows) {
@@ -1542,31 +1595,53 @@
     var cardsHere = {};
     state.txns.forEach(function (t) { cardsHere[t.card_last4] = true; });
     var n = Object.keys(cardsHere).length;
+    var inScope = scopeTxns();
+    var cardsInScope = {};
+    inScope.forEach(function (t) { cardsInScope[t.card_last4] = 1; });
+    var gn = Object.keys(cardsInScope).length;
     $('#monthSub').textContent = state.card
-      ? cardLabel(state.card) + ' · ' + scopeTxns().length + ' transactions'
-      : state.txns.length + ' transactions on ' + n + (n === 1 ? ' card' : ' cards');
+      ? cardLabel(state.card) + (primaryNote(state.card) ? ' · ' + primaryNote(state.card) : '') + ' · ' + inScope.length + ' transactions'
+      : state.group
+        ? (state.group === '-' ? 'Cards in no group' : state.group + ' group') + ' · ' + inScope.length + ' transactions on ' + gn + (gn === 1 ? ' card' : ' cards')
+        : state.txns.length + ' transactions on ' + n + (n === 1 ? ' card' : ' cards');
   }
 
   function renderCardStrip() {
     var per = {};
+    renderGroupSelect();
     state.txns.forEach(function (t) {
+      if (!inGroup(t.card_last4)) return;
       var b = per[t.card_last4] || (per[t.card_last4] = { missing: 0, possible: 0 });
       if (t.invoice_status === 'missing') b.missing++;
       if (t.invoice_status === 'possible') b.possible++;
     });
-    var all = kpisOf(state.txns);
-    var html = '<button class="chip' + (!state.card ? ' active' : '') + '" data-card="">All cards' + (all.missing ? '<span class="badge badge-red">' + all.missing + '</span>' : '') + '</button>';
+    var all = kpisOf(state.txns.filter(function (t) { return inGroup(t.card_last4); }));
+    var allLabel = state.group ? (state.group === '-' ? 'Cards in no group' : 'All ' + state.group + ' cards') : 'All cards';
+    var html = '<button class="chip' + (!state.card ? ' active' : '') + '" data-card="">' + esc(allLabel) + (all.missing ? '<span class="badge badge-red">' + all.missing + '</span>' : '') + '</button>';
     Object.keys(per).sort().forEach(function (l4) {
-      var b = per[l4];
-      html += '<button class="chip' + (state.card === l4 ? ' active' : '') + '" data-card="' + esc(l4) + '" title="' + esc(cardLabel(l4)) + '">' + esc(shortCardLabel(l4)) +
+      var b = per[l4], under = primaryNote(l4);
+      html += '<button class="chip' + (state.card === l4 ? ' active' : '') + '" data-card="' + esc(l4) + '" title="' + esc(cardTitle(l4)) + '">' + esc(shortCardLabel(l4)) +
+        (under ? '<span class="sub" style="margin-left:4px;">' + esc(under) + '</span>' : '') +
         (b.missing ? '<span class="badge badge-red" title="missing">' + b.missing + '</span>' : '') +
         (b.possible ? '<span class="badge badge-amber" title="possible">' + b.possible + '</span>' : '') + '</button>';
     });
     $('#cardStrip').innerHTML = html;
     var sel = $('#cardSelect');
-    sel.innerHTML = '<option value="">All cards</option>' + Object.keys(per).sort().map(function (l4) {
-      return '<option value="' + esc(l4) + '"' + (state.card === l4 ? ' selected' : '') + '>' + esc(cardLabel(l4)) + '</option>';
+    sel.innerHTML = '<option value="">' + esc(allLabel) + '</option>' + Object.keys(per).sort().map(function (l4) {
+      var under = primaryNote(l4);
+      return '<option value="' + esc(l4) + '"' + (state.card === l4 ? ' selected' : '') + ' title="' + esc(cardTitle(l4)) + '">' +
+        esc(cardLabel(l4) + (under ? ' · ' + under : '')) + '</option>';
     }).join('');
+  }
+  // The group picker: shown once a card has a group; '-' picks the cards in none.
+  function renderGroupSelect() {
+    var names = groupNames(), sel = $('#groupSelect');
+    var ungrouped = state.cards.some(function (c) { return !c.group_name; });
+    if (state.group && state.group !== '-' && names.map(function (n) { return n.toLowerCase(); }).indexOf(state.group.toLowerCase()) < 0) state.group = '';
+    sel.classList.toggle('hidden', !names.length);
+    sel.innerHTML = '<option value="">All groups</option>' + names.map(function (n) {
+      return '<option value="' + esc(n) + '"' + (state.group.toLowerCase() === n.toLowerCase() ? ' selected' : '') + '>' + esc(n) + '</option>';
+    }).join('') + (ungrouped ? '<option value="-"' + (state.group === '-' ? ' selected' : '') + '>No group</option>' : '');
   }
 
   function renderToolbar() {
@@ -1665,14 +1740,23 @@
     return p ? p.name : '';
   }
   function personCell(t) {
-    var current = t.person_id || '';
-    var opts = '<option value="">— none —</option>' + state.people.map(function (p) {
+    var current = t.person_id || '', holder = personFor(Object.assign({}, t, { person_id: '' }));
+    // Nobody assigned: the card's holder, said in the empty choice (picking someone else assigns them).
+    var opts = '<option value="">' + esc(holder || '— none —') + '</option>' + state.people.map(function (p) {
       return '<option value="' + esc(p.id) + '"' + (p.id === current ? ' selected' : '') + '>' + esc(p.name) + '</option>';
     }).join('');
     if (current && !personName(current)) opts += '<option value="' + esc(current) + '" selected>(someone not on the list)</option>';
     opts += t.editable ? '<option value="__new__">New person…</option>' : '';
-    return '<select class="inp" data-field="person_id" aria-label="Person" title="' + esc(personName(current) || (current ? 'Someone added since this page loaded' : 'Not assigned')) + '"' +
+    return '<select class="inp' + (!current && holder ? ' person-default' : '') + '" data-field="person_id" aria-label="Person" title="' + esc(personName(current) || (current ? 'Someone added since this page loaded' : holder ? holder + ', the card holder (nobody else assigned)' : 'Not assigned')) + '"' +
       (t.editable ? '' : ' disabled') + '>' + opts + '</select>';
+  }
+
+  // A Person drop-down left on its empty choice shows the card's holder, muted; a person picked shows plain.
+  function markPersonDefault(el) {
+    var holder = el.value ? '' : (el.options[0] && el.options[0].textContent !== '— none —' ? el.options[0].textContent : '');
+    el.classList.toggle('person-default', !!holder);
+    el.title = el.value ? (personName(el.value) || 'Someone added since this page loaded')
+      : holder ? holder + ', the card holder (nobody else assigned)' : 'Not assigned';
   }
 
   function costCenterCell(t) {
@@ -1690,7 +1774,11 @@
       var post = t.post_date && t.post_date !== t.txn_date ? '<div class="sub" title="posted ' + esc(fmtDay(t.post_date)) + '">posted ' + esc(fmtDay(t.post_date)) + '</div>' : '';
       return '<td style="white-space:nowrap;">' + esc(fmtDay(t.txn_date)) + post + '</td>';
     },
-    card: function (t) { return '<td><span class="pill pill-grey" title="' + esc(cardLabel(t.card_last4) + (t.holder_name ? ' · ' + t.holder_name : '')) + '">' + esc(shortCardLabel(t.card_last4)) + '</span></td>'; },
+    card: function (t) {
+      var under = primaryNote(t.card_last4);
+      return '<td><span class="pill pill-grey" title="' + esc(cardTitle(t.card_last4) + (t.holder_name ? ' · on the statement: ' + t.holder_name : '')) + '">' + esc(shortCardLabel(t.card_last4)) + '</span>' +
+        (under ? '<div class="sub" style="white-space:nowrap;">' + esc(under) + '</div>' : '') + '</td>';
+    },
     desc: function (t) {
       var subBits = [[t.city, t.country].filter(Boolean).join(', '), t.merchant_category].filter(Boolean);
       if (t.type !== 'purchase') subBits.unshift(t.type);
@@ -1954,7 +2042,7 @@
       delete input.dataset.pending;
       input.dataset.saving = '';
       input.classList.remove('saving');
-      if (field === 'person_id') input.title = personName(input.value) || 'Not assigned';
+      if (field === 'person_id') markPersonDefault(input);
     }
     if (ok && pending !== undefined && pending !== value) {
       var row = rowEl(id), again = row && row.querySelector('[data-field="' + field + '"]');
@@ -2064,6 +2152,7 @@
       // saved when the list is left (Tab, Enter, a click elsewhere); "New person…" opens the box only then.
       if (el.dataset.keyed === '1') return;
       if (el.value === '__new__') { swapToNewPersonInput(el); return; }
+      markPersonDefault(el);
       saveField(el, 'person_id');
     }
   });
@@ -2128,6 +2217,58 @@
     navigate(state.year, state.month, chip.dataset.card);
   });
   $('#cardSelect').addEventListener('change', function (ev) { navigate(state.year, state.month, ev.target.value); });
+  $('#groupSelect').addEventListener('change', function (ev) {
+    state.group = ev.target.value || '';
+    saveGroup(state.group);
+    if (state.card && !inGroup(state.card)) navigate(state.year, state.month, '');      // its card is not in the group
+    else renderMonth();
+  });
+  // Export missing: the purchases still needing a receipt, for the group (or card) shown, this month or all.
+  function exportMenuHtml() {
+    var what = state.card ? 'card ' + state.card : state.group ? (state.group === '-' ? 'cards in no group' : state.group + ' group') : 'all cards';
+    return '<div class="sub" style="padding: 6px 10px;">Missing receipts, ' + esc(what) + '</div>' +
+      '<button type="button" role="menuitem" data-export="month">' + esc(monthLabel(state.year, state.month)) + '</button>' +
+      '<button type="button" role="menuitem" data-export="all">All months</button>';
+  }
+  function closeExportMenu() { $('#exportMenu').classList.add('hidden'); $('#exportBtn').setAttribute('aria-expanded', 'false'); }
+  $('#exportBtn').addEventListener('click', function (ev) {
+    ev.stopPropagation();
+    var menu = $('#exportMenu'), open = menu.classList.contains('hidden');
+    if (open) {
+      menu.innerHTML = exportMenuHtml(); menu.style.left = ''; menu.style.right = '';
+      menu.classList.remove('hidden'); $('#exportBtn').setAttribute('aria-expanded', 'true');
+      if (menu.getBoundingClientRect().left < 8) { menu.style.left = '0'; menu.style.right = 'auto'; }   // a phone: the button sits on the left
+    } else closeExportMenu();
+  });
+  document.addEventListener('click', function (ev) { if (!ev.target.closest('#exportMenu')) closeExportMenu(); });
+  document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') closeExportMenu(); });
+  $('#exportMenu').addEventListener('click', async function (ev) {
+    var b = ev.target.closest('button[data-export]'); if (!b) return;
+    closeExportMenu();
+    var q = [];
+    if (state.group) q.push('group=' + encodeURIComponent(state.group));
+    if (state.card) q.push('card=' + encodeURIComponent(state.card));
+    if (b.dataset.export === 'month') q.push('year=' + state.year, 'month=' + state.month);
+    var btn = $('#exportBtn');
+    btn.disabled = true;
+    try {
+      var res = await fetch('/api/export/missing' + (q.length ? '?' + q.join('&') : ''), { headers: apiHeaders(), cache: 'no-store' });
+      if (res.status === 401) { var d401 = null; try { d401 = await res.json(); } catch (e) { /* no body */ } throw sessionEnded(d401); }
+      if (!res.ok) { var d = null; try { d = await res.json(); } catch (e) { /* no body */ } throw new ApiError(res.status, (d && d.error) || (res.status + ' ' + res.statusText), d); }
+      var blob = await res.blob(), name = 'missing-receipts.xlsx';
+      var m = /filename="?([^";]+)"?/.exec(res.headers.get('Content-Disposition') || '');
+      if (m) name = m[1];
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 10000);
+      var rows = Number(res.headers.get('X-Rows') || 0);
+      toast(rows ? count(rows, 'purchase', 'purchases') + ' missing a receipt: ' + name : 'Nothing missing a receipt there.', 'ok');
+    } catch (e) {
+      report(e, 'Could not export');
+    }
+    btn.disabled = false;
+  });
   // On a phone the month drop-down is the only month picker: the receipts list stays the receipts list.
   $('#monthSelect').addEventListener('change', function (ev) {
     var p = ev.target.value.split('-'), keep = state.view === 'receipts';
@@ -2941,19 +3082,32 @@
   // -- Cards settings ------------------------------------------------------------
   function cardsModalHtml() {
     return '<div class="sub mb-3">Labels show in the dashboard and in the Chat cards. The owners (one address, or several separated by commas) may code the card\'s transactions and add its receipts. The Chat space name is for reference; the webhook itself is configured on the server. A card shown with "receipts show" was reissued: merchants that keep it on file print the new number, and those receipts are matched to it.</div>' +
-      '<div class="list-wrap"><table class="list" id="cardsTable"><thead><tr><th>Card</th><th>Label</th><th>Holder</th><th>Owner email</th><th>Chat space</th><th>Active</th><th>Webhook</th><th></th></tr></thead><tbody>' +
+      '<div class="sub mb-3">The holder is who uses the card: the Person of its purchases unless someone else is assigned. The card number is the one printed on the card when the statement shows the account\'s (account 4431, card 4449); receipts showing it are this card\'s. A supplementary card is linked under its primary card. The group (Hair, Beauty) filters the dashboard, its spend and the missing-receipt export.</div>' +
+      '<datalist id="groupList">' + ['Hair', 'Beauty'].concat(groupNames()).filter(function (g, i, all) {
+        return all.map(function (x) { return x.toLowerCase(); }).indexOf(g.toLowerCase()) === i;
+      }).map(function (g) { return '<option value="' + esc(g) + '"></option>'; }).join('') + '</datalist>' +
+      '<div class="list-wrap"><table class="list" id="cardsTable"><thead><tr><th>Card</th><th>Label</th><th>Holder</th><th>Group</th><th>Card no.</th><th>Linked under</th><th>Name on card</th><th>Owner email</th><th>Chat space</th><th>Active</th><th>Webhook</th><th></th></tr></thead><tbody>' +
       (state.cards.length ? state.cards.map(function (c) {
+        var primaries = state.cards.filter(function (o) { return o.last4 !== c.last4 && !o.primary_last4; });
         return '<tr data-last4="' + esc(c.last4) + '">' +
           '<td class="font-medium" style="white-space:nowrap;">•••• ' + esc(c.last4) +
             ((c.receipts_show || []).length ? '<div class="sub" style="font-weight:400;" title="The card was reissued: merchants that keep it on file show the new number. Their receipts are matched to this card.">receipts show ' + c.receipts_show.map(esc).join(', ') + '</div>' : '') + '</td>' +
           '<td><input class="inp" data-cf="label" value="' + esc(c.label || '') + '" style="min-width:160px;" /></td>' +
           '<td><input class="inp" data-cf="holder_name" value="' + esc(c.holder_name || '') + '" style="min-width:130px;" /></td>' +
+          '<td><input class="inp" data-cf="group_name" list="groupList" value="' + esc(c.group_name || '') + '" placeholder="Hair, Beauty" style="min-width:90px;" /></td>' +
+          '<td><input class="inp" data-cf="card_number" inputmode="numeric" maxlength="4" value="' + esc(c.card_number || '') + '" placeholder="e.g. 4449" title="The last four digits printed on the card, when they differ from the account\'s" style="width:72px;" /></td>' +
+          '<td><select class="inp" data-cf="primary_last4" title="A supplementary card: the primary card it is linked under" style="min-width:110px;"' + ((c.supplementary || []).length ? ' disabled' : '') + '>' +
+            '<option value="">— primary —</option>' + primaries.map(function (o) {
+              return '<option value="' + esc(o.last4) + '"' + (o.last4 === c.primary_last4 ? ' selected' : '') + '>' + esc(o.last4 + (o.holder_name ? ' · ' + o.holder_name : '')) + '</option>';
+            }).join('') + '</select>' +
+            ((c.supplementary || []).length ? '<div class="sub" style="white-space:nowrap;">primary of ' + c.supplementary.map(esc).join(', ') + '</div>' : '') + '</td>' +
+          '<td><input class="inp" data-cf="name_on_card" value="' + esc(c.name_on_card || '') + '" placeholder="if not the holder" title="The name printed on the card or the statement, when someone else uses it" style="min-width:110px;" /></td>' +
           '<td><input class="inp" data-cf="owner_email" type="email" multiple value="' + esc(c.owner_email || '') + '" placeholder="name@superhairpieces.com" title="One address, or several separated by commas" style="min-width:220px;" /></td>' +
           '<td><input class="inp" data-cf="chat_space" value="' + esc(c.chat_space || '') + '" style="min-width:140px;" /></td>' +
           '<td class="text-center"><input type="checkbox" data-cf="active"' + (c.active ? ' checked' : '') + ' aria-label="Active" /></td>' +
           '<td class="text-center" title="' + (c.webhook_configured ? 'Chat webhook configured for this card' : (c.webhook_default ? 'No webhook for this card: reminders go to the default space' : 'No webhook for this card: reminders fail')) + '">' + (c.webhook_configured ? '<span style="color: var(--up-ink); font-weight: 700;">✓</span>' : (c.webhook_default ? '<span class="sub">default</span>' : '<span class="sub">—</span>')) + '</td>' +
           '<td class="td-right"><button class="btn btn-secondary btn-xs" data-save-card="' + esc(c.last4) + '">Save</button></td></tr>';
-      }).join('') : '<tr><td colspan="8"><div class="empty" style="padding: 24px;">No cards yet; they appear after the first upload.</div></td></tr>') +
+      }).join('') : '<tr><td colspan="12"><div class="empty" style="padding: 24px;">No cards yet; they appear after the first upload.</div></td></tr>') +
       '</tbody></table></div>';
   }
   async function openCardsModal() {
@@ -2966,13 +3120,17 @@
       var b = ev.target.closest('button[data-save-card]'); if (!b || b.disabled) return;
       var tr = b.closest('tr');
       var payload = { last4: b.dataset.saveCard };
-      $all('[data-cf]', tr).forEach(function (el) { payload[el.dataset.cf] = el.type === 'checkbox' ? el.checked : el.value; });
+      $all('[data-cf]', tr).forEach(function (el) { if (!el.disabled) payload[el.dataset.cf] = el.type === 'checkbox' ? el.checked : el.value; });
       b.disabled = true; b.innerHTML = '<span class="spinner"></span>';
       try {
         var data = await api('/api/cards', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         state.cards = data.cards || state.cards;
+        if (data.people) state.people = data.people;
         toast('Card ' + payload.last4 + ' saved', 'ok');
-        renderCardStrip(); renderTable(); renderLists(); renderKpis();
+        renderMonth();
+        var fresh = state.cards.find(function (c) { return c.last4 === payload.last4; });
+        var lbl = tr.querySelector('[data-cf="label"]');
+        if (fresh && lbl && document.activeElement !== lbl) lbl.value = fresh.label || '';
       } catch (e) {
         report(e, 'Could not save the card');
       }

@@ -164,18 +164,31 @@ def card_aliases(statement_cards):
     return {number: next(iter(cards)) for number, cards in seen.items() if len(cards) == 1}
 
 
+def all_card_aliases(cards):
+    """{a number receipts show: its statement card} for the cards table's rows: the number printed on a
+    card whose statement shows the account's (cards.card_number: account 4431, card 4449), as AP entered
+    it, and the reissue numbers card_aliases works out, where none was entered."""
+    known = {str(c.get("last4")) for c in cards if c.get("last4")}
+    out = card_aliases(known)
+    for c in cards:
+        number = str(c.get("card_number") or "")
+        if re.fullmatch(r"\d{4}", number) and number != c.get("last4") and number not in known:
+            out[number] = c["last4"]
+    return out
+
+
 def refresh_card_aliases(store, force=False):
-    """Read the statement cards (the cards table) and keep their reissue numbers for cards_differ;
-    reread at most every CARD_ALIASES_MAX_AGE seconds unless forced."""
+    """Read the statement cards (the cards table) and keep the numbers their receipts may show for
+    cards_differ; reread at most every CARD_ALIASES_MAX_AGE seconds unless forced."""
     import time
     now = time.monotonic()
     if (force or _card_aliases["store"] is not store or not _card_aliases["at"]
             or now - _card_aliases["at"] > CARD_ALIASES_MAX_AGE):
         try:
-            cards = [c.get("last4") for c in store.list_cards()]
+            cards = store.list_cards()
         except Exception:  # noqa: BLE001  (no cards table yet: no aliases, never a failed match)
             return _card_aliases["map"]
-        _card_aliases.update(map=card_aliases(cards), at=now, store=store)
+        _card_aliases.update(map=all_card_aliases(cards), at=now, store=store)
     return _card_aliases["map"]
 
 

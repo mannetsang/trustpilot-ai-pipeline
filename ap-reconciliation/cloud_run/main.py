@@ -72,6 +72,7 @@ import datetime as dt
 import hashlib
 import hmac
 import html
+import io
 import json
 import os
 import re
@@ -81,7 +82,7 @@ import time
 import uuid
 from collections import OrderedDict
 
-from flask import Flask, abort, g, jsonify, redirect, request, send_from_directory
+from flask import Flask, abort, g, jsonify, redirect, request, send_file, send_from_directory
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -1160,23 +1161,42 @@ def month_list(store):
     return [months[k] for k in sorted(months, reverse=True)]
 
 
-def card_view(c, aliases=None):
-    """aliases: {number receipts show: statement card} (matching.card_aliases): the numbers merchants
-    may show for this card since it was reissued."""
+def card_view(c, aliases=None, by_last4=None):
+    """aliases: {number receipts show: statement card} (matching.all_card_aliases): the numbers merchants
+    may show for this card (the number printed on it, or one it was reissued to). by_last4: every card,
+    for a supplementary card's primary (who holds it) and a primary's supplementary cards."""
+    by_last4 = by_last4 or {}
+    primary = by_last4.get(c.get("primary_last4") or "")
     return {"last4": c["last4"], "label": c.get("label") or f"Card ending {c['last4']}",
             "receipts_show": sorted(n for n, card in (aliases or {}).items() if card == c["last4"]),
             "holder_name": c.get("holder_name") or "", "owner_email": c.get("owner_email") or "",
             "chat_space": c.get("chat_space") or "", "active": c.get("active", True) is not False,
+            "group_name": c.get("group_name") or "", "card_number": c.get("card_number") or "",
+            "name_on_card": c.get("name_on_card") or "", "person_id": c.get("person_id") or "",
+            "primary_last4": c.get("primary_last4") or "",
+            "primary_holder": (primary or {}).get("holder_name") or "",
+            "primary_card_number": (primary or {}).get("card_number") or "",
+            "supplementary": sorted(o["last4"] for o in by_last4.values() if o.get("primary_last4") == c["last4"]),
             "webhook_configured": bool(CARD_WEBHOOKS.get(c["last4"])),
             "webhook_default": bool(chat.webhook_for(CARD_WEBHOOKS, c["last4"])),
             "receipt_upload": receipt_upload_enabled(c["last4"])}
 
 
 def card_views(cards, seen=None):
-    """The cards for the dashboard; with seen (the card numbers invoices show), each card's reissue
-    numbers that receipts actually show (the Cards dialog)."""
-    aliases = {n: c for n, c in matching.card_aliases([c["last4"] for c in cards]).items() if n in (seen or ())}
-    return [card_view(c, aliases) for c in cards]
+    """The cards for the dashboard; with seen (the card numbers invoices show), each card's other numbers
+    that receipts actually show (the Cards dialog); the number entered as printed on the card always."""
+    by_last4 = {c["last4"]: c for c in cards}
+    aliases = {n: c for n, c in matching.all_card_aliases(cards).items()
+               if n in (seen or ()) or n == (by_last4.get(c) or {}).get("card_number")}
+    return [card_view(c, aliases, by_last4) for c in cards]
+
+
+GROUP_MAX = 40
+CARD_LABEL_RE = re.compile(r"^Card ending (\d{4})(?: - (.*))?$")
+
+
+def default_card_label(last4, holder):
+    return f"Card ending {last4}" + (f" - {holder}" if holder else "")
 
 
 # ---------------------------------------------------------------------------
@@ -1984,10 +2004,44 @@ def api_cards_update():
     last4 = statements.last4(body.get("last4"))
     if not last4:
         return jsonify({"error": "last4 must be four digits"}), 400
+    store = get_store()
+    cards = {c["last4"]: c for c in store.list_cards()}
+    current = cards.get(last4) or {}
     row = {"last4": last4, "updated_at": now_iso()}
     for field in ("label", "holder_name", "chat_space"):
         if field in body:
-            row[field] = (body.get(field) or "").strip()[:200] or None
+            row[field] = " ".join((body.get(field) or "").split())[:200] or None
+    if "group_name" in body:
+        row["group_name"] = " ".join(str(body.get("group_name") or "").split())[:GROUP_MAX] or None
+    if "name_on_card" in body:
+        row["name_on_card"] = " ".join(str(body.get("name_on_card") or "").split())[:80] or None
+    if "card_number" in body:
+        number = re.sub(r"\D", "", str(body.get("card_number") or ""))
+        if number and len(number) != 4:
+            return jsonify({"error": "card_number: the last four digits printed on the card"}), 400
+        if number and number in cards and number != last4:
+            return jsonify({"error": f"card_number: {number} is a statement card of its own"}), 400
+        row["card_number"] = number if number and number != last4 else None
+    if "primary_last4" in body:
+        primary = statements.last4(body.get("primary_last4")) if body.get("primary_last4") else None
+        if primary and (primary == last4 or primary not in cards):
+            return jsonify({"error": "primary_last4: another card on the dashboard, or empty"}), 400
+        if primary and (cards[primary].get("primary_last4") or any(c.get("primary_last4") == last4 for c in cards.values())):
+            return jsonify({"error": "primary_last4: a supplementary card is linked under a primary card, one level"}), 400
+        row["primary_last4"] = primary
+    if "holder_name" in body and (row["holder_name"] or "") != (current.get("holder_name") or ""):
+        # The holder as a person: the Person of the card's purchases nobody assigned to someone else.
+        if row["holder_name"]:
+            person, _ = store.create_person(row["holder_name"], created_by=user["email"])
+            row["person_id"] = person["id"]
+        else:
+            row["person_id"] = None
+        # A label still the default one follows the new holder.
+        old_label = current.get("label") or default_card_label(last4, current.get("holder_name"))
+        sent = row.get("label") if "label" in body else old_label
+        if not sent or sent in (old_label, default_card_label(last4, current.get("holder_name"))) \
+                and CARD_LABEL_RE.match(old_label or ""):
+            row["label"] = default_card_label(last4, row["holder_name"])
     if "owner_email" in body:
         # Several owners (the card holder and someone who files their receipts) are kept as one
         # comma-separated, lower-case list.
@@ -1998,11 +2052,118 @@ def api_cards_update():
         row["owner_email"] = ", ".join(emails)[:500] or None
     if "active" in body:
         row["active"] = bool(body.get("active"))
-    get_store().upsert_cards([row])
+    store.upsert_cards([row])
     matching.forget_card_aliases()
     print(f"card {last4} updated by {user['email']}")
+    return jsonify({"cards": card_views(store.list_cards(), store.invoice_card_numbers()),
+                    "people": store.list_people()})
+
+
+NO_GROUP = "-"                         # ?group=- : the cards in no group
+
+
+def in_group(card, group):
+    """Is the card (a cards row, or None) in the group asked for: '' any, NO_GROUP none, else that group
+    ignoring case and spaces?"""
+    if not group:
+        return True
+    mine = " ".join(str((card or {}).get("group_name") or "").split()).lower()
+    return not mine if group == NO_GROUP else mine == " ".join(group.split()).lower()
+
+
+def _text_cell(cell, value):
+    """A spreadsheet cell holding text as text: a description such as '=SUM(...)' or '+1 800 ...' is never
+    read as a formula by Excel."""
+    cell.value = value
+    if isinstance(value, str):
+        cell.data_type = "s"
+
+
+def missing_receipts_xlsx(store, group="", card=None, year=None, month=None):
+    """(xlsx bytes, rows) of the purchases still missing their invoice: one month or every month, the
+    cards of a group (or one card), with the card's group, number, primary card, holder and the person
+    each purchase is for (the holder unless someone else was assigned). A second sheet totals them per
+    group and currency: amounts in different currencies are never added together."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+    cards = {c["last4"]: c for c in store.list_cards()}
+    people = {p["id"]: p["name"] for p in store.list_people()}
+    if year and month:
+        months = [(int(year), int(month))]
+    else:
+        months = sorted({(int(r["year"]), int(r["month"])) for r in store.month_summary()})
+    rows = []
+    for y, m in months:
+        for t in store.list_transactions(y, m, card, statuses=["missing"]):
+            c = cards.get(t["card_last4"])
+            if t.get("type") == "purchase" and in_group(c, group):
+                rows.append((t, c or {}))
+    rows.sort(key=lambda r: ((r[1].get("group_name") or "~").lower(), r[0]["card_last4"], str(r[0]["txn_date"]), r[0]["id"]))
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Missing receipts"
+    head = ["Group", "Card (account)", "Card number", "Linked under", "Card holder", "Person", "Date", "Description",
+            "Amount", "Currency", "Foreign amount", "Foreign currency", "Cost centre", "Usage", "Note", "Dashboard"]
+    ws.append(head)
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+    base = dashboard_url()
+    totals = {}
+    for t, c in rows:
+        primary = cards.get(c.get("primary_last4") or "") or {}
+        person = people.get(t.get("person_id") or "") or people.get(c.get("person_id") or "") or c.get("holder_name") or ""
+        link = f"{base}/#/{t['year']}/{int(t['month']):02d}?card={t['card_last4']}" if base else ""
+        values = [c.get("group_name") or "", t["card_last4"], c.get("card_number") or "",
+                  (f"{primary.get('last4', c.get('primary_last4'))} ({primary.get('holder_name')})" if primary.get("holder_name")
+                   else c.get("primary_last4") or ""),
+                  c.get("holder_name") or "", person, str(t["txn_date"])[:10], t.get("description") or "",
+                  float(t["amount"]), t.get("currency") or "",
+                  float(t["source_amount"]) if t.get("source_amount") is not None else None, t.get("source_currency") or "",
+                  t.get("cost_center") or "", t.get("usage") or "", t.get("note") or "", link]
+        ws.append([None] * len(values))
+        for col, value in enumerate(values, start=1):
+            _text_cell(ws.cell(row=ws.max_row, column=col), value)
+        if link:
+            ws.cell(row=ws.max_row, column=len(values)).hyperlink = link
+        key = (c.get("group_name") or "(no group)", t.get("currency") or "")
+        n, total = totals.get(key, (0, 0.0))
+        totals[key] = (n + 1, round(total + float(t["amount"]), 2))
+    for col, width in zip("ABCDEFGHIJKLMNOP", (10, 14, 12, 18, 16, 16, 11, 40, 12, 9, 14, 10, 18, 24, 24, 40)):
+        ws.column_dimensions[col].width = width
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = ws.dimensions
+    summary = wb.create_sheet("Totals")
+    summary.append(["Group", "Currency", "Purchases missing a receipt", "Amount"])
+    for cell in summary[1]:
+        cell.font = Font(bold=True)
+    for (g_name, cur), (n, total) in sorted(totals.items()):
+        summary.append([g_name, cur, n, total])
+    for col, width in zip("ABCD", (16, 10, 28, 14)):
+        summary.column_dimensions[col].width = width
+    out = io.BytesIO()
+    wb.save(out)
+    return out.getvalue(), len(rows)
+
+
+@app.route("/api/export/missing")
+def api_export_missing():
+    """The purchases still missing their invoice, as an Excel file: ?group=Hair (or - for the cards in no
+    group), ?card=, and ?year=&month= for one month (else every month)."""
+    require_user()
     store = get_store()
-    return jsonify({"cards": card_views(store.list_cards(), store.invoice_card_numbers())})
+    group = " ".join(str(request.args.get("group") or "").split())[:GROUP_MAX]
+    card = statements.last4(request.args.get("card")) if request.args.get("card") else None
+    year, month = request.args.get("year"), request.args.get("month")
+    if (year or month) and not (str(year).isdigit() and str(month).isdigit() and 1 <= int(month) <= 12):
+        return jsonify({"error": "year and month: both, as numbers"}), 400
+    data, n = missing_receipts_xlsx(store, group, card, year, month)
+    name = "missing-receipts" + (f"-{re.sub(r'[^A-Za-z0-9]+', '-', group).strip('-') or 'no-group'}" if group else "") + \
+        (f"-{card}" if card else "") + (f"-{int(year)}-{int(month):02d}" if year and month else "-all-months") + ".xlsx"
+    resp = send_file(io.BytesIO(data), mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                     as_attachment=True, download_name=name)
+    resp.headers["X-Rows"] = str(n)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @app.route("/api/statements", methods=["GET"])
