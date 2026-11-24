@@ -1903,25 +1903,53 @@
   // ---------------------------------------------------------------------------
   function rowEl(id) { return $('#txnBody').querySelector('tr[data-id="' + CSS.escape(id) + '"]'); }
   function txnById(id) { for (var i = 0; i < state.txns.length; i++) if (state.txns[i].id === id) return state.txns[i]; return null; }
-  // The Cost centre drop-down kept for its focus still shows what it was drawn with. A use-case save can
-  // fill the card's default into it (it was clicked, or tabbed back to, while that save was out): renew
-  // its options and choice so it does not keep promising a fill that has happened. A drop-down saving a
-  // pick of its own is left to that save. Its value is always a saved one (a pick saves at once).
-  function syncKeptCostCenter(sel, freshTd, updated) {
-    if (!sel.matches('select[data-field="cost_center"]') || sel.dataset.saving === '1') return;
-    var src = freshTd.querySelector('select[data-field="cost_center"]'), want = updated.cost_center || '';
-    if (!src) return;
+  // The Cost centre drop-down kept for its focus still shows what it was drawn with. Renew its options
+  // from the row t as now held: a use-case save sets the use case (and can fill the card's default), and
+  // the first option must not keep promising a fill that will not happen. Its choice becomes the row's
+  // cost centre, except while a pick of its own is saving, or when keepChoice (a pick whose save failed):
+  // that pick stays in view. Called on every answer for the row and once more when its own save is done,
+  // since the answers that came while it was saving only renewed the options.
+  function syncKeptCostCenter(sel, t, keepChoice) {
+    if (!t || !sel.matches('select[data-field="cost_center"]')) return;
+    var tpl = document.createElement('template');
+    tpl.innerHTML = costCenterCell(t);
+    var src = tpl.content.firstElementChild;
+    var want = keepChoice || sel.dataset.saving === '1' ? sel.value : (t.cost_center || '');
     var first = function (el) { return el.options[0] ? el.options[0].textContent : ''; };
     if (sel.value === want && first(sel) === first(src)) return;
     sel.innerHTML = src.innerHTML;
+    if (want && !$all('option', sel).some(function (o) { return o.value === want; })) {
+      // A pick the row's list does not offer (it was the row's own unlisted value): keep it choosable.
+      var o = document.createElement('option');
+      o.value = want; o.textContent = want;
+      sel.insertBefore(o, sel.lastElementChild);
+    }
     sel.value = want;
     markCostDefault(sel);
   }
-  function replaceTxn(updated, at) {
+  // Saves of one row can be answered out of order: a use-case save that filled the card's default cost
+  // centre can be answered after the Cost centre pick that followed it. Each PATCH is numbered as it is
+  // sent; once a save of a field has been answered, the answer to an earlier request keeps that field as
+  // held, so a late answer never puts back what a later save replaced.
+  var ROW_FIELDS = ['cost_center', 'usage', 'note', 'person_id'];
+  var patchSeq = 0, fieldSeq = {};        // transaction id -> { field: number of its latest answered save }
+  // req: { seq, fields } from patchTxn (the request's number and the row fields it sent); absent otherwise.
+  function keepNewerFields(updated, held, req) {
+    var seen = fieldSeq[updated.id] || (fieldSeq[updated.id] = {}), kept = false;
+    ROW_FIELDS.forEach(function (f) {
+      if ((seen[f] || 0) > req.seq && updated[f] !== held[f]) { updated[f] = held[f]; kept = true; }
+    });
+    req.fields.forEach(function (f) { if (ROW_FIELDS.indexOf(f) >= 0) seen[f] = Math.max(seen[f] || 0, req.seq); });
+    if (kept && String(held.updated_at || '') > String(updated.updated_at || '')) {
+      updated.updated_at = held.updated_at; updated.updated_by = held.updated_by;
+    }
+  }
+  function replaceTxn(updated, at, req) {
     at = at || { year: state.year, month: state.month };
     if (at.year !== state.year || at.month !== state.month) return;   // the user has moved on
     var found = false;
     for (var i = 0; i < state.txns.length; i++) if (state.txns[i].id === updated.id) {
+      if (req) keepNewerFields(updated, state.txns[i], req);
       if (updated.editable === undefined) updated.editable = state.txns[i].editable;
       // Only the month's list carries the vendor's use-case suggestion, not a save's answer: keep it while
       // the row still has no use case and the same invoice (the suggestion comes from that invoice's vendor).
@@ -1942,7 +1970,7 @@
         var oldCells = $all('td', tr), newCells = $all('td', fresh);
         for (var c = 0; c < oldCells.length && c < newCells.length; c++) {
           if (!oldCells[c].contains(active)) oldCells[c].replaceWith(newCells[c]);
-          else syncKeptCostCenter(active, newCells[c], updated);
+          else syncKeptCostCenter(active, updated);
         }
         tr.className = fresh.className;
       } else {
@@ -1969,12 +1997,15 @@
   }
   async function patchTxn(id, body, okMessage) {
     var at = { year: state.year, month: state.month };
+    var req = { seq: ++patchSeq, fields: Object.keys(body) };
     var data = await api('/api/transactions/' + encodeURIComponent(id), {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
-    replaceTxn(data.transaction, at);
-    // Setting a use case can fill the card's default cost centre (the row shows it); say so in the toast.
-    if (okMessage) toast(okMessage + (data.filled_cost_center ? ' · cost centre set to ' + data.filled_cost_center : ''), 'ok');
+    replaceTxn(data.transaction, at, req);
+    // Setting a use case can fill the card's default cost centre (the row shows it); say so in the toast,
+    // unless a later Cost centre save, answered first, has already replaced it.
+    var now = txnById(id), filled = data.filled_cost_center && !(now && now.cost_center !== data.filled_cost_center);
+    if (okMessage) toast(okMessage + (filled ? ' · cost centre set to ' + data.filled_cost_center : ''), 'ok');
     // A use case typed into the Cost centre box: the server keeps it there and says where it belongs.
     if (data.hint) toast(data.hint, '', 6000);
     return data.transaction;
@@ -2125,6 +2156,8 @@
       input.dataset.saving = '';
       input.classList.remove('saving');
       if (field === 'person_id') markPersonDefault(input);
+      // The answers that came while it was saving left its choice alone: renew it from the row now.
+      if (field === 'cost_center') syncKeptCostCenter(input, txnById(id), !ok);
       // That kept cell still shows the vendor's suggestion under the drop-down: with a use case now
       // saved it no longer applies, and pressing it would overwrite the pick.
       if (ok && field === 'usage') { var sugg = input.parentNode && input.parentNode.querySelector('.use-sugg'); if (sugg) sugg.remove(); }

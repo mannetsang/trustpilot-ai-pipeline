@@ -687,8 +687,9 @@
   // ---------------------------------------------------------------------------
   // Unsaved changes. An editor sets dirty on its first input and clears it on a successful save or a
   // cancel; closing the dialog, switching tab and leaving the page ask first while it is set.
-  // Kept per editor (owner: 'card', 'vendor', 'person', 'coding-add', 'coding-edit'): two can be open at
-  // once on #coding (the Add form and a row being edited), and each must stay guarded on its own.
+  // Kept per editor (owner: 'card', 'vendor', 'person', 'coding-add-uc', 'coding-add-cc', 'coding-edit'):
+  // three can be open at once on #coding (the two Add forms and a row being edited), and each must stay
+  // guarded on its own.
   // ---------------------------------------------------------------------------
   var dirtyBy = {};
   function setDirty(what, owner) { dirtyBy[owner || ''] = what; }
@@ -739,11 +740,36 @@
   // replaced by another one.
   var modalGuard = null, modalCleanup = null;
   // Keyboard: the dialog takes the focus when it opens, Tab and Shift+Tab stay inside it, and closing it
-  // gives the focus back to what opened it (when that is still on the page).
-  var modalOpener = null;
+  // gives the focus back to what opened it, or to the element drawn in its place since (focusKey).
+  var modalOpener = null, modalOpenerKey = null;
   var FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-  function modalFocusables() {
-    return $all(FOCUSABLE, $('#modalBox')).filter(function (el) { return el.getClientRects().length > 0; });
+  function visibleFocusables(root) {
+    return $all(FOCUSABLE, root).filter(function (el) { return el.getClientRects().length > 0; });
+  }
+  function modalFocusables() { return visibleFocusables($('#modalBox')); }
+  // A list drawn again (the reload after a dialog's Save, most often) replaces the row, card or button
+  // that had the focus, and the focus would fall to the page: the next Tab would start from the top.
+  // focusKey names such an element by what identifies it, so the one drawn in its place can be found.
+  var FOCUS_KEYS = ['data-last4', 'data-open-card', 'data-vendor', 'data-person-edit', 'data-person-merge', 'data-person-del'];
+  function focusKey(el) {
+    if (!el || el === document.body || !el.getAttribute) return null;
+    if (el.id) return '#' + CSS.escape(el.id);
+    for (var i = 0; i < FOCUS_KEYS.length; i++) {
+      if (el.hasAttribute(FOCUS_KEYS[i])) return el.tagName.toLowerCase() + '[' + FOCUS_KEYS[i] + '="' + CSS.escape(el.getAttribute(FOCUS_KEYS[i])) + '"]';
+    }
+    return null;
+  }
+  // Draws html into box. When the focus was inside it, it goes to the element drawn in place of the one
+  // that had it; failing that (that row is gone, or filtered out), to the list's first control, else the
+  // tab's.
+  function redraw(box, html) {
+    var a = document.activeElement, had = !!a && a !== document.body && box.contains(a);
+    var key = had ? focusKey(a) : null;
+    box.innerHTML = html;
+    if (!had) return;
+    var el = key && box.querySelector(key), panel = box.closest('.tab-panel');
+    if (!el) el = visibleFocusables(box)[0] || (panel && visibleFocusables(panel)[0]);
+    if (el) el.focus();
   }
   // After the caller has drawn the dialog's content (it does so right after openModal returns): its first
   // field, else the close button. A caller that already put the focus inside is left alone.
@@ -755,9 +781,11 @@
     (first || $('#modalClose')).focus();
   }
   function giveFocusBack() {
-    var el = modalOpener;
-    modalOpener = null;
+    var el = modalOpener, key = modalOpenerKey;
+    modalOpener = null; modalOpenerKey = null;
+    if (el && !el.isConnected && key) el = document.querySelector(key);   // drawn again while the dialog was open
     if (el && el.isConnected && typeof el.focus === 'function') el.focus();
+    // A save then draws the list again, and redraw() moves the focus to the element drawn in its place.
   }
   function endModal() {
     var done = modalCleanup;
@@ -766,7 +794,10 @@
   }
   function openModal(title, bodyHtml, wide) {
     // One dialog replacing another keeps the first one's opener.
-    if (!modalOpen()) modalOpener = document.activeElement && document.activeElement !== document.body ? document.activeElement : null;
+    if (!modalOpen()) {
+      modalOpener = document.activeElement && document.activeElement !== document.body ? document.activeElement : null;
+      modalOpenerKey = focusKey(modalOpener);
+    }
     endModal();
     $('#modalTitle').textContent = title;
     var old = $('#modalBody'), body = old.cloneNode(false);   // drops the previous open's listeners
@@ -851,7 +882,7 @@
         return;
       }
       // Dropped as agreed: an edit row or Add form text left in place would be back, unguarded, on return.
-      var coding = dirtyBy['coding-edit'] || dirtyBy['coding-add'];
+      var coding = CODING_OWNERS.some(function (o) { return o in dirtyBy; });
       clearDirty();
       if (coding) dropCodingDrafts();
     }
@@ -958,17 +989,17 @@
   }
   function renderCardsTable() {
     var box = $('#cardsBody'), all = cardList();
-    if (!all.length) { box.innerHTML = '<div class="empty">No cards yet: they appear with the first statement.</div>'; return; }
-    if (cardsUi.byOwner) { box.innerHTML = ownersHtml(); return; }
+    if (!all.length) { redraw(box, '<div class="empty">No cards yet: they appear with the first statement.</div>'); return; }
+    if (cardsUi.byOwner) { redraw(box, ownersHtml()); return; }
     var q = cardsUi.q.trim().toLowerCase();
     var rows = all.filter(function (c) {
       return (cardsUi.flag === 'all' || (c.flags || []).indexOf(cardsUi.flag) >= 0) && cardMatches(c, q);
     }).sort(CARD_SORTS[cardsUi.sort] || byLast4);
-    box.innerHTML = '<div class="list-wrap"><table class="list wrap-head"><thead><tr><th>Card</th><th>Holder</th><th>Group</th><th>Owners</th>' +
+    redraw(box, '<div class="list-wrap"><table class="list wrap-head"><thead><tr><th>Card</th><th>Holder</th><th>Group</th><th>Owners</th>' +
       '<th>Default cost centre</th><th>Chat</th><th>Receipts</th><th>Activity</th><th>Flags</th><th>Last change</th></tr></thead><tbody>' +
       (rows.length ? rows.map(cardRowHtml).join('')
         : '<tr><td colspan="10" data-label=""><div class="empty-small">No card matches.</div></td></tr>') +
-      '</tbody></table></div>';
+      '</tbody></table></div>');
   }
   function cardRowHtml(c) {
     var labels = state.cards.flag_labels || {}, a = c.activity || {}, flags = c.flags || [];
@@ -1528,6 +1559,9 @@
   function codingPath(kind, row) { return kind === 'uc' ? ucPath(row.id) : ccPath(row.name); }
   function rowKey(kind, r) { return kind === 'uc' ? r.id : r.name; }
   function codingLocked() { return !!(state.coding && (state.coding.schema_missing || []).length); }
+  // The unsaved-changes owner of each Add form: two forms, two drafts, each guarded on its own.
+  function addOwner(kind) { return 'coding-add-' + kind; }
+  var CODING_OWNERS = ['coding-edit', addOwner('uc'), addOwner('cc')];
 
   async function loadCoding(quiet) {
     state.loaded.coding = true;
@@ -1825,7 +1859,9 @@
             await api(kind === 'uc' ? ucPath(ex.id) : ccPath(ex.name), { method: 'PATCH', body: { active: true } });
           } catch (e2) { report(e2, 'Could not restore ' + ex.name); return; }
           toast(ex.name + ' restored', 'ok');
-          clearDirty('coding-add');
+          // Typed into the form, that name is now on the list again: the draft is done, as after an Add.
+          // A value added from the not-listed list leaves the form, and its draft, alone.
+          if (nameOverride === undefined && cleanText(form.elements.name.value) === name) { form.reset(); clearDirty(addOwner(kind)); }
           loadCoding(true);
         });
       }
@@ -1833,8 +1869,9 @@
       return;
     }
     busy(btn, false);
-    if (nameOverride === undefined) form.reset();
-    clearDirty('coding-add');
+    // Only this form's draft is done, and only when it was the form that was added: a value added from
+    // the not-listed list leaves what is typed in the form, and its guard, as they were.
+    if (nameOverride === undefined) { form.reset(); clearDirty(addOwner(kind)); }
     toast(name + ' added', 'ok');
     loadCoding(true);
   }
@@ -1865,7 +1902,7 @@
   }
 
   $('#codingRefresh').addEventListener('click', function () {
-    if (!guardDirty(['coding-edit', 'coding-add'])) return;    // a full reload drops both
+    if (!guardDirty(CODING_OWNERS)) return;    // a full reload drops the edit row and both Add forms
     codingUi.rename = null; codingUi.warnings = [];
     loadCoding();
   });
@@ -1877,8 +1914,8 @@
     var form = ev.target.closest('form[data-add]');
     if (!form) return;
     var any = $all('input', form).some(function (el) { return el.value.trim(); });
-    if (any) setDirty(form.dataset.add === 'uc' ? 'the new use case' : 'the new cost centre', 'coding-add');
-    else clearDirty('coding-add');
+    if (any) setDirty(form.dataset.add === 'uc' ? 'the new use case' : 'the new cost centre', addOwner(form.dataset.add));
+    else clearDirty(addOwner(form.dataset.add));
   });
   $('#tab-coding').addEventListener('submit', function (ev) {
     var form = ev.target.closest('form[data-add]');
@@ -2141,10 +2178,10 @@
   function renderRegistry() {
     var reg = state.registry, box = $('#regBody');
     $('#regAdd').disabled = reg.available === false;
-    if (reg.available === false) { box.innerHTML = '<div class="card empty-small">The vendor registry needs the database update (Settings).</div>'; return; }
+    if (reg.available === false) { redraw(box, '<div class="card empty-small">The vendor registry needs the database update (Settings).</div>'); return; }
     var vendors = reg.vendors || [];
-    if (!vendors.length) { box.innerHTML = '<div class="card empty-small">No vendors yet. Register one from a folder in the Catalogue, accept a proposal, or Add vendor.</div>'; return; }
-    box.innerHTML = '<div class="vendor-list">' + vendors.map(function (v) {
+    if (!vendors.length) { redraw(box, '<div class="card empty-small">No vendors yet. Register one from a folder in the Catalogue, accept a proposal, or Add vendor.</div>'); return; }
+    redraw(box, '<div class="vendor-list">' + vendors.map(function (v) {
       var cs = codingSummary(v);
       return '<div class="card vendor-card" role="button" tabindex="0" data-vendor="' + esc(v.id) + '">' +
         '<div class="bar"><span class="strong">' + esc(v.name) + '</span><span class="pill pill-grey">' + esc(KIND_LABELS[v.kind] || v.kind) + '</span>' +
@@ -2155,7 +2192,7 @@
         }).join('') + '</div>' : '') +
         (cs ? '<div class="sub">' + esc(cs) + '</div>' : '') +
         '<div class="sub">' + esc(resolvesText(v)) + '</div></div>';
-    }).join('') + '</div>';
+    }).join('') + '</div>');
   }
 
   // -- Vendor editor ----------------------------------------------------------------
@@ -2736,7 +2773,7 @@
           '<button type="button" class="btn btn-secondary btn-xs btn-wrap" data-dup="' + i + '">Merge ' + esc(b.name) + ' into ' + esc(a.name) + '</button></div>';
       }).join('') : '<div class="sub">No likely duplicates.</div>') + '</div></details>';
     html += '<p class="sub">Anyone signed in can still add a person from the dashboard\'s Person column.</p>';
-    box.innerHTML = html;
+    redraw(box, html);
   }
 
   function openPersonEditor(p) {

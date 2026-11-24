@@ -1168,6 +1168,19 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn("<title>AP Admin</title>", page)
         for tab in ("cards", "coding", "vendors", "people", "history", "settings"):
             self.assertIn(f'data-tab="{tab}"', page)
+        # The two Add forms on #coding are open at once: each keeps its own unsaved-changes guard, so an
+        # Add (or erasing) in one never drops the other's draft unguarded.
+        self.assertNotIn("'coding-add'", page)
+        self.assertIn("function addOwner(kind) { return 'coding-add-' + kind; }", page)
+
+    def test_readme_patch_row_matches_the_fill_race(self):
+        # test_a_cost_centre_set_meanwhile_is_kept: a cost centre set while a use-case save would fill the
+        # card's default is kept and the use case saved (200, no filled_cost_center); the API table says so.
+        with open(os.path.join(HERE, "..", "README.md"), encoding="utf-8") as fh:
+            row = next(line for line in fh if line.startswith("| `PATCH /api/transactions/<id>` |"))
+        self.assertNotIn("cost centre meanwhile it answers 409", row)
+        self.assertIn("if someone set a cost centre meanwhile, the use case is still saved, that cost centre is kept "
+                      "and no `filled_cost_center` is returned", row)
 
     def test_dashboard(self):
         page = self.read("index.html")
