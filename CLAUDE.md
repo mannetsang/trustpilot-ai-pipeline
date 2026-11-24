@@ -157,13 +157,19 @@ card statement or RBC transaction export, Gemini reads every invoice in the
 AP user's Drive folder **Invoice** (`18YkGTNDIrxdQgHRgquvQizI8fLsFOpPk`, laid
 out `Invoice/YYYY MM/<vendor>/`), purchases are matched to invoices, each
 card's own Chat space gets an "invoices needed" card, and card owners code
-the cost centre and usage on the dashboard (Google sign-in through
+each purchase's use case (what it was for: Marketing, Travel, ...) and cost
+centre (where: a salon, US, EU, Head office; a card can carry a default) on the
+dashboard; "uncoded" means no use case. Since 2026-11-24 AP manages cards,
+people, use cases, cost centres and the vendor registry at `/admin` (the
+vendor registry gives suggestions only; matching does not read it yet)
+(Google sign-in through
 Identity-Aware Proxy for the `superhairpieces.com` domain, decided
 2026-10-13; `ap@`, `manne@` and `snow@` (accounts payable) are AP, everyone else in the domain edits
 only the cards they own; the public sign-in page is the second Cloud Run
 service `ap-reconciliation-login`, source `ap-reconciliation/login/`. The
 README's "Access" section has the open and shared-password modes too).
-Card holders on the cards in `RECEIPT_UPLOAD_CARDS` (default `4421`) can
+Card holders on the cards with receipt upload on (per card in `/admin`, else
+`RECEIPT_UPLOAD_CARDS`, default `4421`) can
 photograph or upload receipts from the dashboard (*Add receipt…*, and the
 Chat card's *Add receipts* opens a phone list); files are saved to
 `Invoice/YYYY MM/<vendor>/` and linked to the purchase. Whoever does it must be
