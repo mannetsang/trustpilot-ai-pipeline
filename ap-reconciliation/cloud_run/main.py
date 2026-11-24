@@ -2029,13 +2029,16 @@ def api_cards_update():
         if primary and (cards[primary].get("primary_last4") or any(c.get("primary_last4") == last4 for c in cards.values())):
             return jsonify({"error": "primary_last4: a supplementary card is linked under a primary card, one level"}), 400
         row["primary_last4"] = primary
-    if "holder_name" in body and (row["holder_name"] or "") != (current.get("holder_name") or ""):
-        # The holder as a person: the Person of the card's purchases nobody assigned to someone else.
+    changed = "holder_name" in body and (row["holder_name"] or "") != (current.get("holder_name") or "")
+    if changed or ("holder_name" in body and row["holder_name"] and not current.get("person_id")):
+        # The holder as a person: the Person of the card's purchases nobody assigned to someone else. A card
+        # saved with its holder not yet a person links them too.
         if row["holder_name"]:
             person, _ = store.create_person(row["holder_name"], created_by=user["email"])
             row["person_id"] = person["id"]
         else:
             row["person_id"] = None
+    if changed:
         # A label still the default one follows the new holder.
         old_label = current.get("label") or default_card_label(last4, current.get("holder_name"))
         sent = row.get("label") if "label" in body else old_label

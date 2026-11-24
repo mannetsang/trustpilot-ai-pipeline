@@ -52,9 +52,13 @@ class CardFieldTests(CardsTestCase):
         people = r.get_json()["people"]
         self.assertEqual(len(people), 1)
         self.assertEqual(self.card("7436", r.get_json()["cards"])["person_id"], people[0]["id"])
-        # Saving a company-held card without touching its holder makes no person of the company.
-        r = self.save(last4="3914", holder_name="NEW FRONTIER GLOBAL LIMITED", group_name="")
-        self.assertEqual(len(r.get_json()["people"]), 1)
+        # A card saved with its holder not yet a person links them; saving it again adds nobody.
+        r = self.save(last4="9456", holder_name="Linda", group_name="Beauty")
+        linda = next(p for p in r.get_json()["people"] if p["name"] == "Linda")
+        self.assertEqual(self.card("9456", r.get_json()["cards"])["person_id"], linda["id"])
+        r = self.save(last4="9456", holder_name="Linda", group_name="Beauty")
+        self.assertEqual(len(r.get_json()["people"]), 2)
+        self.assertEqual(self.card("9456", r.get_json()["cards"])["label"], "Card ending 9456 - Linda")
 
     def test_a_supplementary_card_shows_its_primary_and_the_primary_its_cards(self):
         self.save(last4="4431", holder_name="George", card_number="4449")
