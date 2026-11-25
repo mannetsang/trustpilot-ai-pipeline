@@ -1648,7 +1648,7 @@ AUDIT_ENTITIES = ["card", "card_number", "cost_center", "use_case", "vendor", "v
 VENDOR_KINDS = ["supplier", "processor", "agent", "not_vendor"]
 KIND_WORDS = {"processor": "a payment processor", "agent": "an agent", "not_vendor": "not a vendor"}
 NO_ACTIVITY = {"transactions": 0, "recent": 0, "missing": 0, "first_month": None, "last_month": None,
-               "missing_last_month": None}
+               "missing_last_month": None, "missing_newest": 0, "missing_months": 0}
 
 
 def json_body():
@@ -4139,6 +4139,17 @@ def bank_todo(files, ledger, now):
     return todo, settling
 
 
+def log_error(log, message):
+    """A failure the job must not hide. Printed (the jobs log through print) it is one JSON line that Cloud
+    Logging records at severity ERROR, so alerts and severity>=ERROR filters see it: a plain print lands at
+    DEFAULT, and the run still ends with exit 0 (no retry against, say, a revoked token). Any other log
+    (a test's, a caller's own) gets the text."""
+    if log is print:
+        print(json.dumps({"severity": "ERROR", "message": message}), flush=True)
+    else:
+        log(message)
+
+
 def bank_folder_problem(exc):
     """Why the folder could not be listed, in words AP can act on."""
     text = str(exc)
@@ -4358,7 +4369,7 @@ def watch_invoice_folder(store, drive, now, log=print):
             for fid in fresh_filings(store, filed, state.get("checked_at")):
                 to_match.setdefault(fid, 0)
     except DriveError as exc:
-        log(f"invoices: the Invoice folder's changes could not be read: {exc}")
+        log_error(log, f"invoices: the Invoice folder's changes could not be read: {exc}")
         if state.get("token") and not _drive_passing(exc) and re.search(r"-> 40[04]\b", str(exc)):
             return update_watch_state(store, token=None, error=str(exc)[:300])   # start again next run
         return update_watch_state(store, error=str(exc)[:300])
@@ -4482,7 +4493,7 @@ def sync_bank_folder(log=print, now=None):
         check.update(ok=True, error="", folder_name=folder.get("name") or "", files=len(files))
     except DriveError as exc:
         check.update(ok=False, error=bank_folder_problem(exc))
-        log(f"sync: {exc}")
+        log_error(log, f"sync: the Bank Transactions folder could not be read: {exc}")
     todo, settling = bank_todo(files, {r["file_id"]: r for r in store.list_statement_sources()}, now)
     check["settling"] = settling
     state = update_sync_state(store, **check)

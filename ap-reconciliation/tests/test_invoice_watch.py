@@ -1,7 +1,10 @@
 """The Invoice folder watch: invoices filed under Invoice/YYYY MM/<vendor>/ since the last import run
 (by the e-mail filer, by hand, or from the dashboard) are read and matched by the next run, against the
 purchases still waiting for one, without taking any link away."""
+import contextlib
 import datetime as dt
+import io
+import json
 import os
 import sys
 import unittest
@@ -287,6 +290,17 @@ class RobustnessTests(InvoiceWatchTestCase):
         self.baseline()
         self.drive.fail_changes = DriveError("Drive GET changes -> 503 backend error")
         self.sync(NOW + dt.timedelta(minutes=15))
+        self.assertEqual(self.watch()["token"], "t0")
+
+    def test_a_feed_that_cannot_be_read_is_logged_at_error_severity(self):
+        self.baseline()
+        self.drive.fail_changes = DriveError('AP token refresh failed: 400 {"error": "invalid_grant"}')
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            main.watch_invoice_folder(self.store, self.drive, NOW + dt.timedelta(minutes=15))
+        lines = [json.loads(line) for line in out.getvalue().splitlines() if line.startswith('{"severity"')]
+        self.assertEqual([entry["severity"] for entry in lines], ["ERROR"])
+        self.assertIn("could not be read", lines[0]["message"])
         self.assertEqual(self.watch()["token"], "t0")
 
 

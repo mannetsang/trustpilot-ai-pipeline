@@ -701,9 +701,11 @@ class AdminCardsTests(unittest.TestCase):
                 {"year": 2026, "month": 9, "card_last4": "1610", "transactions": 2, "missing": 0}]
         act = admin.card_activity(rows, today)
         self.assertEqual(act["4431"], {"transactions": 8, "recent": 4, "missing": 3, "first_month": "2026-10",
-                                       "last_month": "2027-01", "missing_last_month": "2026-12"})
+                                       "last_month": "2027-01", "missing_last_month": "2026-12", "missing_newest": 2,
+                                       "missing_months": 2})
         self.assertEqual(act["1610"]["recent"], 0)
         self.assertIsNone(act["1610"]["missing_last_month"])
+        self.assertEqual((act["1610"]["missing_newest"], act["1610"]["missing_months"]), (0, 0))
         self.assertNotIn("9999", act)
 
     def test_missing_last_month_is_the_newest_month_with_a_missing_invoice(self):
@@ -718,6 +720,17 @@ class AdminCardsTests(unittest.TestCase):
         self.assertEqual(act["missing_last_month"], "2027-01")
         self.assertEqual(act["last_month"], "2027-02")
         self.assertEqual(act["missing"], 3)
+        # The link names its month and how many of the total are in it: the total is every month's.
+        self.assertEqual((act["missing_newest"], act["missing_months"]), (2, 2))
+
+    def test_missing_newest_adds_up_a_month_listed_twice(self):
+        today = dt.date(2027, 2, 1)
+        rows = [{"year": 2027, "month": 1, "card_last4": "4421", "transactions": 5, "missing": 2},
+                {"year": 2027, "month": 1, "card_last4": "4421", "transactions": 1, "missing": 1},
+                {"year": 2026, "month": 12, "card_last4": "4421", "transactions": 4, "missing": 4}]
+        act = admin.card_activity(rows, today)["4421"]
+        self.assertEqual((act["missing"], act["missing_last_month"], act["missing_newest"], act["missing_months"]),
+                         (7, "2027-01", 3, 2))
 
     def test_card_flags(self):
         busy = {"transactions": 5, "recent": 2}

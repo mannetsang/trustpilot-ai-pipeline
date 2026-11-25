@@ -1070,6 +1070,8 @@ class CardNumberAdminTests(AdminApiTestCase):
         self.assertEqual(c["activity"]["transactions"], 5)
         self.assertEqual(c["activity"]["missing_last_month"], "2026-09")       # the gallery's link to the dashboard
         self.assertEqual(cards["2301"]["activity"]["missing_last_month"], "2026-10")
+        # 2301: one of its two missing invoices is in October, the month the link opens.
+        self.assertEqual((cards["2301"]["activity"]["missing_newest"], cards["2301"]["activity"]["missing_months"]), (1, 2))
         self.store.upsert_cards([{"last4": "3922", "label": "Card ending 3922"}])     # no statement line yet
         idle = {c["last4"]: c for c in self.get("/api/admin/cards")["cards"]}["3922"]["activity"]
         self.assertEqual(idle, main.NO_ACTIVITY)
@@ -1337,9 +1339,49 @@ class StaticContractTests(unittest.TestCase):
         self.assertIsNone(re.search(r"^\s*\.cc-bank-text\s*[{,]", page, re.M))
         self.assertIn(".cc-bank .cc-bank-text { display: inline-flex;", page)
         self.assertIn("if (img.closest('.cc-bank')) span.className = 'cc-bank-text';", page)
-        # The product line ends before the tags column (group pill, "Reminders off"), never under it.
-        self.assertRegex(page, r"\.cc-bank \{ flex: 1 1 auto; display: grid; grid-template-columns: minmax\(0, 1fr\);")
-        self.assertIn(".cc-product { max-width: 100%; max-width: min(64cqw, 100%);", page)
+        # The product sits beside the logo on its row (a lockup behind a hairline), clear of the chip, and
+        # its ellipsis lands before the tags column (group pill, "Reminders off"), never under it.
+        self.assertIn(".cc-bank { flex: 1 1 auto; display: flex; align-items: center;", page)
+        self.assertIn(".cc-product { flex: 0 1 auto; min-width: 0; max-width: none;", page)
+        self.assertIn("border-left: 1px solid rgba(255,255,255,0.32);", page)
+        # No bank: engraved lettering at the 11px floor, not a dashed form box.
+        self.assertIn(">Bank not set</span>", page)
+        self.assertNotIn("+ Set bank", page)
+        rule = re.search(r"\.cc-face\.no-bank \.cc-bank-text \{[^}]*\}", page).group(0)
+        self.assertNotIn("dashed", rule)
+        self.assertIn("font-size: max(11px, 3.2cqw)", rule)
+        # The narrowest phones keep the activity line whole.
+        self.assertIn("@media (max-width: 360px) { .cc-meta { font-size: 12px; } }", page)
+
+    def test_cards_tab_finds_and_lists_every_card(self):
+        page = self.read("admin.html")
+        # A number the receipts show (7436's 7444) finds its card, and is said beside it, never on the face.
+        self.assertIn("net, (c.receipts_show || []).join(' ')]", page)
+        self.assertIn("title.push('<div class=\"cc-title\">Receipts show ' + esc(shows.join(', ')) + '</div>');", page)
+        self.assertIn("if (shows.length) sub.push('receipts show ' + shows.join(', '));", page)
+        # A short placeholder that is never cut off; the fields it searches in the title.
+        self.assertIn('placeholder="Search cards" aria-label="Search the cards" title="Card number (or a number its receipts show)', page)
+        # By owner ends with the cards nobody owns, so with "All" or the No owner chip it lists them.
+        self.assertIn("var orphans = rows.filter(function (c) { return !(c.owners || []).length; });", page)
+        self.assertIn("if (!emails.length && !orphans.length) return", page)
+        self.assertNotIn("No owner has a card that matches.", page)
+        self.assertIn(".chip.btn-wrap { white-space: normal; }", page)
+        # The sort is remembered like the view, behind a try/catch; the summary offers the worst card first.
+        self.assertIn("try { var v = localStorage.getItem(CARDS_SORT_KEY); return CARDS_SORT_NAMES.indexOf(v) >= 0 ? v : 'card'; } catch (e) { return 'card'; }", page)
+        self.assertIn("try { localStorage.setItem(CARDS_SORT_KEY, cardsUi.sort); } catch (e)", page)
+        self.assertEqual(re.findall(r'<option value="([a-z]+)">Sort: ', page), ["card", "holder", "group", "active", "missing"])
+        self.assertIn("var CARDS_SORT_NAMES = ['card', 'holder', 'group', 'active', 'missing'];", page)
+        self.assertIn('<div id="cardsSummary" class="cards-sum hidden"></div>', page)
+        self.assertIn("if (t.closest('[data-sort-missing]')) { setCardsSort('missing'); return; }", page)
+        # The missing total counts every month; its link names the one month the dashboard opens on.
+        self.assertIn("function missingGo(a, missing, last4, monthOnly) {", page)
+        self.assertNotIn("' · last used '", page)
+        # Table: the holder's flag in the flag's own words, the flags the gallery shows, and Missing first.
+        self.assertIn("<div class=\"sub\">not linked to People</div>", page)
+        self.assertNotIn("not a person", page)
+        self.assertIn("var flagHtml = galleryFlags(c).filter(function (f) { return f !== 'holder_not_person'; }).map(", page)
+        self.assertIn('<th class="td-right">Missing</th><th>Transactions</th>', page)
+        self.assertIn('colspan="12"', page)
 
     def test_readme_patch_row_matches_the_fill_race(self):
         # test_a_cost_centre_set_meanwhile_is_kept: a cost centre set while a use-case save would fill the

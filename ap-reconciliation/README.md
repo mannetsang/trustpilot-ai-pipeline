@@ -772,16 +772,20 @@ Cost centre list mixed places with kinds of spending. Now:
   the Cost centre box (those purchases still count as having no use case).
 
 **Cards tab.** Three views, *Gallery* (the default), *Table* and *By owner*,
-switched in the toolbar and remembered by the browser; the same search and
-flag chips drive all three, and the sort the first two (*Card* puts a
-supplementary card right after its primary). The **gallery** draws each
+switched in the toolbar; the view and the sort are remembered by the browser.
+The same search and flag chips drive all three, and the sort the first two
+(*Card* puts a supplementary card right after its primary). Above the cards a
+line counts what is missing over every card (*3,440 invoices missing on 21
+cards · 1,560 on cards with no owner*) with *Sort by missing*. Search finds a
+card by any number its receipts show too (7436 by 7444). The **gallery** draws each
 card as the card itself, on a fixed template (logo, chip, number, holder and
 network sit at the same place on every face): the bank's face (RBC royal
 blue with a fine gold double hairline, Chase midnight blue with the white
-wordmark and a faint octagon outline, graphite with a dashed *+ Set bank*,
-which opens the editor on its Bank field), the product under the logo
-(without a trailing network word the mark already shows: *Business Cash
-Back*, not *… Mastercard*), the group top right (a frosted pill with a
+wordmark and a faint octagon outline, graphite with *BANK NOT SET* engraved,
+which opens the editor on its Bank field), the product beside the logo
+behind a hairline, on two lines when it is long (without a trailing network
+word the mark already shows: *Business Cash Back*, not *… Mastercard*), the
+group top right (a frosted pill with a
 Hair/Beauty dot), chip and contactless mark, the number as
 `•••• •••• •••• 4449` (the card number when it has one, with an *ACCT 4431*
 pill beside it), *PRINTED HENRY LI* when the name on the card is someone
@@ -790,12 +794,15 @@ bottom line, and the network (Visa, Mastercard, AMEX) level with it. A card
 with reminders off (`active` false: no weekly Chat card; nothing else
 changes) is muted with a *Reminders off* tag under the group. Under each
 card, in the same order under every card so a row reads straight across:
-activity (*6 invoices missing · last used Nov 2026*, the count a link to the
-dashboard's newest month with one missing for that card, or *All invoices
-in*; then *41 transactions since Sep 2026*), the owners (in-domain addresses
+activity (*616 invoices missing · 58 in Oct 2026 →*: the total over every
+month, then a link to the dashboard's newest month with one missing for that
+card, which names that month since the dashboard shows one at a time; or *All
+invoices in*; then *1,185 transactions · Dec 2025 – Oct 2026*), the owners (in-domain addresses
 by name, an outside one in amber, *No owner* in amber when there is none)
 with its Chat space when it has one (*own space* or *shared*) and *Edit*,
-then *Account 4431 · card no. 4449* when they differ and the supplementary
+then *Account 4431 · card no. 4449* when they differ, *Receipts show 7444*
+when receipts print a number the card does not show (a reissue nobody has
+typed as its card number: never drawn on the face), and the supplementary
 link (each number brings that card into view), and its flags as amber chips,
 those asking for an action first (*No Chat webhook of its own*, nearly every
 card's normal state, and *No owner* are left out there, and *No activity in
@@ -811,15 +818,21 @@ names and two logos (for a light background and for the card face), plus
 its face colours in `admin.html` (`.cc-face.bank-<key>`; without them the
 face is plain graphite).
 
-The **table** has one row per card: bank (logo, product), holder (*not a person* when the holder is
-not linked to a person), group, owners (an address outside
-`ALLOWED_DOMAINS` is amber: it cannot sign in), default cost centre, Chat
-webhook, receipt upload, activity (transactions, those of the last three months,
-missing, last month seen), flags and the last change. Chips filter the
+The **table** has one row per card, about two lines each: card (with its card
+number and the numbers receipts show), bank (logo, product), holder (*not
+linked to People* when no People record has it), group, owners (by name, the
+address in the title; an address outside `ALLOWED_DOMAINS` in full and amber:
+it cannot sign in; *No owner* in amber), default cost centre, Chat webhook,
+receipt upload (*On*/*Off*, the title says whether it is the server setting),
+*Missing* (the total in red, and the newest month with one missing as a link
+to it; *All in* in green), *Transactions* (the count, the last month used under
+it), the flags the gallery shows (less *Holder not linked to a person*, which
+the holder cell says) and the last change (who, as a name, and when). Chips filter the
 cards by flag: *No owner*, *No group*, *Holder not linked to a person*, *No
 Chat webhook of its own*, *No activity in 90 days*, *Never used*, *Never
 reviewed*, *Default cost centre retired*, *No default cost centre (its
-primary card has one)*. *By owner* lists each owner's cards. A click opens
+primary card has one)*. *By owner* lists each owner's cards, then the cards
+nobody owns in a last *No owner* row. A click opens
 the card's editor, which sends only the fields that changed:
 
 - **Default cost centre** (`cards.default_cost_center`): a salon card is
@@ -1019,7 +1032,7 @@ phone. Chat cards posted before keep their old button until the next send.
 | `GET /api/jobs/current[?id=…]` | signed in | the job with that id (the last ten stay readable, so a tab keeps its own result when someone else starts the next job; 404 after a restart), else the newest: `id`, `name`, `started`, `finished`, `running`, `progress` (`read`, `live`, `remaining`, `note`, `year`, `month`, …) and, once finished, `result` or `error` |
 | `GET /api/admin/settings` | AP | what the Settings tab shows: auth mode, store, AI, allowed domains, `ap_emails` and how to change them, receipt upload (`env`, `all`, `per_card`), webhooks (which cards have their own; no URLs), `schema` (each table and column the pages need: `true` when present; `coding_split`), `coding_split`, `coding` (`suggestions`, `by`, `at`), `registry_version`; `schema_error` when the check itself failed |
 | `PUT /api/admin/settings/coding` | AP | `{"suggestions": true\|false}`: the coding-suggestions switch (400 for anything else) |
-| `GET /api/admin/cards` | AP | the Cards tab: every card as in `/api/cards` plus `activity` (`transactions`, `recent`, `missing`, `first_month`, `last_month`, and `missing_last_month`: the newest month with an invoice missing), `flags`, `owners`, `last_notification`, `last_change`, `default_cost_center_active`, `primary_default`, `deletable` and `delete_blockers`; `counts` per flag, `flag_labels`, `banks` (`[{key, name, short, logo, logo_on_dark}]`, logos under `/static/banks/`), `networks`, groups, people, active cost centres, `owners` (cards per owner address), `unclaimed` (receipt card numbers no card claims, with `ignored`) |
+| `GET /api/admin/cards` | AP | the Cards tab: every card as in `/api/cards` plus `activity` (`transactions`, `recent`, `missing` (every month's), `first_month`, `last_month`, `missing_last_month`: the newest month with an invoice missing, `missing_newest`: how many are missing in it, and `missing_months`: how many months have one missing), `flags`, `owners`, `last_notification`, `last_change`, `default_cost_center_active`, `primary_default`, `deletable` and `delete_blockers`; `counts` per flag, `flag_labels`, `banks` (`[{key, name, short, logo, logo_on_dark}]`, logos under `/static/banks/`), `networks`, groups, people, active cost centres, `owners` (cards per owner address), `unclaimed` (receipt card numbers no card claims, with `ignored`) |
 | `DELETE /api/admin/cards/<last4>[?confirm=1]` | AP | deletes an unused card: 409 with `counts` when it has transactions, an upload lists it or it is a primary card; 409 with `alias_changes` when receipt numbers would move to another card, until `?confirm=1`; 409 "an import or match is running" while a job holds the lease or runs in this instance; 400 for a `last4` that is not four digits, 404 unknown |
 | `POST /api/admin/cards/<last4>/fill-default` | AP | fills the card's active default cost centre into its purchases with a use case and no cost centre (never over one set meanwhile): `{"filled", "cost_center"}`; 400 when the card has no active default |
 | `GET /api/admin/card-numbers/<n>` | AP | the receipts showing card number `n` and the likely cards (purchases of the receipt's amount 0-21 days later; each with `card_number`, `card_number_receipts`, `months`), `considered`, `ignored`; 404 when no receipt shows it |
@@ -1370,7 +1383,7 @@ next idle period, or at once with *Run workflow*.
 | `409 {"status": "busy"}` from an upload, index, match or notify | one job at a time per instance; wait for it (`/health` shows `last_job`) and retry. The dashboard retries by itself |
 | Invoice listed in the picker with *unsupported file type* | Word, Excel, zip or e-mail files are not read; save as PDF into the same folder. Files over 15 MB likewise. Such files are not retried; any other extraction error is retried on the next index |
 | Index keeps reporting the same `remaining` count | the files that fail are listed in the job log (`errors`); fix or remove them. The dashboard stops after two stalled rounds |
-| *AP token refresh failed ... invalid_grant* | the AP user's refresh token was revoked (password change, app removed under the account's third-party access, token unused for six months while the OAuth app is in *testing*). Mint a new one with the same client (OAuth Playground, scopes `https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/drive` - **both**: a Drive-only token stops the invoice filer in `mannetsang/ap-automation` with `403 ACCESS_TOKEN_SCOPE_INSUFFICIENT` - signed in as `ap@`), add it as a new version of `google-workspace-ap-refresh-token`, redeploy |
+| *AP token refresh failed ... invalid_grant* | the sync job logs it at severity ERROR (`sync: the Bank Transactions folder could not be read: ...`, and `invoices: the Invoice folder's changes could not be read: ...`) and still ends with exit 0, so look for it in the logs, not in the execution status. The AP user's refresh token was revoked (password change, app removed under the account's third-party access, token unused for six months while the OAuth app is in *testing*). Mint a new one with the same client (OAuth Playground, scopes `https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/drive` - **both**: a Drive-only token stops the invoice filer in `mannetsang/ap-automation` with `403 ACCESS_TOKEN_SCOPE_INSUFFICIENT` - signed in as `ap@`), add it as a new version of `google-workspace-ap-refresh-token`, redeploy |
 | *Google Drive error ... 404* on the Invoice folder | the folder id is wrong, or the service is on ADC and the folder is not shared with the compute service account |
 | `database error: GET transactions -> 401` (PostgREST) | `SUPABASE_SERVICE_KEY` is wrong: the anon key instead of `service_role`, or the key was rotated in Supabase. Add the right one as a new secret version and redeploy |
 | `database error: ... 404 ... relation "..." does not exist` | the schema is not applied to this project: `setup_db.py --project-ref <ref>` |

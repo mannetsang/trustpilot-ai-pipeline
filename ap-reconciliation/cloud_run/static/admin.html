@@ -215,7 +215,6 @@
     /* The cards table: the columns that hold e-mails and labels keep a readable width; on a laptop the
        table then scrolls inside its box rather than breaking an address every few letters. */
     table.list td.w-flags { min-width: 140px; }
-    table.list td.w-mid { min-width: 110px; }
     table.list td.w-bank { min-width: 92px; }
     .tag { display: inline-flex; align-items: center; gap: 2px; border-radius: 999px; padding: 2px 9px; font-size: 11.5px; background: var(--border-subtle); color: var(--text-mid); max-width: 100%; overflow-wrap: break-word; min-width: 0; }
     .tag.pill-warn { background: var(--warn); color: var(--warn-text); }
@@ -372,25 +371,30 @@
     /* The template. */
     .cc-top { position: absolute; left: 20px; right: 20px; top: 15px; left: 6.4cqw; right: 6.4cqw; top: 4.8cqw;
       display: flex; align-items: flex-start; justify-content: space-between; gap: 9px; gap: 3cqw; min-width: 0; }
-    /* The bank column takes everything left of the tags (flex: 1), and its one column is exactly that wide, so
-       the product's ellipsis lands before the group pill and "Reminders off", never under them. */
-    .cc-bank { flex: 1 1 auto; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: 32px auto; grid-template-rows: 10.5cqw auto;
-      row-gap: 4px; row-gap: 1.2cqw; justify-items: start; min-width: 0; }
-    .cc-logo { display: block; width: auto; height: 32px; height: 10.5cqw; max-width: 56cqw; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.25)); }
-    /* RBC's shield a little taller than the slot, rising into the top inset (its foot stays on the slot's). */
+    /* The bank row: the logo, then the product as a lockup beside it behind a hairline (as Avion or Sapphire
+       sits by its bank's mark), all on the logo's line, clear of the chip. The row takes everything left of
+       the tags (flex: 1), so the product's ellipsis lands before the group pill and "Reminders off". */
+    .cc-bank { flex: 1 1 auto; display: flex; align-items: center; gap: 9px; gap: 2.4cqw; height: 32px; height: 10.5cqw; min-width: 0; }
+    .cc-logo { display: block; flex-shrink: 0; width: auto; height: 32px; height: 10.5cqw; max-width: 56cqw; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.25)); }
+    /* RBC's shield a little taller than the row, rising into the top inset (its foot stays on the row's). */
     .bank-rbc .cc-logo { height: 36px; height: 11.7cqw; margin-top: -4px; margin-top: -1.2cqw; }
-    /* Chase's wordmark centred in the slot. */
-    .bank-chase .cc-logo { height: 15px; height: 4.8cqw; margin: 9px 0; margin: 2.85cqw 0; }
+    /* Chase's wordmark centred on the row. */
+    .bank-chase .cc-logo { height: 15px; height: 4.8cqw; margin: 0; }
     /* Sized in the face's cqw, so only on a face: the table has no query container (cqw would be the viewport's). */
-    .cc-bank .cc-bank-text { display: inline-flex; align-items: center; height: 32px; height: 10.5cqw; font-size: 13px; font-size: 4.2cqw; font-weight: 700; letter-spacing: .06em; line-height: 1; }
-    .cc-face.no-bank .cc-bank-text { height: 26px; height: 8.4cqw; margin: 3px 0; margin: 1.05cqw 0; padding: 0 8px; padding: 0 2.6cqw;
-      border: 1px dashed rgba(255,255,255,0.35); border-radius: 5px; border-radius: 1.6cqw;
-      font-size: 10px; font-size: max(10px, 2.8cqw); font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: rgba(255,255,255,0.62); }
-    .cc-face.no-bank .cc-bank-text:hover { border-color: rgba(255,255,255,0.6); color: rgba(255,255,255,0.85); }
+    .cc-bank .cc-bank-text { display: inline-flex; flex-shrink: 0; align-items: center; height: 32px; height: 10.5cqw; font-size: 13px; font-size: 4.2cqw; font-weight: 700; letter-spacing: .06em; line-height: 1; }
+    /* No bank: engraved in the metal like an unbranded card, not a form box; it still opens the editor on the
+       bank (the click handler), and brightens on the card's hover and focus. */
+    .cc-face.no-bank .cc-bank-text { height: 26px; height: 8.4cqw; margin: 3px 0; margin: 1.05cqw 0; padding: 0; border: 0;
+      font-size: 11px; font-size: max(11px, 3.2cqw); font-weight: 600; letter-spacing: .16em; text-transform: uppercase; color: rgba(255,255,255,0.6);
+      text-shadow: 0 -1px 0 rgba(0,0,0,0.45), 0 1px 0 rgba(255,255,255,0.08); }
+    .cc-card:hover .no-bank .cc-bank-text, .cc-card:focus-visible .no-bank .cc-bank-text { color: rgba(255,255,255,0.85); }
     /* The product as printed: regular weight, quieter than the holder; the network word the mark already
-       shows is left off the face (the line under the card and the table keep the full name). */
-    .cc-product { max-width: 100%; max-width: min(64cqw, 100%); font-size: 11px; font-size: max(11px, 3.4cqw); font-weight: 400; letter-spacing: .03em; line-height: 1.25;
-      color: rgba(255,255,255,0.78); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+       shows is left off the face (the line under the card and the table keep the full name). A name too long
+       for the row beside a wide mark ("Ink Business Preferred" by Chase's) stacks on two lines, as a lockup
+       does; the row holds two lines at the 11px floor, still clear of the chip. */
+    .cc-product { flex: 0 1 auto; min-width: 0; max-width: none; padding-left: 9px; padding-left: 2.4cqw; border-left: 1px solid rgba(255,255,255,0.32);
+      font-size: 11px; font-size: max(11px, 3.4cqw); font-weight: 400; letter-spacing: .03em; line-height: 1.15;
+      color: rgba(255,255,255,0.78); overflow-wrap: anywhere; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
     .cc-tags { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; gap: 1.4cqw; flex-shrink: 0; min-width: 0; }
     .cc-group, .cc-off { font-size: 11px; font-size: max(11px, 3.4cqw); font-weight: 600; letter-spacing: .04em; line-height: 1.3;
       padding: 2px 9px; padding: max(2px, .7cqw) max(8px, 2.8cqw); border-radius: 999px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 30cqw; }
@@ -453,10 +457,12 @@
     .cc-jump:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
     /* Padded so the link's focus ring is not clipped by the ellipsis' overflow. */
     .cc-activity { color: var(--text-mid); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 3px 4px; margin: -3px -4px; }
-    .cc-activity .miss { color: var(--down); font-weight: 600; text-decoration: none; border-radius: 3px; }
+    .cc-activity .miss { color: var(--down); font-weight: 600; }
     .cc-activity .miss::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--down); margin-right: 6px; vertical-align: 1px; }
-    .cc-activity a.miss:hover { text-decoration: underline; text-underline-offset: 2px; }
-    .cc-activity a.miss:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+    /* The total counts every month; the link opens one (the dashboard shows a month at a time), so it names it. */
+    a.miss-go { color: var(--brand-ink); font-weight: 500; text-decoration: none; border-radius: 3px; }
+    a.miss-go:hover { text-decoration: underline; text-underline-offset: 2px; }
+    a.miss-go:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
     .cc-count { font-size: 12px; color: var(--text-mute); margin-top: -3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .cc-activity .ok { color: var(--up-ink); font-weight: 500; }
     .cc-owners-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; }
@@ -468,6 +474,24 @@
     .cc-flags { display: flex; flex-wrap: wrap; gap: 4px; }
     .cc-flags .pill { font-size: 11px; padding: 2px 8px; gap: 4px; background: #fff4e5; color: #8a5300; white-space: normal; }
     .cc-flags .pill svg { width: 11px; height: 11px; flex-shrink: 0; }
+    /* The narrowest phones: the activity line ("616 invoices missing · 58 in Oct 2026 →") a size down so it
+       stays on one line, whole. */
+    @media (max-width: 360px) { .cc-meta { font-size: 12px; } }
+
+    /* Above the cards: what is missing across them all. */
+    .cards-sum { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 9px 12px; border-bottom: 1px solid var(--border-subtle); font-size: 13px; color: var(--text-mid); }
+    .cards-sum .miss { color: var(--down); font-weight: 600; }
+    /* The table's Missing column: the total in red, the month its link opens under it; "All in" in green. */
+    table.list td.w-num { text-align: right; }
+    /* Twelve columns: a little less padding, so the table fits a 1280px screen without scrolling sideways. */
+    @media (min-width: 641px) {
+      #cardsBody table.list th, #cardsBody table.list td { padding-left: 6px; padding-right: 6px; }
+      #cardsBody table.list td.w-flags { min-width: 110px; }
+    }
+    table.list .miss-n { color: var(--down); font-weight: 600; }
+    table.list .all-in { color: var(--up-ink); font-weight: 500; }
+    /* By owner: a card chip wraps its holder's name on a phone rather than widening the page. */
+    .chip.btn-wrap { white-space: normal; }
 
     /* Phones: every list table stacks, a block per row, each value after its column's name. */
     @media (max-width: 640px) {
@@ -483,7 +507,8 @@
       table.list td.nowrap, table.list td .nowrap { white-space: normal; }
       .list-wrap { overflow-x: visible; }
       .toolbar .search { max-width: none; flex-basis: 100%; }
-      table.list td.w-flags, table.list td.w-mid, table.list td.w-bank { min-width: 0; }
+      table.list td.w-flags, table.list td.w-bank { min-width: 0; }
+      table.list td.w-num { text-align: left; }
       /* The flag chips stay on one line and scroll sideways, so the cards start near the top. */
       #cardsChips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
       #cardsChips .chip { flex-shrink: 0; }
@@ -543,7 +568,7 @@
         <div id="cardsFill" class="hidden"></div>
         <div class="card">
           <div class="toolbar">
-            <input id="cardsSearch" class="inp search" type="search" placeholder="Search card, holder, owner, bank, product, group, cost centre" aria-label="Search the cards" />
+            <input id="cardsSearch" class="inp search" type="search" placeholder="Search cards" aria-label="Search the cards" title="Card number (or a number its receipts show), holder, owner, bank, product, group or cost centre" />
             <select id="cardsSort" class="inp" aria-label="Sort the cards">
               <option value="card">Sort: Card</option>
               <option value="holder">Sort: Holder</option>
@@ -562,6 +587,7 @@
             </span>
           </div>
           <div id="cardsChips" class="chips-row"></div>
+          <div id="cardsSummary" class="cards-sum hidden"></div>
           <div id="cardsBody"><div class="loading">Loading cards…</div></div>
         </div>
         <details id="unclaimedPanel" class="card hidden" open>
@@ -824,7 +850,7 @@
     String(v || '').toLowerCase().split(/[\s,;]+/).forEach(function (e) { if (e && out.indexOf(e) < 0) out.push(e); });
     return out;
   }
-  function plural(n, one, many) { n = Number(n) || 0; return n + ' ' + (n === 1 ? one : many); }
+  function plural(n, one, many) { n = Number(n) || 0; return n.toLocaleString('en-CA') + ' ' + (n === 1 ? one : many); }
   // "2026-10" (a summary month) or "2026 10" (an Invoice month folder) as "Oct 2026".
   function ymLabel(ym) {
     var m = /^(\d{4})[- ](\d{1,2})$/.exec(String(ym || '').trim());
@@ -1075,18 +1101,30 @@
   // ---------------------------------------------------------------------------
   // Cards
   // ---------------------------------------------------------------------------
-  // view: 'gallery' (the default), 'table' or 'owners' (By owner), remembered by this browser (CARDS_VIEW_KEY).
+  // view: 'gallery' (the default), 'table' or 'owners' (By owner), remembered by this browser (CARDS_VIEW_KEY);
+  // the sort too (CARDS_SORT_KEY), so AP who sorts by Invoices missing finds it so next time.
   var CARDS_VIEW_KEY = 'ap_admin_cards_view';
   var CARDS_VIEWS = ['gallery', 'table', 'owners'];
-  var cardsUi = { q: '', sort: 'card', flag: 'all', fill: null, view: storedCardsView() };
+  var CARDS_SORT_KEY = 'ap_admin_cards_sort';
+  var CARDS_SORT_NAMES = ['card', 'holder', 'group', 'active', 'missing'];     // #cardsSort's options, CARD_SORTS' keys
+  var cardsUi = { q: '', sort: storedCardsSort(), flag: 'all', fill: null, view: storedCardsView() };
   function storedCardsView() {
     try { var v = localStorage.getItem(CARDS_VIEW_KEY); return CARDS_VIEWS.indexOf(v) >= 0 ? v : 'gallery'; } catch (e) { return 'gallery'; }
+  }
+  function storedCardsSort() {
+    try { var v = localStorage.getItem(CARDS_SORT_KEY); return CARDS_SORT_NAMES.indexOf(v) >= 0 ? v : 'card'; } catch (e) { return 'card'; }
   }
   function setCardsView(view) {
     cardsUi.view = CARDS_VIEWS.indexOf(view) >= 0 ? view : 'gallery';
     try { localStorage.setItem(CARDS_VIEW_KEY, cardsUi.view); } catch (e) { /* remembered for this visit only */ }
     syncCardsView();
-    if (state.cards) renderCardsList();
+    if (state.cards) { renderCardsSummary(); renderCardsList(); }
+  }
+  function setCardsSort(sort) {
+    cardsUi.sort = CARDS_SORT_NAMES.indexOf(sort) >= 0 ? sort : 'card';
+    try { localStorage.setItem(CARDS_SORT_KEY, cardsUi.sort); } catch (e) { /* remembered for this visit only */ }
+    $('#cardsSort').value = cardsUi.sort;
+    if (state.cards) { renderCardsSummary(); renderCardsList(); }
   }
   function syncCardsView() {
     $all('[data-cards-view]').forEach(function (b) {
@@ -1159,9 +1197,29 @@
       b.classList.toggle('hidden', !n);
     });
     renderCardChips();
+    renderCardsSummary();
     renderCardsList();
     renderFillNotice();
     renderUnclaimed();
+  }
+  // Above the cards, over every card (not only those the search leaves): how many invoices are missing,
+  // on how many cards, how many of them on cards nobody owns; and a way to put the worst card first.
+  function renderCardsSummary() {
+    var box = $('#cardsSummary'), cards = cardList();
+    var total = 0, on = 0, orphaned = 0;
+    cards.forEach(function (c) {
+      var n = Number((c.activity || {}).missing) || 0;
+      if (!n) return;
+      total += n;
+      on += 1;
+      if (!(c.owners || []).length) orphaned += n;
+    });
+    box.classList.toggle('hidden', !total);
+    if (!total) { box.innerHTML = ''; return; }
+    var sortable = cardsUi.sort !== 'missing' && cardsUi.view !== 'owners';
+    box.innerHTML = '<span><span class="miss">' + esc(plural(total, 'invoice', 'invoices')) + ' missing</span> on ' + esc(plural(on, 'card', 'cards')) +
+      (orphaned ? ' · ' + esc(orphaned.toLocaleString('en-CA')) + ' on cards with no owner' : '') + '</span>' +
+      (sortable ? '<button type="button" class="btn btn-ghost btn-xs" data-sort-missing>Sort by missing</button>' : '');
   }
   function renderCardChips() {
     var d = state.cards, counts = d.counts || {}, labels = d.flag_labels || {};
@@ -1213,8 +1271,9 @@
     if (!q) return true;
     var bank = bankFor(c.bank);
     var net = Object.prototype.hasOwnProperty.call(NETWORK_ALIASES, c.network || '') ? NETWORK_ALIASES[c.network] : '';
+    // receipts_show: the numbers receipts print for the card (7436's 7444), so a receipt in hand finds it.
     return [c.last4, c.label, c.holder_name, c.owner_email, c.group_name, c.card_number, c.default_cost_center,
-            c.name_on_card, bank ? bank.name : c.bank, c.product, networkLabel(c.network), net]
+            c.name_on_card, bank ? bank.name : c.bank, c.product, networkLabel(c.network), net, (c.receipts_show || []).join(' ')]
       .join(' ').toLowerCase().indexOf(q) >= 0;
   }
   // The cards the search, the flag chip and the sort leave, in that order: both views draw these.
@@ -1233,9 +1292,10 @@
   }
   function cardsTableHtml(rows) {
     return '<div class="list-wrap"><table class="list wrap-head"><thead><tr><th>Card</th><th>Bank</th><th>Holder</th><th>Group</th><th>Owners</th>' +
-      '<th>Default cost centre</th><th>Chat</th><th>Receipts</th><th>Activity</th><th>Flags</th><th>Last change</th></tr></thead><tbody>' +
+      '<th>Default cost centre</th><th>Chat</th><th>Receipts</th><th class="td-right">Missing</th><th>Transactions</th>' +
+      '<th>Flags</th><th>Last change</th></tr></thead><tbody>' +
       (rows.length ? rows.map(cardRowHtml).join('')
-        : '<tr><td colspan="11" data-label=""><div class="empty-small">No card matches.</div></td></tr>') +
+        : '<tr><td colspan="12" data-label=""><div class="empty-small">No card matches.</div></td></tr>') +
       '</tbody></table></div>';
   }
   // The table's Bank column: the logo (the bank's short name when it has none), the product under it, and
@@ -1265,8 +1325,8 @@
   var WARN_HTML = '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M7.1 1.9a1 1 0 0 1 1.8 0l6 11.1A1 1 0 0 1 14 14.5H2a1 1 0 0 1-.9-1.5Z" opacity=".9"/>' +
     '<path d="M8 5.6v4M8 11.7v.1" stroke="#fff4e5" stroke-width="1.6" stroke-linecap="round"/></svg>';
   var DOTS_HTML = '<span class="grp">••••</span><span class="grp">••••</span><span class="grp">••••</span>';
-  // Flags the gallery leaves out under a card (their chips in the toolbar still filter by them): no_webhook is
-  // the normal state of nearly every card; no_owner is said on the owners line, where the owners would be.
+  // Flags the gallery and the table leave out (their chips in the toolbar still filter by them): no_webhook is
+  // the normal state of nearly every card; no_owner is said where the owners would be.
   var GALLERY_QUIET_FLAGS = ['no_webhook', 'no_owner'];
   // Status, not something to do: after the flags that ask for an action. never_used already says
   // inactive_90d, so a card never used shows only that.
@@ -1285,10 +1345,33 @@
     var re = Object.prototype.hasOwnProperty.call(NETWORK_WORDS, c.network || '') ? NETWORK_WORDS[c.network] : null;
     return (re && p.replace(re, '')) || p;
   }
-  // "N invoices missing" opens the dashboard on the newest month with one missing, for this card.
+  // The missing count's link opens the dashboard on the newest month with one missing, for this card.
   function dashboardHref(ym, last4) {
     var m = /^(\d{4})-(\d{2})$/.exec(ym || '');
     return m && /^\d{4}$/.test(last4 || '') ? '/#/' + m[1] + '/' + m[2] + '?card=' + encodeURIComponent(last4) : '';
+  }
+  // The link from a card's missing total to the dashboard, which shows one month: its text names the month
+  // and how many of the total are in it ("58 in Oct 2026", or just "Oct 2026" when they all are; "newest
+  // Oct 2026" from a server that does not count them); monthOnly (the table's narrow cell, under the total):
+  // just the month, the counts in the title. {text, html}, or null without a month to open.
+  function missingGo(a, missing, last4, monthOnly) {
+    var month = ymLabel(a.missing_last_month), href = dashboardHref(a.missing_last_month, last4);
+    if (!month) return null;
+    var inMonth = Number(a.missing_newest) || 0;
+    var text = monthOnly || inMonth >= missing ? month : (!inMonth ? 'newest ' + month : inMonth.toLocaleString('en-CA') + ' in ' + month);
+    // The month and the arrow never break apart (a narrow table cell may break after "58 in").
+    var shown = esc(text).replace(/ (\d{4})$/, '\u00a0$1');
+    if (!href) return { text: text, html: shown };
+    var title = 'Open ' + month + ' for card ' + last4 + ' on the dashboard: ' +
+      (inMonth ? (inMonth >= missing ? 'every missing invoice is in that month' : inMonth.toLocaleString('en-CA') + ' of the ' +
+        missing.toLocaleString('en-CA') + ' missing are in it, the newest month with one missing') : 'the newest month with an invoice missing');
+    return { text: text, html: '<a class="miss-go" href="' + esc(href) + '" title="' + esc(title) + '">' + shown + '\u00a0→</a>' };
+  }
+  // The numbers receipts print for a card besides the one on its face: a reissue AP has not typed as the card
+  // number (7436's receipts show 7444). Said beside the card, never printed on the face as if it were the plastic.
+  function receiptNumbers(c) {
+    var face = c.card_number || c.last4;
+    return (c.receipts_show || []).filter(function (n) { return n && n !== face && n !== c.last4; });
   }
   function networkMarkHtml(n) {
     if (n === 'visa') return '<span class="cc-visa" aria-hidden="true">VISA</span>';
@@ -1344,7 +1427,7 @@
     if (b && logo) bankHtml = '<img class="cc-logo" src="' + esc(logo) + '" alt="' + esc(b.name) + '" data-bank-logo="' + esc(b.name) + '" decoding="async" />';
     else if (b) bankHtml = '<span class="cc-bank-text">' + esc(b.name) + '</span>';
     else if (c.bank) bankHtml = '<span class="cc-bank-text">' + esc(String(c.bank).toUpperCase()) + '</span>';
-    else bankHtml = '<span class="cc-bank-text" title="Set the bank in the editor">+ Set bank</span>';
+    else bankHtml = '<span class="cc-bank-text" title="Set the bank in the editor">Bank not set</span>';
     var faceCls = 'cc-face' + (b ? bankClass(b.key) : (c.bank ? ' bank-unknown' : ' no-bank'));
     // The face's extra lines, in a real card's small spaced capitals, above the holder.
     var lines = [];
@@ -1378,6 +1461,8 @@
     var title = [];
     if (c.label && !isDefaultLabel(c.label)) title.push('<div class="cc-title">' + esc(c.label) + '</div>');
     if (ownNumber) title.push('<div class="cc-title">Account ' + esc(c.last4) + ' · card no. ' + esc(number) + '</div>');
+    var shows = receiptNumbers(c);
+    if (shows.length) title.push('<div class="cc-title">Receipts show ' + esc(shows.join(', ')) + '</div>');
     var rel = '';
     if (c.primary_last4) {
       rel = '<div class="cc-rel">Supplementary of ' + jumpHtml(c.primary_last4) +
@@ -1386,24 +1471,24 @@
     } else if ((c.supplementary || []).length) {
       rel = '<div class="cc-rel">Supplementary: ' + c.supplementary.map(jumpHtml).join(', ') + '</div>';
     }
-    // "6 invoices missing · last used Nov 2026", which fits a 300px card on one line, then the count in a
-    // quieter line ("41 transactions since Sep 2026"). The missing count opens the dashboard on its newest
-    // month with one missing.
+    // "616 invoices missing · 58 in Oct 2026 →", which fits a 300px card on one line: the total over every
+    // month, then a link to the newest month with one missing, named, since the dashboard shows one month at
+    // a time. Then the count in a quieter line ("1,185 transactions · Dec 2025 – Oct 2026").
     var actText, actHtml, countHtml = '';
     if (a.transactions) {
-      var rest = a.last_month ? ' · last used ' + ymLabel(a.last_month) : '';
-      var missText = plural(missing, 'invoice', 'invoices') + ' missing';
-      var href = missing ? dashboardHref(a.missing_last_month, c.last4) : '';
-      var count = plural(a.transactions, 'transaction', 'transactions') + (a.first_month ? ' since ' + ymLabel(a.first_month) : '');
+      var used = a.first_month && a.last_month && a.first_month !== a.last_month
+        ? ymLabel(a.first_month) + ' – ' + ymLabel(a.last_month) : ymLabel(a.last_month || a.first_month);
+      var count = plural(a.transactions, 'transaction', 'transactions') + (used ? ' · ' + used : '');
       countHtml = '<div class="cc-count">' + esc(count) + '</div>';
-      actText = (missing ? missText : 'All invoices in') + rest + ' · ' + count;
-      if (href) {
-        actHtml = '<a class="miss" href="' + esc(href) + '" title="' + esc('Open ' + ymLabel(a.missing_last_month) + ' for card ' + c.last4 +
-          ' on the dashboard: the newest month with an invoice missing') + '">' + esc(missText) + '</a>';
+      if (missing) {
+        var go = missingGo(a, missing, c.last4);
+        actText = plural(missing, 'invoice', 'invoices') + ' missing' +
+          (a.missing_months > 1 ? ' over ' + a.missing_months + ' months' : '') + (go ? ' · ' + go.text : '') + ' · ' + count;
+        actHtml = '<span class="miss">' + esc(plural(missing, 'invoice', 'invoices')) + ' missing</span>' + (go ? ' · ' + go.html : '');
       } else {
-        actHtml = missing ? '<span class="miss">' + esc(missText) + '</span>' : '<span class="ok">All invoices in</span>';
+        actText = 'All invoices in · ' + count;
+        actHtml = '<span class="ok">All invoices in</span>';
       }
-      actHtml += esc(rest);
     } else {
       actText = 'No transactions yet';
       actHtml = esc(actText);
@@ -1438,14 +1523,20 @@
     el.scrollIntoView({ block: 'center', behavior: calm ? 'auto' : 'smooth' });
     el.focus({ preventScroll: true });
   }
+  // A row aims at two lines: names before the @ (the address in the title), the flags AP acts on, and the
+  // activity in narrow columns with the missing count first.
   function cardRowHtml(c) {
     var labels = state.cards.flag_labels || {}, a = c.activity || {}, flags = c.flags || [];
     var sub = [];
     if (c.label && !isDefaultLabel(c.label)) sub.push(c.label);
     if (c.card_number) sub.push('card no. ' + c.card_number);
+    var shows = receiptNumbers(c);
+    if (shows.length) sub.push('receipts show ' + shows.join(', '));
     if (c.primary_last4) sub.push('under ' + c.primary_last4 + (c.primary_holder ? ' (' + c.primary_holder + ')' : ''));
     var owners = (c.owners || []).map(function (o) {
-      return '<span class="tag' + (o.outside_domain ? ' pill-warn' : '') + '"' + (o.outside_domain ? ' title="' + esc(OUTSIDE_TITLE) + '"' : '') + '>' + emailHtml(o.email) + '</span>';
+      if (o.outside_domain) return '<span class="tag pill-warn" title="' + esc(OUTSIDE_TITLE) + '">' + emailHtml(o.email) + '</span>';
+      var at = o.email.indexOf('@');
+      return '<span class="tag" title="' + esc(o.email) + '">' + esc(at > 0 ? o.email.slice(0, at) : o.email) + '</span>';
     }).join('');
     var dcc;
     if (c.default_cost_center) {
@@ -1458,43 +1549,68 @@
     }
     var chat = c.webhook_configured ? '<span class="ok-mark">✓</span> own'
       : (c.webhook_default ? '<span class="muted">default</span>' : '<span class="muted">—</span>');
-    var receipts = (c.receipt_upload ? 'On' : 'Off') +
-      (c.receipt_upload_setting === null || c.receipt_upload_setting === undefined ? '<div class="sub">server setting</div>' : '');
-    var activity = esc(a.transactions || 0) + ' · ' + esc(a.recent || 0) + ' last 3 months · ' + esc(a.missing || 0) + ' missing' +
-      (a.last_month ? '<div class="sub">last ' + esc(ymLabel(a.last_month)) + '</div>' : '');
-    var flagHtml = flags.length ? '<div class="tags">' + flags.map(function (f) {
+    var fromServer = c.receipt_upload_setting === null || c.receipt_upload_setting === undefined;
+    var receipts = '<span title="' + (fromServer ? 'From the server setting (this card has none of its own)' : 'Set on this card') + '">' +
+      (c.receipt_upload ? 'On' : 'Off') + '</span>';
+    // Missing: the total over every month in red, and under it the link to the newest month with one missing.
+    var missing = Number(a.missing) || 0, missingHtml;
+    if (!a.transactions) missingHtml = '<span class="muted">—</span>';
+    else if (!missing) missingHtml = '<span class="all-in">All in</span>';
+    else {
+      var go = missingGo(a, missing, c.last4, true);
+      missingHtml = '<span class="miss-n">' + esc(missing.toLocaleString('en-CA')) + '</span>' + (go ? '<div class="sub">' + go.html + '</div>' : '');
+    }
+    // Transactions: the count, and when the card was last used under it (the last 3 months' count in the title).
+    var txns = a.transactions ? '<span title="' + esc((Number(a.recent) || 0).toLocaleString('en-CA') + ' in the last 3 months') + '">' +
+      esc((Number(a.transactions) || 0).toLocaleString('en-CA')) + '</span>' + (a.last_month ? '<div class="sub nowrap">last ' + esc(ymLabel(a.last_month)) + '</div>' : '')
+      : '<span class="muted">—</span>';
+    // The gallery's flags, less holder_not_person: the Holder cell says it ("not linked to People").
+    var flagHtml = galleryFlags(c).filter(function (f) { return f !== 'holder_not_person'; }).map(function (f) {
       return '<span class="pill pill-grey">' + esc(labels[f] || f) + '</span>';
-    }).join('') + '</div>' : '<span class="muted">—</span>';
-    var change = c.last_change ? '<div>' + emailHtml(c.last_change.actor) + '</div><div class="sub">' + esc(fmtStamp(c.last_change.at)) + '</div>' : '<span class="muted">—</span>';
+    }).join('');
+    flagHtml = flagHtml ? '<div class="tags">' + flagHtml + '</div>' : '<span class="muted">—</span>';
+    // The actor as a name ("Claude (card banks for Manne)" is Claude, an address its part before the @), in full in the title.
+    var change = '<span class="muted">—</span>';
+    if (c.last_change) {
+      var actor = String(c.last_change.actor || ''), who = actor.replace(/\s*\(.*\)\s*$/, '') || actor;
+      if (who.indexOf('@') > 0) who = who.slice(0, who.indexOf('@'));
+      change = '<div class="nowrap" title="' + esc(actor) + '">' + esc(who) + '</div><div class="sub nowrap">' + esc(fmtStamp(c.last_change.at)) + '</div>';
+    }
     return '<tr class="click-row" data-last4="' + esc(c.last4) + '" tabindex="0">' +
       '<td data-label="Card"><div class="strong nowrap">•••• ' + esc(c.last4) + '</div>' + (sub.length ? '<div class="sub">' + esc(sub.join(' · ')) + '</div>' : '') + '</td>' +
       '<td data-label="Bank" class="w-bank">' + bankCellHtml(c) + '</td>' +
       '<td data-label="Holder">' + (c.holder_name ? esc(c.holder_name) : '<span class="muted">—</span>') +
-        (flags.indexOf('holder_not_person') >= 0 ? '<div class="sub">not a person</div>' : '') + '</td>' +
+        (flags.indexOf('holder_not_person') >= 0 ? '<div class="sub">not linked to People</div>' : '') + '</td>' +
       '<td data-label="Group">' + (c.group_name ? esc(c.group_name) : '<span class="muted">—</span>') + '</td>' +
-      '<td data-label="Owners">' + (owners ? '<div class="tags">' + owners + '</div>' : '<span class="muted">—</span>') + '</td>' +
+      '<td data-label="Owners">' + (owners ? '<div class="tags">' + owners + '</div>' : '<span class="tag pill-warn nowrap">No owner</span>') + '</td>' +
       '<td data-label="Default cost centre">' + dcc + '</td>' +
       '<td data-label="Chat" class="nowrap">' + chat + '</td>' +
       '<td data-label="Receipts">' + receipts + '</td>' +
-      '<td data-label="Activity" class="w-mid">' + activity + '</td>' +
+      '<td data-label="Missing" class="w-num">' + missingHtml + '</td>' +
+      '<td data-label="Transactions">' + txns + '</td>' +
       '<td data-label="Flags" class="w-flags">' + flagHtml + '</td>' +
       '<td data-label="Last change">' + change + '</td></tr>';
   }
-  // By owner: each owner's address with its cards, limited to the cards the search and the flag chip leave.
+  // By owner: each owner's address with its cards, limited to the cards the search and the flag chip leave;
+  // then the cards nobody owns, in a last "No owner" row, so the view lists every card that matches.
   function ownersHtml(rows) {
     var idx = state.cards.owners || {}, shown = {};
     rows.forEach(function (c) { shown[c.last4] = true; });
     var emails = Object.keys(idx).sort().filter(function (em) { return (idx[em] || []).some(function (l) { return shown[l]; }); });
-    if (!Object.keys(idx).length) return '<div class="empty-small">No card has an owner yet.</div>';
-    if (!emails.length) return '<div class="empty-small">No owner has a card that matches.</div>';
+    var orphans = rows.filter(function (c) { return !(c.owners || []).length; });
+    if (!emails.length && !orphans.length) return '<div class="empty-small">No card matches.</div>';
+    function chip(l) {
+      var c = cardByLast4(l);
+      return '<button type="button" class="chip btn-wrap" data-open-card="' + esc(l) + '">•••• ' + esc(l) + (c && c.holder_name ? ' · ' + esc(c.holder_name) : '') + '</button>';
+    }
     return '<div class="list-wrap"><table class="list"><thead><tr><th>Owner</th><th>Cards</th></tr></thead><tbody>' + emails.map(function (em) {
       var out = outsideDomain(em);
       return '<tr><td data-label="Owner"><span class="tag' + (out ? ' pill-warn' : '') + '"' + (out ? ' title="' + esc(OUTSIDE_TITLE) + '"' : '') + '>' + emailHtml(em) + '</span></td>' +
-        '<td data-label="Cards"><div class="btns">' + (idx[em] || []).filter(function (l) { return shown[l]; }).map(function (l) {
-          var c = cardByLast4(l);
-          return '<button type="button" class="chip btn-wrap" data-open-card="' + esc(l) + '">•••• ' + esc(l) + (c && c.holder_name ? ' · ' + esc(c.holder_name) : '') + '</button>';
-        }).join('') + '</div></td></tr>';
-    }).join('') + '</tbody></table></div>';
+        '<td data-label="Cards"><div class="btns">' + (idx[em] || []).filter(function (l) { return shown[l]; }).map(chip).join('') + '</div></td></tr>';
+    }).join('') +
+      (orphans.length ? '<tr><td data-label="Owner"><span class="tag pill-warn">No owner</span></td>' +
+        '<td data-label="Cards"><div class="btns">' + orphans.map(function (c) { return chip(c.last4); }).join('') + '</div></td></tr>' : '') +
+      '</tbody></table></div>';
   }
 
   // The fill offer after a save that gave a card a default: in the tab, not a dialog, so it can wait.
@@ -1967,7 +2083,8 @@
 
   // Cards tab events.
   $('#cardsSearch').addEventListener('input', function () { cardsUi.q = this.value; if (state.cards) renderCardsList(); });
-  $('#cardsSort').addEventListener('change', function () { cardsUi.sort = this.value; if (state.cards) renderCardsList(); });
+  $('#cardsSort').addEventListener('change', function () { setCardsSort(this.value); });
+  $('#cardsSort').value = cardsUi.sort;
   syncCardsView();
   // A bank logo that does not load (a deploy without static/banks/, an IAP re-auth on the image): the bank's
   // name takes its place, in the face's lettering on a card and as plain text in the table's Bank cell, the
@@ -1992,6 +2109,7 @@
     var t = ev.target;
     var view = t.closest('[data-cards-view]');
     if (view) { setCardsView(view.dataset.cardsView); return; }
+    if (t.closest('[data-sort-missing]')) { setCardsSort('missing'); return; }
     var flag = t.closest('[data-flag]');
     if (flag) { cardsUi.flag = flag.dataset.flag; renderCardChips(); renderCardsList(); return; }
     var open = t.closest('[data-open-card]');

@@ -1,7 +1,10 @@
 """The Drive import: statements put in the Bank Transactions folder (and its subfolders) are read by
 `python main.py sync`, once per version, then their months are read for invoices and matched. Also
 the job lease that keeps it, the weekly reminder and the dashboard's own steps from overlapping."""
+import contextlib
 import datetime as dt
+import io
+import json
 import os
 import sys
 import unittest
@@ -214,6 +217,26 @@ class FolderAndLeaseTests(BankSyncTestCase):
     def test_off_without_a_folder(self):
         with mock.patch.object(main, "BANK_FOLDER_ID", ""):
             self.assertEqual(self.sync()["status"], "off")
+
+    def test_an_unreadable_folder_is_logged_at_error_severity(self):
+        # The job prints its log (log=print): Cloud Logging reads a JSON line's "severity", so a revoked token
+        # (invalid_grant) shows in severity>=ERROR filters and alerts, while the run still ends normally.
+        def refuse(file_id, fields=None):
+            raise DriveError('AP token refresh failed: 400 {"error": "invalid_grant"}')
+        self.drive.get = refuse
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            result = main.sync_bank_folder(now=NOW)
+        self.assertEqual(result["status"], "unreadable")
+        lines = [json.loads(line) for line in out.getvalue().splitlines() if line.startswith('{"severity"')]
+        self.assertEqual([entry["severity"] for entry in lines], ["ERROR"])
+        self.assertIn("invalid_grant", lines[0]["message"])
+        self.assertTrue(lines[0]["message"].startswith("sync: the Bank Transactions folder could not be read"))
+        # Any other log (the tests', a caller's own) gets the plain text.
+        said = []
+        main.sync_bank_folder(log=said.append, now=NOW)
+        self.assertTrue(any(m.startswith("sync: the Bank Transactions folder could not be read") for m in said))
+        self.assertFalse(any(m.startswith("{") for m in said))
 
     def test_the_run_waits_for_a_step_running_elsewhere(self):
         self.store.take_lease(main.LEASE_NAME, "service:rev-1:abcd", "match", 300)

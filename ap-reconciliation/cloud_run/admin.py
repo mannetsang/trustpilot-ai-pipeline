@@ -226,18 +226,20 @@ def _ym(year, month):
 
 
 def card_activity(summary_rows, today):
-    """{last4: {"transactions", "recent", "missing", "first_month", "last_month", "missing_last_month"}} from
-    month_summary rows. recent: the transactions of the last 3 months (about 90 days, counted in whole statement
-    months). missing_last_month: the newest month with an invoice missing (None when none is), the month the
-    Cards gallery's "N invoices missing" opens on the dashboard."""
+    """{last4: {"transactions", "recent", "missing", "first_month", "last_month", "missing_last_month",
+    "missing_newest", "missing_months"}} from month_summary rows. recent: the transactions of the last 3 months
+    (about 90 days, counted in whole statement months). missing: every month's missing invoices added up.
+    missing_last_month: the newest month with an invoice missing (None when none is), the month the Cards
+    gallery's link opens on the dashboard (one month: the dashboard shows a month at a time); missing_newest:
+    how many are missing in that month; missing_months: how many months have one missing."""
     recent = recent_months(today)
-    out = {}
+    out, missing_by_month = {}, {}
     for r in summary_rows:
         last4 = r.get("card_last4")
         if not last4:
             continue
         a = out.setdefault(last4, {"transactions": 0, "recent": 0, "missing": 0, "first_month": None, "last_month": None,
-                                   "missing_last_month": None})
+                                   "missing_last_month": None, "missing_newest": 0, "missing_months": 0})
         n = int(r.get("transactions") or 0)
         missing = int(r.get("missing") or 0)
         a["transactions"] += n
@@ -248,7 +250,11 @@ def card_activity(summary_rows, today):
         a["first_month"] = ym if a["first_month"] is None else min(a["first_month"], ym)
         a["last_month"] = ym if a["last_month"] is None else max(a["last_month"], ym)
         if missing > 0:
-            a["missing_last_month"] = ym if a["missing_last_month"] is None else max(a["missing_last_month"], ym)
+            months = missing_by_month.setdefault(last4, {})
+            months[ym] = months.get(ym, 0) + missing
+    for last4, months in missing_by_month.items():
+        newest = max(months)
+        out[last4].update(missing_last_month=newest, missing_newest=months[newest], missing_months=len(months))
     return out
 
 
