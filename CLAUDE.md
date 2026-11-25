@@ -164,7 +164,8 @@ people, use cases, cost centres and the vendor registry at `/admin` (the
 vendor registry gives suggestions only; matching does not read it yet)
 (Google sign-in through
 Identity-Aware Proxy for the `superhairpieces.com` domain, decided
-2026-10-13; `ap@`, `manne@` and `snow@` (accounts payable) are AP, everyone else in the domain edits
+2026-10-13; `ap@`, `manne@` and `snow@` (accounts payable) and, since 2026-11-25, `george@` and
+`james@` are AP, everyone else in the domain edits
 only the cards they own; the public sign-in page is the second Cloud Run
 service `ap-reconciliation-login`, source `ap-reconciliation/login/`. The
 README's "Access" section has the open and shared-password modes too).

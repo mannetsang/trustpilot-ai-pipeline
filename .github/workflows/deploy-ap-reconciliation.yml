@@ -58,7 +58,7 @@ env:
   BANK_FOLDER_ID: 1MGenhujsY-zElpg6A0SGD8C1WqC516t3
   SUPABASE_URL: https://bkkifrwfgtcnmfynbbdd.supabase.co
   ALLOWED_DOMAINS: superhairpieces.com
-  AP_EMAILS: ap@superhairpieces.com,manne@superhairpieces.com,snow@superhairpieces.com
+  AP_EMAILS: ap@superhairpieces.com,manne@superhairpieces.com,snow@superhairpieces.com,george@superhairpieces.com,james@superhairpieces.com
   # What the IAP assertion's audience must be: this service, by project number.
   IAP_AUDIENCE: /projects/304363458561/locations/us-central1/services/ap-reconciliation
   SECRETS: SUPABASE_SERVICE_KEY=ap-reconciliation-supabase-service-key:latest,GOOGLE_WORKSPACE_AP_CLIENT_ID=google-workspace-ap-client-id:latest,GOOGLE_WORKSPACE_AP_CLIENT_SECRET=google-workspace-ap-client-secret:latest,GOOGLE_WORKSPACE_AP_REFRESH_TOKEN=google-workspace-ap-refresh-token:latest,CARD_WEBHOOKS_JSON=ap-reconciliation-card-webhooks:latest
