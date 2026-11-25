@@ -1542,10 +1542,47 @@
   function webhookText(c) {
     return c.webhook_configured ? 'Own webhook' : (c.webhook_default ? 'Default space (no webhook of its own)' : 'None: its reminders cannot be sent');
   }
+  // Holder and Group are drop-downs, never a <datalist>: a browser lists only the suggestions that match
+  // what the box already says, so with "Yin Wei" in it Yin Wei was the only choice and nobody else could
+  // be picked without clearing the box first. The drop-down lists every name, and its value is the name,
+  // sent as before (holder_name, group_name). Its last choice, "New person…" / "New group…", shows a box
+  // under it for a name not on the list (on Save the server adds the person, as it did for a typed name).
+  var PICK_NEW = '__new__';
+  // Names once each (case and spaces aside, the first spelling kept), sorted.
+  function nameList(names) {
+    var seen = {};
+    return names.map(cleanText).filter(function (n) {
+      var k = n.toLowerCase();
+      if (!k || seen[k]) return false;
+      seen[k] = true;
+      return true;
+    }).sort(function (a, b) { return a.toLowerCase().localeCompare(b.toLowerCase()); });
+  }
+  // The choice matching the card's value (case and spaces aside) keeps the card's own spelling as its
+  // value, so a card saved without touching the field does not send it; a value matching no choice is
+  // listed too, selected, marked o.notListed and data-unlisted (picked() never snaps a typed name to it),
+  // and is what the "New …" box starts with (Save then adds it). A listed choice's text is the list's
+  // spelling. o: { notListed, newLabel, placeholder, aria, max }.
+  function namePickerHtml(name, names, current, o) {
+    var cur = cleanText(current), key = cur.toLowerCase(), found = false;
+    var opts = opt('', '— none —', !cur) + names.map(function (n) {
+      var same = !found && !!cur && n.toLowerCase() === key;
+      if (same) found = true;
+      return opt(same ? cur : n, n, same);
+    }).join('');
+    if (cur && !found) opts += '<option value="' + esc(cur) + '" selected data-unlisted>' + esc(cur + o.notListed) + '</option>';
+    return '<select class="inp" id="f_' + name + '" name="' + name + '">' + opts + opt(PICK_NEW, o.newLabel, false) + '</select>' +
+      '<input class="inp hidden" id="f_' + name + '_new" maxlength="' + o.max + '" placeholder="' + esc(o.placeholder) + '"' +
+      ' aria-label="' + esc(o.aria) + '" autocomplete="off" value="' + esc(cur && !found ? cur : '') + '" />';
+  }
   function cardFormHtml(c, d) {
     var create = !c, cur = c || {};
-    var people = (d.people || []).map(function (p) { return p.name; });
-    var groups = d.groups || [], ccs = d.cost_centers || [];
+    var people = nameList((d.people || []).map(function (p) { return p.name; }));
+    // Hair and Beauty, and every group a card is in (spelled as the cards have it: the server keeps one per name).
+    var groups = nameList((d.groups || []).concat(['Hair', 'Beauty'])), ccs = d.cost_centers || [];
+    // A holder who is no one in People: said under the list too, where a long name cannot cut it off.
+    var holderKey = nameKey(cur.holder_name);
+    var holderOut = !!holderKey && !people.some(function (n) { return n.toLowerCase() === holderKey; });
     var primaries = cardList().filter(function (o) { return !o.primary_last4 && (!c || o.last4 !== c.last4); });
     var sup = cur.supplementary || [];
     var primaryOpts = '<option value="">— not linked (a primary card) —</option>' + primaries.map(function (o) {
@@ -1568,15 +1605,16 @@
         (ccs.indexOf(cur.primary_default) >= 0 ? '<button type="button" class="btn btn-secondary btn-xs" id="useSame">Use the same</button>' : ' (retired there too)') + '</div>';
     }
     var h = '<form id="cardForm" novalidate autocomplete="off">' +
-      '<datalist id="dlPeople">' + people.map(function (n) { return '<option value="' + esc(n) + '"></option>'; }).join('') + '</datalist>' +
-      '<datalist id="dlGroups">' + groups.map(function (n) { return '<option value="' + esc(n) + '"></option>'; }).join('') + '</datalist>' +
       '<div class="form-grid">' +
       (create ? field('last4', 'Last 4 digits', '<input class="inp" id="f_last4" name="last4" inputmode="numeric" maxlength="4" placeholder="1234" />',
                       'The last four digits of the account, as the statement shows them.') : '') +
       field('label', 'Label', '<input class="inp" id="f_label" name="label" maxlength="200" value="' + esc(cur.label || '') + '"' + (create ? ' placeholder="Card ending 1234 - holder (the default)"' : '') + ' />') +
-      field('holder_name', 'Holder', '<input class="inp" id="f_holder_name" name="holder_name" list="dlPeople" maxlength="200" value="' + esc(cur.holder_name || '') + '" />',
-            'Who uses the card: the Person of its purchases unless someone else is assigned.') +
-      field('group_name', 'Group', '<input class="inp" id="f_group_name" name="group_name" list="dlGroups" maxlength="40" value="' + esc(cur.group_name || '') + '" placeholder="Hair, Beauty" />') +
+      field('holder_name', 'Holder', namePickerHtml('holder_name', people, cur.holder_name,
+              { notListed: ' (not in People)', newLabel: 'New person…', placeholder: 'New person’s name', aria: 'Name of the new person', max: 200 }),
+            'Who uses the card: the Person of its purchases unless someone else is assigned.' +
+            (holderOut ? ' <span id="f_holder_name_out"><b>Not in People</b>: pick someone, or New person… adds this name.</span>' : '')) +
+      field('group_name', 'Group', namePickerHtml('group_name', groups, cur.group_name,
+              { notListed: ' (not on the list)', newLabel: 'New group…', placeholder: 'New group’s name', aria: 'Name of the new group', max: 40 })) +
       '<div class="form-sub">On the card</div>' +
       field('bank', 'Bank', '<select class="inp" id="f_bank" name="bank">' + bankOpts + '</select>', 'The card\'s face in the gallery.') +
       field('network', 'Network', '<select class="inp" id="f_network" name="network">' + netOpts + '</select>') +
@@ -1679,6 +1717,50 @@
     ownerInput.addEventListener('blur', commitOwnerInput);
     drawOwners();
 
+    // Holder and Group: "New person…" / "New group…" shows the box under the list, and picking a name hides
+    // it again (what was typed is kept). Picked with the mouse or a phone's picker, the box takes the focus;
+    // arrowing through the closed list (Windows changes the choice on every step) only shows it, and Tab or
+    // Enter goes into it. A new choice clears the field's message ("Type the new person's name"), and
+    // "Not in People" shows only while that holder or "New person…" is the choice.
+    var pickers = ['holder_name', 'group_name'].map(function (name) {
+      var sel = $('#f_' + name, body), box = $('#f_' + name + '_new', body), keyed = false;
+      sel.addEventListener('pointerdown', function () { keyed = false; });
+      sel.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter' && sel.value === PICK_NEW) { ev.preventDefault(); box.focus(); box.select(); return; }
+        keyed = !ev.altKey && (/^(Arrow|Page|Home|End)/.test(ev.key) || (ev.key.length === 1 && ev.key !== ' '));
+      });
+      sel.addEventListener('change', function () {
+        var isNew = sel.value === PICK_NEW, out = $('#f_' + name + '_out', body);
+        box.classList.toggle('hidden', !isNew);
+        $('[data-err="' + name + '"]', form).textContent = '';
+        if (out) out.classList.toggle('hidden', !isNew && !sel.options[sel.selectedIndex].hasAttribute('data-unlisted'));
+        if (isNew && !keyed) { box.focus(); box.select(); }
+      });
+      return { name: name, sel: sel, box: box };
+    });
+    var holderPicker = pickers[0];
+    // What a picker says: its choice, or on "New …" the name in its box, spelled as the list has it when
+    // it is one of the listed names. Only the list's spelling (a listed choice's text) is snapped to, never
+    // the card's own (a choice's value, or the data-unlisted one): retyped in other capitals, a holder not
+    // in People is sent as typed, and one spelled unlike their person can be put right.
+    function picked(p) {
+      if (p.sel.value !== PICK_NEW) return cleanText(p.sel.value);
+      var typed = cleanText(p.box.value), key = typed.toLowerCase();
+      var same = $all('option', p.sel).filter(function (o) {
+        return o.value && o.value !== PICK_NEW && !o.hasAttribute('data-unlisted') && o.text.toLowerCase() === key;
+      })[0];
+      return same ? same.text : typed;
+    }
+    // "New …" with nothing typed: said under the field, and the focus goes to its box.
+    function newNameMissing() {
+      var p = pickers.filter(function (x) { return x.sel.value === PICK_NEW && !cleanText(x.box.value); })[0];
+      if (!p) return false;
+      $('[data-err="' + p.name + '"]', form).textContent = p === holderPicker
+        ? 'Type the new person’s name, or pick someone on the list.' : 'Type the new group’s name, or pick one on the list.';
+      p.box.focus();
+      return true;
+    }
+
     body.addEventListener('click', function (ev) {
       var rm = ev.target.closest('[data-rm-owner]');
       if (rm) { owners.splice(Number(rm.dataset.rmOwner), 1); drawOwners(); markDirty(); }
@@ -1699,7 +1781,7 @@
       commitOwnerInput();
       var ru = fv('receipt_upload');
       var v = {
-        label: cleanText(fv('label')), holder_name: cleanText(fv('holder_name')), group_name: cleanText(fv('group_name')),
+        label: cleanText(fv('label')), holder_name: picked(holderPicker), group_name: picked(pickers[1]),
         card_number: fv('card_number').replace(/\s+/g, ''), name_on_card: cleanText(fv('name_on_card')),
         bank: fv('bank'), network: fv('network'), product: cleanText(fv('product')),
         owner_email: owners.join(', '), default_cost_center: fv('default_cost_center'),
@@ -1716,6 +1798,7 @@
       if (create) {
         l4 = fv('last4').trim();
         if (!/^\d{4}$/.test(l4)) { $('[data-err="last4"]', form).textContent = 'Four digits.'; $('#f_last4', body).focus(); return; }
+        if (newNameMissing()) return;
         payload = { last4: l4, create: true };
         CARD_KEYS.forEach(function (k) {
           if (!(k in v)) return;
@@ -1725,10 +1808,14 @@
         });
         if (confirmed) payload.confirm = true;
       } else {
+        if (newNameMissing()) return;
         l4 = c.last4;
         payload = { last4: l4 };
         // Only what changed: a retired default left selected is unchanged, so it is neither sent nor cleared.
         CARD_KEYS.forEach(function (k) { if (k in v && v[k] !== orig[k]) payload[k] = v[k]; });
+        // A holder not yet a person, typed again under "New person…": sent though unchanged, so the server
+        // adds them to People and links the card (it does so for a holder sent while the card has no person).
+        if (holderPicker.sel.value === PICK_NEW && !c.person_id) payload.holder_name = v.holder_name;
         if (Object.keys(payload).length === 1) { clearDirty('card'); dropModal(); toast('Nothing changed'); return; }
       }
       var btn = $('#cardSave', body), data;

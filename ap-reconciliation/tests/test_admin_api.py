@@ -1329,6 +1329,64 @@ class StaticContractTests(unittest.TestCase):
         for text in ('data-cf="bank"', 'data-cf="network"', 'data-cf="product"', "cc-card"):
             self.assertNotIn(text, dashboard)
 
+    @staticmethod
+    def function_src(page, name):
+        """The source of the page's top-level `function name(...)`, up to the next one."""
+        start = page.index(f"\n  function {name}(")
+        return page[start:page.index("\n  function ", start + 1)]
+
+    def test_card_editor_holder_and_group_are_pickers(self):
+        # Holder and Group were inputs with a <datalist>: a browser lists only the suggestions matching
+        # what the box already says, so with "Yin Wei" in it nobody else could be picked. They are
+        # drop-downs of every person / group now; a datalist must not come back on either.
+        page = self.read("admin.html")
+        self.assertFalse("dlPeople" in page or "dlGroups" in page, "the Holder / Group datalist is back")
+        form = self.function_src(page, "cardFormHtml")
+        self.assertFalse("datalist" in form or re.search(r"\blist=", form), "the card editor has a datalist again")
+        picker = self.function_src(page, "namePickerHtml")
+        self.assertFalse("datalist" in picker or re.search(r"\blist=", picker), "the Holder / Group picker has a datalist")
+        self.assertIn("field('holder_name', 'Holder', namePickerHtml('holder_name', people, cur.holder_name,", form)
+        self.assertIn("field('group_name', 'Group', namePickerHtml('group_name', groups, cur.group_name,", form)
+        self.assertIn("var people = nameList((d.people || []).map(function (p) { return p.name; }));", form)
+        self.assertIn("var groups = nameList((d.groups || []).concat(['Hair', 'Beauty']))", form)
+        self.assertIn("newLabel: 'New person…'", form)
+        self.assertIn("notListed: ' (not in People)'", form)
+        self.assertIn("newLabel: 'New group…'", form)
+        # A <select> keeping the form's ids and names (the payload stays holder_name / group_name), with
+        # "— none —" first, the card's value even when it is on no choice, and "New …" last.
+        self.assertIn("""'<select class="inp" id="f_' + name + '" name="' + name + '">' + opts + opt(PICK_NEW, o.newLabel, false) + '</select>'""",
+                      picker)
+        self.assertIn("var opts = opt('', '— none —', !cur)", picker)
+        self.assertIn("""if (cur && !found) opts += '<option value="' + esc(cur) + '" selected data-unlisted>' + esc(cur + o.notListed) + '</option>';""",
+                      picker)
+        # The box for a new name has no name of its own: values() reads it only on "New …".
+        self.assertIn("""'<input class="inp hidden" id="f_' + name + '_new" maxlength=""", picker)
+        self.assertIn("label: cleanText(fv('label')), holder_name: picked(holderPicker), group_name: picked(pickers[1]),", page)
+        self.assertIn("if (p.sel.value !== PICK_NEW) return cleanText(p.sel.value);", page)
+        # A typed name snaps only to the list's spelling (a listed choice's text), never to the card's own
+        # (the unlisted choice, or a choice's value): "Chi Tung CHOW" typed for "Chi Tung Chow" is sent as typed.
+        self.assertIn("return o.value && o.value !== PICK_NEW && !o.hasAttribute('data-unlisted') && o.text.toLowerCase() === key;", page)
+        self.assertIn("return same ? same.text : typed;", page)
+        # A new choice clears the field's message, and "Not in People" shows only for that holder or New person….
+        self.assertIn("$('[data-err=\"' + name + '\"]', form).textContent = '';", page)
+        self.assertIn("if (out) out.classList.toggle('hidden', !isNew && !sel.options[sel.selectedIndex].hasAttribute('data-unlisted'));", page)
+        self.assertIn('<span id="f_holder_name_out"><b>Not in People</b>', form)
+
+    def test_dashboard_cards_dialog_group_is_a_picker(self):
+        # The dashboard's Cards… dialog had the same <datalist> for Group: a card in Hair offered only Hair.
+        page = self.read("index.html")
+        self.assertNotIn("groupList", page)
+        no_datalist = re.compile(r'<datalist[\s>]|\blist="')
+        self.assertNotRegex(self.function_src(page, "cardsModalHtml"), no_datalist)
+        self.assertIn("'<td data-group-cell>' + groupPickHtml(c.group_name) + '</td>'", page)
+        pick = self.function_src(page, "groupPickHtml")
+        self.assertNotRegex(pick, no_datalist)
+        self.assertIn('<select class="inp" data-cf="group_name"', pick)
+        self.assertIn("'<option value=\"__new__\">New group…</option></select>'", pick)
+        # The card's own spelling stays the matched choice's value, so an untouched row sends what it had.
+        self.assertIn("return '<option value=\"' + esc(same ? cur : g) + '\"' + (same ? ' selected' : '') + '>' + esc(g) + '</option>';", pick)
+        self.assertIn("if (payload.group_name === '__new__') {", page)
+
     def test_card_face_sizes_stay_on_the_face(self):
         page = self.read("admin.html")
         # .cc-bank-text is sized in cqw, which only the face (.cc-card, the query container) defines: in the
