@@ -258,10 +258,10 @@
     .ro-line > span:first-child { color: var(--text-mute); }
     .fill-line { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12.5px; color: var(--text-mid); }
     .danger-zone { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--border-subtle); display: grid; gap: 6px; justify-items: start; }
-    .chip-editor { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 4px 6px; border: 1px solid var(--border); border-radius: 8px; min-height: 32px; background: var(--surface); min-width: 0; }
-    .chip-editor:focus-within { border-color: var(--brand); box-shadow: 0 0 0 3px rgba(0,182,122,0.15); }
-    .chip-editor .chip-list { display: contents; }
-    .chip-editor input { flex: 1 1 160px; min-width: 120px; border: 0; outline: none; height: 24px; font-size: 12.5px; background: transparent; }
+    /* The card editor's owners: one chip each, over the list that adds one. */
+    .owner-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-height: 22px; min-width: 0; font-size: 12.5px; }
+    /* Read out by a screen reader, not shown (the Owners field's "… added as an owner"). */
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
     @media (max-width: 640px) { .ro-line { grid-template-columns: minmax(0, 1fr); gap: 0; } }
 
     /* Use cases & cost centres: two sections side by side on a wide screen. */
@@ -694,6 +694,7 @@
   var PATTERN_ON = 'pro' + 'bation';
   var PROPOSAL_TYPES = { alias: 'Alias', folders: 'Folders together', coding: 'Coding' };
   var OUTSIDE_TITLE = "Outside the allowed domains: can't sign in";
+  var EMAIL_RE = /^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$/;     // main.EMAIL_RE: what the server takes as an e-mail address
   var CODED_EACH = 'Coded purchase by purchase';
 
   // Open access: the name typed into the header is sent with every call and recorded as the actor.
@@ -1575,6 +1576,21 @@
       '<input class="inp hidden" id="f_' + name + '_new" maxlength="' + o.max + '" placeholder="' + esc(o.placeholder) + '"' +
       ' aria-label="' + esc(o.aria) + '" autocomplete="off" value="' + esc(cur && !found ? cur : '') + '" />';
   }
+  // Owners: chips over a drop-down built like Holder's, whose choice adds an owner rather than being the
+  // value: "Add an owner…", every person by name in Holder's order, then "Other e-mail address…". A person
+  // with an e-mail is added at once; one without, and "Other e-mail address…", show the box under the list
+  // (an address typed for the person is saved to them in People too). An owner is never derived from a name.
+  var PICK_PERSON = 'person:';
+  function ownerPickerHtml(people) {
+    return '<select class="inp" id="f_owner_email">' + opt('', 'Add an owner…', true) +
+      people.slice().sort(function (a, b) {
+        return cleanText(a.name).toLowerCase().localeCompare(cleanText(b.name).toLowerCase());
+      }).map(function (p) { return opt(PICK_PERSON + p.id, cleanText(p.name), false); }).join('') +
+      opt(PICK_NEW, 'Other e-mail address…', false) + '</select>' +
+      '<input class="inp hidden" id="f_owner_email_new" type="email" autocomplete="off" />' +
+      '<div class="field-hint hidden" id="f_owner_email_for"></div>' +
+      '<span class="sr-only" id="f_owner_email_said" role="status" aria-live="polite"></span>';
+  }
   function cardFormHtml(c, d) {
     var create = !c, cur = c || {};
     var people = nameList((d.people || []).map(function (p) { return p.name; }));
@@ -1625,9 +1641,8 @@
       field('name_on_card', 'Name on card', '<input class="inp" id="f_name_on_card" name="name_on_card" maxlength="80" value="' + esc(cur.name_on_card || '') + '" placeholder="if not the holder" />') +
       field('primary_last4', 'Linked under', '<select class="inp" id="f_primary_last4" name="primary_last4"' + (sup.length ? ' disabled' : '') + '>' + primaryOpts + '</select>',
             sup.length ? 'primary of ' + esc(sup.join(', ')) : 'A supplementary card is linked under its primary card.') +
-      field('owner_email', 'Owners', '<div class="chip-editor"><span class="chip-list" id="ownerChips"></span>' +
-            '<input id="f_owner_email" type="email" placeholder="name@superhairpieces.com" aria-label="Add an owner\'s e-mail" /></div>',
-            'Who may code the card\'s purchases and add its receipts. Enter or a comma adds an address.', 'full') +
+      field('owner_email', 'Owners', '<div class="owner-chips" id="ownerChips"></div>' + ownerPickerHtml(d.people || []),
+            'Who may code the card\'s purchases and add its receipts.', 'full') +
       field('default_cost_center', 'Default cost centre', '<select class="inp" id="f_default_cost_center" name="default_cost_center">' + ccOpts + '</select>',
             'Filled into a purchase when its use case is set and it has no cost centre yet. Purchases already coded are not changed (see Fill below).', 'full') +
       field('receipt_upload', 'Receipt upload', '<select class="inp" id="f_receipt_upload" name="receipt_upload">' +
@@ -1687,35 +1702,217 @@
     var form = $('#cardForm', body);
     function markDirty() { setDirty(what, 'card'); }
     function fv(name) { var el = form.querySelector('[name="' + name + '"]'); return el ? el.value : ''; }
-    form.addEventListener('input', markDirty);
-    form.addEventListener('change', markDirty);
+    // The Owners list's choice is not a value (the chips are, marked by addOwners / removeOwner): browsing it
+    // changes nothing.
+    function formChanged(ev) { if (ev.target.id !== 'f_owner_email') markDirty(); }
+    form.addEventListener('input', formChanged);
+    form.addEventListener('change', formChanged);
 
-    // Owners: chips. Enter, a comma or leaving the box adds what was typed; × removes one.
-    var ownerInput = $('#f_owner_email', body);
+    // Owners: chips, and the list that adds one (ownerPickerHtml). A chip shows the person whose e-mail it
+    // is (the address in its title), else the address. Choosing a person with an e-mail adds it, and the
+    // list says "Add an owner…" again; people already owners are greyed out. A person with no e-mail yet,
+    // and "Other e-mail address…", show the box under the list: Enter, a comma, another choice in the list
+    // or Save adds what was typed (Other also on leaving the box; a pasted list becomes chips). The person's
+    // box takes one address, theirs, which Save writes to them in People before the card (savePersonEmails).
+    // As on Holder, arrowing through the closed list (Windows changes the choice on every step) adds nothing
+    // and Enter adds the choice; leaving the list on a person only arrowed to adds nothing either (an owner
+    // is an edit right). A choice made with the mouse, on a phone or in the opened list is added at once.
+    // × removes a chip; what was added or removed is read out (f_owner_email_said).
+    var ownerSel = $('#f_owner_email', body), ownerBox = $('#f_owner_email_new', body), ownerHint = $('#f_owner_email_for', body);
+    var ownerKeyed = false, ownerArrowed = false, ownerPerson = null;
+    var personEmails = {};   // person id -> { person, email, added (the chip came with it) } for Save
+    function ownerErr(text) { $('[data-err="owner_email"]', form).textContent = text || ''; }
+    var saying = '';         // read out in this step so far: a box's address added with the next choice is said too
+    function ownerSaid(text) {
+      saying = saying ? saying + '. ' + text : text;
+      $('#f_owner_email_said', body).textContent = saying;
+      setTimeout(function () { saying = ''; }, 0);
+    }
+    function cardPerson(id) { return (d.people || []).filter(function (p) { return p.id === id; })[0] || null; }
+    function emailOf(p) { return personEmails[p.id] ? personEmails[p.id].email : String(p.email || '').toLowerCase(); }
+    function ownerName(em) {
+      var p = (d.people || []).filter(function (x) { return emailOf(x) === em; })[0];
+      return p ? cleanText(p.name) : em;
+    }
     function drawOwners() {
-      $('#ownerChips', body).innerHTML = owners.map(function (em, i) {
-        var out = outsideDomain(em);
-        return '<span class="tag' + (out ? ' pill-warn' : '') + '"' + (out ? ' title="' + esc(OUTSIDE_TITLE) + '"' : '') + '>' + esc(em) +
-          '<button type="button" data-rm-owner="' + i + '" aria-label="Remove ' + esc(em) + '">×</button></span>';
-      }).join('');
+      $('#ownerChips', body).innerHTML = owners.length ? owners.map(function (em, i) {
+        var out = outsideDomain(em), n = ownerName(em), title = [n !== em ? em : '', out ? OUTSIDE_TITLE : ''].filter(Boolean).join(' · ');
+        return '<span class="tag' + (out ? ' pill-warn' : '') + '"' + (title ? ' title="' + esc(title) + '"' : '') + '>' + esc(n) +
+          '<button type="button" data-rm-owner="' + i + '" aria-label="Remove ' + esc(n) + '">×</button></span>';
+      }).join('') : '<span class="muted">No owner yet</span>';
+      $all('option', ownerSel).forEach(function (o) {
+        var p = o.value.indexOf(PICK_PERSON) === 0 && cardPerson(o.value.slice(PICK_PERSON.length));
+        if (p) o.disabled = owners.indexOf(emailOf(p)) >= 0;
+      });
     }
     function addOwners(text) {
-      var added = false;
-      ownerList(text).forEach(function (em) { if (owners.indexOf(em) < 0) { owners.push(em); added = true; } });
-      if (added) { drawOwners(); markDirty(); }
+      var added = [];
+      ownerList(text).forEach(function (em) { if (owners.indexOf(em) < 0) { owners.push(em); added.push(ownerName(em)); } });
+      if (!added.length) return;
+      drawOwners();
+      markDirty();
+      ownerSaid(added.join(', ') + (added.length === 1 ? ' added as an owner' : ' added as owners'));
     }
-    function commitOwnerInput() { if (ownerInput.value.trim()) { addOwners(ownerInput.value); ownerInput.value = ''; } }
-    ownerInput.addEventListener('keydown', function (ev) {
-      if (ev.key === 'Enter' || ev.key === ',' || ev.key === ';') { ev.preventDefault(); commitOwnerInput(); }
-      else if (ev.key === 'Backspace' && !ownerInput.value && owners.length) { owners.pop(); drawOwners(); markDirty(); }
+    function removeOwner(i) {
+      var em = owners.splice(i, 1)[0], n = ownerName(em);
+      Object.keys(personEmails).forEach(function (id) { if (personEmails[id].email === em) delete personEmails[id]; });
+      drawOwners();
+      markDirty();
+      ownerSaid(n + ' removed from the owners');
+    }
+    // The box, for a person with no e-mail yet or for Other e-mail address… (person null).
+    function openOwnerBox(person) {
+      if (person !== ownerPerson) ownerBox.value = '';
+      ownerPerson = person;
+      var n = person ? cleanText(person.name) : '';
+      ownerBox.classList.remove('hidden');
+      ownerBox.placeholder = person ? n + '’s e-mail' : 'name@superhairpieces.com';
+      ownerBox.setAttribute('aria-label', person ? n + '’s e-mail' : 'Other e-mail address');
+      ownerHint.textContent = person ? n + ' has no e-mail in People yet: Save adds it there too.' : '';
+      ownerHint.classList.toggle('hidden', !person);
+      if (person) ownerBox.setAttribute('aria-describedby', 'f_owner_email_for'); else ownerBox.removeAttribute('aria-describedby');
+    }
+    function closeOwnerBox() {
+      ownerBox.value = '';
+      ownerPerson = null;
+      ownerBox.classList.add('hidden');
+      ownerHint.classList.add('hidden');
+    }
+    // The list's choice. chosen: picked (mouse, phone, opened list, Enter), not arrowed to.
+    function takeOwnerChoice(chosen) {
+      var v = ownerSel.value, was = ownerBox.classList.contains('hidden') ? '' : ownerPerson ? PICK_PERSON + ownerPerson.id : PICK_NEW;
+      // Another choice: what the open box says is added first, as Enter would; when it cannot be, the choice
+      // goes back to the box's (the reason is said under Owners).
+      if (was && v !== was) {
+        if (!commitOwnerBox(false)) { ownerSel.value = was; return; }
+        ownerSel.value = v;
+      }
+      var p = v.indexOf(PICK_PERSON) === 0 ? cardPerson(v.slice(PICK_PERSON.length)) : null;
+      var em = p ? emailOf(p) : '';
+      ownerErr('');
+      ownerArrowed = !!em && !chosen;                   // only arrowed to: Enter adds it
+      if (v === PICK_NEW || (p && !em)) {
+        openOwnerBox(p);
+        if (chosen) { ownerBox.focus(); ownerBox.select(); }
+        return;
+      }
+      closeOwnerBox();
+      if (!em || !chosen) return;
+      ownerSel.value = '';
+      addOwners(em);
+    }
+    // Why an address cannot be the person's: not an e-mail, or someone else's in People (the server checks
+    // both again on Save).
+    function personEmailProblem(p, em) {
+      if (!EMAIL_RE.test(em)) return "'" + em + "' is not an e-mail address";
+      var other = (d.people || []).filter(function (o) { return o.id !== p.id && emailOf(o) === em; })[0];
+      return other ? em + ' is ' + cleanText(other.name) + '’s in People: choose ' + cleanText(other.name) + ' instead' : '';
+    }
+    // What the box says becomes chips. A person's box holds one address, theirs (the box then closes and the
+    // list says "Add an owner…" again); false, said under Owners, when it cannot be.
+    function commitOwnerBox(fromKey) {
+      var list = ownerList(ownerBox.value), p = ownerPerson;
+      if (!list.length) { ownerBox.value = ''; return true; }
+      if (p) {
+        var why = list.length > 1 ? cleanText(p.name) + '’s e-mail is one address' : personEmailProblem(p, list[0]);
+        if (why) { ownerErr(why); ownerBox.focus(); return false; }
+        personEmails[p.id] = { person: p, email: list[0], added: owners.indexOf(list[0]) < 0 };
+      }
+      ownerBox.value = '';
+      ownerErr('');
+      addOwners(list.join(', '));
+      if (p) {
+        closeOwnerBox();
+        ownerSel.value = '';
+        drawOwners();                                   // the person's address may have been a chip already
+        markDirty();
+        if (fromKey) ownerSel.focus();
+      }
+      return true;
+    }
+    ownerSel.addEventListener('pointerdown', function () { ownerKeyed = false; });
+    ownerSel.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter' && ownerSel.value) { ev.preventDefault(); takeOwnerChoice(true); return; }
+      ownerKeyed = !ev.altKey && (/^(Arrow|Page|Home|End)/.test(ev.key) || (ev.key.length === 1 && ev.key !== ' '));
+      // Only the change this key makes is a step: one made later in the list it opened (a Mac opens it on an
+      // arrow) is a choice.
+      if (ownerKeyed) setTimeout(function () { ownerKeyed = false; }, 0);
     });
-    ownerInput.addEventListener('input', function () {
+    ownerSel.addEventListener('change', function () { takeOwnerChoice(!ownerKeyed); });
+    // Leaving the list on a person only arrowed to adds nothing: the list says "Add an owner…" again.
+    ownerSel.addEventListener('blur', function () { if (ownerArrowed) { ownerArrowed = false; ownerSel.value = ''; } });
+    ownerBox.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter' || ev.key === ',' || ev.key === ';') { ev.preventDefault(); commitOwnerBox(true); }
+    });
+    ownerBox.addEventListener('input', function () {
+      if (ownerPerson) return;                          // the person's one address: added on Enter, a comma, another choice or Save
       // A pasted list: everything before the last separator becomes chips.
-      var v = ownerInput.value, cut = Math.max(v.lastIndexOf(','), v.lastIndexOf(';'));
-      if (cut >= 0) { addOwners(v.slice(0, cut)); ownerInput.value = v.slice(cut + 1).trimStart(); }
+      var v = ownerBox.value, cut = Math.max(v.lastIndexOf(','), v.lastIndexOf(';'));
+      if (cut >= 0) { addOwners(v.slice(0, cut)); ownerBox.value = v.slice(cut + 1).trimStart(); }
     });
-    ownerInput.addEventListener('blur', commitOwnerInput);
+    // Leaving a person's box keeps what was typed there (it may still be half an address).
+    ownerBox.addEventListener('blur', function () { if (!ownerPerson) commitOwnerBox(false); });
     drawOwners();
+    // Save, before the card: each address typed for a person goes to them in People. The names saved, or null
+    // when one is refused (said under Owners; the card is then not saved).
+    // People is read again first: an e-mail someone gave the person since this page read them (here on the
+    // People tab, or another AP elsewhere) is not overwritten. Nothing is written then: the person is listed
+    // with that address, and the one typed for them comes off the owners when it was added for them.
+    async function savePersonEmails() {
+      var names = [], ids = Object.keys(personEmails), now;
+      if (!ids.length) return names;
+      try {
+        now = await api('/api/admin/people');
+      } catch (e) {
+        if (e.status !== 401) ownerErr('Could not read People before saving: ' + String(e && e.message ? e.message : e) + '. Nothing was saved.');
+        return null;
+      }
+      var taken = ids.map(function (id) {
+        var pe = personEmails[id], row = ((now && now.people) || []).filter(function (x) { return x.id === id; })[0];
+        var em = String((row && row.email) || '').toLowerCase();
+        return em && em !== pe.email ? { pe: pe, email: em } : null;
+      }).filter(Boolean);
+      if (taken.length) {
+        ownerErr(taken.map(function (t) {
+          var n = cleanText(t.pe.person.name), at = t.pe.added ? owners.indexOf(t.pe.email) : -1;
+          if (at >= 0) owners.splice(at, 1);
+          personSaved(t.pe.person, t.email);
+          return n + ' has ' + t.email + ' in People now' + (at >= 0 ? ', so ' + t.pe.email + ' was taken off the owners' : '') +
+            ': choose ' + n + ' again to add that address.';
+        }).join(' ') + ' Nothing was saved.');
+        return null;
+      }
+      for (var i = 0; i < ids.length; i++) {
+        var pe = personEmails[ids[i]], r;
+        try {
+          r = await api('/api/admin/people/' + enc(pe.person.id), { method: 'PATCH', body: { email: pe.email } });
+        } catch (e) {
+          if (e.status !== 401) {
+            // An earlier person's e-mail in this Save stays saved: said so, not "Nothing was saved".
+            var why = String(e && e.message ? e.message : e).replace(/^email: /, '');
+            ownerErr(names.length
+              ? savedInPeople(names) + '; ' + cleanText(pe.person.name) + '’s was not (' + why + '), and the card was not saved.'
+              : 'Could not save ' + cleanText(pe.person.name) + '’s e-mail in People: ' + why + '. Nothing was saved.');
+          }
+          return null;
+        }
+        personSaved(pe.person, String((r && r.person && r.person.email) || pe.email).toLowerCase());
+        names.push(cleanText(pe.person.name));
+      }
+      return names;
+    }
+    function savedInPeople(names) {
+      return names.length === 1 ? names[0] + '’s e-mail was saved in People' : 'The e-mails of ' + names.join(', ') + ' were saved in People';
+    }
+    // The person has the address now: in this editor and the page's People (whose tab reloads when opened).
+    function personSaved(p, email) {
+      delete personEmails[p.id];
+      p.email = email;
+      var row = personById(p.id);
+      if (row) row.email = email;
+      state.loaded.people = false;
+      drawOwners();
+    }
 
     // Holder and Group: "New person…" / "New group…" shows the box under the list, and picking a name hides
     // it again (what was typed is kept). Picked with the mouse or a phone's picker, the box takes the focus;
@@ -1763,7 +1960,11 @@
 
     body.addEventListener('click', function (ev) {
       var rm = ev.target.closest('[data-rm-owner]');
-      if (rm) { owners.splice(Number(rm.dataset.rmOwner), 1); drawOwners(); markDirty(); }
+      if (!rm) return;
+      var i = Number(rm.dataset.rmOwner);
+      removeOwner(i);
+      // The × went with its chip: the focus goes to the × now in its place, else the one before, else the list.
+      ($all('#ownerChips [data-rm-owner]', body)[Math.min(i, owners.length - 1)] || ownerSel).focus();
     });
     var same = $('#useSame', body);
     if (same) same.addEventListener('click', function () {
@@ -1778,7 +1979,6 @@
     if (del) del.addEventListener('click', function () { deleteCard(c, body); });
 
     function values() {
-      commitOwnerInput();
       var ru = fv('receipt_upload');
       var v = {
         label: cleanText(fv('label')), holder_name: picked(holderPicker), group_name: picked(pickers[1]),
@@ -1794,6 +1994,7 @@
     }
     async function save(confirmed) {
       clearFormErrors(form);
+      if (!commitOwnerBox(false)) return;               // what the owner box still says, as Enter would add it
       var v = values(), payload, l4;
       if (create) {
         l4 = fv('last4').trim();
@@ -1816,15 +2017,27 @@
         // A holder not yet a person, typed again under "New person…": sent though unchanged, so the server
         // adds them to People and links the card (it does so for a holder sent while the card has no person).
         if (holderPicker.sel.value === PICK_NEW && !c.person_id) payload.holder_name = v.holder_name;
-        if (Object.keys(payload).length === 1) { clearDirty('card'); dropModal(); toast('Nothing changed'); return; }
+        if (Object.keys(payload).length === 1 && !Object.keys(personEmails).length) { clearDirty('card'); dropModal(); toast('Nothing changed'); return; }
       }
+      // Owners as the server checks them, before anything is written: a person's address is saved first.
+      var bad = 'owner_email' in payload ? owners.filter(function (em) { return !EMAIL_RE.test(em); })[0] : null;
+      if (bad) { ownerErr("'" + bad + "' is not an e-mail address"); ownerSel.focus(); return; }
       var btn = $('#cardSave', body), data;
       busy(btn, true);
+      var named = await savePersonEmails();
+      if (!named) { busy(btn, false); ownerSel.focus(); return; }
+      var inPeople = named.length === 1 ? named[0] + '’s e-mail saved in People' : 'e-mails saved in People for ' + named.join(', ');
+      var alsoPeople = named.length ? ' · ' + inPeople : '';
+      if (Object.keys(payload).length === 1) {          // only a person's address (already one of the owners)
+        busy(btn, false); clearDirty('card'); dropModal(); toast(inPeople, 'ok'); return;
+      }
       try {
         data = await api('/api/cards', { method: 'POST', body: payload });
       } catch (e) {
         busy(btn, false);
         if (e.status === 401) return;
+        // A person's e-mail saved just before stays saved: said under Owners, whatever the card's refusal says.
+        if (named.length) ownerErr(savedInPeople(named) + '; the card was not saved.');
         var errBox = $('#cardFormErr', body);
         var changes = e.data && e.data.alias_changes;
         if (create && e.status === 409 && changes && changes.length) {
@@ -1838,18 +2051,20 @@
           $('#openExisting', body).addEventListener('click', function () { clearDirty('card'); openCardEditor(l4); });
           return;
         }
-        showFormError(form, e, errBox);
+        var ownerErrEl = $('[data-err="owner_email"]', form), saidInPeople = ownerErrEl.textContent;
+        showFormError(form, e, errBox);                 // clears the field messages first
+        if (saidInPeople) ownerErrEl.textContent = (ownerErrEl.textContent ? ownerErrEl.textContent + ' ' : '') + saidInPeople;
         return;
       }
       busy(btn, false);
       clearDirty('card');
       if (create) {
-        toast('Card ' + l4 + ' added', 'ok');
+        toast('Card ' + l4 + ' added' + alsoPeople, 'ok');
         await loadCards(true);
         if (cardByLast4(l4)) openCardEditor(l4); else dropModal();
         return;
       }
-      toast('Card ' + l4 + ' saved', 'ok');
+      toast('Card ' + l4 + ' saved' + alsoPeople, 'ok');
       dropModal();
       if (data && data.fillable > 0) {
         cardsUi.fill = { last4: l4, cc: (data.card && data.card.default_cost_center) || v.default_cost_center, n: data.fillable };
@@ -3379,7 +3594,9 @@
       dropModal();
       var upd = (r && r.cards_updated) || [];
       toast('Saved' + (upd.length ? ' · holder updated on ' + upd.join(', ') : ''), 'ok');
-      if (upd.length) state.loaded.cards = false;
+      // Cards are read again on the way back: besides a holder renamed, the card editor's Owners list shows
+      // each person's e-mail, and saves an address typed for one with no e-mail to them.
+      state.loaded.cards = false;
       loadPeople(true);
     });
   }
@@ -3407,7 +3624,7 @@
     } catch (e) { report(e, 'Could not merge ' + src.name + ' into ' + target.name); return; }
     var moved = (r && r.moved) || {}, cards = moved.cards || [];
     toast('Merged ' + src.name + ' into ' + target.name + ' · ' + plural(moved.transactions || 0, 'purchase', 'purchases') + (cards.length ? ', cards ' + cards.join(', ') : '') + ' moved', 'ok');
-    if (cards.length) state.loaded.cards = false;
+    state.loaded.cards = false;                         // cards moved, and the Owners list's people changed
     loadPeople(true);
   }
   async function deletePerson(p) {
@@ -3433,6 +3650,7 @@
       } catch (e2) { report(e2, 'Could not delete ' + p.name); return; }
     }
     toast(p.name + ' deleted', 'ok');
+    state.loaded.cards = false;                         // the card editor's Owners list names everyone
     loadPeople(true);
   }
   // The person holds a card whose owners do not list them: add their e-mail to the card's owners, read

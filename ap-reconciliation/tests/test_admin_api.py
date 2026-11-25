@@ -1372,6 +1372,83 @@ class StaticContractTests(unittest.TestCase):
         self.assertIn("if (out) out.classList.toggle('hidden', !isNew && !sel.options[sel.selectedIndex].hasAttribute('data-unlisted'));", page)
         self.assertIn('<span id="f_holder_name_out"><b>Not in People</b>', form)
 
+    def test_card_editor_owners_offer_people_and_new_address(self):
+        # Owners was chips over a bare e-mail box. It is a drop-down like Holder's now: every person by name
+        # (in Holder's order), then "Other e-mail address…"; a chip shows the person whose address it is.
+        page = self.read("admin.html")
+        form = self.function_src(page, "cardFormHtml")
+        self.assertIn("field('owner_email', 'Owners', '<div class=\"owner-chips\" id=\"ownerChips\"></div>' + "
+                      "ownerPickerHtml(d.people || []),", form)
+        self.assertNotIn('<input id="f_owner_email" type="email"', page)
+        picker = self.function_src(page, "ownerPickerHtml")
+        self.assertFalse("datalist" in picker or re.search(r"\blist=", picker), "the Owners picker has a datalist")
+        # The select keeps the id the field's <label for> names; "Add an owner…" first, then plain names (no
+        # groups, no addresses, no card counts), "Other e-mail address…" last.
+        self.assertIn("""return '<select class="inp" id="f_owner_email">' + opt('', 'Add an owner…', true) +""", picker)
+        self.assertIn("return cleanText(a.name).toLowerCase().localeCompare(cleanText(b.name).toLowerCase());", picker)
+        self.assertIn("}).map(function (p) { return opt(PICK_PERSON + p.id, cleanText(p.name), false); }).join('') +", picker)
+        self.assertIn("opt(PICK_NEW, 'Other e-mail address…', false) + '</select>' +", picker)
+        self.assertNotIn("optgroup", picker)
+        self.assertNotIn("Other addresses in use", page)
+        self.assertNotRegex(page, r"name\)?\.toLowerCase\(\)\s*\+\s*'@", "an owner address is derived from a name")
+        editor = self.function_src(page, "openCardEditor")
+        # A chip shows the person's name, the address in its title; a person already an owner is greyed out.
+        self.assertIn("var out = outsideDomain(em), n = ownerName(em), title = [n !== em ? em : '', out ? OUTSIDE_TITLE : ''].filter(Boolean).join(' · ');", editor)
+        self.assertIn("if (p) o.disabled = owners.indexOf(emailOf(p)) >= 0;", editor)
+        # A person with no e-mail opens their box, with one line under it; Other e-mail address… the same box.
+        self.assertIn("if (v === PICK_NEW || (p && !em)) {", editor)
+        self.assertIn("ownerBox.setAttribute('aria-label', person ? n + '’s e-mail' : 'Other e-mail address');", editor)
+        self.assertIn("ownerHint.textContent = person ? n + ' has no e-mail in People yet: Save adds it there too.' : '';", editor)
+        # Arrowing through the closed list adds nothing; nor does leaving it on a person only arrowed to.
+        self.assertIn("ownerSel.addEventListener('change', function () { takeOwnerChoice(!ownerKeyed); });", editor)
+        self.assertIn("if (!em || !chosen) return;", editor)
+        self.assertNotRegex(editor, r"addEventListener\('blur', function \(\) \{[^}]*takeOwnerChoice", "leaving the Owners list adds an owner")
+        self.assertIn("ownerSel.addEventListener('blur', function () { if (ownerArrowed) { ownerArrowed = false; ownerSel.value = ''; } });", editor)
+        # What was added or removed is read out; the × that removed a chip hands the focus on.
+        self.assertIn('<span class="sr-only" id="f_owner_email_said" role="status" aria-live="polite"></span>', picker)
+        self.assertIn("ownerSaid(added.join(', ') + (added.length === 1 ? ' added as an owner' : ' added as owners'));", editor)
+        self.assertIn("ownerSaid(n + ' removed from the owners');", editor)
+        self.assertIn("($all('#ownerChips [data-rm-owner]', body)[Math.min(i, owners.length - 1)] || ownerSel).focus();", editor)
+        # The box: what it says is added before the list's choice moves on (refused, the choice goes back), not
+        # kept back for later; a person's box takes one address; Backspace there removes no chip.
+        self.assertNotIn("drafts", editor)
+        self.assertIn("if (person !== ownerPerson) ownerBox.value = '';", editor)
+        self.assertIn("if (!commitOwnerBox(false)) { ownerSel.value = was; return; }", editor)
+        self.assertIn("var why = list.length > 1 ? cleanText(p.name) + '’s e-mail is one address' : personEmailProblem(p, list[0]);", editor)
+        self.assertNotIn("'Backspace'", editor)
+        # Browsing the list changes nothing: its choice is not a value, so it does not mark the card unsaved.
+        self.assertIn("function formChanged(ev) { if (ev.target.id !== 'f_owner_email') markDirty(); }", editor)
+        self.assertNotIn("form.addEventListener('change', markDirty);", editor)
+        # Save: the person's address goes to People first (PATCH), and the card only after it succeeded.
+        save = editor[editor.index("async function save(confirmed)"):]
+        self.assertIn("{ method: 'PATCH', body: { email: pe.email } }", editor)
+        self.assertLess(save.index("var named = await savePersonEmails();"), save.index("api('/api/cards', { method: 'POST', body: payload })"))
+        self.assertIn("if (!named) { busy(btn, false); ownerSel.focus(); return; }", save)
+        # People is read again before the PATCH, so an e-mail set since the page loaded is not overwritten.
+        spe = editor[editor.index("async function savePersonEmails()"):editor.index("function savedInPeople(names)")]
+        self.assertLess(spe.index("now = await api('/api/admin/people');"), spe.index("method: 'PATCH'"))
+        self.assertIn("return em && em !== pe.email ? { pe: pe, email: em } : null;", spe)
+        # A refusal after an earlier person's e-mail was saved, or a card refused after it, says it was saved.
+        self.assertIn("? savedInPeople(names) + '; ' + cleanText(pe.person.name) + '’s was not (' + why + '), and the card was not saved.'", spe)
+        self.assertIn("if (named.length) ownerErr(savedInPeople(named) + '; the card was not saved.');", save)
+        # The payload is unchanged: owner_email, a comma-separated string, sent only when it changed.
+        self.assertIn("owner_email: owners.join(', '),", editor)
+        self.assertIn("CARD_KEYS.forEach(function (k) { if (k in v && v[k] !== orig[k]) payload[k] = v[k]; });", save)
+
+    def test_people_tab_changes_reload_the_cards(self):
+        # The card editor's Owners list shows each person's e-mail (from the cards' data), and Save writes an
+        # address typed for "no e-mail yet" to the person: after any change on the People tab, Cards are read
+        # again, or the list offers an old address and overwrites a new one.
+        page = self.read("admin.html")
+        edit = self.function_src(page, "openPersonEditor")
+        self.assertNotIn("if (upd.length) state.loaded.cards = false;", edit)
+        self.assertIn("      state.loaded.cards = false;\n      loadPeople(true);", edit)
+        merge = page[page.index("async function mergePeople("):page.index("async function deletePerson(")]
+        self.assertNotIn("if (cards.length) state.loaded.cards = false;", merge)
+        self.assertIn("state.loaded.cards = false;", merge)
+        delete = page[page.index("async function deletePerson("):page.index("async function makeOwner(")]
+        self.assertIn("state.loaded.cards = false;", delete)
+
     def test_dashboard_cards_dialog_group_is_a_picker(self):
         # The dashboard's Cards… dialog had the same <datalist> for Group: a card in Hair offered only Hair.
         page = self.read("index.html")
