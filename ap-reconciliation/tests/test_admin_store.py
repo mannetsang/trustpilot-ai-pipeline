@@ -86,6 +86,22 @@ class SchemaSqlTests(unittest.TestCase):
         self.assertRegex(self.sql, r"add column if not exists default_cost_center text\s+references "
                                    r"cost_centers\(name\) on update cascade")
 
+    def test_the_card_face_columns_and_checks(self):
+        # The columns store.CARD_FIELDS names are added (idempotently), and the network check matches
+        # store.CARD_NETWORKS, which MemoryStore and POST /api/cards enforce too.
+        for column in ("bank", "network", "product"):
+            self.assertIn(column, store_module.CARD_FIELDS)
+            self.assertRegex(self.outside, rf"alter table cards add column if not exists {column}\s+text;")
+        check = re.search(r"alter table cards add constraint cards_network_check\s+check \((.*?)\);", self.outside, re.S)
+        self.assertEqual(re.findall(r"'([a-z]+)'", check.group(1)), list(store_module.CARD_NETWORKS))
+        self.assertIn("network is null or", check.group(1))
+        self.assertLess(self.outside.index("drop constraint if exists cards_network_check"),
+                        self.outside.index("add constraint cards_network_check"))
+        self.assertIn(f"check (product is null or length(product) <= {store_module.CARD_PRODUCT_MAX})", self.outside)
+        self.assertLess(self.outside.index("drop constraint if exists cards_product_check"),
+                        self.outside.index("add constraint cards_product_check"))
+        self.assertIn(("cards.bank", ("cards", "bank")), store_module.SCHEMA_PROBES)
+
     def test_the_duplicate_guard_comes_before_the_unique_indexes(self):
         guard = self.sql.index("raise exception 'schema.sql not applied: two people share the e-mail")
         self.assertLess(guard, self.sql.index("people_email_unique"))
@@ -398,7 +414,7 @@ class MemoryRegistryTests(unittest.TestCase):
 
     def test_schema_status_and_catalogue_rows(self):
         self.assertEqual(set(self.store.schema_status().values()), {True})
-        self.assertEqual(len(self.store.schema_status()), 10)
+        self.assertEqual(len(self.store.schema_status()), 11)
         self.store.insert_transactions([txn("a", "2026-10-01", "X", 1.0)])
         self.store.upsert_invoices([inv("i1", "Canada Post", 1.0, "2026-10-01")])
         self.assertEqual(list(self.store.admin_transaction_rows()[0]), list(store_module.ADMIN_TXN_COLUMNS))
@@ -483,7 +499,7 @@ class SupabaseShapingTests(unittest.TestCase):
 
     def test_schema_status_maps_missing_to_false(self):
         missing = FakeResponse(status=404, body='{"code":"PGRST205","message":"Could not find the table"}')
-        self.respond(missing, FakeResponse(), *[FakeResponse()] * 8)
+        self.respond(missing, FakeResponse(), *[FakeResponse()] * 9)
         status = self.store.schema_status()
         self.assertEqual((status["admin_audit"], status["use_cases"]), (False, True))
         self.assertEqual(self.calls[0]["params"], {"select": "id", "limit": 1})
@@ -685,9 +701,23 @@ class AdminCardsTests(unittest.TestCase):
                 {"year": 2026, "month": 9, "card_last4": "1610", "transactions": 2, "missing": 0}]
         act = admin.card_activity(rows, today)
         self.assertEqual(act["4431"], {"transactions": 8, "recent": 4, "missing": 3, "first_month": "2026-10",
-                                       "last_month": "2027-01"})
+                                       "last_month": "2027-01", "missing_last_month": "2026-12"})
         self.assertEqual(act["1610"]["recent"], 0)
+        self.assertIsNone(act["1610"]["missing_last_month"])
         self.assertNotIn("9999", act)
+
+    def test_missing_last_month_is_the_newest_month_with_a_missing_invoice(self):
+        # Rows in any order (month_summary returns them newest first), across a year end; a month whose
+        # invoices are all in does not count, however new.
+        today = dt.date(2027, 2, 1)
+        rows = [{"year": 2027, "month": 2, "card_last4": "4421", "transactions": 3, "missing": 0},
+                {"year": 2026, "month": 11, "card_last4": "4421", "transactions": 2, "missing": 1},
+                {"year": 2027, "month": 1, "card_last4": "4421", "transactions": 5, "missing": 2},
+                {"year": 2026, "month": 12, "card_last4": "4421", "transactions": 1, "missing": None}]
+        act = admin.card_activity(rows, today)["4421"]
+        self.assertEqual(act["missing_last_month"], "2027-01")
+        self.assertEqual(act["last_month"], "2027-02")
+        self.assertEqual(act["missing"], 3)
 
     def test_card_flags(self):
         busy = {"transactions": 5, "recent": 2}

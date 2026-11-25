@@ -184,6 +184,10 @@
     .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); }
     .toolbar .inp { height: 34px; width: auto; max-width: 100%; }
     .toolbar .search { flex: 1 1 200px; min-width: 0; max-width: 340px; }
+    /* Cards: Add card and Refresh stay together on the right; the search gives up width first, so the
+       toolbar keeps one line down to about 1000px (phones stack it, below). */
+    .tb-actions { display: flex; gap: 8px; margin-left: auto; flex-shrink: 0; }
+    @media (min-width: 641px) { #tab-cards .toolbar .search { flex-basis: 140px; } }
     .chips-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); }
     .chips-row:empty { display: none; }
     .notice { padding: 12px 14px; display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
@@ -212,6 +216,7 @@
        table then scrolls inside its box rather than breaking an address every few letters. */
     table.list td.w-flags { min-width: 140px; }
     table.list td.w-mid { min-width: 110px; }
+    table.list td.w-bank { min-width: 92px; }
     .tag { display: inline-flex; align-items: center; gap: 2px; border-radius: 999px; padding: 2px 9px; font-size: 11.5px; background: var(--border-subtle); color: var(--text-mid); max-width: 100%; overflow-wrap: break-word; min-width: 0; }
     .tag.pill-warn { background: var(--warn); color: var(--warn-text); }
     .tag.brand { background: var(--brand-soft); color: var(--brand-ink); }
@@ -239,6 +244,7 @@
     .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 12px 16px; }
     .field { display: grid; gap: 4px; min-width: 0; align-content: start; }
     .field.full { grid-column: 1 / -1; }
+    .form-sub { grid-column: 1 / -1; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--text-mute); border-top: 1px solid var(--border-subtle); padding-top: 10px; margin-top: 2px; }
     .field > label, .field-label { font-size: 12px; font-weight: 600; color: var(--text-mid); }
     .field-hint { font-size: 11.5px; color: var(--text-mute); }
     .field-hint .btn { margin-left: 6px; }
@@ -297,8 +303,176 @@
     .set-card code, .banner code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; background: var(--bg); padding: 1px 4px; border-radius: 4px; overflow-wrap: anywhere; }
     .schema-row { display: flex; gap: 8px; font-size: 12.5px; }
 
+    /* Cards: Gallery | Table | By owner. The gallery draws each card as the card itself (the bank's face,
+       chip, number, holder, network); what AP needs about it sits under it, on the page. A face is a fixed
+       template, like a real card: every block is pinned at the same place on every card, so a row of cards
+       lines up whatever each one carries. Sizes and positions are in cqw (of the card's width; the height is
+       63cqw), the px value before each is the fallback; text AP reads has an 11px floor. */
+    .view-seg { flex-shrink: 0; }
+    .view-seg svg { width: 13px; height: 13px; flex-shrink: 0; }
+    .bank-cell { display: flex; align-items: center; gap: 6px; min-width: 0; white-space: nowrap; }
+    .bank-cell img { height: 18px; width: auto; display: block; flex-shrink: 0; }
+    .bank-cell.bank-chase img { height: 9px; }
+    .cc-gallery { padding: 20px 20px 26px; display: grid; gap: 28px; min-width: 0; }
+    .cc-group-sec { display: grid; gap: 14px; min-width: 0; }
+    .cc-section { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--text); padding: 0 2px 7px; border-bottom: 1px solid var(--border-subtle); margin: 0; }
+    .cc-section .n { font-size: 11.5px; font-weight: 500; color: var(--text-mute); }
+    .cc-swatch { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; background: #c4cad3; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.08); }
+    .cc-swatch[data-group="hair"] { background: #9db4d6; }
+    .cc-swatch[data-group="beauty"] { background: #f0a6c9; }
+    .cc-grid { display: grid; gap: 32px 24px; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); align-items: start; }
+    .cc-item { display: grid; gap: 12px; min-width: 0; max-width: 460px; align-content: start; }
+    /* A real card's corner is 3.18mm on 85.6mm (about 3.7% of its width): 12px, not an app tile's 16px. The
+       shadow takes the bank's colour (--sh), so the face sits on the page like an object. */
+    .cc-card { --sh: 16,24,40; position: relative; container-type: inline-size; border-radius: 12px; cursor: pointer; outline: none;
+      box-shadow: 0 1px 1.5px rgba(var(--sh),0.22), 0 14px 28px -14px rgba(var(--sh),0.55); transition: transform .18s ease, box-shadow .18s ease; }
+    .cc-card:has(.bank-rbc) { --sh: 6,34,96; }
+    .cc-card:has(.bank-chase) { --sh: 4,16,40; }
+    .cc-card:hover { transform: translateY(-3px); box-shadow: 0 2px 4px rgba(var(--sh),0.2), 0 22px 36px -16px rgba(var(--sh),0.6); }
+    .cc-card:focus-visible { outline: 3px solid var(--brand); outline-offset: 3px; }
+    @media (prefers-reduced-motion: reduce) { .cc-card:hover { transform: none; } }
+    .cc-face { position: relative; display: block; isolation: isolate; overflow: hidden; aspect-ratio: 1.586; min-height: 0; border-radius: 12px; color: #fff;
+      background: radial-gradient(90% 80% at 100% 0%, rgba(255,255,255,0.10), rgba(255,255,255,0) 60%), linear-gradient(135deg, #454b55 0%, #2d3138 46%, #1b1d21 100%);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.07), inset 0 1px 0 rgba(255,255,255,0.18); }
+    /* Over every face: a soft light from the top left and a glossy band (::before), and a fine grain (.cc-grain). */
+    .cc-face::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+      background:
+        linear-gradient(118deg, rgba(255,255,255,0) 30%, rgba(255,255,255,0.075) 44%, rgba(255,255,255,0) 58%),
+        radial-gradient(70% 60% at 0% 0%, rgba(255,255,255,0.13), rgba(255,255,255,0) 70%); }
+    .cc-grain { position: absolute; inset: 0; z-index: -1; pointer-events: none; opacity: .16; mix-blend-mode: overlay; background-size: 160px 160px;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.55'/%3E%3C/svg%3E"); }
+    .cc-face.bank-rbc { background:
+        radial-gradient(110% 90% at 100% 0%, rgba(74,144,255,0.38), rgba(74,144,255,0) 58%),
+        linear-gradient(135deg, #0b4fc0 0%, #08307c 46%, #041a4a 100%); }
+    /* RBC: a fine gold double hairline across the top-right corner. Centre (112cqw, -28cqw), radius 58cqw (the
+       outer line 60.6cqw): it enters the top edge at about 61cqw and leaves the right edge at about 29cqw, so it
+       passes below the group pill and above the number row, and never reaches the logo, product, chip or name. */
+    .cc-face.bank-rbc::after { content: ""; position: absolute; z-index: -1; pointer-events: none; border-radius: 50%;
+      width: 360px; height: 360px; left: 167px; top: -267px; width: 116cqw; height: 116cqw; left: 54cqw; top: -86cqw;
+      border: 1px solid rgba(226,182,72,0.9); box-shadow: 0 0 6px rgba(226,182,72,0.25);
+      outline: 1px solid rgba(226,182,72,0.35); outline-offset: 8px; outline-offset: 2.6cqw; }
+    /* Chase: a deeper midnight base than RBC's royal blue, Chase blue rising from the bottom right, and its
+       octagon as a faint hairline outline off the top right, fading out (no filled panel: no hard edge). */
+    .cc-face.bank-chase { background:
+        radial-gradient(120% 120% at 100% 100%, rgba(17,122,202,0.6), rgba(17,122,202,0) 60%),
+        linear-gradient(140deg, #050d1e 0%, #0a1d40 55%, #0d3570 100%); }
+    /* Box (60..130cqw, -36..34cqw): its left edge stops above the product line, its foot runs above the
+       number row, the group pill sits inside it; it fades out towards the top right. */
+    .cc-face.bank-chase::after { content: ""; position: absolute; z-index: -1; pointer-events: none; aspect-ratio: 1;
+      width: 217px; right: -93px; top: -112px; width: 70cqw; right: -30cqw; top: -36cqw;
+      background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpolygon points='29,1 71,1 99,29 99,71 71,99 29,99 1,71 1,29' fill='none' stroke='white' stroke-opacity='.2' stroke-width='.55'/%3E%3C/svg%3E") center / 100% 100% no-repeat;
+      -webkit-mask-image: linear-gradient(225deg, transparent 22%, #000 62%); mask-image: linear-gradient(225deg, transparent 22%, #000 62%); }
+    /* Reminders off (active=false: no weekly Chat card). Only the Chat reminder stops, the card is still in
+       use, so the face is muted, not erased: the bank stays recognisable. The accent hairline goes. */
+    .cc-item.is-inactive .cc-face { filter: grayscale(0.55) brightness(0.92); }
+    .cc-item.is-inactive .cc-face::after { display: none; }
+    .cc-item.is-inactive .cc-card { box-shadow: 0 1px 2px rgba(var(--sh),0.1); }
+    .cc-item.is-inactive .cc-card:hover { box-shadow: 0 2px 4px rgba(var(--sh),0.12), 0 12px 22px -14px rgba(var(--sh),0.4); }
+
+    /* The template. */
+    .cc-top { position: absolute; left: 20px; right: 20px; top: 15px; left: 6.4cqw; right: 6.4cqw; top: 4.8cqw;
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 9px; gap: 3cqw; min-width: 0; }
+    /* The bank column takes everything left of the tags (flex: 1), and its one column is exactly that wide, so
+       the product's ellipsis lands before the group pill and "Reminders off", never under them. */
+    .cc-bank { flex: 1 1 auto; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: 32px auto; grid-template-rows: 10.5cqw auto;
+      row-gap: 4px; row-gap: 1.2cqw; justify-items: start; min-width: 0; }
+    .cc-logo { display: block; width: auto; height: 32px; height: 10.5cqw; max-width: 56cqw; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.25)); }
+    /* RBC's shield a little taller than the slot, rising into the top inset (its foot stays on the slot's). */
+    .bank-rbc .cc-logo { height: 36px; height: 11.7cqw; margin-top: -4px; margin-top: -1.2cqw; }
+    /* Chase's wordmark centred in the slot. */
+    .bank-chase .cc-logo { height: 15px; height: 4.8cqw; margin: 9px 0; margin: 2.85cqw 0; }
+    /* Sized in the face's cqw, so only on a face: the table has no query container (cqw would be the viewport's). */
+    .cc-bank .cc-bank-text { display: inline-flex; align-items: center; height: 32px; height: 10.5cqw; font-size: 13px; font-size: 4.2cqw; font-weight: 700; letter-spacing: .06em; line-height: 1; }
+    .cc-face.no-bank .cc-bank-text { height: 26px; height: 8.4cqw; margin: 3px 0; margin: 1.05cqw 0; padding: 0 8px; padding: 0 2.6cqw;
+      border: 1px dashed rgba(255,255,255,0.35); border-radius: 5px; border-radius: 1.6cqw;
+      font-size: 10px; font-size: max(10px, 2.8cqw); font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: rgba(255,255,255,0.62); }
+    .cc-face.no-bank .cc-bank-text:hover { border-color: rgba(255,255,255,0.6); color: rgba(255,255,255,0.85); }
+    /* The product as printed: regular weight, quieter than the holder; the network word the mark already
+       shows is left off the face (the line under the card and the table keep the full name). */
+    .cc-product { max-width: 100%; max-width: min(64cqw, 100%); font-size: 11px; font-size: max(11px, 3.4cqw); font-weight: 400; letter-spacing: .03em; line-height: 1.25;
+      color: rgba(255,255,255,0.78); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .cc-tags { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; gap: 1.4cqw; flex-shrink: 0; min-width: 0; }
+    .cc-group, .cc-off { font-size: 11px; font-size: max(11px, 3.4cqw); font-weight: 600; letter-spacing: .04em; line-height: 1.3;
+      padding: 2px 9px; padding: max(2px, .7cqw) max(8px, 2.8cqw); border-radius: 999px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 30cqw; }
+    .cc-group { display: inline-flex; align-items: center; gap: 5px; gap: max(5px, 1.5cqw); color: #fff;
+      background: rgba(255,255,255,0.10); border: 1px solid rgba(255,255,255,0.22); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+    .cc-group::before { content: ""; flex-shrink: 0; width: 6px; height: 6px; width: max(6px, 1.8cqw); height: max(6px, 1.8cqw); border-radius: 50%; background: var(--dot, #c4cad3); }
+    .cc-group[data-group="hair"] { --dot: #9db4d6; }
+    .cc-group[data-group="beauty"] { --dot: #f4a9cd; }
+    /* Reminders off: dark glass, so the muted face's brightest thing is not its tag. */
+    .cc-off { display: inline-flex; align-items: center; gap: 4px; gap: 1.2cqw; max-width: none; color: rgba(255,255,255,0.92);
+      background: rgba(6,12,24,0.42); border: 1px solid rgba(255,255,255,0.22); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+    .cc-off svg { width: 11px; height: 11px; width: max(11px, 3.4cqw); height: max(11px, 3.4cqw); flex-shrink: 0; }
+    .cc-mid { position: absolute; left: 20px; top: 70px; left: 6.4cqw; top: 22.5cqw; display: flex; align-items: center; gap: 9px; gap: 2.8cqw; }
+    .cc-chip { position: relative; display: block; width: 39px; width: 12.6cqw; aspect-ratio: 1.3; border-radius: 5px; border-radius: 1.7cqw;
+      background: radial-gradient(120% 90% at 28% 18%, rgba(255,248,222,0.6), rgba(255,248,222,0) 55%),
+        linear-gradient(135deg, #ead59c 0%, #cba85c 45%, #a8843e 70%, #dcc287 100%);
+      box-shadow: inset 0 0 0 .5px rgba(90,60,12,0.55), inset 0 1px 0 rgba(255,255,255,0.45), inset 0 -1px 0 rgba(90,60,12,0.25), 0 1px 1px rgba(0,0,0,0.35); }
+    .cc-chip svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+    .cc-nfc { display: block; width: 17px; width: 5.6cqw; height: auto; color: rgba(255,255,255,0.72); }
+    .cc-number { position: absolute; left: 20px; right: 20px; top: 110px; left: 6.4cqw; right: 6.4cqw; top: 35.5cqw;
+      display: flex; flex-wrap: wrap; align-items: center; column-gap: 7px; column-gap: 2.4cqw; row-gap: 3px; row-gap: 1cqw; min-width: 0; white-space: nowrap; }
+    .cc-digits { flex-shrink: 0; font-size: 19px; font-size: 6cqw; font-weight: 500; letter-spacing: .09em; line-height: 1.2; color: #fff;
+      font-feature-settings: 'tnum' 1; font-variant-numeric: tabular-nums; }
+    .cc-digits .grp { display: inline-block; font-size: .6em; letter-spacing: .18em; opacity: .55; vertical-align: .2em; margin-right: .7em; }
+    .cc-digits .last { text-shadow: 0 1px 0 rgba(0,0,0,0.5), 0 -1px 0 rgba(255,255,255,0.14); }
+    /* The account AP knows the card by, when the number printed on it differs: beside the digits, or just
+       under them on a card too narrow for both (it never moves the digits). */
+    .cc-acct { font-size: 11px; font-size: max(11px, 3.2cqw); font-weight: 600; letter-spacing: .08em; line-height: 1.3;
+      text-transform: uppercase; color: #fff; background: rgba(255,255,255,0.16); padding: 1px 6px; padding: .3cqw 2cqw; border-radius: 999px; }
+    .cc-acct .k, .cc-line .k { opacity: .62; }
+    .cc-bottom { position: absolute; left: 20px; right: 20px; bottom: 16px; left: 6.4cqw; right: 6.4cqw; bottom: 5.2cqw;
+      display: flex; align-items: flex-end; justify-content: space-between; gap: 9px; gap: 3cqw; min-width: 0; }
+    /* The extra lines first, the holder last: the holder always sits on the bottom line, level with the network. */
+    .cc-who { display: flex; flex-direction: column; gap: 1px; gap: .3cqw; min-width: 0; }
+    .cc-line { font-size: 11px; font-size: max(11px, 3.2cqw); font-weight: 600; letter-spacing: .08em; line-height: 1.2; text-transform: uppercase;
+      color: rgba(255,255,255,0.9); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* The holder, embossed: lit from above, a shadow below. */
+    .cc-holder { font-size: 13px; font-size: 4.3cqw; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; line-height: 1.22; color: #eef1f5;
+      text-shadow: 0 1px 0 rgba(0,0,0,0.55), 0 -1px 0 rgba(255,255,255,0.16); overflow-wrap: anywhere;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .cc-who.two-lines .cc-holder { -webkit-line-clamp: 1; }
+    .cc-holder.len-m { font-size: 12px; font-size: max(11px, 3.8cqw); letter-spacing: .08em; }
+    .cc-holder.len-l { font-size: 11px; font-size: max(11px, 3.8cqw); letter-spacing: .08em; }
+    .cc-holder.none { text-shadow: none; letter-spacing: .1em; opacity: .45; }
+    /* Network marks, drawn (not downloaded), all one height and sitting on the holder's line. */
+    .cc-net { flex-shrink: 0; display: flex; align-items: flex-end; justify-content: flex-end; height: 28px; height: 9cqw; }
+    .cc-visa { display: block; font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif; font-style: italic; font-weight: 800; font-size: 25px; font-size: 8cqw;
+      line-height: .78; letter-spacing: -.02em; color: #fff; text-shadow: 0 1px 1px rgba(0,0,0,0.3); padding-right: 2px; }
+    .cc-mc { display: block; width: 40px; width: 13cqw; height: auto; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.3)); }
+    .cc-amex { display: inline-flex; align-items: center; width: auto; height: 23px; height: 7.5cqw; padding: 0 6px; padding: 0 2cqw; border-radius: 2px; border-radius: .8cqw;
+      background: #016fd0; color: #fff; font-family: 'Inter', system-ui, sans-serif; font-size: 12px; font-size: max(11px, 3.8cqw); font-weight: 800; line-height: 1;
+      letter-spacing: .06em; box-shadow: 0 1px 1px rgba(0,0,0,0.3); }
+
+    /* Under the card, on the page. */
+    .cc-meta { display: grid; gap: 5px; padding: 0 2px; min-width: 0; font-size: 12.5px; }
+    .cc-title { font-size: 12px; font-weight: 400; color: var(--text-mid); overflow-wrap: anywhere; }
+    .cc-rel { font-size: 12px; color: var(--text-mid); overflow-wrap: anywhere; }
+    .cc-jump { font: inherit; font-weight: 600; color: var(--brand-ink); background: none; border: 0; padding: 0 1px; border-radius: 4px; cursor: pointer; }
+    .cc-jump:hover { text-decoration: underline; }
+    .cc-jump:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+    /* Padded so the link's focus ring is not clipped by the ellipsis' overflow. */
+    .cc-activity { color: var(--text-mid); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 3px 4px; margin: -3px -4px; }
+    .cc-activity .miss { color: var(--down); font-weight: 600; text-decoration: none; border-radius: 3px; }
+    .cc-activity .miss::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--down); margin-right: 6px; vertical-align: 1px; }
+    .cc-activity a.miss:hover { text-decoration: underline; text-underline-offset: 2px; }
+    .cc-activity a.miss:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+    .cc-count { font-size: 12px; color: var(--text-mute); margin-top: -3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .cc-activity .ok { color: var(--up-ink); font-weight: 500; }
+    .cc-owners-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; }
+    .cc-owners { font-size: 12px; color: var(--text-mid); overflow-wrap: anywhere; min-width: 0; }
+    .cc-owners .tag { font-size: 11px; padding: 1px 7px; vertical-align: 1px; }
+    .cc-owners .chat { white-space: nowrap; }
+    .cc-owners .none { display: inline-flex; align-items: center; gap: 4px; color: #8a5300; font-weight: 500; }
+    .cc-owners .none svg { width: 11px; height: 11px; flex-shrink: 0; }
+    .cc-flags { display: flex; flex-wrap: wrap; gap: 4px; }
+    .cc-flags .pill { font-size: 11px; padding: 2px 8px; gap: 4px; background: #fff4e5; color: #8a5300; white-space: normal; }
+    .cc-flags .pill svg { width: 11px; height: 11px; flex-shrink: 0; }
+
     /* Phones: every list table stacks, a block per row, each value after its column's name. */
     @media (max-width: 640px) {
+      .cc-gallery { padding: 12px 10px 18px; }
+      .cc-grid { gap: 28px 24px; }
       table.list, table.list tbody, table.list tr { display: block; width: 100%; }
       table.list thead { display: none; }
       table.list tr { padding: 6px 0; border-bottom: 1px solid var(--border-subtle); }
@@ -309,7 +483,7 @@
       table.list td.nowrap, table.list td .nowrap { white-space: normal; }
       .list-wrap { overflow-x: visible; }
       .toolbar .search { max-width: none; flex-basis: 100%; }
-      table.list td.w-flags, table.list td.w-mid { min-width: 0; }
+      table.list td.w-flags, table.list td.w-mid, table.list td.w-bank { min-width: 0; }
       /* The flag chips stay on one line and scroll sideways, so the cards start near the top. */
       #cardsChips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
       #cardsChips .chip { flex-shrink: 0; }
@@ -369,18 +543,23 @@
         <div id="cardsFill" class="hidden"></div>
         <div class="card">
           <div class="toolbar">
-            <input id="cardsSearch" class="inp search" type="search" placeholder="Search card, holder, owner, group, cost centre" aria-label="Search the cards" />
+            <input id="cardsSearch" class="inp search" type="search" placeholder="Search card, holder, owner, bank, product, group, cost centre" aria-label="Search the cards" />
             <select id="cardsSort" class="inp" aria-label="Sort the cards">
               <option value="card">Sort: Card</option>
               <option value="holder">Sort: Holder</option>
               <option value="group">Sort: Group</option>
               <option value="active">Sort: Last active</option>
-              <option value="missing">Sort: Missing</option>
+              <option value="missing">Sort: Invoices missing</option>
             </select>
-            <button id="cardsByOwner" class="btn btn-secondary btn-xs" type="button" aria-pressed="false" title="List each owner's e-mail with the cards it owns">By owner</button>
-            <span class="grow"></span>
-            <button id="cardsAdd" class="btn btn-primary btn-xs" type="button">Add card</button>
-            <button id="cardsRefresh" class="btn btn-ghost btn-xs" type="button">Refresh</button>
+            <div id="cardsView" class="seg view-seg" role="group" aria-label="Show the cards as">
+              <button type="button" data-cards-view="gallery" aria-pressed="true" title="Each card drawn as the card itself"><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="1" y="2.5" width="6.2" height="4.6" rx="1.2"/><rect x="8.8" y="2.5" width="6.2" height="4.6" rx="1.2"/><rect x="1" y="8.9" width="6.2" height="4.6" rx="1.2"/><rect x="8.8" y="8.9" width="6.2" height="4.6" rx="1.2"/></svg>Gallery</button>
+              <button type="button" data-cards-view="table" aria-pressed="false" title="One row per card"><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="1" y="2.5" width="14" height="2.2" rx="1"/><rect x="1" y="6.9" width="14" height="2.2" rx="1"/><rect x="1" y="11.3" width="14" height="2.2" rx="1"/></svg>Table</button>
+              <button type="button" data-cards-view="owners" aria-pressed="false" title="Each owner's e-mail with the cards it owns"><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="8" cy="5" r="3"/><path d="M2 14.2c0-3 2.7-5 6-5s6 2 6 5c0 .5-.4.8-.9.8H2.9c-.5 0-.9-.3-.9-.8Z"/></svg>By owner</button>
+            </div>
+            <span class="tb-actions">
+              <button id="cardsAdd" class="btn btn-primary btn-xs" type="button">Add card</button>
+              <button id="cardsRefresh" class="btn btn-ghost btn-xs" type="button">Refresh</button>
+            </span>
           </div>
           <div id="cardsChips" class="chips-row"></div>
           <div id="cardsBody"><div class="loading">Loading cards…</div></div>
@@ -750,7 +929,7 @@
   // A list drawn again (the reload after a dialog's Save, most often) replaces the row, card or button
   // that had the focus, and the focus would fall to the page: the next Tab would start from the top.
   // focusKey names such an element by what identifies it, so the one drawn in its place can be found.
-  var FOCUS_KEYS = ['data-last4', 'data-open-card', 'data-vendor', 'data-person-edit', 'data-person-merge', 'data-person-del'];
+  var FOCUS_KEYS = ['data-last4', 'data-open-card', 'data-jump-card', 'data-vendor', 'data-person-edit', 'data-person-merge', 'data-person-del'];
   function focusKey(el) {
     if (!el || el === document.body || !el.getAttribute) return null;
     if (el.id) return '#' + CSS.escape(el.id);
@@ -896,7 +1075,45 @@
   // ---------------------------------------------------------------------------
   // Cards
   // ---------------------------------------------------------------------------
-  var cardsUi = { q: '', sort: 'card', flag: 'all', byOwner: false, fill: null };
+  // view: 'gallery' (the default), 'table' or 'owners' (By owner), remembered by this browser (CARDS_VIEW_KEY).
+  var CARDS_VIEW_KEY = 'ap_admin_cards_view';
+  var CARDS_VIEWS = ['gallery', 'table', 'owners'];
+  var cardsUi = { q: '', sort: 'card', flag: 'all', fill: null, view: storedCardsView() };
+  function storedCardsView() {
+    try { var v = localStorage.getItem(CARDS_VIEW_KEY); return CARDS_VIEWS.indexOf(v) >= 0 ? v : 'gallery'; } catch (e) { return 'gallery'; }
+  }
+  function setCardsView(view) {
+    cardsUi.view = CARDS_VIEWS.indexOf(view) >= 0 ? view : 'gallery';
+    try { localStorage.setItem(CARDS_VIEW_KEY, cardsUi.view); } catch (e) { /* remembered for this visit only */ }
+    syncCardsView();
+    if (state.cards) renderCardsList();
+  }
+  function syncCardsView() {
+    $all('[data-cards-view]').forEach(function (b) {
+      var on = b.dataset.cardsView === cardsUi.view;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
+    // By owner lists owners, not cards: the search and the flag chips pick whose cards it shows; it has no sort.
+    var sort = $('#cardsSort');
+    sort.disabled = cardsUi.view === 'owners';
+    sort.title = sort.disabled ? 'By owner lists the owners by address' : '';
+  }
+
+  // The banks and networks a card can be from. The banks come from the server (GET /api/admin/cards
+  // "banks"), with their logos; the page knows no bank of its own.
+  var NETWORK_LABELS = { visa: 'Visa', mastercard: 'Mastercard', amex: 'American Express' };
+  function bankList() { return (state.cards && state.cards.banks) || []; }
+  function bankFor(key) { return key ? bankList().filter(function (b) { return b.key === key; })[0] || null : null; }
+  // A logo is drawn only when it is one of this server's files under /static/banks/.
+  function bankLogo(url) { url = String(url || ''); return /^\/static\/banks\/[A-Za-z0-9_-]+\.svg$/.test(url) ? url : ''; }
+  // The face's colours: a class per bank key the server listed (.cc-face.bank-rbc); any other bank is a plain face.
+  function bankClass(key) { return /^[a-z0-9-]+$/.test(key || '') ? ' bank-' + key : ''; }
+  function networkLabel(n) { return Object.prototype.hasOwnProperty.call(NETWORK_LABELS, n || '') ? NETWORK_LABELS[n] : (n || ''); }
+  function networkList() {
+    var n = state.cards && state.cards.networks;
+    return n && n.length ? n : Object.keys(NETWORK_LABELS);
+  }
 
   function cardList() { return (state.cards && state.cards.cards) || []; }
   function cardByLast4(last4) { return cardList().filter(function (c) { return c.last4 === last4; })[0] || null; }
@@ -942,7 +1159,7 @@
       b.classList.toggle('hidden', !n);
     });
     renderCardChips();
-    renderCardsTable();
+    renderCardsList();
     renderFillNotice();
     renderUnclaimed();
   }
@@ -969,8 +1186,16 @@
       return x < y ? -1 : 1;
     };
   }
+  // By card: a supplementary card right after its primary (primaries by their own number, each followed by
+  // the cards linked under it), so the two sit side by side.
+  function byFamily(a, b) {
+    var x = String(a.primary_last4 || a.last4), y = String(b.primary_last4 || b.last4);
+    if (x !== y) return x.localeCompare(y);
+    if (!a.primary_last4 !== !b.primary_last4) return a.primary_last4 ? 1 : -1;
+    return byLast4(a, b);
+  }
   var CARD_SORTS = {
-    card: byLast4,
+    card: byFamily,
     holder: textSort('holder_name'),
     group: textSort('group_name'),
     active: function (a, b) {
@@ -982,24 +1207,236 @@
       return x === y ? byLast4(a, b) : y - x;
     },
   };
+  // The words AP types for a network besides its name: its key ("amex") and its short name ("mc").
+  var NETWORK_ALIASES = { visa: 'visa', mastercard: 'mastercard mc', amex: 'amex' };
   function cardMatches(c, q) {
     if (!q) return true;
-    return [c.last4, c.label, c.holder_name, c.owner_email, c.group_name, c.card_number, c.default_cost_center]
+    var bank = bankFor(c.bank);
+    var net = Object.prototype.hasOwnProperty.call(NETWORK_ALIASES, c.network || '') ? NETWORK_ALIASES[c.network] : '';
+    return [c.last4, c.label, c.holder_name, c.owner_email, c.group_name, c.card_number, c.default_cost_center,
+            c.name_on_card, bank ? bank.name : c.bank, c.product, networkLabel(c.network), net]
       .join(' ').toLowerCase().indexOf(q) >= 0;
   }
-  function renderCardsTable() {
-    var box = $('#cardsBody'), all = cardList();
-    if (!all.length) { redraw(box, '<div class="empty">No cards yet: they appear with the first statement.</div>'); return; }
-    if (cardsUi.byOwner) { redraw(box, ownersHtml()); return; }
+  // The cards the search, the flag chip and the sort leave, in that order: both views draw these.
+  function visibleCards() {
     var q = cardsUi.q.trim().toLowerCase();
-    var rows = all.filter(function (c) {
+    return cardList().filter(function (c) {
       return (cardsUi.flag === 'all' || (c.flags || []).indexOf(cardsUi.flag) >= 0) && cardMatches(c, q);
     }).sort(CARD_SORTS[cardsUi.sort] || byLast4);
-    redraw(box, '<div class="list-wrap"><table class="list wrap-head"><thead><tr><th>Card</th><th>Holder</th><th>Group</th><th>Owners</th>' +
+  }
+  function renderCardsList() {
+    var box = $('#cardsBody'), all = cardList();
+    if (!all.length) { redraw(box, '<div class="empty">No cards yet: they appear with the first statement.</div>'); return; }
+    var rows = visibleCards();
+    if (cardsUi.view === 'owners') { redraw(box, ownersHtml(rows)); return; }
+    redraw(box, cardsUi.view === 'table' ? cardsTableHtml(rows) : cardsGalleryHtml(rows));
+  }
+  function cardsTableHtml(rows) {
+    return '<div class="list-wrap"><table class="list wrap-head"><thead><tr><th>Card</th><th>Bank</th><th>Holder</th><th>Group</th><th>Owners</th>' +
       '<th>Default cost centre</th><th>Chat</th><th>Receipts</th><th>Activity</th><th>Flags</th><th>Last change</th></tr></thead><tbody>' +
       (rows.length ? rows.map(cardRowHtml).join('')
-        : '<tr><td colspan="10" data-label=""><div class="empty-small">No card matches.</div></td></tr>') +
-      '</tbody></table></div>');
+        : '<tr><td colspan="11" data-label=""><div class="empty-small">No card matches.</div></td></tr>') +
+      '</tbody></table></div>';
+  }
+  // The table's Bank column: the logo (the bank's short name when it has none), the product under it, and
+  // the network only when the product does not already say it ("Cash Back Mastercard").
+  function bankCellHtml(c) {
+    if (!c.bank && !c.network && !c.product) return '<span class="muted">—</span>';
+    var b = bankFor(c.bank), logo = b ? bankLogo(b.logo) : '';
+    var name = b ? (b.short || b.name) : (c.bank || 'Bank not set');
+    var net = networkLabel(c.network);
+    var sub = [c.product, net && String(c.product || '').toLowerCase().indexOf(net.toLowerCase()) < 0 ? net : ''].filter(Boolean).join(' · ');
+    var head = logo
+      ? '<img src="' + esc(logo) + '" alt="' + esc(b.name) + '" title="' + esc(b.name) + '" data-bank-logo="' + esc(name) + '" decoding="async" />'
+      : '<span' + (b ? '' : ' class="muted"') + '>' + esc(name) + '</span>';
+    return '<div class="bank-cell' + (b ? bankClass(b.key) : '') + '">' + head + '</div>' + (sub ? '<div class="sub">' + esc(sub) + '</div>' : '');
+  }
+
+  // -- Gallery --------------------------------------------------------------------
+  // Drawn without ids (one copy per card): the chip's contacts, the contactless mark, Mastercard's circles.
+  var CHIP_HTML = '<span class="cc-chip" aria-hidden="true"><svg viewBox="0 0 50 38" fill="none" stroke="rgba(88,58,10,0.62)" stroke-width="1.1">' +
+    '<rect x="16" y="9" width="18" height="20" rx="3"/><path d="M0 12.5H16M0 25.5H16M34 12.5H50M34 25.5H50M25 0V9M25 29V38"/></svg></span>';
+  var NFC_HTML = '<svg class="cc-nfc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true">' +
+    '<path d="M5.5 9.5a3.5 3.5 0 0 1 0 5"/><path d="M9 7a7 7 0 0 1 0 10"/><path d="M12.5 4.5a10.5 10.5 0 0 1 0 15"/><path d="M16 2a14 14 0 0 1 0 20"/></svg>';
+  var MC_HTML = '<svg class="cc-mc" viewBox="0 0 44 27" aria-hidden="true"><circle cx="15.5" cy="13.5" r="12.5" fill="#EB001B"/>' +
+    '<circle cx="28.5" cy="13.5" r="12.5" fill="#F79E1B"/><path d="M22 2.823A12.5 12.5 0 0 1 22 24.177A12.5 12.5 0 0 1 22 2.823Z" fill="#FF5F00"/></svg>';
+  var BELL_OFF_HTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M6.3 13.2a1.8 1.8 0 0 0 3.4 0"/><path d="M4.2 6.3a3.8 3.8 0 0 1 6.9-2.2M12 6.6c0 3.1 1.3 4.6 1.3 4.6H5.5"/><path d="M2.5 2.5l11 11"/></svg>';
+  var WARN_HTML = '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M7.1 1.9a1 1 0 0 1 1.8 0l6 11.1A1 1 0 0 1 14 14.5H2a1 1 0 0 1-.9-1.5Z" opacity=".9"/>' +
+    '<path d="M8 5.6v4M8 11.7v.1" stroke="#fff4e5" stroke-width="1.6" stroke-linecap="round"/></svg>';
+  var DOTS_HTML = '<span class="grp">••••</span><span class="grp">••••</span><span class="grp">••••</span>';
+  // Flags the gallery leaves out under a card (their chips in the toolbar still filter by them): no_webhook is
+  // the normal state of nearly every card; no_owner is said on the owners line, where the owners would be.
+  var GALLERY_QUIET_FLAGS = ['no_webhook', 'no_owner'];
+  // Status, not something to do: after the flags that ask for an action. never_used already says
+  // inactive_90d, so a card never used shows only that.
+  var STATUS_FLAGS = ['never_used', 'inactive_90d'];
+  function galleryFlags(c) {
+    var flags = (c.flags || []).filter(function (f) { return GALLERY_QUIET_FLAGS.indexOf(f) < 0; });
+    if (flags.indexOf('never_used') >= 0) flags = flags.filter(function (f) { return f !== 'inactive_90d'; });
+    return flags.filter(function (f) { return STATUS_FLAGS.indexOf(f) < 0; })
+      .concat(STATUS_FLAGS.filter(function (f) { return flags.indexOf(f) >= 0; }));
+  }
+  // The product as printed on the face: without a trailing network word the mark beside it already shows
+  // ("Business Cash Back Mastercard" on a Mastercard is "Business Cash Back"). Only the card's own network.
+  var NETWORK_WORDS = { visa: /\s+visa$/i, mastercard: /\s+master\s?card$/i, amex: /\s+(amex|american express)$/i };
+  function faceProduct(c) {
+    var p = cleanText(c.product);
+    var re = Object.prototype.hasOwnProperty.call(NETWORK_WORDS, c.network || '') ? NETWORK_WORDS[c.network] : null;
+    return (re && p.replace(re, '')) || p;
+  }
+  // "N invoices missing" opens the dashboard on the newest month with one missing, for this card.
+  function dashboardHref(ym, last4) {
+    var m = /^(\d{4})-(\d{2})$/.exec(ym || '');
+    return m && /^\d{4}$/.test(last4 || '') ? '/#/' + m[1] + '/' + m[2] + '?card=' + encodeURIComponent(last4) : '';
+  }
+  function networkMarkHtml(n) {
+    if (n === 'visa') return '<span class="cc-visa" aria-hidden="true">VISA</span>';
+    if (n === 'mastercard') return MC_HTML;
+    if (n === 'amex') return '<span class="cc-amex" aria-hidden="true">AMEX</span>';
+    return '';
+  }
+  function cardsGalleryHtml(rows) {
+    if (!rows.length) return '<div class="cc-gallery"><div class="empty-small">No card matches.</div></div>';
+    if (cardsUi.sort !== 'group') return '<div class="cc-gallery"><div class="cc-grid">' + rows.map(cardTileHtml).join('') + '</div></div>';
+    // Sorted by group: a section per group, in the sort's order (no group last).
+    var sections = [], at = Object.create(null);
+    rows.forEach(function (c) {
+      var key = nameKey(c.group_name);
+      if (!(key in at)) { at[key] = sections.length; sections.push({ name: cleanText(c.group_name), cards: [] }); }
+      sections[at[key]].cards.push(c);
+    });
+    return '<div class="cc-gallery">' + sections.map(function (s) {
+      var title = s.name || 'No group';
+      return '<section class="cc-group-sec" aria-label="' + esc(title) + '"><h3 class="cc-section">' +
+        '<span class="cc-swatch" data-group="' + esc(nameKey(s.name)) + '" aria-hidden="true"></span>' + esc(title) +
+        ' <span class="n">' + esc(plural(s.cards.length, 'card', 'cards')) + '</span></h3>' +
+        '<div class="cc-grid">' + s.cards.map(cardTileHtml).join('') + '</div></section>';
+    }).join('') + '</div>';
+  }
+  // Under a card: an owner in the allowed domains by the part before the @ (the address in the line's
+  // title); one outside them in full and amber (it cannot sign in).
+  function ownersLineHtml(c) {
+    var owners = c.owners || [];
+    var names = owners.map(function (o) {
+      if (o.outside_domain) return '<span class="tag pill-warn" title="' + esc(OUTSIDE_TITLE) + '">' + emailHtml(o.email) + '</span>';
+      var at = o.email.indexOf('@');
+      return '<span>' + esc(at > 0 ? o.email.slice(0, at) : o.email) + '</span>';
+    });
+    // The Chat space only when the card has one: most cards have none, and the editor and the toolbar's
+    // chip say what that means for reminders.
+    var chat = c.webhook_configured ? 'Chat: own space' : (c.webhook_default ? 'Chat: shared' : '');
+    return '<div class="cc-owners" title="' + esc(owners.length ? owners.map(function (o) { return o.email; }).join(', ') : 'No owner') + '">' +
+      (names.length ? names.join(', ') : '<span class="none">' + WARN_HTML + 'No owner</span>') +
+      (chat ? ' · <span class="chat" title="' + esc(webhookText(c)) + '">' + esc(chat) + '</span>' : '') + '</div>';
+  }
+  function jumpHtml(last4) {
+    return '<button type="button" class="cc-jump" data-jump-card="' + esc(last4) + '" title="Show card ' + esc(last4) + '">' + esc(last4) + '</button>';
+  }
+  function cardTileHtml(c) {
+    var labels = state.cards.flag_labels || {}, a = c.activity || {};
+    var b = bankFor(c.bank), logo = b ? bankLogo(b.logo_on_dark || b.logo) : '';
+    var inactive = c.active === false;
+    var number = c.card_number || c.last4, ownNumber = number !== c.last4;
+    var holder = cleanText(c.holder_name);
+    var missing = Number(a.missing) || 0;
+    var bankHtml;
+    if (b && logo) bankHtml = '<img class="cc-logo" src="' + esc(logo) + '" alt="' + esc(b.name) + '" data-bank-logo="' + esc(b.name) + '" decoding="async" />';
+    else if (b) bankHtml = '<span class="cc-bank-text">' + esc(b.name) + '</span>';
+    else if (c.bank) bankHtml = '<span class="cc-bank-text">' + esc(String(c.bank).toUpperCase()) + '</span>';
+    else bankHtml = '<span class="cc-bank-text" title="Set the bank in the editor">+ Set bank</span>';
+    var faceCls = 'cc-face' + (b ? bankClass(b.key) : (c.bank ? ' bank-unknown' : ' no-bank'));
+    // The face's extra lines, in a real card's small spaced capitals, above the holder.
+    var lines = [];
+    if (c.name_on_card) lines.push('<div class="cc-line"><span class="k">Printed</span> ' + esc(c.name_on_card) + '</div>');
+    if (c.primary_last4) lines.push('<div class="cc-line"><span class="k">Supplementary of</span> ' + esc(c.primary_last4) + '</div>');
+    var holderCls = 'cc-holder' + (!holder ? ' none' : (holder.length > 24 ? ' len-l' : (holder.length > 18 ? ' len-m' : '')));
+    var product = faceProduct(c);
+    var face = '<div class="' + faceCls + '"><span class="cc-grain" aria-hidden="true"></span>' +
+      '<div class="cc-top"><div class="cc-bank">' + bankHtml +
+        (product ? '<div class="cc-product" title="' + esc(cleanText(c.product)) + '">' + esc(product) + '</div>' : '') + '</div>' +
+        '<div class="cc-tags">' + (c.group_name ? '<span class="cc-group" data-group="' + esc(nameKey(c.group_name)) + '">' + esc(c.group_name) + '</span>' : '') +
+        (inactive ? '<span class="cc-off" title="No weekly Chat reminder for this card">' + BELL_OFF_HTML + 'Reminders off</span>' : '') + '</div></div>' +
+      '<div class="cc-mid">' + CHIP_HTML + NFC_HTML + '</div>' +
+      '<div class="cc-number"><span class="cc-digits">' + DOTS_HTML + '<span class="last">' + esc(number) + '</span></span>' +
+        (ownNumber ? '<span class="cc-acct" title="The statement\'s account: ' + esc(c.last4) + '"><span class="k">Acct</span> ' + esc(c.last4) + '</span>' : '') + '</div>' +
+      '<div class="cc-bottom"><div class="cc-who' + (lines.length > 1 ? ' two-lines' : '') + '">' + lines.join('') +
+        '<div class="' + holderCls + '">' + (holder ? esc(holder) : 'No holder') + '</div></div>' +
+        '<div class="cc-net">' + networkMarkHtml(c.network) + '</div></div>' +
+      '</div>';
+    // The card is one button for a screen reader: its name says what the face shows.
+    var spoken = ['Card ' + (ownNumber ? c.last4 + ', card number ' + number : number),
+                  b ? b.name + (c.product ? ' ' + c.product : '') : (c.bank ? c.bank : 'bank not set'),
+                  networkLabel(c.network), holder || 'no holder', c.name_on_card ? 'printed ' + c.name_on_card : '',
+                  c.primary_last4 ? 'supplementary of ' + c.primary_last4 : '', c.group_name, inactive ? 'reminders off' : '',
+                  missing ? plural(missing, 'invoice', 'invoices') + ' missing' : '']
+      .filter(Boolean).join(', ') + '. Open the editor';
+    var card = '<div class="cc-card" role="button" tabindex="0" data-last4="' + esc(c.last4) + '" aria-label="' + esc(spoken) + '">' + face + '</div>';
+
+    // Under the card, the same order under every card so a row reads straight across: the activity (what
+    // to chase), the owners and Edit, then what the card is to AP (its label, account, link), then flags.
+    var title = [];
+    if (c.label && !isDefaultLabel(c.label)) title.push('<div class="cc-title">' + esc(c.label) + '</div>');
+    if (ownNumber) title.push('<div class="cc-title">Account ' + esc(c.last4) + ' · card no. ' + esc(number) + '</div>');
+    var rel = '';
+    if (c.primary_last4) {
+      rel = '<div class="cc-rel">Supplementary of ' + jumpHtml(c.primary_last4) +
+        (c.primary_card_number && c.primary_card_number !== c.primary_last4 ? ' (card ' + esc(c.primary_card_number) + ')' : '') +
+        (c.primary_holder ? ' · ' + esc(c.primary_holder) : '') + '</div>';
+    } else if ((c.supplementary || []).length) {
+      rel = '<div class="cc-rel">Supplementary: ' + c.supplementary.map(jumpHtml).join(', ') + '</div>';
+    }
+    // "6 invoices missing · last used Nov 2026", which fits a 300px card on one line, then the count in a
+    // quieter line ("41 transactions since Sep 2026"). The missing count opens the dashboard on its newest
+    // month with one missing.
+    var actText, actHtml, countHtml = '';
+    if (a.transactions) {
+      var rest = a.last_month ? ' · last used ' + ymLabel(a.last_month) : '';
+      var missText = plural(missing, 'invoice', 'invoices') + ' missing';
+      var href = missing ? dashboardHref(a.missing_last_month, c.last4) : '';
+      var count = plural(a.transactions, 'transaction', 'transactions') + (a.first_month ? ' since ' + ymLabel(a.first_month) : '');
+      countHtml = '<div class="cc-count">' + esc(count) + '</div>';
+      actText = (missing ? missText : 'All invoices in') + rest + ' · ' + count;
+      if (href) {
+        actHtml = '<a class="miss" href="' + esc(href) + '" title="' + esc('Open ' + ymLabel(a.missing_last_month) + ' for card ' + c.last4 +
+          ' on the dashboard: the newest month with an invoice missing') + '">' + esc(missText) + '</a>';
+      } else {
+        actHtml = missing ? '<span class="miss">' + esc(missText) + '</span>' : '<span class="ok">All invoices in</span>';
+      }
+      actHtml += esc(rest);
+    } else {
+      actText = 'No transactions yet';
+      actHtml = esc(actText);
+    }
+    var flags = galleryFlags(c);
+    // Edit is for the mouse: the card itself is the keyboard's button for the same editor (one tab stop a card).
+    var meta = '<div class="cc-meta">' +
+      '<div class="cc-activity" title="' + esc(actText) + '">' + actHtml + '</div>' + countHtml +
+      '<div class="cc-owners-row">' + ownersLineHtml(c) +
+        '<button type="button" class="btn btn-secondary btn-xs" tabindex="-1" data-open-card="' + esc(c.last4) + '" aria-label="Edit card ' + esc(c.last4) + '">Edit</button></div>' +
+      title.join('') + rel +
+      (flags.length ? '<div class="cc-flags" role="list" aria-label="Needs attention">' + flags.map(function (f) {
+        return '<span class="pill" role="listitem">' + WARN_HTML + esc(labels[f] || f) + '</span>';
+      }).join('') + '</div>' : '') + '</div>';
+    return '<article class="cc-item' + (inactive ? ' is-inactive' : '') + (c.primary_last4 ? ' is-supp' : '') + '">' + card + meta + '</article>';
+  }
+  // A card number under another card: bring that card into view and give it the focus (clearing the
+  // search and the chip first when they hide it).
+  function jumpToCard(last4) {
+    var sel = '.cc-card[data-last4="' + CSS.escape(last4) + '"]';
+    var el = $('#cardsBody').querySelector(sel);
+    if (!el && cardByLast4(last4)) {
+      cardsUi.q = '';
+      cardsUi.flag = 'all';
+      $('#cardsSearch').value = '';
+      renderCardChips();
+      renderCardsList();
+      el = $('#cardsBody').querySelector(sel);
+    }
+    if (!el) { toast('Card ' + last4 + ' is not on the list', 'err'); return; }
+    var calm = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    el.scrollIntoView({ block: 'center', behavior: calm ? 'auto' : 'smooth' });
+    el.focus({ preventScroll: true });
   }
   function cardRowHtml(c) {
     var labels = state.cards.flag_labels || {}, a = c.activity || {}, flags = c.flags || [];
@@ -1031,6 +1468,7 @@
     var change = c.last_change ? '<div>' + emailHtml(c.last_change.actor) + '</div><div class="sub">' + esc(fmtStamp(c.last_change.at)) + '</div>' : '<span class="muted">—</span>';
     return '<tr class="click-row" data-last4="' + esc(c.last4) + '" tabindex="0">' +
       '<td data-label="Card"><div class="strong nowrap">•••• ' + esc(c.last4) + '</div>' + (sub.length ? '<div class="sub">' + esc(sub.join(' · ')) + '</div>' : '') + '</td>' +
+      '<td data-label="Bank" class="w-bank">' + bankCellHtml(c) + '</td>' +
       '<td data-label="Holder">' + (c.holder_name ? esc(c.holder_name) : '<span class="muted">—</span>') +
         (flags.indexOf('holder_not_person') >= 0 ? '<div class="sub">not a person</div>' : '') + '</td>' +
       '<td data-label="Group">' + (c.group_name ? esc(c.group_name) : '<span class="muted">—</span>') + '</td>' +
@@ -1042,13 +1480,17 @@
       '<td data-label="Flags" class="w-flags">' + flagHtml + '</td>' +
       '<td data-label="Last change">' + change + '</td></tr>';
   }
-  function ownersHtml() {
-    var idx = state.cards.owners || {}, emails = Object.keys(idx).sort();
-    if (!emails.length) return '<div class="empty-small">No card has an owner yet.</div>';
+  // By owner: each owner's address with its cards, limited to the cards the search and the flag chip leave.
+  function ownersHtml(rows) {
+    var idx = state.cards.owners || {}, shown = {};
+    rows.forEach(function (c) { shown[c.last4] = true; });
+    var emails = Object.keys(idx).sort().filter(function (em) { return (idx[em] || []).some(function (l) { return shown[l]; }); });
+    if (!Object.keys(idx).length) return '<div class="empty-small">No card has an owner yet.</div>';
+    if (!emails.length) return '<div class="empty-small">No owner has a card that matches.</div>';
     return '<div class="list-wrap"><table class="list"><thead><tr><th>Owner</th><th>Cards</th></tr></thead><tbody>' + emails.map(function (em) {
       var out = outsideDomain(em);
       return '<tr><td data-label="Owner"><span class="tag' + (out ? ' pill-warn' : '') + '"' + (out ? ' title="' + esc(OUTSIDE_TITLE) + '"' : '') + '>' + emailHtml(em) + '</span></td>' +
-        '<td data-label="Cards"><div class="btns">' + (idx[em] || []).map(function (l) {
+        '<td data-label="Cards"><div class="btns">' + (idx[em] || []).filter(function (l) { return shown[l]; }).map(function (l) {
           var c = cardByLast4(l);
           return '<button type="button" class="chip btn-wrap" data-open-card="' + esc(l) + '">•••• ' + esc(l) + (c && c.holder_name ? ' · ' + esc(c.holder_name) : '') + '</button>';
         }).join('') + '</div></td></tr>';
@@ -1085,13 +1527,14 @@
   }
 
   // -- Card editor (and Add card, the same form in create mode) ------------------
-  var CARD_KEYS = ['label', 'holder_name', 'group_name', 'card_number', 'primary_last4', 'name_on_card', 'owner_email',
-                   'default_cost_center', 'receipt_upload', 'active'];
+  var CARD_KEYS = ['label', 'holder_name', 'group_name', 'card_number', 'primary_last4', 'name_on_card', 'bank', 'network',
+                   'product', 'owner_email', 'default_cost_center', 'receipt_upload', 'active'];
   function cardOriginal(c) {
     if (!c) return { label: '', holder_name: '', group_name: '', card_number: '', primary_last4: '', name_on_card: '',
-                     owner_email: '', default_cost_center: '', receipt_upload: null, active: true };
+                     bank: '', network: '', product: '', owner_email: '', default_cost_center: '', receipt_upload: null, active: true };
     return { label: cleanText(c.label), holder_name: cleanText(c.holder_name), group_name: cleanText(c.group_name),
              card_number: c.card_number || '', primary_last4: c.primary_last4 || '', name_on_card: cleanText(c.name_on_card),
+             bank: c.bank || '', network: c.network || '', product: cleanText(c.product),
              owner_email: ownerList(c.owner_email).join(', '), default_cost_center: c.default_cost_center || '',
              receipt_upload: c.receipt_upload_setting === true ? true : (c.receipt_upload_setting === false ? false : null),
              active: c.active !== false };
@@ -1109,6 +1552,11 @@
       return opt(o.last4, o.last4 + (o.holder_name ? ' · ' + o.holder_name : ''), o.last4 === cur.primary_last4);
     }).join('');
     if (cur.primary_last4 && !primaries.some(function (o) { return o.last4 === cur.primary_last4; })) primaryOpts += opt(cur.primary_last4, cur.primary_last4, true);
+    var bankOpts = '<option value="">— not set —</option>' + bankList().map(function (b) { return opt(b.key, b.name, b.key === cur.bank); }).join('');
+    if (cur.bank && !bankFor(cur.bank)) bankOpts += opt(cur.bank, cur.bank + ' (not on the list)', true);
+    var nets = networkList();
+    var netOpts = '<option value="">— not set —</option>' + nets.map(function (n) { return opt(n, networkLabel(n), n === cur.network); }).join('');
+    if (cur.network && nets.indexOf(cur.network) < 0) netOpts += opt(cur.network, cur.network, true);
     var dcc = cur.default_cost_center || '';
     var ccOpts = '<option value="">— none —</option>' + ccs.map(function (n) { return opt(n, n, n === dcc); }).join('');
     if (dcc && ccs.indexOf(dcc) < 0) ccOpts += opt(dcc, dcc + ' (retired)', true);
@@ -1129,11 +1577,16 @@
       field('holder_name', 'Holder', '<input class="inp" id="f_holder_name" name="holder_name" list="dlPeople" maxlength="200" value="' + esc(cur.holder_name || '') + '" />',
             'Who uses the card: the Person of its purchases unless someone else is assigned.') +
       field('group_name', 'Group', '<input class="inp" id="f_group_name" name="group_name" list="dlGroups" maxlength="40" value="' + esc(cur.group_name || '') + '" placeholder="Hair, Beauty" />') +
+      '<div class="form-sub">On the card</div>' +
+      field('bank', 'Bank', '<select class="inp" id="f_bank" name="bank">' + bankOpts + '</select>', 'The card\'s face in the gallery.') +
+      field('network', 'Network', '<select class="inp" id="f_network" name="network">' + netOpts + '</select>') +
+      field('product', 'Product', '<input class="inp" id="f_product" name="product" maxlength="60" value="' + esc(cur.product || '') + '" placeholder="e.g. Avion Business" />',
+            'The bank\'s name for the card, as printed.') +
       field('card_number', 'Card number', '<input class="inp" id="f_card_number" name="card_number" inputmode="numeric" maxlength="4" value="' + esc(cur.card_number || '') + '" placeholder="e.g. 4449" />',
             'The last four digits printed on the card, when they differ from the account\'s.') +
+      field('name_on_card', 'Name on card', '<input class="inp" id="f_name_on_card" name="name_on_card" maxlength="80" value="' + esc(cur.name_on_card || '') + '" placeholder="if not the holder" />') +
       field('primary_last4', 'Linked under', '<select class="inp" id="f_primary_last4" name="primary_last4"' + (sup.length ? ' disabled' : '') + '>' + primaryOpts + '</select>',
             sup.length ? 'primary of ' + esc(sup.join(', ')) : 'A supplementary card is linked under its primary card.') +
-      field('name_on_card', 'Name on card', '<input class="inp" id="f_name_on_card" name="name_on_card" maxlength="80" value="' + esc(cur.name_on_card || '') + '" placeholder="if not the holder" />') +
       field('owner_email', 'Owners', '<div class="chip-editor"><span class="chip-list" id="ownerChips"></span>' +
             '<input id="f_owner_email" type="email" placeholder="name@superhairpieces.com" aria-label="Add an owner\'s e-mail" /></div>',
             'Who may code the card\'s purchases and add its receipts. Enter or a comma adds an address.', 'full') +
@@ -1248,6 +1701,7 @@
       var v = {
         label: cleanText(fv('label')), holder_name: cleanText(fv('holder_name')), group_name: cleanText(fv('group_name')),
         card_number: fv('card_number').replace(/\s+/g, ''), name_on_card: cleanText(fv('name_on_card')),
+        bank: fv('bank'), network: fv('network'), product: cleanText(fv('product')),
         owner_email: owners.join(', '), default_cost_center: fv('default_cost_center'),
         receipt_upload: ru === 'true' ? true : (ru === 'false' ? false : null),
         active: $('#f_active', body).checked,
@@ -1512,15 +1966,23 @@
   }
 
   // Cards tab events.
-  $('#cardsSearch').addEventListener('input', function () { cardsUi.q = this.value; if (state.cards) renderCardsTable(); });
-  $('#cardsSort').addEventListener('change', function () { cardsUi.sort = this.value; if (state.cards) renderCardsTable(); });
-  $('#cardsByOwner').addEventListener('click', function () {
-    cardsUi.byOwner = !cardsUi.byOwner;
-    this.setAttribute('aria-pressed', String(cardsUi.byOwner));
-    this.classList.toggle('btn-primary', cardsUi.byOwner);
-    this.classList.toggle('btn-secondary', !cardsUi.byOwner);
-    if (state.cards) renderCardsTable();
-  });
+  $('#cardsSearch').addEventListener('input', function () { cardsUi.q = this.value; if (state.cards) renderCardsList(); });
+  $('#cardsSort').addEventListener('change', function () { cardsUi.sort = this.value; if (state.cards) renderCardsList(); });
+  syncCardsView();
+  // A bank logo that does not load (a deploy without static/banks/, an IAP re-auth on the image): the bank's
+  // name takes its place, in the face's lettering on a card and as plain text in the table's Bank cell, the
+  // same span the cell draws for a bank with no logo.
+  $('#cardsBody').addEventListener('error', function (ev) {
+    var img = ev.target;
+    if (!img || img.tagName !== 'IMG' || !img.hasAttribute('data-bank-logo')) return;
+    var name = img.getAttribute('data-bank-logo');
+    if (!name) { img.parentNode.removeChild(img); return; }
+    var span = document.createElement('span');
+    if (img.closest('.cc-bank')) span.className = 'cc-bank-text';
+    span.textContent = name;
+    if (img.title) span.title = img.title;
+    img.parentNode.replaceChild(span, img);
+  }, true);
   $('#cardsAdd').addEventListener('click', function () {
     if (!state.cards) { toast('The cards are still loading', 'err'); return; }
     openCardEditor('', true);
@@ -1528,10 +1990,14 @@
   $('#cardsRefresh').addEventListener('click', function () { loadCards(); });
   $('#tab-cards').addEventListener('click', function (ev) {
     var t = ev.target;
+    var view = t.closest('[data-cards-view]');
+    if (view) { setCardsView(view.dataset.cardsView); return; }
     var flag = t.closest('[data-flag]');
-    if (flag) { cardsUi.flag = flag.dataset.flag; renderCardChips(); renderCardsTable(); return; }
+    if (flag) { cardsUi.flag = flag.dataset.flag; renderCardChips(); renderCardsList(); return; }
     var open = t.closest('[data-open-card]');
     if (open) { openCardEditor(open.dataset.openCard); return; }
+    var jump = t.closest('[data-jump-card]');
+    if (jump) { jumpToCard(jump.dataset.jumpCard); return; }
     var go = t.closest('[data-fill-go]');
     if (go && cardsUi.fill) { fillDefault(cardsUi.fill.last4, go); return; }
     if (t.closest('[data-fill-no]')) { cardsUi.fill = null; renderFillNotice(); return; }
@@ -1541,11 +2007,16 @@
     if (ign) { ignoreNumber(ign.dataset.ignore); return; }
     var unign = t.closest('[data-unignore]');
     if (unign) { unignoreNumber(unign.dataset.unignore); return; }
-    var row = t.closest('tr[data-last4]');
-    if (row && !t.closest('a, button, input, select')) openCardEditor(row.dataset.last4);
+    var row = t.closest('tr[data-last4], .cc-card[data-last4]');
+    if (row && !t.closest('a, button, input, select')) {
+      openCardEditor(row.dataset.last4);
+      // After the dialog's own first focus (also a timeout): the field the click asked for.
+      if (t.closest('.no-bank .cc-bank-text')) setTimeout(function () { var f = $('#f_bank'); if (f) f.focus(); }, 0);
+    }
   });
+  // A row of the table or a card of the gallery: Enter (or Space) opens it, like a click.
   $('#tab-cards').addEventListener('keydown', function (ev) {
-    var row = ev.target.closest && ev.target.closest('tr[data-last4]');
+    var row = ev.target.closest && ev.target.closest('tr[data-last4], .cc-card[data-last4]');
     if (row && ev.target === row && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); openCardEditor(row.dataset.last4); }
   });
 

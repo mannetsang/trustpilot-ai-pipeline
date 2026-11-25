@@ -771,7 +771,47 @@ Cost centre list mixed places with kinds of spending. Now:
   with *Add as use case* or *Add to list*, and the use case names typed into
   the Cost centre box (those purchases still count as having no use case).
 
-**Cards tab.** One row per card: holder (*not a person* when the holder is
+**Cards tab.** Three views, *Gallery* (the default), *Table* and *By owner*,
+switched in the toolbar and remembered by the browser; the same search and
+flag chips drive all three, and the sort the first two (*Card* puts a
+supplementary card right after its primary). The **gallery** draws each
+card as the card itself, on a fixed template (logo, chip, number, holder and
+network sit at the same place on every face): the bank's face (RBC royal
+blue with a fine gold double hairline, Chase midnight blue with the white
+wordmark and a faint octagon outline, graphite with a dashed *+ Set bank*,
+which opens the editor on its Bank field), the product under the logo
+(without a trailing network word the mark already shows: *Business Cash
+Back*, not *… Mastercard*), the group top right (a frosted pill with a
+Hair/Beauty dot), chip and contactless mark, the number as
+`•••• •••• •••• 4449` (the card number when it has one, with an *ACCT 4431*
+pill beside it), *PRINTED HENRY LI* when the name on the card is someone
+else's, *SUPPLEMENTARY OF 4431* for a supplementary card, the holder on the
+bottom line, and the network (Visa, Mastercard, AMEX) level with it. A card
+with reminders off (`active` false: no weekly Chat card; nothing else
+changes) is muted with a *Reminders off* tag under the group. Under each
+card, in the same order under every card so a row reads straight across:
+activity (*6 invoices missing · last used Nov 2026*, the count a link to the
+dashboard's newest month with one missing for that card, or *All invoices
+in*; then *41 transactions since Sep 2026*), the owners (in-domain addresses
+by name, an outside one in amber, *No owner* in amber when there is none)
+with its Chat space when it has one (*own space* or *shared*) and *Edit*,
+then *Account 4431 · card no. 4449* when they differ and the supplementary
+link (each number brings that card into view), and its flags as amber chips,
+those asking for an action first (*No Chat webhook of its own*, nearly every
+card's normal state, and *No owner* are left out there, and *No activity in
+90 days* when *Never used* says it; their chips still filter). Search also
+knows *amex* and *mc*. Sorted by group, the cards come in sections (Hair,
+Beauty, No group) with counts. A click on a card, *Edit*, or Enter on a
+focused card (one tab stop per card: *Edit* is for the mouse) opens the
+editor, whose *On the card* row holds bank, network, product and card
+number. The banks and their logos come
+from the server (`BANKS` in `main.py`: key, name, short name, logos in
+`cloud_run/static/banks/`), so adding a bank is a server change: its key,
+names and two logos (for a light background and for the card face), plus
+its face colours in `admin.html` (`.cc-face.bank-<key>`; without them the
+face is plain graphite).
+
+The **table** has one row per card: bank (logo, product), holder (*not a person* when the holder is
 not linked to a person), group, owners (an address outside
 `ALLOWED_DOMAINS` is amber: it cannot sign in), default cost centre, Chat
 webhook, receipt upload, activity (transactions, those of the last three months,
@@ -797,6 +837,11 @@ the card's editor, which sends only the fields that changed:
   setting wins, even over `RECEIPT_UPLOAD_CARDS=all`, for the dashboard's
   *Add receipt...*, the receipts list and the Chat card's *Add receipts*,
   in the service and the weekly reminder alike.
+- **Bank**, **Network** and **Product** (`cards.bank`, `cards.network`,
+  `cards.product`): the card as issued, drawn on its face in the gallery.
+  Bank is one of the server's banks (RBC Royal Bank, Chase) or not set;
+  Network Visa, Mastercard or American Express; Product the bank's name for
+  the card (*Avion Business*, *U.S. Dollar*), at most 60 characters.
 - **Chat reminders on** is the card's `active` flag. Webhooks themselves are
   not edited here (Settings says how).
 - **Delete card**, for unused cards only: no transactions, not listed on an
@@ -809,7 +854,7 @@ the card's editor, which sends only the fields that changed:
 - **Add card** creates a card before its first statement, with its owners,
   default and receipt setting in the same step.
 
-Under the table, **Numbers on receipts that no card claims**: receipts read
+Under the cards, **Numbers on receipts that no card claims**: receipts read
 from the Invoice folder that show a card number no card has, so they can
 never be matched. *Find the card* lists the cards with a purchase of the
 receipt's amount 0-21 days after it; *Use as card number of 4431* gives the
@@ -943,6 +988,7 @@ phone. Chat cards posted before keep their old button until the next send.
 |---|---|---|
 | `GET /` | none | the dashboard page |
 | `GET /admin` | none (IAP guards the path, as for `/`) | the admin pages; the page holds no data, every `/api/admin` call checks the role |
+| `GET /static/banks/<name>.svg` | none (IAP guards the path, as for `/`) | the bank logos the Cards gallery draws (`BANKS`); kept by the browser a day (`Cache-Control: private, max-age=86400`) and served with `Content-Security-Policy: default-src 'none'` |
 | `GET /health` | none | `{"ok": true, "store": ..., "last_job": ...}`; `?deep=1` adds reachability checks for Supabase and the Invoice folder, how many card webhooks are configured (counts only: it answers without the password) and the auth mode. (`/healthz` is answered by Cloud Run's front end itself, not the container.) |
 | `GET /api/config` | none | `auth` (`password`, `open` or `iap`), `auth_disabled`, dashboard URL, sign-in page URL (`login_url`), Invoice folder URL, `ai_enabled` |
 | `POST /api/login` | none, but `X-Requested-With: XMLHttpRequest` in password mode (403 without) | password mode: `{"password": "..."}` sets the session cookie (401 wrong, 429 after too many wrong ones); a no-op in the other modes |
@@ -961,8 +1007,8 @@ phone. Chat cards posted before keep their old button until the next send.
 | `DELETE /api/transactions/<id>/receipt` | signed in, AP or the card's owner | *Remove...*: unlinks a receipt added from the dashboard and sends its file to the Drive trash; the file stays out of matching even when the trash fails (`200` with `"trashed": false` and a `warning`) |
 | `GET /receipts/<last4>/<YYYY>/<MM>` | signed in | the Chat card's *Add receipts*: redirects to the receipts list |
 | `GET /api/invoices?year&month` | signed in | invoices of month-1..month+1 with a `linked` flag (the picker) |
-| `GET /api/cards` | signed in | cards, each with `default_cost_center` (`""` for none), `receipt_upload` (whether it is on) and `receipt_upload_setting` (the card's own `true`/`false`, or `null` to follow `RECEIPT_UPLOAD_CARDS`) |
-| `POST /api/cards` | AP | `{"last4", "label", "holder_name", "group_name", "card_number", "primary_last4", "name_on_card", "owner_email", "chat_space", "active"}`; `owner_email` may list several addresses (commas, semicolons or spaces), stored lower-case as `a@x, b@x`; 400 if one is not an address, a card number is not four digits, is another statement card or is already another card's, or a primary card is the card itself, not on the dashboard, or itself supplementary or a primary already. A new holder is added as a person (`cards.person_id`), only once nothing in the save was refused. An unknown `last4` answers 404 unless the body has `"create": true` (409 if that card exists); a create that would take reissued receipt numbers from another card answers 409 with `alias_changes` (`number`, `before`, `after`) unless `"confirm": true`. `expect_card_number` (optional; `""` for none) refuses with 409 when the card's number is no longer that, so a page cannot replace a number it has not seen. `default_cost_center` (an active cost centre, snapped to its spelling; `""` or `null` clears; else 400) and `receipt_upload` (`true`, `false` or `null`; else 400). 400 for a body that is not a JSON object. Answers the cards, the people, `card` (the saved card), and `fillable` (the purchases with a use case and no cost centre the new default could fill) when an active default was set. Each create and change is recorded in the History |
+| `GET /api/cards` | signed in | cards, each with `default_cost_center` (`""` for none), `receipt_upload` (whether it is on), `receipt_upload_setting` (the card's own `true`/`false`, or `null` to follow `RECEIPT_UPLOAD_CARDS`), and `bank`, `network`, `product` (`""` when not set) |
+| `POST /api/cards` | AP | `{"last4", "label", "holder_name", "group_name", "card_number", "primary_last4", "name_on_card", "owner_email", "chat_space", "active"}`; `owner_email` may list several addresses (commas, semicolons or spaces), stored lower-case as `a@x, b@x`; 400 if one is not an address, a card number is not four digits, is another statement card or is already another card's, or a primary card is the card itself, not on the dashboard, or itself supplementary or a primary already. A new holder is added as a person (`cards.person_id`), only once nothing in the save was refused. An unknown `last4` answers 404 unless the body has `"create": true` (409 if that card exists); a create that would take reissued receipt numbers from another card answers 409 with `alias_changes` (`number`, `before`, `after`) unless `"confirm": true`. `expect_card_number` (optional; `""` for none) refuses with 409 when the card's number is no longer that, so a page cannot replace a number it has not seen. `default_cost_center` (an active cost centre, snapped to its spelling; `""` or `null` clears; else 400) and `receipt_upload` (`true`, `false` or `null`; else 400). `bank` (a key of `BANKS`: `rbc`, `chase`; case ignored), `network` (`visa`, `mastercard`, `amex`; case ignored) and `product` (text, spaces tidied, cut at 60 characters): `""` or `null` clears each, anything else answers 400 (`bank: ...`, `network: ...`, `product: ...`); they work on a create too. 400 for a body that is not a JSON object. Answers the cards, the people, `card` (the saved card), and `fillable` (the purchases with a use case and no cost centre the new default could fill) when an active default was set. Each create and change is recorded in the History |
 | `GET /api/export/missing` | signed in | Excel file of the purchases still missing their invoice (the use case column is headed *Use case*, formerly *Usage*); `?group=Hair` (`-` for the cards in no group), `?card=4431`, `?year=&month=` for one month (else every month); 400 for a bad card or month. Totals per group and currency, never added across currencies. Header `X-Rows`: how many |
 | `GET /api/statements?year&month` | signed in | uploads that touched the month |
 | `POST /api/statements[?background=1]` | AP | multipart `file`; `?sync=1` also indexes, matches and notifies (`&notify=0` to skip the cards) |
@@ -973,7 +1019,7 @@ phone. Chat cards posted before keep their old button until the next send.
 | `GET /api/jobs/current[?id=…]` | signed in | the job with that id (the last ten stay readable, so a tab keeps its own result when someone else starts the next job; 404 after a restart), else the newest: `id`, `name`, `started`, `finished`, `running`, `progress` (`read`, `live`, `remaining`, `note`, `year`, `month`, …) and, once finished, `result` or `error` |
 | `GET /api/admin/settings` | AP | what the Settings tab shows: auth mode, store, AI, allowed domains, `ap_emails` and how to change them, receipt upload (`env`, `all`, `per_card`), webhooks (which cards have their own; no URLs), `schema` (each table and column the pages need: `true` when present; `coding_split`), `coding_split`, `coding` (`suggestions`, `by`, `at`), `registry_version`; `schema_error` when the check itself failed |
 | `PUT /api/admin/settings/coding` | AP | `{"suggestions": true\|false}`: the coding-suggestions switch (400 for anything else) |
-| `GET /api/admin/cards` | AP | the Cards tab: every card as in `/api/cards` plus `activity`, `flags`, `owners`, `last_notification`, `last_change`, `default_cost_center_active`, `primary_default`, `deletable` and `delete_blockers`; `counts` per flag, `flag_labels`, groups, people, active cost centres, `owners` (cards per owner address), `unclaimed` (receipt card numbers no card claims, with `ignored`) |
+| `GET /api/admin/cards` | AP | the Cards tab: every card as in `/api/cards` plus `activity` (`transactions`, `recent`, `missing`, `first_month`, `last_month`, and `missing_last_month`: the newest month with an invoice missing), `flags`, `owners`, `last_notification`, `last_change`, `default_cost_center_active`, `primary_default`, `deletable` and `delete_blockers`; `counts` per flag, `flag_labels`, `banks` (`[{key, name, short, logo, logo_on_dark}]`, logos under `/static/banks/`), `networks`, groups, people, active cost centres, `owners` (cards per owner address), `unclaimed` (receipt card numbers no card claims, with `ignored`) |
 | `DELETE /api/admin/cards/<last4>[?confirm=1]` | AP | deletes an unused card: 409 with `counts` when it has transactions, an upload lists it or it is a primary card; 409 with `alias_changes` when receipt numbers would move to another card, until `?confirm=1`; 409 "an import or match is running" while a job holds the lease or runs in this instance; 400 for a `last4` that is not four digits, 404 unknown |
 | `POST /api/admin/cards/<last4>/fill-default` | AP | fills the card's active default cost centre into its purchases with a use case and no cost centre (never over one set meanwhile): `{"filled", "cost_center"}`; 400 when the card has no active default |
 | `GET /api/admin/card-numbers/<n>` | AP | the receipts showing card number `n` and the likely cards (purchases of the receipt's amount 0-21 days later; each with `card_number`, `card_number_receipts`, `months`), `considered`, `ignored`; 404 when no receipt shows it |

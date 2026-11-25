@@ -226,23 +226,29 @@ def _ym(year, month):
 
 
 def card_activity(summary_rows, today):
-    """{last4: {"transactions", "recent", "missing", "first_month", "last_month"}} from month_summary rows.
-    recent: the transactions of the last 3 months (about 90 days, counted in whole statement months)."""
+    """{last4: {"transactions", "recent", "missing", "first_month", "last_month", "missing_last_month"}} from
+    month_summary rows. recent: the transactions of the last 3 months (about 90 days, counted in whole statement
+    months). missing_last_month: the newest month with an invoice missing (None when none is), the month the
+    Cards gallery's "N invoices missing" opens on the dashboard."""
     recent = recent_months(today)
     out = {}
     for r in summary_rows:
         last4 = r.get("card_last4")
         if not last4:
             continue
-        a = out.setdefault(last4, {"transactions": 0, "recent": 0, "missing": 0, "first_month": None, "last_month": None})
+        a = out.setdefault(last4, {"transactions": 0, "recent": 0, "missing": 0, "first_month": None, "last_month": None,
+                                   "missing_last_month": None})
         n = int(r.get("transactions") or 0)
+        missing = int(r.get("missing") or 0)
         a["transactions"] += n
-        a["missing"] += int(r.get("missing") or 0)
+        a["missing"] += missing
         if (int(r["year"]), int(r["month"])) in recent:
             a["recent"] += n
         ym = _ym(r["year"], r["month"])
         a["first_month"] = ym if a["first_month"] is None else min(a["first_month"], ym)
         a["last_month"] = ym if a["last_month"] is None else max(a["last_month"], ym)
+        if missing > 0:
+            a["missing_last_month"] = ym if a["missing_last_month"] is None else max(a["missing_last_month"], ym)
     return out
 
 

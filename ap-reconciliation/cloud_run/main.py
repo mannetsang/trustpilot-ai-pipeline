@@ -47,7 +47,8 @@ Endpoints
   POST /api/ask?year&month[&card]  voice mode: {"question"} -> a short answer to read aloud (read only)
   GET  /api/invoices?year&month[&all=1]  invoices of the surrounding month folders (link picker)
   GET  /api/cards  POST /api/cards (AP)     card labels, owners, Chat space names, default cost centre,
-                                 receipt upload; POST answers 404 for an unknown card unless create: true
+                                 receipt upload, bank, network and product; POST answers 404 for an unknown
+                                 card unless create: true
   GET  /api/export/missing?group&card&year&month  the purchases still missing a receipt, as .xlsx
   GET  /api/statements?year&month           uploads
   POST /api/statements (AP, multipart file; ?sync=1 also indexes, matches and notifies)
@@ -60,6 +61,7 @@ Endpoints
   GET  /api/jobs/current                    the running or last background job: progress, then result
   GET  /admin                                the accounts-payable admin pages (every /api/admin call is AP only;
                                              its writes are refused in open mode on a real database)
+  GET  /static/banks/<file>.svg              the bank logos the Cards gallery draws (BANKS), cacheable
   GET  /api/admin/settings  PUT /api/admin/settings/coding {suggestions}
   GET  /api/admin/cards  DELETE /api/admin/cards/<last4>[?confirm=1]  POST /api/admin/cards/<last4>/fill-default
   GET  /api/admin/card-numbers/<n>  POST|DELETE /api/admin/card-numbers/<n>/ignore
@@ -123,8 +125,8 @@ import receipts  # noqa: E402
 import statements  # noqa: E402
 from drive import FOLDER, Drive, DriveError  # noqa: E402
 from gemini import Gemini, GeminiError  # noqa: E402
-from store import (CARD_FIELDS, UUID_RE, VENDOR_FIELDS, MemoryStore, StoreError, SupabaseStore,  # noqa: E402
-                   month_folder_name, neighbouring_months, now_iso, person_named)
+from store import (CARD_FIELDS, CARD_NETWORKS, CARD_PRODUCT_MAX, UUID_RE, VENDOR_FIELDS, MemoryStore,  # noqa: E402
+                   StoreError, SupabaseStore, month_folder_name, neighbouring_months, now_iso, person_named)
 
 app = Flask(__name__, static_folder=os.path.join(HERE, "static"), static_url_path="/static")
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
@@ -1233,7 +1235,9 @@ def card_view(c, aliases=None, by_last4=None):
             # The card's own switch (True, False, or None: RECEIPT_UPLOAD_CARDS decides); receipt_upload is
             # what applies.
             "receipt_upload_setting": c.get("receipt_upload"),
-            "receipt_upload": receipt_upload_enabled(c)}
+            "receipt_upload": receipt_upload_enabled(c),
+            # The card as issued ("" when not set): a BANKS key, a CARD_NETWORKS name, the bank's product.
+            "bank": c.get("bank") or "", "network": c.get("network") or "", "product": c.get("product") or ""}
 
 
 def card_views(cards, seen=None):
@@ -1247,6 +1251,22 @@ def card_views(cards, seen=None):
 
 GROUP_MAX = 40
 CARD_LABEL_RE = re.compile(r"^Card ending (\d{4})(?: - (.*))?$")
+
+# The banks a card can be from (cards.bank holds the key). The Cards tab takes its Bank list and each
+# card's logo from this registry (GET /api/admin/cards "banks"): a bank added here is offered and drawn
+# with no change to the page. short is its name where room is tight (the table, when the logo cannot
+# load). Its logos go in static/banks/ (logo for a light background, logo_on_dark for the card face); its
+# face colours are admin.html's .cc-face.bank-<key>, without which it gets a plain graphite face.
+BANKS = {
+    "rbc": {"name": "RBC Royal Bank", "short": "RBC", "logo": "/static/banks/rbc.svg", "logo_on_dark": "/static/banks/rbc.svg"},
+    "chase": {"name": "Chase", "short": "Chase", "logo": "/static/banks/chase.svg", "logo_on_dark": "/static/banks/chase-white.svg"},
+}
+BANK_LOGO_PATH_RE = re.compile(r"/static/banks/[a-z0-9-]+\.svg")
+
+
+def bank_list():
+    """[{key, name, short, logo, logo_on_dark}] in BANKS order, for the page's pickers, card faces and table."""
+    return [dict(key=key, **bank) for key, bank in BANKS.items()]
 
 
 def default_card_label(last4, holder):
@@ -1627,7 +1647,8 @@ AUDIT_ENTITIES = ["card", "card_number", "cost_center", "use_case", "vendor", "v
                   "vendor_coding", "person", "setting", "proposal"]                       # schema.sql's vocabulary
 VENDOR_KINDS = ["supplier", "processor", "agent", "not_vendor"]
 KIND_WORDS = {"processor": "a payment processor", "agent": "an agent", "not_vendor": "not a vendor"}
-NO_ACTIVITY = {"transactions": 0, "recent": 0, "missing": 0, "first_month": None, "last_month": None}
+NO_ACTIVITY = {"transactions": 0, "recent": 0, "missing": 0, "first_month": None, "last_month": None,
+               "missing_last_month": None}
 
 
 def json_body():
@@ -1851,6 +1872,11 @@ def _headers(response):
     response.headers["Referrer-Policy"] = "same-origin"
     if request.path in ("/", "/index.html", "/admin", "/static/index.html", "/static/admin.html"):
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    elif BANK_LOGO_PATH_RE.fullmatch(request.path) and response.status_code in (200, 304):
+        # The bank logos change only with a deploy: the browser keeps them a day (private: behind IAP,
+        # no shared cache). Opened on their own they are inert drawings, never a document that runs.
+        response.headers["Cache-Control"] = "private, max-age=86400"
+        response.headers["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'"
     return response
 
 
@@ -2410,6 +2436,27 @@ def api_cards_update():
         if body["receipt_upload"] is not None and not isinstance(body["receipt_upload"], bool):
             return jsonify({"error": "receipt_upload: true, false or null"}), 400
         row["receipt_upload"] = body["receipt_upload"]
+    # The card as issued (the face the Cards gallery draws). "" or null clears each.
+    if "bank" in body:
+        value = body["bank"]
+        if value is not None and not isinstance(value, str):
+            return jsonify({"error": "bank: " + ", ".join(BANKS) + ", or empty"}), 400
+        value = (value or "").strip().lower()
+        if value and value not in BANKS:
+            return jsonify({"error": f"bank: '{value[:40]}' is not one of " + ", ".join(BANKS)}), 400
+        row["bank"] = value or None
+    if "network" in body:
+        value = body["network"]
+        if value is not None and not isinstance(value, str):
+            return jsonify({"error": "network: " + ", ".join(CARD_NETWORKS) + ", or empty"}), 400
+        value = (value or "").strip().lower()
+        if value and value not in CARD_NETWORKS:
+            return jsonify({"error": f"network: '{value[:40]}' is not one of " + ", ".join(CARD_NETWORKS)}), 400
+        row["network"] = value or None
+    if "product" in body:
+        if body["product"] is not None and not isinstance(body["product"], str):
+            return jsonify({"error": f"product: text, at most {CARD_PRODUCT_MAX} characters"}), 400
+        row["product"] = admin.norm_space(body["product"])[:CARD_PRODUCT_MAX].strip() or None
     changed = "holder_name" in body and (row["holder_name"] or "") != (current.get("holder_name") or "")
     if changed:
         # A label still the default one follows the new holder.
@@ -2871,7 +2918,8 @@ def api_admin_cards():
                          last_notification=notified.get(last4), last_change=last_change.get(last4),
                          default_cost_center_active=not default or default in active_cc,
                          primary_default=primary_default, deletable=not blockers, delete_blockers=blockers))
-    return jsonify({"cards": rows, "counts": counts, "flag_labels": admin.FLAG_LABELS,
+    return jsonify({"cards": rows, "counts": counts, "flag_labels": admin.FLAG_LABELS, "banks": bank_list(),
+                    "networks": list(CARD_NETWORKS),
                     "groups": admin.card_groups(cards), "people": store.list_people(), "cost_centers": active_cc,
                     "owners": admin.owners_index(cards), "allowed_domains": sorted(ALLOWED_DOMAINS),
                     "unclaimed": admin.unclaimed_numbers(admin.invoice_rows(store), cards, ignored_numbers(store)),

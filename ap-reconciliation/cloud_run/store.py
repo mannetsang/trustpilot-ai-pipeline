@@ -28,7 +28,12 @@ TRANSACTION_FIELDS = (
 )
 CARD_FIELDS = ("last4", "label", "holder_name", "owner_email", "chat_space", "active", "updated_at",
                "group_name", "card_number", "primary_last4", "name_on_card", "person_id",
-               "default_cost_center", "receipt_upload")
+               "default_cost_center", "receipt_upload", "bank", "network", "product")
+# What the face of a card shows (schema.sql, "The card as issued"): cards.network takes one of these or
+# null (a check constraint); cards.product is at most CARD_PRODUCT_MAX characters. cards.bank is a key
+# of main.BANKS, a registry in code, so it has no constraint of its own.
+CARD_NETWORKS = ("visa", "mastercard", "amex")
+CARD_PRODUCT_MAX = 60
 INVOICE_FIELDS = (
     "id", "file_name", "mime_type", "web_view_link", "folder_path", "month_folder", "vendor_folder",
     "modified_time", "size", "vendor", "invoice_number", "invoice_date", "total", "currency",
@@ -66,6 +71,7 @@ SCHEMA_PROBES = (
     ("cost_centers.active", ("cost_centers", "active")),
     ("cards.default_cost_center", ("cards", "default_cost_center")),
     ("cards.receipt_upload", ("cards", "receipt_upload")),
+    ("cards.bank", ("cards", "bank")),
     ("people.updated_at", ("people", "updated_at")),
     ("vendors", ("vendors", "id")),
     ("vendor_folders", ("vendor_folders", "id")),
@@ -176,6 +182,19 @@ def _conflict(message):
 def _missing_fk(message):
     """MemoryStore's foreign-key violation, with the status and code PostgREST gives one."""
     return StoreError(f"foreign key (23503): {message}", status=409, code="23503")
+
+
+def _check_violation(message):
+    """MemoryStore's check-constraint violation, with the status and code PostgREST gives one."""
+    return StoreError(f"check constraint (23514): {message}", status=400, code="23514")
+
+
+def _card_checks(row):
+    """schema.sql's cards_network_check and cards_product_check, for MemoryStore."""
+    if row.get("network") is not None and row["network"] not in CARD_NETWORKS:
+        raise _check_violation(f"cards.network {row['network']!r} is not one of {', '.join(CARD_NETWORKS)}")
+    if row.get("product") is not None and len(row["product"]) > CARD_PRODUCT_MAX:
+        raise _check_violation(f"cards.product is longer than {CARD_PRODUCT_MAX} characters")
 
 
 def person_named(people, name):
@@ -937,11 +956,13 @@ class MemoryStore:
 
     def upsert_cards(self, rows):
         with self.lock:
-            # cards.default_cost_center references cost_centers(name): checked before anything is written.
+            # cards.default_cost_center references cost_centers(name), and the face's check constraints:
+            # checked before anything is written.
             names = {c["name"] for c in self.cost_centers}
             for r in rows:
                 if r.get("default_cost_center") is not None and r["default_cost_center"] not in names:
                     raise _missing_fk(f"cards.default_cost_center {r['default_cost_center']!r} is not a cost centre")
+                _card_checks(r)
             for r in rows:
                 self.cards.setdefault(r["last4"], {}).update(r)
 

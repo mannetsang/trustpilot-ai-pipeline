@@ -7,6 +7,7 @@ Everything runs on store.MemoryStore in open mode (AUTH_DISABLED=1), where every
 X-Dashboard-User header names who is typing (the audit's actor)."""
 import io
 import os
+import re
 import sys
 import unittest
 from unittest import mock
@@ -295,6 +296,112 @@ class CardSettingsTests(AdminApiTestCase):
             self.card_save({"last4": "1610", "receipt_upload": False})
             with self.assertRaises(main.AuthError):
                 main.receipt_access(AP_IAP, {"card_last4": "1610"})
+
+
+# ---------------------------------------------------------------------------
+# Cards: the card as issued (bank, network, product), drawn by the Cards gallery
+# ---------------------------------------------------------------------------
+class CardFaceTests(AdminApiTestCase):
+    def setUp(self):
+        super().setUp()
+        self.assertEqual(self.upload().status_code, 200)
+
+    def face(self, last4):
+        c = self.card(last4)
+        return c.get("bank"), c.get("network"), c.get("product")
+
+    def test_round_trip_cleaned_and_cleared(self):
+        r = self.card_save({"last4": "1610", "bank": " RBC ", "network": "Visa", "product": "  Avion \t Business "})
+        self.assertEqual((r["card"]["bank"], r["card"]["network"], r["card"]["product"]), ("rbc", "visa", "Avion Business"))
+        self.assertEqual(self.face("1610"), ("rbc", "visa", "Avion Business"))
+        listed = {c["last4"]: c for c in self.get("/api/cards")["cards"]}
+        self.assertEqual((listed["1610"]["bank"], listed["1610"]["network"], listed["1610"]["product"]),
+                         ("rbc", "visa", "Avion Business"))
+        self.assertEqual((listed["2301"]["bank"], listed["2301"]["network"], listed["2301"]["product"]), ("", "", ""))
+        admin_cards = {c["last4"]: c for c in self.get("/api/admin/cards")["cards"]}
+        self.assertEqual(admin_cards["1610"]["bank"], "rbc")
+        self.assertEqual(admin_cards["1610"]["product"], "Avion Business")
+        # Only what is sent changes.
+        self.card_save({"last4": "1610", "product": "U.S. Dollar"})
+        self.assertEqual(self.face("1610"), ("rbc", "visa", "U.S. Dollar"))
+        self.card_save({"last4": "1610", "bank": "", "network": None, "product": "   "})
+        self.assertEqual(self.face("1610"), (None, None, None))
+        self.card_save({"last4": "1610", "product": "x" * 80})
+        self.assertEqual(self.face("1610")[2], "x" * 60)
+        self.card_save({"last4": "1610", "product": "a" * 59 + " b"})        # cut at 60, no trailing space
+        self.assertEqual(self.face("1610")[2], "a" * 59)
+
+    def test_refused_values_change_nothing(self):
+        self.card_save({"last4": "1610", "bank": "chase", "network": "mastercard", "product": "Ink"})
+        for body, error in (
+                ({"bank": "td"}, "bank: 'td' is not one of rbc, chase"),
+                ({"bank": 5}, "bank: rbc, chase, or empty"),
+                ({"bank": ["rbc"]}, "bank: rbc, chase, or empty"),
+                ({"network": "discover"}, "network: 'discover' is not one of visa, mastercard, amex"),
+                ({"network": True}, "network: visa, mastercard, amex, or empty"),
+                ({"product": {"name": "Avion"}}, "product: text, at most 60 characters"),
+                ({"product": 7}, "product: text, at most 60 characters")):
+            r = self.card_save(dict(body, last4="1610", label="Changed"), expect=400)
+            self.assertEqual(r["error"], error)
+        self.assertEqual(self.face("1610"), ("chase", "mastercard", "Ink"))
+        self.assertEqual(self.card("1610")["label"], "Card ending 1610 - Yin Wei")
+
+    def test_create_takes_them_too(self):
+        r = self.card_save({"last4": "8100", "create": True, "holder_name": "George", "bank": "rbc", "network": "visa",
+                            "product": "U.S. Dollar"})
+        self.assertEqual((r["card"]["bank"], r["card"]["network"], r["card"]["product"]), ("rbc", "visa", "U.S. Dollar"))
+        self.assertEqual(self.audits(entity="card", entity_id="8100")[0]["after"]["product"], "U.S. Dollar")
+        self.assertEqual(self.card_save({"last4": "8101", "create": True, "network": "diners"}, expect=400)["error"],
+                         "network: 'diners' is not one of visa, mastercard, amex")
+        self.assertNotIn("8101", {c["last4"] for c in self.store.list_cards()})
+
+    def test_changes_are_audited_once(self):
+        self.card_save({"last4": "4894", "bank": "chase", "network": "visa"})
+        rows = self.audits(entity="card", entity_id="4894")
+        self.assertEqual([a["action"] for a in rows], ["update"])
+        self.assertEqual((rows[0]["before"]["bank"], rows[0]["after"]["bank"]), (None, "chase"))
+        self.assertEqual((rows[0]["before"]["network"], rows[0]["after"]["network"]), (None, "visa"))
+        self.assertIsNone(rows[0]["after"]["product"])
+        self.card_save({"last4": "4894", "bank": "CHASE", "network": "visa"})               # the same, as stored
+        self.assertEqual(len(self.audits(entity="card", entity_id="4894")), 1)
+        self.card_save({"last4": "4894", "product": "Ink Business"})
+        rows = self.audits(entity="card", entity_id="4894")
+        self.assertEqual((rows[0]["before"]["product"], rows[0]["after"]["product"]), (None, "Ink Business"))
+
+    def test_the_bank_registry(self):
+        r = self.get("/api/admin/cards")
+        self.assertEqual([b["key"] for b in r["banks"]], list(main.BANKS))
+        self.assertEqual([b["key"] for b in r["banks"]], ["rbc", "chase"])
+        self.assertEqual(r["networks"], ["visa", "mastercard", "amex"])
+        for b in r["banks"]:
+            self.assertEqual(set(b), {"key", "name", "short", "logo", "logo_on_dark"})
+            self.assertTrue(b["short"] and len(b["short"]) <= 12, b)
+            for url in (b["logo"], b["logo_on_dark"]):
+                # The page draws only logos under /static/banks/, served same-origin and cacheable.
+                self.assertTrue(url.startswith("/static/banks/") and url.endswith(".svg"), url)
+                self.assertTrue(os.path.isfile(os.path.join(STATIC, url[len("/static/"):])), url)
+                with self.client.get(url) as resp:
+                    self.assertEqual(resp.status_code, 200, url)
+                    self.assertEqual(resp.mimetype, "image/svg+xml")
+                    self.assertEqual(resp.headers["Cache-Control"], "private, max-age=86400")
+                    self.assertIn("default-src 'none'", resp.headers["Content-Security-Policy"])
+                    svg = resp.get_data(as_text=True)
+                for active in ("<script", "href", "<foreignObject", " on"):
+                    self.assertNotIn(active, svg.replace(" one", ""), url)
+        with self.client.get("/admin") as resp:
+            self.assertEqual(resp.headers["Cache-Control"], "no-cache, no-store, must-revalidate")
+        with self.client.get("/static/banks/none.svg") as resp:
+            self.assertEqual(resp.status_code, 404)
+
+    def test_the_store_refuses_what_the_check_constraints_refuse(self):
+        for row in ({"last4": "1610", "network": "discover"}, {"last4": "1610", "product": "x" * 61}):
+            with self.assertRaises(StoreError) as ctx:
+                self.store.upsert_cards([row])
+            self.assertEqual(ctx.exception.code, "23514")
+            self.assertFalse(ctx.exception.missing)
+        self.assertEqual(self.face("1610"), (None, None, None))
+        self.store.upsert_cards([{"last4": "1610", "network": "amex", "product": "x" * 60}])
+        self.assertEqual(self.face("1610"), (None, "amex", "x" * 60))
 
 
 # ---------------------------------------------------------------------------
@@ -961,6 +1068,12 @@ class CardNumberAdminTests(AdminApiTestCase):
         cards = {c["last4"]: c for c in r["cards"]}
         c = cards["1610"]
         self.assertEqual(c["activity"]["transactions"], 5)
+        self.assertEqual(c["activity"]["missing_last_month"], "2026-09")       # the gallery's link to the dashboard
+        self.assertEqual(cards["2301"]["activity"]["missing_last_month"], "2026-10")
+        self.store.upsert_cards([{"last4": "3922", "label": "Card ending 3922"}])     # no statement line yet
+        idle = {c["last4"]: c for c in self.get("/api/admin/cards")["cards"]}["3922"]["activity"]
+        self.assertEqual(idle, main.NO_ACTIVITY)
+        self.assertIsNone(idle["missing_last_month"])
         self.assertEqual(c["last_change"]["actor"], "manne")
         self.assertIn("no_owner", c["flags"])
         self.assertNotIn("no_webhook", c["flags"])                   # 1610 has its own
@@ -1172,6 +1285,61 @@ class StaticContractTests(unittest.TestCase):
         # Add (or erasing) in one never drops the other's draft unguarded.
         self.assertNotIn("'coding-add'", page)
         self.assertIn("function addOwner(kind) { return 'coding-add-' + kind; }", page)
+
+    def test_cards_gallery(self):
+        page = self.read("admin.html")
+        # Gallery | Table, the gallery by default, remembered by the browser behind a try/catch.
+        self.assertIn('data-cards-view="gallery" aria-pressed="true"', page)
+        self.assertIn('data-cards-view="table" aria-pressed="false"', page)
+        # By owner is the third view of the same switch, not a separate toggle that leaves Gallery pressed.
+        self.assertIn('data-cards-view="owners" aria-pressed="false"', page)
+        self.assertNotIn('id="cardsByOwner"', page)
+        self.assertIn("var CARDS_VIEWS = ['gallery', 'table', 'owners'];", page)
+        self.assertIn("try { var v = localStorage.getItem(CARDS_VIEW_KEY); return CARDS_VIEWS.indexOf(v) >= 0 ? v : 'gallery'; } catch (e) { return 'gallery'; }", page)
+        self.assertIn("try { localStorage.setItem(CARDS_VIEW_KEY, cardsUi.view); } catch (e)", page)
+        # Logos only from the server's banks list, and only its own files under /static/banks/.
+        self.assertIn(r"function bankLogo(url) { url = String(url || ''); return /^\/static\/banks\/[A-Za-z0-9_-]+\.svg$/.test(url) ? url : ''; }", page)
+        self.assertNotIn("rbc.svg", page)
+        self.assertNotIn("chase.svg", page)
+        # Every face class the page styles is a bank the server lists.
+        for key in re.findall(r"\.cc-face\.bank-([a-z0-9-]+)", page):
+            self.assertIn(key, main.BANKS)
+        # Both views take the same filtered, sorted list; the editor sends the three new fields.
+        self.assertIn("redraw(box, cardsUi.view === 'table' ? cardsTableHtml(rows) : cardsGalleryHtml(rows));", page)
+        self.assertIn("if (cardsUi.view === 'owners') { redraw(box, ownersHtml(rows)); return; }", page)
+        # Under a card the flags AP acts on, not the Chat-webhook flag nearly every card has, nor No owner (the
+        # owners line says it); never_used hides inactive_90d, and status flags come after action flags.
+        self.assertIn("var GALLERY_QUIET_FLAGS = ['no_webhook', 'no_owner'];", page)
+        self.assertIn("var STATUS_FLAGS = ['never_used', 'inactive_90d'];", page)
+        self.assertIn("if (flags.indexOf('never_used') >= 0) flags = flags.filter(function (f) { return f !== 'inactive_90d'; });", page)
+        # The missing count links to the dashboard's own route (#/YYYY/MM?card=1234), built only from a
+        # well-formed month and a four-digit card; no count badge on the card's corner.
+        self.assertIn("return m && /^\\d{4}$/.test(last4 || '') ? '/#/' + m[1] + '/' + m[2] + '?card=' + encodeURIComponent(last4) : '';", page)
+        self.assertIn("var m = /^(\\d{4})-(\\d{2})$/.exec(ym || '');", page)
+        self.assertNotIn("cc-miss-badge", page)
+        self.assertIn(r"var m = location.hash.match(/^#\/(\d{4})\/(\d{1,2})(?:\?(.*))?$/);", self.read("index.html"))
+        # One tab stop per card: Edit is for the mouse. Search knows the network's short names.
+        self.assertIn('class="btn btn-secondary btn-xs" tabindex="-1" data-open-card=', page)
+        self.assertIn("var NETWORK_ALIASES = { visa: 'visa', mastercard: 'mastercard mc', amex: 'amex' };", page)
+        self.assertIn("'bank', 'network',\n                   'product'", page)
+        self.assertIn("<th>Bank</th>", page)
+        self.assertIn("@media (prefers-reduced-motion: reduce) { .cc-card:hover { transform: none; } }", page)
+        # The dashboard's Cards… dialog is unchanged: it never sends them.
+        dashboard = self.read("index.html")
+        for text in ('data-cf="bank"', 'data-cf="network"', 'data-cf="product"', "cc-card"):
+            self.assertNotIn(text, dashboard)
+
+    def test_card_face_sizes_stay_on_the_face(self):
+        page = self.read("admin.html")
+        # .cc-bank-text is sized in cqw, which only the face (.cc-card, the query container) defines: in the
+        # table cqw is the viewport's, so the rule is scoped to the face, and a table logo that fails to load
+        # becomes a plain span (the face's lettering only inside .cc-bank).
+        self.assertIsNone(re.search(r"^\s*\.cc-bank-text\s*[{,]", page, re.M))
+        self.assertIn(".cc-bank .cc-bank-text { display: inline-flex;", page)
+        self.assertIn("if (img.closest('.cc-bank')) span.className = 'cc-bank-text';", page)
+        # The product line ends before the tags column (group pill, "Reminders off"), never under it.
+        self.assertRegex(page, r"\.cc-bank \{ flex: 1 1 auto; display: grid; grid-template-columns: minmax\(0, 1fr\);")
+        self.assertIn(".cc-product { max-width: 100%; max-width: min(64cqw, 100%);", page)
 
     def test_readme_patch_row_matches_the_fill_race(self):
         # test_a_cost_centre_set_meanwhile_is_kept: a cost centre set while a use-case save would fill the

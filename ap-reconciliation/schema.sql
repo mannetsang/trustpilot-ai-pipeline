@@ -319,6 +319,17 @@ alter table cards add column if not exists default_cost_center text
   references cost_centers(name) on update cascade on delete set null;
 -- Receipt upload from the dashboard for this card: true/false; null follows RECEIPT_UPLOAD_CARDS.
 alter table cards add column if not exists receipt_upload boolean;
+-- The card as issued, drawn on its face in the Cards tab's gallery: the bank (a key of main.BANKS, rbc
+-- or chase; a registry in code, so no constraint here), the network (visa, mastercard, amex) and the
+-- bank's name for the product ('Avion Business', 'U.S. Dollar'). Null: not set.
+alter table cards add column if not exists bank    text;
+alter table cards add column if not exists network text;
+alter table cards add column if not exists product text;
+alter table cards drop constraint if exists cards_network_check;
+alter table cards add constraint cards_network_check
+  check (network is null or network in ('visa', 'mastercard', 'amex'));
+alter table cards drop constraint if exists cards_product_check;
+alter table cards add constraint cards_product_check check (product is null or length(product) <= 60);
 
 -- People: who changed them last; an e-mail belongs to one person.
 alter table people add column if not exists updated_by text;
