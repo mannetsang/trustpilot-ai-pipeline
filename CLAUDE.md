@@ -152,68 +152,13 @@ mirrors the Trustpilot one; see the README's pipeline section.
 
 ### AP credit-card reconciliation
 
-Cloud Run `ap-reconciliation` (source `ap-reconciliation/`): AP uploads a
-card statement or RBC transaction export, Gemini reads every invoice in the
-AP user's Drive folder **Invoice** (`18YkGTNDIrxdQgHRgquvQizI8fLsFOpPk`, laid
-out `Invoice/YYYY MM/<vendor>/`), purchases are matched to invoices, each
-card's own Chat space gets an "invoices needed" card, and card owners code
-each purchase's use case (what it was for: Marketing, Travel, ...) and cost
-centre (where: a salon, US, EU, Head office; a card can carry a default) on the
-dashboard; "uncoded" means no use case. Since 2026-11-24 AP manages cards,
-people, use cases, cost centres and the vendor registry at `/admin` (the
-vendor registry gives suggestions only; matching does not read it yet)
-(Google sign-in through
-Identity-Aware Proxy for the `superhairpieces.com` domain, decided
-2026-10-13; `ap@`, `manne@` and `snow@` (accounts payable) and, since 2026-11-25, `george@` and
-`james@` are AP, everyone else in the domain edits
-only the cards they own; the public sign-in page is the second Cloud Run
-service `ap-reconciliation-login`, source `ap-reconciliation/login/`. The
-README's "Access" section has the open and shared-password modes too).
-Card holders on the cards with receipt upload on (per card in `/admin`, else
-`RECEIPT_UPLOAD_CARDS`, default `4421`) can
-photograph or upload receipts from the dashboard (*Add receipt…*, and the
-Chat card's *Add receipts* opens a phone list); files are saved to
-`Invoice/YYYY MM/<vendor>/` and linked to the purchase. Whoever does it must be
-one of the card's owner emails under *Cards…* (several allowed, comma-separated);
-card 4421 is labelled Linda (its statement names Bo Li) and its owner is
-`anais@superhairpieces.com`.
-Storage is a **separate Supabase project** (ref
-`bkkifrwfgtcnmfynbbdd`; schema in `ap-reconciliation/schema.sql`, applied
-with `setup_db.py`), not shared with anything else. Secrets are `ap-reconciliation-*` plus the AP user's Drive
-OAuth triple `google-workspace-ap-*`; see `ap-reconciliation/README.md`.
-Statements put in the Drive folder **Bank Transactions**
-(`1MGenhujsY-zElpg6A0SGD8C1WqC516t3`, owned by nikki@; Manne is an editor but
-editors may not share it) are imported by the Cloud Run job
-`ap-reconciliation-sync` (`python main.py sync`) every 15 minutes. It needs the
-folder shared with ap@ as a viewer, and a Cloud Scheduler job only an owner can
-create: claude-sessions has no Cloud Scheduler rights (it cannot even list them;
-the audit log shows creations). Manne created `ap-reconciliation-sync` (every 15
-minutes) on 2026-11-06 and `ap-reconciliation-remind` (Mondays 14:00 UTC) on
-2026-11-10. Only cards 1610, 2887 and 4421 have a Chat webhook
-(`ap-reconciliation-card-webhooks`), so the Monday reminder posts for those and
-logs "no webhook" for the rest; it still re-matches every card. It can deploy
-and execute Cloud Run jobs and apply the schema. The job and the dashboard
-share a lease in `job_lease`, so their long steps never overlap. The same job
-also watches **Invoice/** through ap@'s Drive change feed: an invoice filed
-there is read and matched on the next run by `matching.match_new_invoices`,
-which only adds or improves links (`app_state` `invoice_watch`;
-`INVOICE_WATCH=0` turns it off). E-mailed invoices get there through the
-**invoice filer** in `mannetsang/ap-automation` (`invoice-filer/`, GitHub
-Actions, scheduled hourly but GitHub often runs it only every few hours): it
-reads ap@'s **Gmail** directly, files PDFs into `Invoice/YYYY MM/<vendor>/`
-and labels the mail `Invoice Filer/Filed` or `Not invoice`. Since 2026-11-20
-it also files bills that are the email itself (Square's "Tax Invoice for
-Square Services", receipts, order confirmations: printed to PDF, 60 a run,
-oldest first) and receipt photos in an email (filed as the image); a bill
-whose amount the email does not print gets `Invoice Filer/Needs review`.
-Replies in a thread whose bill is already filed, a receipt for a filed
-invoice and a second PDF of one bill are not filed again. It shares the
-`google-workspace-ap-*` OAuth triple with this service, so a replacement
-refresh token must carry **both** `gmail.modify` and `drive`: a Drive-only
-token keeps this service working but stops the filer with `403
-ACCESS_TOKEN_SCOPE_INSUFFICIENT` (Nov 16-19 2026). `EmailattatchmentOriginal/`
-is a separate attachment dump the filer does not read, mirrored into
-`EmailAttatchmentCopy/` by ap@'s Apps Script "Untitled project".
+Moved on 2026-11-27, with its history, to its own repository,
+**`mannetsang/ap-reconciliation`**: the Cloud Run services `ap-reconciliation`
+and `ap-reconciliation-login`, the jobs `ap-reconciliation-sync` and
+`ap-reconciliation-remind`, its Supabase project and its deploy workflow. Its
+`CLAUDE.md`, README and `docs/credentials.md` are the reference now; change
+it there only. The invoice filer that feeds its Invoice folder stays in
+`mannetsang/ap-automation`.
 
 ### Known data-quality caveats
 
